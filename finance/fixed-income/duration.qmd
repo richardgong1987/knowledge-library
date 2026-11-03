@@ -1,0 +1,65 @@
+---
+title: "Duration: Deriving Interest-Rate Sensitivity"
+description: "Derive modified duration from the same two-year bond example."
+---
+
+## The problem
+
+In [Bond Pricing](bond-pricing.qmd), a bond's cash flows stayed fixed while its market yield changed. We observed that its price moved in the opposite direction.
+
+Can we estimate **how much** its price will move if yields rise by a small amount without repricing the bond from scratch?
+
+## Keep the same bond
+
+Our example has a face value of 100, an annual coupon of 5, and a maturity of two years. With annual compounding:
+
+$$
+P(y) = \frac{5}{1+y} + \frac{105}{(1+y)^2}
+$$ {#eq-duration-price}
+
+Differentiate the price with respect to the yield:
+
+$$
+\frac{dP}{dy} = -\frac{5}{(1+y)^2} - \frac{210}{(1+y)^3}
+$$ {#eq-duration-price-derivative}
+
+Rather than comparing derivatives across bonds of very different prices, scale the derivative by the bond's price:
+
+$$
+D_{\mathrm{mod}} = -\frac{1}{P(y)}\frac{dP}{dy}
+$$ {#eq-modified-duration}
+
+This quantity is **modified duration** under our annual-compounding convention. For a small yield change $\Delta y$:
+
+$$
+\frac{\Delta P}{P} \approx -D_{\mathrm{mod}}\Delta y
+$$ {#eq-duration-approx}
+
+Here $\Delta y$ is a decimal yield change: 10 basis points equals $0.001$.
+
+## Compute it for the example
+
+At a yield of 5%, the bond price is 100. The annual cash flows have present values $5/1.05$ and $105/1.05^2$. Macaulay duration weights each payment time by its contribution to the price:
+
+$$
+D_{\mathrm{Mac}} =
+\frac{1\cdot 5/1.05 + 2\cdot 105/1.05^2}{100}
+\approx 1.95238
+$$
+
+Therefore:
+
+$$
+D_{\mathrm{mod}} = \frac{D_{\mathrm{Mac}}}{1.05}
+\approx 1.85941
+$$
+
+If the yield rises by 10 basis points, the first-order prediction is a price decline of about **0.1859%**.
+
+## Explore the intuition
+
+Return to the [interactive price-yield curve](bond-pricing.qmd) and move the yield by a small increment. Modified duration describes the *local slope*, not the entire curve.
+
+## Limitations and next concept
+
+Duration is a first-order approximation. Larger yield changes reveal curvature, motivating **convexity**. Embedded options, non-parallel curve moves, and changing cash-flow assumptions require more sophisticated risk measures.

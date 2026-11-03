@@ -1,0 +1,75 @@
+---
+title: "Bond Pricing: An Interactive Introduction"
+description: "Use a two-year bond to understand present value and explore the price-yield relationship."
+---
+
+## The problem
+
+Imagine buying a bond with a face value of **100**, a **5% annual coupon**, and **two years** until maturity. It pays **5** after the first year and **105** after the second year. How much should you pay today?
+
+The answer depends on the market yield required by investors. We use annual compounding and assume both cash flows have the same yield.
+
+## Derive the price from cash flows
+
+A future payment is worth less than an identical payment today. Discount each cash flow at the required annual yield, $y$:
+
+$$
+P(y)=\frac{5}{1+y}+\frac{105}{(1+y)^2}
+$$ {#eq-bond-price}
+
+If $y=0.05$, the bond is worth exactly 100. The next experiment changes **only the yield**, keeping the cash flows fixed.
+
+## Experiment: move the market yield
+
+```{ojs}
+viewof yieldPercent = Inputs.range([1, 12], {
+  label: "Market yield (%)",
+  value: 5,
+  step: 0.5
+})
+```
+
+```{ojs}
+bondPrice = (percent) => {
+  const y = percent / 100;
+  return 5 / (1 + y) + 105 / ((1 + y) ** 2);
+}
+```
+
+```{ojs}
+currentPrice = bondPrice(yieldPercent);
+html`<p style="font-size:1.2rem"><strong>Bond price:</strong> ${currentPrice.toFixed(2)} &nbsp; <span style="font-size:.85rem">at a yield of ${yieldPercent.toFixed(1)}%</span></p>`
+```
+
+```{ojs}
+rates = Array.from({length: 111}, (_, i) => {
+  const yieldValue = 1 + i * 0.1;
+  return {yieldValue, price: bondPrice(yieldValue)};
+});
+Plot.plot({
+  width: 680,
+  height: 350,
+  marginLeft: 55,
+  x: {label: "Market yield (%)"},
+  y: {label: "Bond price"},
+  marks: [
+    Plot.line(rates, {x: "yieldValue", y: "price", stroke: "#16877b", strokeWidth: 3}),
+    Plot.ruleX([yieldPercent], {stroke: "#c27a30", strokeDasharray: "5,4"}),
+    Plot.dot([{yieldValue: yieldPercent, price: currentPrice}],
+      {x: "yieldValue", y: "price", fill: "#c27a30", r: 6}),
+    Plot.ruleY([100], {stroke: "gray", strokeDasharray: "3,5"})
+  ]
+})
+```
+
+## What did you observe?
+
+When the yield increases, the present value of the future cash flows decreases. When the yield decreases, their present value increases. This is the **inverse price-yield relationship**.
+
+The price is **not** changing because the issuer changed the promised payments. It changes because the *required return* changed.
+
+## Next step: quantify sensitivity
+
+The price-yield curve is not a straight line. For a small yield change, we can approximate the local effect with a derivative. This is the motivation for [Duration](duration.qmd).
+
+> **Scope:** The model uses annual compounding, fixed payments, a single yield, and no default risk or accrued-interest adjustment. It is an educational example rather than a market pricing engine.

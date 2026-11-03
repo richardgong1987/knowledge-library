@@ -1,0 +1,76 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "Knowledge Library"
+  site-url: https://richardgong1987.github.io/knowledge-library/
+  repo-url: https://github.com/richardgong1987/knowledge-library
+  repo-actions: [edit, issue]
+  search: true
+  page-navigation: true
+  navbar:
+    left:
+      - text: "Home"
+        href: index.qmd
+      - text: "Programming Languages"
+        href: programming-languages/index.qmd
+      - text: "DevOps"
+        href: devops/index.qmd
+      - text: "Finance"
+        href: finance/index.qmd
+      - text: "AI & Mathematics"
+        href: ai-mathematics/index.qmd
+    right:
+      - icon: github
+        href: https://github.com/richardgong1987/knowledge-library
+        aria-label: GitHub repository
+  sidebar:
+    style: docked
+    contents:
+      - index.qmd
+      - section: "Programming Languages"
+        href: programming-languages/index.qmd
+        contents:
+          - programming-languages/java.qmd
+          - programming-languages/rust.qmd
+          - programming-languages/go.qmd
+          - programming-languages/typescript.qmd
+          - programming-languages/javascript.qmd
+          - programming-languages/python.qmd
+          - programming-languages/csharp.qmd
+          - programming-languages/prolog.qmd
+      - section: "DevOps"
+        href: devops/index.qmd
+        contents:
+          - devops/ansible.qmd
+          - devops/kubernetes.qmd
+          - devops/ci-cd.qmd
+      - section: "Finance"
+        href: finance/index.qmd
+        contents:
+          - finance/fixed-income/index.qmd
+          - finance/fixed-income/bond-pricing.qmd
+          - finance/fixed-income/duration.qmd
+      - section: "AI & Mathematics"
+        href: ai-mathematics/index.qmd
+        contents:
+          - ai-mathematics/linear-algebra.qmd
+          - ai-mathematics/calculus.qmd
+          - ai-mathematics/probability.qmd
+          - ai-mathematics/machine-learning.qmd
+
+format:
+  html:
+    theme:
+      light: cosmo
+      dark: darkly
+    toc: true
+    toc-depth: 3
+    code-copy: true
+    code-fold: false
+    number-sections: false
+    css: styles.css
+
+execute:
+  freeze: auto
