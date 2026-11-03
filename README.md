@@ -4,7 +4,8 @@ An English-language technical knowledge website powered by [Quarto](https://quar
 
 ## Topics
 
-- **Programming Languages:** Java, Rust, Go, TypeScript, JavaScript, Python, C#, Prolog
+- **Programming Languages:** Java (including JVM Topics → Java Memory Model), Rust, Go, TypeScript, JavaScript, Python, C#, Prolog
+- **System Design:** fundamentals, distributed systems, and data consistency
 - **DevOps:** Ansible, Kubernetes, CI/CD pipelines
 - **Finance:** fixed income, bond pricing, duration, and future financial topics
 - **AI & Mathematics:** linear algebra, calculus, probability, machine learning
