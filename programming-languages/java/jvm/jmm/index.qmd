@@ -1,77 +1,87 @@
 ---
 title: "Java Memory Model (JMM)"
-description: "Start with a two-thread problem to derive visibility, ordering, and happens-before."
+description: "An official-specification-based learning outline for Java SE 27."
 ---
 
-## The problem: two threads, one shared flag
+::: {.callout-note}
+## Outline only
 
-Imagine a worker thread repeatedly performs a task until another thread asks it to stop. Both threads access the same `running` field.
-
-```java
-class Worker {
-    private boolean running = true;
-
-    void work() {
-        while (running) {
-            // Perform work.
-        }
-    }
-
-    void stop() {
-        running = false;
-    }
-}
-```
-
-If one thread calls `work()` and another calls `stop()`, **is the worker guaranteed to observe the update and terminate?**
-
-No. The code has a data race: the flag is shared, but the reads and writes are not coordinated by a happens-before relationship. An implementation may continue observing the earlier value; termination is not guaranteed.
-
-## A minimal fix: volatile
-
-```java
-class Worker {
-    private volatile boolean running = true;
-
-    void work() {
-        while (running) {
-            // Perform work.
-        }
-    }
-
-    void stop() {
-        running = false;
-    }
-}
-```
-
-Declaring the flag `volatile` introduces the required visibility and ordering guarantees for this simple stop signal. A write to a volatile field *happens-before* subsequent reads of that field in the synchronisation order.
-
-::: {.callout-important}
-A `volatile` field does **not** make a multi-step operation such as `counter++` atomic. Use an appropriate atomic class or locking when you need compound atomicity.
+This section is a **knowledge map**, not a complete textbook. Fill in each chapter gradually using one consistent running example, verified specifications, code, and interactive experiments.
 :::
 
-## What JMM explains
+**Specification baseline:** Java SE 27 (September 2026). The Java Memory Model (JMM) concerns permitted behaviour of shared-memory interactions, not the physical heap/stack layout of a particular JVM.
 
-The Java Memory Model defines the rules for thread interaction through shared memory. Three questions guide the rest of this chapter:
+## Knowledge tree
 
-1. **Visibility:** When must one thread observe another thread's writes?
-2. **Ordering:** Which reorderings are allowed without changing correctly synchronised behaviour?
-3. **Happens-before:** Which relationships guarantee ordering and visibility between actions?
+- **[01. Foundations](01-foundations.qmd)**
+  - Why a Memory Model Is Necessary
+  - Threads and Shared Variables
+  - Data Races and Correct Synchronisation
+  - Atomicity, Visibility, and Ordering
+- **[02. Formal Memory Model](02-formal-model.qmd)**
+  - Inter-thread Actions
+  - Program Order
+  - Synchronisation Order
+  - Synchronises-with and Happens-before
+  - Executions and Well-Formed Executions
+  - Happens-before Consistency
+  - Causality Requirements
+  - Observable Behaviour and Nonterminating Executions
+- **[03. Volatile Variables](03-volatile.qmd)**
+  - Volatile Reads and Writes
+  - Visibility and Ordering Guarantees
+  - Volatile Versus Atomicity
+  - Volatile-based Publication Patterns
+- **[04. Locks and Synchronisation](04-locks.qmd)**
+  - Monitors and synchronized
+  - Lock and Unlock Actions
+  - Wait Sets and Notification
+  - Thread Interruption
+  - Sleep and Yield
+- **[05. Final Fields and Safe Publication](05-final-fields.qmd)**
+  - Semantics of final Fields
+  - Reading final Fields During Construction
+  - Subsequent Modification of final Fields
+  - Write-protected Fields
+  - Immutability and Safe Publication
+- **[06. Atomicity and Memory Access](06-atomicity.qmd)**
+  - Atomic Reads and Writes
+  - Word Tearing
+  - long and double Access
+  - Atomic Variables
+  - Compare-and-set (CAS)
+- **[07. Advanced Memory Ordering](07-advanced-ordering.qmd)**
+  - VarHandle Access Modes
+  - Plain and Opaque Access
+  - Acquire and Release Access
+  - Volatile Access Modes
+  - Memory Fences
+  - Compiler and Hardware Reordering
+- **[08. Practical Concurrency Patterns](08-concurrency-patterns.qmd)**
+  - A Thread-safe Counter
+  - Producer–Consumer Coordination
+  - Double-checked Locking
+  - Concurrent Collections and Executors
+  - Common JMM Misconceptions
+- **[09. Experiments and Verification](09-experiments.qmd)**
+  - Interleaving Visualisations
+  - Store-buffering and Message-passing Litmus Tests
+  - JCStress Testing
+  - How to Interpret Outcomes
+  - Limits of Empirical Testing
+- **[10. References and Specification Mapping](10-references.qmd)**
+  - JLS 27 §17.1–§17.7
+  - JVMS 27: Separate JVM Runtime Memory Areas
+  - Java 27 VarHandle API
+  - Java 27 Concurrency APIs
+  - Glossary and Cross-references
 
-## Learning path
+## Authoritative references
 
-We will keep the same two-thread example while expanding it to cover:
+- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
+- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
+- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
 
-- Shared variables and data races
-- Volatile reads and writes
-- Synchronisation with `synchronized`
-- Happens-before edges and transitivity
-- Why `volatile` alone cannot implement a thread-safe counter
-- Interactive thread execution timelines (planned)
+## Writing convention
 
-## Primary reference
-
-- [Java Language Specification, Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se25/html/jls-17.html)
-
-The example is intentionally minimal. Production cancellation code should also consider interruption, blocking operations, and safe lifecycle management.
+Each topic will start with a concrete problem, reuse the same example as far as possible, derive the guarantees before introducing terminology, and then add an interactive experiment or executable test.
