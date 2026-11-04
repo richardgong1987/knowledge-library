@@ -1,38 +1,56 @@
 ---
-title: "Practical Concurrency Patterns"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "08 — Practical Concurrency Patterns"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View `JmmLab.java`](examples/JmmLab.java). From its directory run `javac JmmLab.java` and `java JmmLab all`. The programme runs on Java 17+; normative references use Java SE 27.
 :::
 
-**Specification mapping:** JLS §17.4–§17.5; java.util.concurrent API
+**Official reference:** [Java 27 java.util.concurrent memory consistency properties](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/util/concurrent/package-summary.html)
 
-## A Thread-safe Counter
+## 1. Our order-processing desk now has several responsibilities
 
-*To be written.*
+The same running example has grown to need four things:
 
-## Producer–Consumer Coordination
+1. **Stop requests:** the controller tells a worker to finish.
+2. **Order publication:** a producer sends immutable order information.
+3. **Accurate counting:** multiple workers record progress.
+4. **Progress notification:** a controller waits until enough orders have finished.
 
-*To be written.*
+No single primitive is automatically best for all four.
 
-## Double-checked Locking
+## 2. Choose a tool by the invariant
 
-*To be written.*
+| Problem | Solution used in `JmmLab.java` | Why |
+|---|---|---|
+| Simple stop flag | `volatile boolean` | Signal visibility and ordering |
+| Publish one order | Data write followed by volatile signal; or release/acquire | Establish publication ordering |
+| Consistent count + closed state | `synchronized` monitor | Mutual exclusion for compound state |
+| High-contention independent counter | `AtomicInteger` | Atomic read-modify-write |
+| Stable completed order record | `final` fields + latch publication | Construction safety and explicit hand-off |
+| Wait for a condition | `wait`/`notifyAll` in a monitor loop | No unbounded busy waiting |
 
-## Concurrent Collections and Executors
+## 3. Production alternatives
 
-*To be written.*
+A `BlockingQueue<Order>` often gives a cleaner producer–consumer architecture than a `hasOrder` boolean, particularly when multiple orders or consumers are involved.
 
-## Common JMM Misconceptions
+A `CountDownLatch`, `Future`, or executor completion event can communicate task completion without inventing a custom notification protocol.
 
-*To be written.*
+Double-checked locking is a separate advanced publication pattern. When used for lazy initialisation, the holder field must have the required visibility semantics (commonly `volatile`). Simpler eager initialisation or a static holder is usually easier to maintain.
 
-## Official references
+## 4. Don't confuse thread safety with business correctness
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+A correctly synchronised order counter can still count the *wrong orders* if retry handling or business deduplication is flawed. JMM guarantees address memory semantics, not idempotency, exactly-once processing, transaction isolation, or domain invariants by themselves.
 
-[← Back to the JMM knowledge tree](index.qmd)
+## 5. Step-by-step review
+
+Run `java JmmLab all`. For every output, identify the protected variable, the thread boundary, and the operation that establishes ordering. Then ask how the design changes if there are 1,000 orders instead of one.
+
+## Questions to revisit
+
+Which properties are guaranteed by the specification, and which outcomes could change between executions? What happens if we remove one synchronisation edge?
+
+[Back to JMM](index.qmd) · [Runnable source](examples/JmmLab.java)

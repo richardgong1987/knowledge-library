@@ -1,38 +1,62 @@
 ---
-title: "Atomicity and Memory Access"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "06 — Atomicity, Counters and Word Tearing"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View `JmmLab.java`](examples/JmmLab.java). From its directory run `javac JmmLab.java` and `java JmmLab atomic`. The programme runs on Java 17+; normative references use Java SE 27.
 :::
 
-**Specification mapping:** §17.6–§17.7
+**Official reference:** [JLS §17.6–§17.7](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html#jls-17.6) and [AtomicInteger API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/util/concurrent/atomic/AtomicInteger.html)
 
-## Atomic Reads and Writes
+## 1. The order desk grows: count every processed order
 
-*To be written.*
+Four order workers each process 1,000 orders. We expect **4,000** processed orders, but this code is unsafe:
 
-## Word Tearing
+```java
+int processed;
+void process() { processed++; }
+```
 
-*To be written.*
+An increment reads the old value, computes a new value, and writes it back. If two workers read 17 simultaneously, both may store 18; one increment disappears. A `volatile int` does not repair this compound atomicity problem.
 
-## long and double Access
+## 2. Add one atomic field
 
-*To be written.*
+Our same order desk now contains:
 
-## Atomic Variables
+```java
+static final class AtomicOrderDesk {
+    final AtomicInteger processed = new AtomicInteger();
+    void process() { processed.incrementAndGet(); }
+}
+```
 
-*To be written.*
+The `atomic` demo creates four worker threads and joins each one before printing the total. The atomic increment prevents lost updates. The join edges guarantee the main thread reads state after the worker threads terminate.
 
-## Compare-and-set (CAS)
+An atomic class is not a general database transaction. Coordinating two independent fields may still need a lock, an immutable aggregate, or another higher-level protocol.
 
-*To be written.*
+## 3. Compare-and-set (CAS)
 
-## Official references
+An atomic update can be implemented using a compare-and-set loop: read a current value, compute the replacement, and attempt to replace the old value only if it has not changed. Under contention, the attempt may have to be repeated.
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+The important abstraction is that the comparison and conditional update are **one atomic operation**. CAS does not mean arbitrary sequences of operations become atomic.
 
-[← Back to the JMM knowledge tree](index.qmd)
+## 4. Word tearing and 64-bit values
+
+The specification prohibits **word tearing**: writes to one distinct variable must not unexpectedly overwrite a neighbouring variable, even when storage is packed.
+
+JLS §17.7 historically allows non-volatile `long` or `double` reads/writes to be treated as two 32-bit operations; volatile access has the required atomicity. In modern implementations you may never observe tearing, but the language-level rule is why code must not rely on an unpromised guarantee.
+
+The `word-tearing` mode reports the conceptual limitation; it does not claim to force a rare hardware/compiler outcome.
+
+## 5. Evaluate the result
+
+Run `java JmmLab atomic`: the expected count is exactly 4,000. This demonstrates correct use of the class under this workload, but the correctness argument comes from the atomic API's contract, not from a single successful run.
+
+## Questions to revisit
+
+Which properties are guaranteed by the specification, and which outcomes could change between executions? What happens if we remove one synchronisation edge?
+
+[Back to JMM](index.qmd) · [Runnable source](examples/JmmLab.java)

@@ -1,34 +1,65 @@
 ---
-title: "Volatile Variables"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "03 — Volatile Variables"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View the complete `JmmLab.java`](examples/JmmLab.java). Compile with `javac JmmLab.java` from the `examples/` directory and run `java JmmLab volatile`. The example uses Java 17+ APIs; the normative specification baseline is Java SE 27.
 :::
 
-**Specification mapping:** §17.4.4–§17.4.5
+**Official specification:** [JLS §17.4.4–§17.4.5](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html#jls-17.4.5)
 
-## Volatile Reads and Writes
+## 1. Extend the same order desk
 
-*To be written.*
+The first order desk could not safely communicate a stop request. Change its signal to `volatile` and add a readiness flag:
 
-## Visibility and Ordering Guarantees
+```java
+static final class VolatileOrderDesk {
+    int latestOrder;
+    volatile boolean hasOrder;
+    volatile boolean running = true;
 
-*To be written.*
+    void submit(int id) {
+        latestOrder = id;
+        hasOrder = true;
+    }
+    void stop() { running = false; }
+}
+```
 
-## Volatile Versus Atomicity
+The worker waits until `hasOrder` is true, reads `latestOrder`, then later observes the stop signal. See `volatilePublication()` in the single source file.
 
-*To be written.*
+## 2. Why publication works
 
-## Volatile-based Publication Patterns
+The controller writes `latestOrder=102` **before** the volatile write `hasOrder=true` (program order). That volatile write synchronises-with a subsequent volatile read of the same field in the synchronisation order. The worker's later ordinary read of `latestOrder` is ordered after its observed readiness read.
 
-*To be written.*
+By *transitivity*, the earlier ordinary write is visible to that worker read. We have an actual ordering argument, not just a hope that a CPU cache was refreshed.
 
-## Official references
+## 3. Why stopping works
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+A volatile write of `running=false` and subsequent volatile reads establish the corresponding ordering. In this example the worker's loop is a simple cancellation signal.
 
-[← Back to the JMM knowledge tree](index.qmd)
+This does not mean a busy-spin loop is a suitable design for production. In real applications, use blocking queues, interruption, executors, or other coordination primitives appropriate to the work.
+
+## 4. What volatile does not do
+
+```java
+volatile int processed;
+processed++;  // read + calculate + write: NOT one atomic operation
+```
+
+Two threads can read the same old value and write the same incremented value. A volatile variable provides individual access ordering/visibility properties; it does **not** make arbitrary read-modify-write expressions indivisible.
+
+Likewise, a volatile reference does not make all the fields of the referenced object independently thread-safe. You must reason about the whole access protocol.
+
+## 5. Exercise
+
+Trace the edges from `latestOrder=102` to the worker's read. Then explain why replacing `hasOrder` with an ordinary boolean removes the required guarantee.
+
+## Check your understanding
+
+Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
+
+[Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)

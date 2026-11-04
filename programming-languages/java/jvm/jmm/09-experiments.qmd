@@ -1,38 +1,55 @@
 ---
-title: "Experiments and Verification"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "09 — Experiments, Litmus Tests and Verification"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View `JmmLab.java`](examples/JmmLab.java). From its directory run `javac JmmLab.java` and `java JmmLab causality`. The programme runs on Java 17+; normative references use Java SE 27.
 :::
 
-**Specification mapping:** JLS §17.4; OpenJDK JCStress
+**Official reference:** [JLS §17.4](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html#jls-17.4) and [OpenJDK jcstress](https://github.com/openjdk/jcstress)
 
-## Interleaving Visualisations
+## 1. Why a demo is not a proof
 
-*To be written.*
+The order desk shows that `volatile`, locks, and atomics are sufficient for particular communication patterns. It cannot reliably demonstrate *every* behaviour a racy program is allowed to produce.
 
-## Store-buffering and Message-passing Litmus Tests
+A run showing the expected output does **not** prove that a plain shared flag is safe. Conversely, a deliberately busy loop may not reproduce a visibility bug on your machine.
 
-*To be written.*
+## 2. Construct a controlled experiment
 
-## JCStress Testing
+Use the same two roles—controller and worker—and write down:
 
-*To be written.*
+- The shared variables and their initial values.
+- The actions in **each** thread, in program order.
+- Every synchronisation edge between threads.
+- The outcomes you want to classify as **allowed**, **forbidden**, or **not yet established**.
 
-## How to Interpret Outcomes
+One classic pattern is **message passing**: the controller writes data and then a ready flag; the worker reads the flag and then the data. Compare plain access with a volatile or release/acquire protocol.
 
-*To be written.*
+## 3. Store-buffering thought experiment
 
-## Limits of Empirical Testing
+A second litmus test uses two shared variables, initially zero, where each thread writes one variable and then reads the other. Under insufficient synchronisation, outcomes may differ from a naive single global interleaving. The legal outcomes must be checked against the exact JMM constraints, not asserted from processor folklore.
 
-*To be written.*
+This is an extension of the same question: what may one thread observe about another thread's writes?
 
-## Official references
+## 4. Use jcstress for systematic stress testing
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+OpenJDK's **jcstress** is a dedicated stress-testing harness for concurrency and JMM behaviours. It can run actors concurrently, collect observed result combinations, and label outcomes for a defined test.
 
-[← Back to the JMM knowledge tree](index.qmd)
+The official project is [openjdk/jcstress](https://github.com/openjdk/jcstress). It is a **separate test harness**, not embedded as a dependency in our one-file demonstration.
+
+The runnable `JmmLab.java` remains self-contained, while jcstress can be introduced later as a validation project.
+
+## 5. Interpret evidence correctly
+
+A stress test can discover an unexpected outcome and falsify a mistaken assumption. It cannot enumerate all theoretically allowed executions in one run. Treat the language specification and API contracts as the source of guarantees; treat experiments as evidence and teaching tools.
+
+For a performance test, also distinguish correctness from throughput, machine architecture, warm-up, compiler configuration, and scheduler effects.
+
+## Questions to revisit
+
+Which properties are guaranteed by the specification, and which outcomes could change between executions? What happens if we remove one synchronisation edge?
+
+[Back to JMM](index.qmd) · [Runnable source](examples/JmmLab.java)

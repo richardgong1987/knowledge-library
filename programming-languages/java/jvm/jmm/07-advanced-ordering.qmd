@@ -1,42 +1,67 @@
 ---
-title: "Advanced Memory Ordering"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "07 — Advanced Memory Ordering with VarHandle"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View `JmmLab.java`](examples/JmmLab.java). From its directory run `javac JmmLab.java` and `java JmmLab varhandle`. The programme runs on Java 17+; normative references use Java SE 27.
 :::
 
-**Specification mapping:** JLS §17.4; VarHandle API
+**Official reference:** [Java 27 VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
 
-## VarHandle Access Modes
+## 1. New requirement: publish an order with a narrower access mode
 
-*To be written.*
+We know a volatile readiness flag can publish an ordinary order field. The order desk now experiments with an explicit **release/acquire** protocol.
 
-## Plain and Opaque Access
+```java
+static final class HandleOrderDesk {
+    int latestOrder;
+    boolean ready;
+    // READY is a VarHandle obtained for the ready field.
+    void submit(int id) {
+        latestOrder = id;
+        READY.setRelease(this, true);
+    }
+    int receive() {
+        while (!(boolean) READY.getAcquire(this)) Thread.onSpinWait();
+        return latestOrder;
+    }
+}
+```
 
-*To be written.*
+The executable file includes the `MethodHandles.lookup().findVarHandle(...)` declaration. Run `varhandle` to see the published order.
 
-## Acquire and Release Access
+## 2. Derive the rule before naming it
 
-*To be written.*
+The publisher must make the write to `latestOrder` available before it signals readiness. The consumer must observe the readiness condition before reading the data. **Release** is a write-side ordering discipline; **acquire** is the corresponding read-side discipline.
 
-## Volatile Access Modes
+These are not generic magic barriers: the matching access modes and access protocol are essential to the reasoning.
 
-*To be written.*
+## 3. Compare the access modes
 
-## Memory Fences
+| Mode | Intuition | Example API |
+|---|---|---|
+| Plain | Ordinary field-style access, without inter-thread ordering guarantee | `get`, `set` |
+| Opaque | Per-variable coherent access, weaker than acquire/release | `getOpaque`, `setOpaque` |
+| Acquire / Release | Establish directional ordering for a publication protocol | `getAcquire`, `setRelease` |
+| Volatile | Stronger ordering consistent with volatile semantics | `getVolatile`, `setVolatile` |
 
-*To be written.*
+`VarHandle` also supports CAS, exchange, and atomic numeric updates for supported variable types.
 
-## Compiler and Hardware Reordering
+## 4. Fences and optimisation
 
-*To be written.*
+Advanced algorithms may use acquire, release, or full fences. Fences constrain ordering but **do not make arbitrary read-modify-write operations atomic**. A fence is not a substitute for designing a complete communication protocol.
 
-## Official references
+Compiler transformations, CPU ordering, and JMM rules are related but distinct layers: prove correctness against the Java contract, then measure whether a weaker access mode improves performance.
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+## 5. When should you use this?
 
-[← Back to the JMM knowledge tree](index.qmd)
+In most application code, prefer clearer constructs such as `synchronized`, atomics, blocking queues, or immutable messages. Reserve low-level `VarHandle` designs for well-reviewed components where their ordering guarantees are necessary.
+
+## Questions to revisit
+
+Which properties are guaranteed by the specification, and which outcomes could change between executions? What happens if we remove one synchronisation edge?
+
+[Back to JMM](index.qmd) · [Runnable source](examples/JmmLab.java)

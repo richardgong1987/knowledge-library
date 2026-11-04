@@ -1,87 +1,71 @@
 ---
 title: "Java Memory Model (JMM)"
-description: "An official-specification-based learning outline for Java SE 27."
+description: "Learn shared-memory concurrency through one evolving, runnable order-processing example."
 ---
 
-::: {.callout-note}
-## Outline only
+# One example, ten chapters
 
-This section is a **knowledge map**, not a complete textbook. Fill in each chapter gradually using one consistent running example, verified specifications, code, and interactive experiments.
+Imagine a small **order-processing service**. A controller submits orders and can request shutdown; a worker consumes published orders; multiple workers later share a processed-order count. The system becomes more demanding as each chapter introduces a new requirement.
+
+We deliberately **keep one Java source file**, [`JmmLab.java`](examples/JmmLab.java), with a single `main(String[] args)`. Each chapter refers to a named method or a nested class in that file.
+
+::: {.callout-tip}
+## Get started
+
+Requires a JDK **17 or newer**. The language-law references are based on the official **Java SE 27** specification.
+
+```bash
+cd programming-languages/java/jvm/jmm/examples
+javac JmmLab.java
+java JmmLab all
+```
+
+Or run one chapter experiment, e.g. `java JmmLab volatile` or `java JmmLab locks`.
+
+All examples are educational. The deliberately racy plain-field version is discussed but **not** launched as an unbounded spin loop.
 :::
 
-**Specification baseline:** Java SE 27 (September 2026). The Java Memory Model (JMM) concerns permitted behaviour of shared-memory interactions, not the physical heap/stack layout of a particular JVM.
+## The evolving requirements
 
-## Knowledge tree
+| Stage | New problem | Technique added |
+|---|---|---|
+| 1 | A controller must stop a worker | Shared state and data-race diagnosis |
+| 2 | Reason precisely about cross-thread observations | Actions, orders, happens-before, causality |
+| 3 | Publish an order and a stop request | `volatile` |
+| 4 | Protect order counts and wait for progress | `synchronized`, `wait`, `notifyAll` |
+| 5 | Hand off a completed order snapshot | `final`, `CountDownLatch` |
+| 6 | Count work from many concurrent workers | `AtomicInteger` |
+| 7 | Explore explicit low-level publication ordering | `VarHandle` release/acquire |
+| 8 | Choose the correct tool for each production need | Concurrency design patterns |
+| 9 | Investigate behaviours systematically | Litmus tests and jcstress |
+| 10 | Connect concepts to normative sources | Specification mapping |
 
-- **[01. Foundations](01-foundations.qmd)**
-  - Why a Memory Model Is Necessary
-  - Threads and Shared Variables
-  - Data Races and Correct Synchronisation
-  - Atomicity, Visibility, and Ordering
-- **[02. Formal Memory Model](02-formal-model.qmd)**
-  - Inter-thread Actions
-  - Program Order
-  - Synchronisation Order
-  - Synchronises-with and Happens-before
-  - Executions and Well-Formed Executions
-  - Happens-before Consistency
-  - Causality Requirements
-  - Observable Behaviour and Nonterminating Executions
-- **[03. Volatile Variables](03-volatile.qmd)**
-  - Volatile Reads and Writes
-  - Visibility and Ordering Guarantees
-  - Volatile Versus Atomicity
-  - Volatile-based Publication Patterns
-- **[04. Locks and Synchronisation](04-locks.qmd)**
-  - Monitors and synchronized
-  - Lock and Unlock Actions
-  - Wait Sets and Notification
-  - Thread Interruption
-  - Sleep and Yield
-- **[05. Final Fields and Safe Publication](05-final-fields.qmd)**
-  - Semantics of final Fields
-  - Reading final Fields During Construction
-  - Subsequent Modification of final Fields
-  - Write-protected Fields
-  - Immutability and Safe Publication
-- **[06. Atomicity and Memory Access](06-atomicity.qmd)**
-  - Atomic Reads and Writes
-  - Word Tearing
-  - long and double Access
-  - Atomic Variables
-  - Compare-and-set (CAS)
-- **[07. Advanced Memory Ordering](07-advanced-ordering.qmd)**
-  - VarHandle Access Modes
-  - Plain and Opaque Access
-  - Acquire and Release Access
-  - Volatile Access Modes
-  - Memory Fences
-  - Compiler and Hardware Reordering
-- **[08. Practical Concurrency Patterns](08-concurrency-patterns.qmd)**
-  - A Thread-safe Counter
-  - Producer–Consumer Coordination
-  - Double-checked Locking
-  - Concurrent Collections and Executors
-  - Common JMM Misconceptions
-- **[09. Experiments and Verification](09-experiments.qmd)**
-  - Interleaving Visualisations
-  - Store-buffering and Message-passing Litmus Tests
-  - JCStress Testing
-  - How to Interpret Outcomes
-  - Limits of Empirical Testing
-- **[10. References and Specification Mapping](10-references.qmd)**
-  - JLS 27 §17.1–§17.7
-  - JVMS 27: Separate JVM Runtime Memory Areas
-  - Java 27 VarHandle API
-  - Java 27 Concurrency APIs
-  - Glossary and Cross-references
+## Read the chapters in order
 
-## Authoritative references
+1. [Foundations](01-foundations.qmd) — Why a naive stop flag is not sufficient.
+2. [Formal Memory Model](02-formal-model.qmd) — Actions, program order, synchronisation order, happens-before and causality.
+3. [Volatile Variables](03-volatile.qmd) — Signal visibility and safely publish ordinary data.
+4. [Locks and Synchronisation](04-locks.qmd) — Protect invariants and wait for progress.
+5. [Final Fields and Safe Publication](05-final-fields.qmd) — Construct and hand off immutable order records.
+6. [Atomicity and Memory Access](06-atomicity.qmd) — Count every processed order without lost increments.
+7. [Advanced Memory Ordering](07-advanced-ordering.qmd) — Experiment with `VarHandle` acquire/release.
+8. [Practical Concurrency Patterns](08-concurrency-patterns.qmd) — Apply the appropriate primitive.
+9. [Experiments and Verification](09-experiments.qmd) — Know what executions do and do not prove.
+10. [References and Specification Mapping](10-references.qmd) — Source map, definitions, review.
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
+## Run modes
+
+`plain`, `volatile`, `locks`, `final`, `atomic`, `varhandle`, `lifecycle`, `word-tearing`, `causality`, and `all`.
+
+## An important distinction
+
+The JMM is a **Java language specification about legal interactions through shared memory**. It is not a diagram of a heap, stack, CPU cache, or garbage collector. JVM runtime data areas belong in the separate JVM topic series.
+
+## Primary sources
+
+- [Java SE 27 — Java Language Specification, Chapter 17](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
 - [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+- [Java SE 27 — java.util.concurrent memory consistency properties](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/util/concurrent/package-summary.html)
+- [OpenJDK jcstress](https://github.com/openjdk/jcstress)
 
-## Writing convention
-
-Each topic will start with a concrete problem, reuse the same example as far as possible, derive the guarantees before introducing terminology, and then add an interactive experiment or executable test.
+The learning text is an original explanation grounded in those references; it is not a reproduction of the specifications.

@@ -1,38 +1,62 @@
 ---
-title: "Final Fields and Safe Publication"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "05 — Final Fields and Safe Publication"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View the complete `JmmLab.java`](examples/JmmLab.java). Compile with `javac JmmLab.java` from the `examples/` directory and run `java JmmLab final`. The example uses Java 17+ APIs; the normative specification baseline is Java SE 27.
 :::
 
-**Specification mapping:** §17.5
+**Official specification:** [JLS §17.5](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html#jls-17.5)
 
-## Semantics of final Fields
+## 1. New requirement: preserve a completed order snapshot
 
-*To be written.*
+Instead of sharing a mutable order record, the controller creates a stable result that the reporting thread can read:
 
-## Reading final Fields During Construction
+```java
+static final class OrderSnapshot {
+    final int id;
+    final String market;
+    OrderSnapshot(int id, String market) {
+        this.id = id;
+        this.market = market;
+    }
+}
+```
 
-*To be written.*
+The object is fully initialised before its constructor completes, and it does not let `this` escape during construction. The `final` field rules provide special initialisation-safety guarantees. They are **not** simply identical to ordinary mutable field rules.
 
-## Subsequent Modification of final Fields
+## 2. Avoid constructor escape
 
-*To be written.*
+Do not register the not-yet-constructed object in a global collection or start a thread from its constructor that accesses it. Doing so can undermine final-field safety by exposing partially constructed state.
 
-## Write-protected Fields
+A `final` reference also does not make an object reachable from that reference deeply immutable. If `market` were replaced with a mutable array, the array's later mutations would require their own coordination.
 
-*To be written.*
+## 3. Publish the reference deliberately
 
-## Immutability and Safe Publication
+Our example uses a `CountDownLatch`:
 
-*To be written.*
+```java
+holder[0] = new OrderSnapshot(103, "BONDS");
+published.countDown();
+```
 
-## Official references
+The reader first calls `published.await()` and then reads the holder. The latch provides a clear happens-before edge for the publication of the reference and earlier writes.
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+The lesson is deliberately conservative: use **proper construction and a clear publication mechanism** rather than relying on obscure boundary cases of final-field semantics.
 
-[← Back to the JMM knowledge tree](index.qmd)
+## 4. Why the JLS devotes a separate section to final
+
+JLS §17.5 details the special treatment of final fields, including constructor completion, reads during construction, subsequent modification through unusual mechanisms, and write-protected fields. Normal application code should not reflectively mutate final fields and then assume ordinary guarantees apply.
+
+## 5. Exercise
+
+Make the snapshot contain a mutable `List<String>`. Which operations are protected by the final-reference rules? Which subsequent list mutations still require synchronisation?
+
+## Check your understanding
+
+Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
+
+[Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)

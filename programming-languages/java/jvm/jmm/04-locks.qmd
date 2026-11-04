@@ -1,38 +1,66 @@
 ---
-title: "Locks and Synchronisation"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "04 — Locks, Wait and Notification"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View the complete `JmmLab.java`](examples/JmmLab.java). Compile with `javac JmmLab.java` from the `examples/` directory and run `java JmmLab locks`. The example uses Java 17+ APIs; the normative specification baseline is Java SE 27.
 :::
 
-**Specification mapping:** §17.1–§17.3
+**Official specification:** [JLS §17.1–§17.3](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html#jls-17.1)
 
-## Monitors and synchronized
+## 1. New requirement: several workers update the count
 
-*To be written.*
+Our controller now needs a reliable processed-order count. Simply making the count visible is not enough: increments must not overlap in a way that loses updates.
 
-## Lock and Unlock Actions
+`LockedOrderDesk` uses the same object's monitor:
 
-*To be written.*
+```java
+synchronized boolean process() {
+    if (closed) return false;
+    processed++;
+    notifyAll();
+    return true;
+}
+synchronized int count() { return processed; }
+```
 
-## Wait Sets and Notification
+A synchronized instance method locks the current object's monitor. Only one thread can own that monitor at a time; the update is therefore protected from concurrent `process()` operations on the same instance.
 
-*To be written.*
+## 2. Mutual exclusion plus visibility
 
-## Thread Interruption
+An **unlock** on a monitor synchronises-with each subsequent **lock** on that monitor in the synchronisation order. Together with program order, this publishes changes made before unlocking to a thread that later acquires the same monitor.
 
-*To be written.*
+The lock protects an **invariant**, not merely a single field. For example, order count and closed status can be examined consistently inside the same monitor-protected operation.
 
-## Sleep and Yield
+## 3. Wait for progress without spinning
 
-*To be written.*
+Our controller wants to await three processed orders:
 
-## Official references
+```java
+synchronized void awaitAtLeast(int minimum) throws InterruptedException {
+    while (processed < minimum && !closed) wait();
+}
+```
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+`wait()` releases the monitor while waiting and reacquires it before returning. Another thread can process orders and call `notifyAll()` under the same monitor.
 
-[← Back to the JMM knowledge tree](index.qmd)
+The **while** loop is essential: a thread may wake without the requested condition having become true (including spurious wakeups), or another consumer may have changed state before it reacquires the lock.
+
+## 4. Interruption, sleep and yield
+
+`interrupt()` is a cooperative cancellation mechanism, not a command that forcibly stops a thread. `sleep()` and `yield()` are **not replacements for synchronisation** and do not establish the missing publication guarantees.
+
+Do not call `wait()`, `notify()`, or `notifyAll()` on an object without owning its monitor; doing so may throw `IllegalMonitorStateException`.
+
+## 5. Trade-off
+
+A monitor can coordinate compound state and waiting, but contention can limit throughput and care is required to avoid deadlock. In a larger order-processing service, a `BlockingQueue` may offer a simpler high-level design.
+
+## Check your understanding
+
+Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
+
+[Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)

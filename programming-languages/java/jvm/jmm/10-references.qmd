@@ -1,38 +1,59 @@
 ---
-title: "References and Specification Mapping"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "10 — Reference Map, Terminology and Review"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View `JmmLab.java`](examples/JmmLab.java). From its directory run `javac JmmLab.java` and `java JmmLab all`. The programme runs on Java 17+; normative references use Java SE 27.
 :::
 
-**Specification mapping:** Java SE 27 official documentation
+**Official reference:** [Java SE 27 JLS Chapter 17](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
 
-## JLS 27 §17.1–§17.7
+## 1. Map every chapter to the official specifications
 
-*To be written.*
+| Topic | Primary reference | Example method |
+|---|---|---|
+| Shared variables, data races | JLS §17.4.1–§17.4.5 | `plainStopExplanation` |
+| Actions, order, causality | JLS §17.4.2–§17.4.9 | `startAndJoin`, `causalityExplanation` |
+| Volatile publication | JLS §17.4.4–§17.4.5 | `volatilePublication` |
+| Monitors, wait sets, interruption | JLS §17.1–§17.3 | `lockAndWait` |
+| Final fields | JLS §17.5 | `finalFieldPublication` |
+| Word tearing and 64-bit access | JLS §17.6–§17.7 | `wordTearingExplanation` |
+| Atomics and counters | `java.util.concurrent.atomic` API | `atomicCounter` |
+| Explicit access ordering | `VarHandle` API | `releaseAcquire` |
+| Concurrent stress tests | OpenJDK jcstress | Separate future harness |
 
-## JVMS 27: Separate JVM Runtime Memory Areas
+**Specification baseline:** Java SE 27, released September 2026. Code deliberately targets Java 17+ so it also runs on a broad range of supported developer installations.
 
-*To be written.*
+## 2. Glossary
 
-## Java 27 VarHandle API
+- **Data race:** Conflicting ordinary accesses to one variable without a happens-before ordering.
+- **Program order:** Per-thread action ordering under the Java semantics.
+- **Synchronises-with:** A specified inter-thread synchronisation relationship.
+- **Happens-before:** The transitive closure of program order and synchronises-with.
+- **Visibility:** Whether one action's write must be observable by a later read under the specified rules.
+- **Atomicity:** Whether an operation appears indivisible with respect to competing operations.
+- **Safe publication:** A protocol that establishes the necessary guarantees for another thread to use an object.
+- **Sequential consistency:** Behaviour consistent with a single interleaving that respects each thread's order; a useful guarantee for correctly synchronised programmes.
 
-*To be written.*
+## 3. Official sources
 
-## Java 27 Concurrency APIs
+- [Java SE 27 — JLS Chapter 17](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html).
+- [Java SE 27 — JVMS Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html). JVM runtime data areas are a **different subject** from JMM legality of inter-thread observations.
+- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html).
+- [Java SE 27 — java.util.concurrent](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/util/concurrent/package-summary.html).
+- [OpenJDK jcstress](https://github.com/openjdk/jcstress).
 
-*To be written.*
+## 4. A recommended study order
 
-## Glossary and Cross-references
+First solve stop visibility using volatile. Then communicate order data across a publication boundary. Next implement an accurate count using locks and atomics. Finally study the formal action model, final-field rules, weaker access modes, and causality constraints.
 
-*To be written.*
+Do not memorise rules without explaining the original failure they prevent. The correct question is always: *Which thread must observe which write, and what exact language rule guarantees it?*
 
-## Official references
+## Questions to revisit
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+Which properties are guaranteed by the specification, and which outcomes could change between executions? What happens if we remove one synchronisation edge?
 
-[← Back to the JMM knowledge tree](index.qmd)
+[Back to JMM](index.qmd) · [Runnable source](examples/JmmLab.java)

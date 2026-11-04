@@ -1,50 +1,61 @@
 ---
-title: "Formal Memory Model"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "02 — Formal Memory Model"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View the complete `JmmLab.java`](examples/JmmLab.java). Compile with `javac JmmLab.java` from the `examples/` directory and run `java JmmLab lifecycle`. The example uses Java 17+ APIs; the normative specification baseline is Java SE 27.
 :::
 
-**Specification mapping:** §17.4.2–§17.4.9
+**Official specification:** [JLS §17.4.2–§17.4.9](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html#jls-17.4)
 
-## Inter-thread Actions
+## 1. From our order desk to memory actions
 
-*To be written.*
+For the controller/worker example, the specification reasons about **actions**: normal reads and writes, volatile reads and writes, lock/unlock operations, thread startup/termination detection, and other defined events.
 
-## Program Order
+A useful simplified timeline is:
 
-*To be written.*
+```text
+Controller thread                Worker thread
+write order 105
+Thread.start(worker)  -------->  read order 105
+                                update order to 106
+Thread.join(worker)   <--------  worker terminates
+read order 106
+```
 
-## Synchronisation Order
+In `startAndJoin()`, writing 105 before starting the thread and reading 106 after joining are both supported by specified synchronisation edges.
 
-*To be written.*
+## 2. Program order and synchronisation order
 
-## Synchronises-with and Happens-before
+**Program order (po)** orders the actions of each thread according to its individual execution semantics. It does not automatically put actions of different threads into one reliable order.
 
-*To be written.*
+**Synchronisation order (so)** is a total order over *synchronisation actions* and must be consistent with each thread's program order. The specification defines certain **synchronises-with (sw)** edges, such as a volatile write to subsequent reads of that field in synchronisation order.
 
-## Executions and Well-Formed Executions
+**Happens-before (hb)** is the transitive closure of program order and synchronises-with. Informally, if A is before B in the same thread, and B synchronises-with C in another thread, then A happens-before C.
 
-*To be written.*
+## 3. Which write may a read observe?
 
-## Happens-before Consistency
+A read is not simply guaranteed to see the last wall-clock write. The JMM constrains its write-seen mapping using happens-before consistency, well-formed execution rules, and causality requirements.
 
-*To be written.*
+It is useful to draw a graph of actions with arrows for `po`, `sw`, and their transitive consequences. **No arrow** between conflicting actions often indicates that a race requires further analysis.
 
-## Causality Requirements
+## 4. Why causality matters
 
-*To be written.*
+Naive reordering stories can suggest values appearing from nowhere through circular reasoning: one read somehow depends on a write that itself depends on that read. The specification has detailed causality rules to restrict such executions.
 
-## Observable Behaviour and Nonterminating Executions
+These are **formal constraints on allowed executions**, not a promise that a particular trace will appear when you run a small demo. For deeper work, read JLS §17.4.6–§17.4.9 directly.
 
-*To be written.*
+## 5. Data-race freedom and sequential consistency
 
-## Official references
+For a correctly synchronised programme, the language provides strong *sequential consistency* reasoning. That does **not** make a logically incorrect sequence of individually synchronised operations atomic as a group.
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+The order-counting chapter will make this distinction concrete.
 
-[← Back to the JMM knowledge tree](index.qmd)
+## Check your understanding
+
+Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
+
+[Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)

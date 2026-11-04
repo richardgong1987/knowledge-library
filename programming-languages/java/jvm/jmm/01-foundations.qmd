@@ -1,34 +1,61 @@
 ---
-title: "Foundations"
-description: "JMM chapter outline grounded in the Java SE 27 specification."
+title: "01 — Foundations"
+description: "A worked JMM chapter using one evolving order-processing example."
 ---
 
-::: {.callout-note}
-**Status:** Outline. Detailed explanations, examples, and experiments will be added progressively.
+::: {.callout-tip}
+## Run the same source file
+
+[View the complete `JmmLab.java`](examples/JmmLab.java). Compile with `javac JmmLab.java` from the `examples/` directory and run `java JmmLab plain`. The example uses Java 17+ APIs; the normative specification baseline is Java SE 27.
 :::
 
-**Specification mapping:** §17.4.1–§17.4.5
+**Official specification:** [JLS §17.4.1–§17.4.5](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html#jls-17.4)
 
-## Why a Memory Model Is Necessary
+## 1. A real problem: stopping an order worker
 
-*To be written.*
+An order-processing application has two threads: one accepts control commands; another processes orders. The controller needs to stop the worker when a market session closes. A developer starts with the `PlainOrderDesk` class:
 
-## Threads and Shared Variables
+```java
+static final class PlainOrderDesk {
+    boolean running = true;
+    int latestOrder;
+    void submit(int id) { latestOrder = id; }
+    void stop() { running = false; }
+}
+```
 
-*To be written.*
+The tempting worker loop is `while (desk.running) { /* process */ }`. Even if a different thread invokes `stop()`, **termination is not guaranteed**: these conflicting, unsynchronised accesses create a *data race*. The Java Memory Model permits optimisations and observations that differ from the programmer's imagined interleaving.
 
-## Data Races and Correct Synchronisation
+The runnable demonstration intentionally explains this issue without starting a thread that could spin forever.
 
-*To be written.*
+## 2. Identify the actual shared variables
 
-## Atomicity, Visibility, and Ordering
+Fields such as `running` and `latestOrder` are shared variables. A local method variable is not independently shared between threads (although the object to which a local reference points may be shared). Two accesses to the *same* variable conflict when at least one is a write.
 
-*To be written.*
+A race does not mean the program fails every time. It means the assumptions needed to guarantee behaviour are missing. Adding a delay, logging, or testing repeatedly does not establish correctness.
 
-## Official references
+## 3. Three separate questions
 
-- [Java SE 27 — JLS Chapter 17: Threads and Locks](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html)
-- [Java SE 27 — JVM Specification, Chapter 2](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html)
-- [Java SE 27 — VarHandle API](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/lang/invoke/VarHandle.html)
+**Visibility:** If the controller writes `false`, what guarantees the worker can observe the change?
 
-[← Back to the JMM knowledge tree](index.qmd)
+**Ordering:** If the controller writes order data *before* signalling readiness, what guarantees the consumer sees those earlier writes after observing the signal?
+
+**Atomicity:** If multiple workers increment the processed-order count, can any increments be lost?
+
+These are different problems. A solution for one does not necessarily solve the others.
+
+## 4. Derive the need for synchronisation
+
+We need a contractual relationship between actions in the controller and worker. Java expresses these relationships through *happens-before* edges: ordinary program order, monitor unlock/lock, volatile write/read, thread start/termination, and library-defined synchronisation.
+
+The next chapters construct these edges one at a time, using the same order desk. Start with `java JmmLab plain`, then compare `java JmmLab volatile`.
+
+::: {.callout-warning}
+Do not assume that CPU caches alone explain the JMM. The JMM specifies *allowed Java behaviours*, independent of any particular CPU or JIT implementation.
+:::
+
+## Check your understanding
+
+Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
+
+[Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)
