@@ -1,0 +1,75 @@
+---
+title: "Garbage Collection"
+description: "Watch one order queue retain and release objects, then connect reachability to GC algorithms and diagnostics."
+---
+
+# Why did memory stay full after we processed an order?
+
+Continue the same **order-processing service**. An order is created, processed and eventually forgotten. When is the object's memory reclaimable?
+
+## One Java file, three stages
+
+[Open `GcLab.java`](examples/GcLab.java). Requires JDK 17+.
+
+```bash
+cd programming-languages/java/jvm/gc/examples
+javac GcLab.java
+java GcLab
+java -Xmx64m -Xlog:gc* GcLab
+```
+
+The programme intentionally uses a `WeakReference` to *observe eligibility*, but GC timing is nondeterministic. Never write a test that asserts an object **must** disappear after `System.gc()`.
+
+## Step 1 — Reachability, not reference counting
+
+`new Order(101)` creates an instance. While the queue keeps a strong reference to it, the collector must treat it as reachable. Removing it from the queue and dropping any other strong reference makes it **eligible**, not necessarily immediately collected.
+
+```text
+GC root -> main stack -> queue -> Order(101)   reachable
+GC root -> main stack -> queue (empty)         Order may be unreachable
+```
+
+Cycles do not automatically prevent collection: a pair of objects referring to each other can be reclaimed if neither is reachable from GC roots. This is why a pure reference-counting explanation is inadequate for Java tracing collectors.
+
+## Step 2 — Explore reference strengths
+
+`WeakReference<Order>` does not keep its referent alive. `SoftReference` is subject to memory-sensitive clearing policies and should not be relied on as an ordinary cache policy. `PhantomReference` works with a reference queue and is useful for post-mortem cleanup protocols. Prefer `Cleaner` or explicit `close()` for resource management; do not build new designs around the obsolete finalisation mechanism.
+
+## Step 3 — Compare the algorithms conceptually
+
+| Algorithm | What happens to live objects? | Trade-off |
+|---|---|---|
+| Mark–sweep | Mark reachable objects, reclaim others | May leave fragmentation |
+| Mark–compact | Move survivors together | Requires relocating live data |
+| Copying | Evacuate survivors into another region | Needs destination capacity |
+| Generational collection | Concentrate effort where objects often die young | Collector-specific layouts and promotion rules |
+
+These are **algorithms**, not a promise that every modern collector uses the exact Eden/From/To/old diagram in the PDF. The diagram describes a useful generational model. G1, for example, uses regions.
+
+## Step 4 — Choose a collector by objective
+
+Compare **throughput** (more useful work per unit time), **latency** (shorter pauses) and memory cost. HotSpot has Serial, Parallel, G1 and low-pause collectors with differing availability and implementations. The provided GC PDF describes CMS; **CMS is historical**, removed from HotSpot in JDK 14, so do not recommend its flags on current JDKs. See the JDK-specific documentation before choosing ZGC or Shenandoah.
+
+For a current HotSpot JDK, start by measuring with the default collector rather than assuming a special flag is faster. The current Oracle JDK 27 tuning guide describes G1 as the default.
+
+## Step 5 — Investigate high memory after GC
+
+If memory stays high, ask whether the queue still retains orders. “Allocated” is not the same as “leaked”; a leak means unwanted **reachable** data persists. Capture evidence before tuning:
+
+```bash
+jcmd <pid> GC.heap_info
+jcmd <pid> GC.class_histogram
+jcmd <pid> GC.heap_dump /tmp/orders.hprof
+```
+
+A heap dump can be large, can contain sensitive data and may affect the process. Observe GC logs using `-Xlog:gc*` and compare allocation rates, retention and pause times.
+
+## Source mapping and accuracy notes
+
+The attached *Garbage Collection* PDF covers reachability, strong/soft/weak/phantom/finaliser references, mark/sweep/compact/copy, generational GC, collectors and tuning. This page modernises **version-dependent** guidance instead of copying old VM options.
+
+- [Oracle Java 27 — Garbage Collection Tuning](https://docs.oracle.com/en/java/javase/27/gctuning/introduction-garbage-collection-tuning.html)
+- [Oracle Java 27 — G1 tuning](https://docs.oracle.com/en/java/javase/27/gctuning/garbage-first-garbage-collector-tuning.html)
+- [OpenJDK JEP 363 — Remove CMS](https://openjdk.org/jeps/363)
+
+[Back to JVM topics](../index.qmd)

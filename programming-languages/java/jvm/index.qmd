@@ -1,21 +1,33 @@
 ---
 title: "JVM Topics"
-description: "Understand JVM concepts through running examples and the Java platform specification."
+description: "Study the JVM through tiny evolving examples, then inspect the actual runtime."
 ---
 
-The Java Virtual Machine (JVM) provides the runtime environment for Java bytecode. This section groups JVM-related concepts and their practical implications.
+# JVM learning path
 
-## Topics
+We use **one small order-processing scenario** across the entire JVM section. Each topic introduces only the code needed to explain its next concept. Every topic has a single Java file with `main` that compiles on JDK 17+; the documentation is checked against the Java SE 27 specifications.
 
-- [Java Memory Model (JMM)](jmm/index.qmd) — A **10-part learning tree** based on the Java SE 27 specification, covering visibility, ordering, happens-before, final fields, atomicity, and advanced memory access.
+## Study in this order
 
-## Planned topics
+1. [JVM Runtime Memory Areas](memory/index.qmd) — Follow order 101 through a method frame, the heap, the class metadata, strings and direct memory. Single file: [`MemoryLab.java`](memory/examples/MemoryLab.java).
+2. [Garbage Collection](gc/index.qmd) — Keep and release that order, then reason about reachability, collection algorithms and diagnostics. Single file: [`GcLab.java`](gc/examples/GcLab.java).
+3. [Class Files, Loading and Bytecode](bytecode/index.qmd) — Compile, disassemble, load and initialise an order-processing class. Single file: [`OrderLab.java`](bytecode/examples/OrderLab.java).
+4. [Java Memory Model (JMM)](jmm/index.qmd) — Expand to concurrently processing orders, visibility, locks, final fields, atomics and memory ordering. Existing ten-chapter example: [`JmmLab.java`](jmm/examples/JmmLab.java).
+5. [JMM course-material coverage audit](jmm/11-source-audit.qmd) — What the course PDF adds and where CAS/lock implementations should be explained separately.
 
-- Class loading, linking, and initialisation
-- JVM runtime data areas
-- Heap management and garbage collection
-- JIT compilation and runtime optimisation
+## Keep these different
 
-**Terminology:** The Java Memory Model is defined by the Java Language Specification. It must not be confused with physical JVM runtime memory areas such as the heap and thread stacks.
+- **JVM memory areas** describe where runtime data and execution state are represented.
+- **Garbage collection** concerns reachability, reclamation and performance.
+- **Bytecode / loading** concern the binary class format, executing and linking code.
+- **JMM** specifies allowed inter-thread shared-memory behaviour.
 
-**Latest specification baseline:** [Java SE 27 — JLS Chapter 17](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html).
+These concepts are related, but a heap-and-stack picture cannot substitute for the JMM's happens-before rules.
+
+## Sources
+
+The supplied four PDFs provide topic coverage and progression. Their Java 8-specific details and retired HotSpot options are checked against newer references instead of copied uncritically.
+
+- [Java SE 27 — JVMS](https://docs.oracle.com/javase/specs/jvms/se27/html/index.html)
+- [Java SE 27 — JLS](https://docs.oracle.com/javase/specs/jls/se27/html/index.html)
+- [Java 27 — GC tuning](https://docs.oracle.com/en/java/javase/27/gctuning/introduction-garbage-collection-tuning.html)

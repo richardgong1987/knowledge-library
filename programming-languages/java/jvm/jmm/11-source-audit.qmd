@@ -1,0 +1,43 @@
+---
+title: "11 — JMM Coverage Audit Against the Course Materials"
+description: "Separate language memory-model rules from CAS, lock implementation and JVM runtime topics."
+---
+
+# What the supplied JMM PDF adds
+
+The ten existing chapters already teach the formal Java Memory Model with one evolving `JmmLab.java` order desk. The supplied **Memory Model** PDF adds useful *concurrency implementation* topics, but not all of them are part of the normative JMM.
+
+| PDF area | Existing material | Follow-up needed |
+|---|---|---|
+| Atomicity and `i++` interleavings | [Atomicity](06-atomicity.qmd), [Locks](04-locks.qmd) | Add a side-by-side observed lost-update example, if helpful |
+| Visibility and volatile stop flag | [Foundations](01-foundations.qmd), [Volatile](03-volatile.qmd) | Covered; avoid claiming volatile always reads physical RAM |
+| Ordering and happens-before | [Formal model](02-formal-model.qmd), [Advanced ordering](07-advanced-ordering.qmd) | Covered at the introductory and formal-rule levels |
+| CAS and optimistic versus pessimistic locks | [Atomicity](06-atomicity.qmd) uses `AtomicInteger` | **Expand** with an explicit CAS retry loop and contention caveats |
+| `synchronized` optimisation: lock inflation, coarsening, elimination | [Locks](04-locks.qmd) covers monitors | **Expand separately** as HotSpot implementation-dependent behaviour |
+| Biased locking | Not a core JMM rule | **Historical**: do not teach old biased-lock diagrams as current universal behaviour |
+
+## Two accuracy corrections to keep in mind
+
+1. **Volatile is not a literal “read from main RAM every time” contract.** It supplies visibility/ordering guarantees defined by the language memory model. The JVM and processor may implement these using caches, fences or other legal mechanisms.
+2. **Monitor performance is not fixed by the word `synchronized`.** The original PDF's blanket “heavyweight” description is too broad; implementation optimisations and workload matter.
+
+## Recommended continuation of the single running example
+
+Inside `JmmLab.java`, use the existing order counter to explain these in sequence:
+
+1. Two workers execute `processed++` concurrently; show why update loss is possible.
+2. Replace the plain field with an `AtomicInteger`; explain its CAS-based operations conceptually without promising a particular assembly sequence.
+3. Add `compareAndSet(expected, update)` inside a small retry loop; explain how retry handles interference and how contention can cause repeated failures.
+4. Compare with the already-present `synchronized` order desk; explain mutual exclusion and monitor semantics.
+5. Only after the language guarantees are clear, explain what HotSpot *may* optimise (lock elimination, coarsening, inflation) and which properties remain unchanged.
+
+This is a **coverage review**, not an assertion that every JDK version has the same lock state machine. We should keep the existing JMM examples intact until a demonstration is both safe and genuinely clarifies a missing concept.
+
+## Source mapping
+
+- Supplied *Memory Model* PDF: §1 atomicity, §2 visibility, §3 ordering/happens-before, §4 CAS and atomic classes, §5 `synchronized` optimisation.
+- [Java SE 27 JLS §17](https://docs.oracle.com/javase/specs/jls/se27/html/jls-17.html) — normative memory-model and monitor rules.
+- [Java SE 27 AtomicInteger](https://docs.oracle.com/en/java/javase/27/docs/api/java.base/java/util/concurrent/atomic/AtomicInteger.html) — atomic API contract.
+- [OpenJDK JEP 374](https://openjdk.org/jeps/374) — disable and deprecate biased locking, historically.
+
+[Back to JMM](index.qmd)

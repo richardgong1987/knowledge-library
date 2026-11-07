@@ -1,0 +1,72 @@
+---
+title: "JVM Runtime Memory Areas"
+description: "Follow one order request through JVM stacks, heap objects, method metadata and native memory."
+---
+
+# Follow one order through the JVM
+
+Our order-processing service starts with one order, **101**. Instead of memorising five disconnected diagrams, we ask where its instructions, local variables and objects live.
+
+## Run the single example
+
+[Download or view `MemoryLab.java`](examples/MemoryLab.java). Requires JDK 17+.
+
+```bash
+cd programming-languages/java/jvm/memory/examples
+javac MemoryLab.java
+java MemoryLab
+javap -c -p MemoryLab
+```
+
+## Step 1 — One method and one stack frame
+
+`main` calls `process(101)`. Each active Java method invocation has a **frame** in that thread's JVM stack. The frame includes local-variable slots and an operand stack; it does not mean the entire `Order` object is stored on the stack.
+
+```text
+Thread "main"
+  JVM stack
+    main frame
+      process frame: local id=101, local order=reference
+  heap
+    Order(id=101)
+```
+
+The **program-counter register** is per-thread and identifies the current JVM instruction for a non-native method; it is not the heap address of the next Java source line. The **native method stack** supports native execution when applicable. These are distinct runtime areas, not Java variables you can directly print.
+
+## Step 2 — Add a heap object
+
+The example creates `new Order(101)` and returns it. A reference can be held in a local variable while the instance is allocated from the Java heap (subject to allowed implementation optimisations, such as escape analysis). The heap is shared across threads. **Heap sharing alone does not make every object access a data race**: races require conflicting unsynchronised accesses.
+
+## Step 3 — Follow the class, not only the object
+
+The JVM method area holds per-class structures such as method information, field metadata and the **runtime constant pool**. The Java Virtual Machine Specification defines the method area abstractly; HotSpot's **Metaspace** is an implementation detail and must not be treated as synonymous with the entire normative method area.
+
+Run `javap -v MemoryLab` to inspect class-file constant-pool entries. The *class-file* constant pool and *runtime* constant pool are related but not identical things.
+
+## Step 4 — Understand the string pool
+
+`"BONDS"` is a string literal, and `"BON" + "DS"` is a compile-time constant expression. Compare these with `new String("BONDS")`, which creates a distinct String object. Do not conclude that every String is automatically interned.
+
+## Step 5 — Add direct memory
+
+The same file allocates a small `ByteBuffer.allocateDirect(8)`. Its native buffer storage is outside the regular Java heap; the Java `ByteBuffer` wrapper is still a Java object. Direct allocation is neither a way to bypass all limits nor a guarantee of immediate native-memory release.
+
+## Failures and diagnosis
+
+| Symptom | Likely area / investigation |
+|---|---|
+| `StackOverflowError` after very deep recursion | Per-thread stack; inspect call chain and `-Xss` |
+| `OutOfMemoryError: Java heap space` | Java heap; inspect reachable objects and allocations |
+| `OutOfMemoryError: Metaspace` | HotSpot class metadata; check class-loader retention |
+| Direct buffer memory exhaustion | Native/direct memory; inspect allocations and relevant limits |
+| A thread appears stuck | Thread dump; inspect state and stack frames |
+
+Try `jcmd <pid> Thread.print`, `jcmd <pid> GC.heap_info`, and `jcmd <pid> VM.native_memory summary` (the last requires native-memory tracking enabled at launch). `jcmd` commands and availability are JDK/VM-specific.
+
+**Important distinction:** JMM governs legal shared-memory observations between threads; this chapter covers **runtime data areas**.
+
+## Source mapping
+
+The attached *Memory Structure* PDF covers PC, stacks, heap, method area, StringTable and direct memory. Its diagrams are learning aids; normative definitions are in [JVMS §2.5–§2.6](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html). Consult the [Java 27 tool guide](https://docs.oracle.com/en/java/javase/27/docs/specs/man/jcmd.html) for command details.
+
+[Back to JVM topics](../index.qmd)
