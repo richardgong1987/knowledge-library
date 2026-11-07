@@ -1,0 +1,93 @@
+---
+title: "01 — Reachability, References, Algorithms and Collectors"
+---
+
+# When can order 101 disappear?
+
+This chapter extends [GcLab.java](examples/GcLab.java) without switching to unrelated demonstrations.
+
+```bash
+javac programming-languages/java/jvm/gc/examples/GcLab.java
+java -cp programming-languages/java/jvm/gc/examples GcLab
+java -Xmx64m -Xlog:gc* -cp programming-languages/java/jvm/gc/examples GcLab
+```
+
+## Step 1: A queue holds an order
+
+Initially, `pending` is a strongly reachable `ArrayList` and contains `order`. Follow the references:
+
+```text
+GC root -> main's local 'pending' -> ArrayList -> Order(101)
+```
+
+An object reachable through a chain of strong references is not a reclamation candidate. This is why "no one needs the order" is different from "the program no longer references the order."
+
+## Step 2: Remove the last strong references
+
+`pending.clear()` releases the queue's reference to the order. `order = null` releases the named local reference. Assuming no other strong references remain, it becomes eligible for reclamation.
+
+The `WeakReference` called `observer` can show whether its referent has already been cleared. However, `System.gc()` is only a request and **never guarantees** that a particular object will immediately be collected. Compiler liveness analysis can also affect how long local references are treated as live. The correct lesson is **eligibility, not exact timing**.
+
+## Step 3: Why a cycle can still be collected
+
+Imagine two pending orders each refer to the other. Their mutual references form a cycle, but **neither is necessarily reachable from a GC root** after the queue drops both. A tracing collector finds live objects by following references from roots, whereas simple reference counting alone struggles with unreachable cycles.
+
+Common GC root sources include live thread execution state and relevant static fields. Precise root processing depends on the JVM.
+
+## Step 4: Reference strength
+
+| Reference | Effect on retention | Typical use |
+|---|---|---|
+| Strong | Keeps a reachable object alive | Ordinary queue ownership |
+| `SoftReference` | May be cleared in response to memory demand | Special memory-sensitive use; not a reliable general-purpose cache policy |
+| `WeakReference` | Does not strongly retain its referent | Observing reachability, weak-key structures |
+| `PhantomReference` | Does not give access to a live referent through `get()` | Post-mortem notification with a `ReferenceQueue` |
+
+For real resource ownership, prefer `try-with-resources` and explicit `close()`. The PDF also discusses finaliser references; finalisation is a historical mechanism and should not be used in new designs.
+
+## Step 5: The three classic algorithms
+
+Suppose our queue contains `Order(101)`, `Order(102)` and `Order(103)`, and we remove 102.
+
+- **Mark–sweep:** identify live objects, reclaim unmarked space; fragmentation can remain.
+- **Mark–compact:** identify live objects and move survivors together; reduces fragmentation at the cost of relocation work.
+- **Copying/evacuation:** copy surviving objects into destination space; efficient when few survive but requires destination capacity.
+
+These algorithms describe techniques, not a claim that every contemporary collector uses identical physical regions.
+
+## Step 6: Generational collection
+
+Orders often live briefly: after processing, the queue releases them. Generational collectors exploit the observation that many objects die young. The PDF introduces **Eden**, survivor spaces, **minor GC** and an old generation. Treat that as a useful introductory model; actual region layouts, promotion policy and collection terminology vary by collector and JDK.
+
+For G1, the heap is divided into regions rather than one fixed set of contiguous generational partitions. Do not assert that every full collection always follows a minor collection.
+
+## Step 7: Collectors and tuning objectives
+
+Our order-processing service has two possible goals:
+
+1. **Throughput:** process the greatest number of orders over time.
+2. **Latency:** keep individual order-processing pauses short.
+
+Compare Serial, Parallel, G1 and low-pause collectors on a *specific JDK*, with actual GC logs and application measurements. The source PDF includes CMS, but **CMS was removed from HotSpot in JDK 14**; it belongs to a historical comparison, not a current recommendation. The default collector may be a sound starting point.
+
+## Step 8: Diagnose high memory after GC
+
+If we forgot `pending.clear()`, our list would continue to retain orders. More GC cycles would not repair that logical retention bug. Begin with evidence:
+
+```bash
+jcmd <pid> GC.heap_info
+jcmd <pid> GC.class_histogram
+jcmd <pid> GC.heap_dump /tmp/orders.hprof
+```
+
+These commands are diagnostic operations, not something to run automatically on every production process. Heap dumps can be large and contain private data. Analyse allocation rate, retained objects, GC pauses and heap occupancy before tuning `-Xmx`.
+
+## Check your understanding
+
+1. Does `pending.clear()` *immediately* destroy an order?
+2. Why does a weak reference not protect an object?
+3. Can an unreachable reference cycle be reclaimed?
+4. Why might G1's region layout differ from the PDF's simple young/old diagram?
+5. How would retaining completed orders in `pending` mimic a memory leak?
+
+**Source scope:** Based on the provided *Garbage Collection* PDF: reachability, reference strengths, marking/compaction/copying, generations, collectors and performance diagnostics. For current tuning, consult [Oracle GC Tuning](https://docs.oracle.com/en/java/javase/27/gctuning/introduction-garbage-collection-tuning.html).

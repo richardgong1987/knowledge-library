@@ -1,0 +1,89 @@
+---
+title: "01 — Program Counter, Stacks, Heap and Method Area"
+---
+
+# Follow order 101 through the JVM
+
+Use [MemoryLab.java](examples/MemoryLab.java) throughout this chapter. Compile and run it with a JDK 17 or later:
+
+```bash
+javac programming-languages/java/jvm/memory/examples/MemoryLab.java
+java -cp programming-languages/java/jvm/memory/examples MemoryLab
+javap -c -p -classpath programming-languages/java/jvm/memory/examples MemoryLab
+```
+
+## Step 1: Program counter and instructions
+
+Start at `main`. The JVM executes bytecode rather than source-code lines. Each Java thread has its own **program-counter (PC) register**. For a non-native method, it identifies the JVM instruction currently being executed; the specification leaves the value undefined during a native method.
+
+Inspect the output of `javap -c -p MemoryLab`. The numbers at the left are bytecode offsets. Unlike a source line number, an offset identifies a position in a method's bytecode.
+
+## Step 2: One method call, one frame
+
+`main` calls `process(101)`. The call creates a new **stack frame** associated with `process` in the executing thread's JVM stack. The frame contains local-variable slots, an operand stack and bookkeeping needed for method invocation and return.
+
+```text
+main thread
+  JVM stack
+    process frame (active)
+      localId = 101
+      order = reference -----------+
+    main frame                     |
+                                  v
+  shared heap                Order(id=101)
+```
+
+When `process` returns, its frame ceases to be active. The returned reference can be stored in `main`, so the order object need not disappear with the frame. A local **reference** is not the same thing as the object it refers to.
+
+**Prediction:** If `process` recursively calls itself without a stopping condition, which resource grows? The call-stack depth grows and may eventually produce `StackOverflowError`. This does not mean garbage collection should clean up the Java stack.
+
+## Step 3: Heap and object lifetime
+
+The expression `new Order(localId)` ordinarily allocates an instance in the **heap**, a runtime data area shared by threads. The reference stored in `order` is held in a local-variable slot. HotSpot may optimise away allocations when it can prove that doing so preserves observable behaviour; avoid treating source-level `new` as a promise of a particular physical layout.
+
+The heap is garbage-collected. Whether an object can be reclaimed depends on reachability, which we investigate in the next topic, [Garbage Collection](../gc/index.qmd).
+
+## Step 4: Native method stack
+
+The JVM distinguishes a **native method stack**, used for native execution where required. `MemoryLab` does not expose its internal representation. The exact stack arrangement and error conditions are implementation-specific. Avoid claiming that `javap` prints native stack frames.
+
+## Step 5: Method area and runtime constant pool
+
+The **method area** is a shared JVM runtime area for per-class structures, including runtime constant pools and method information. Run:
+
+```bash
+javap -v -classpath programming-languages/java/jvm/memory/examples MemoryLab
+```
+
+Find `Constant pool:` and locate the symbolic entries for `MemoryLab`, `Order`, and `process`. The **class-file constant pool** is stored in the compiled class file; the **runtime constant pool** is the JVM runtime representation derived from it. They are related, not interchangeable.
+
+HotSpot's **Metaspace** is one implementation mechanism for class metadata. The JVM specification does not require every implementation to have HotSpot's Metaspace.
+
+## Step 6: String table
+
+The example compares `MARKET` with `"BON" + "DS"`. Because both operands are constant strings, the compiler can fold the expression to the literal `"BONDS"`. It then compares `MARKET` with `new String("BONDS")`: the latter creates a distinct object. Use `.equals()` when comparing string *contents*. Do not generalise this into a claim that every String is interned.
+
+## Step 7: Direct memory
+
+`ByteBuffer.allocateDirect(8)` obtains a buffer whose data storage is outside the ordinary Java heap. The buffer wrapper is itself a Java object. Run the programme and observe that reading back the order ID works; this is **not** evidence that direct storage resides on the heap.
+
+## Diagnosis checklist
+
+| Observation | What to investigate |
+|---|---|
+| Recursive calls fail | Thread stack and `-Xss`; inspect the recursive call chain |
+| New objects fail with heap OOME | Retained references, `-Xmx`, allocations |
+| Metaspace OOME | Class metadata and class-loader lifetimes |
+| Memory remains high after GC | Reachable objects, not just stack depth |
+| Native memory appears high | Direct buffers and native-memory tracking |
+
+For an accessible running process, `jcmd <pid> Thread.print` helps inspect threads and `jcmd <pid> GC.heap_info` shows heap information. Native-memory tracking generally must be enabled before using `jcmd <pid> VM.native_memory summary`.
+
+## Check your understanding
+
+1. Does returning a reference from `process` copy the whole order object into `main`'s stack?
+2. Can two Java threads have distinct stacks but access the same order?
+3. Does the method area equal HotSpot Metaspace by definition?
+4. Why is the Java Memory Model a different topic from runtime memory areas?
+
+**Source scope:** Adapted from the provided *Memory Structure* PDF: PC register, JVM stacks, native stacks, heap, method area, runtime constant pool, StringTable and direct memory. Implementation details are identified separately. Normative reference: [JVMS §2.5–2.6](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html).

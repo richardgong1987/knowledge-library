@@ -1,0 +1,85 @@
+---
+title: "01 — From Java Source to Bytecode and Class Initialisation"
+---
+
+# What makes order 101 executable?
+
+Follow the single file [OrderLab.java](examples/OrderLab.java) as it moves from source code to class-file bytes and runtime execution.
+
+```bash
+javac programming-languages/java/jvm/bytecode/examples/OrderLab.java
+java -cp programming-languages/java/jvm/bytecode/examples OrderLab
+javap -c -p -classpath programming-languages/java/jvm/bytecode/examples OrderLab
+javap -v -classpath programming-languages/java/jvm/bytecode/examples OrderLab
+```
+
+## Step 1: Source becomes class files
+
+`javac OrderLab.java` creates `OrderLab.class` and a nested-class file `OrderLab$Order.class`. The compiler may generate class-file details that are not directly present in the Java source. The JVM runs the resulting **bytecode**, not the `.java` text.
+
+## Step 2: Class-file structure
+
+Open `javap -v OrderLab`. Locate the **major version** and the **constant pool**. A standard Java class file begins with `CA FE BA BE`, followed by version information, the constant pool, class declarations, field declarations, methods and attributes.
+
+A Java 8 class file has major version 52. Do not memorise 52 as the universal version; recompiling this example with a newer JDK may produce a newer class-file version.
+
+The constant pool describes symbolic references such as class names and method names. Its numbered entries can change when code changes, so identify the *meaning* of an entry rather than hard-coding a screenshot's index.
+
+## Step 3: Read `process(101)` as bytecode
+
+In `process`, the program creates an `Order` and calls `total(2)`. In the disassembly, look for the general roles of `new`, `dup`, `invokespecial`, `astore`, `aload`, `invokevirtual` and `ireturn`.
+
+```text
+source                  conceptual bytecode steps
+new Order(id)     ->     allocate, duplicate reference, call constructor
+order.total(2)    ->     load receiver, load argument, invoke method
+return result     ->     return integer to caller
+```
+
+This is a conceptual trace: consult your local `javap` output for the precise instruction offsets and constant-pool indices.
+
+## Step 4: Compiler-generated loops
+
+In `main`, the enhanced `for` loop iterates through an integer array. The compiler can translate it into array access, indexing and branches. This is a good first demonstration of **source syntax vs executable bytecode**. Inspect the branch instructions and explain which instruction returns to the loop's condition.
+
+The PDF also covers `switch`, string concatenation, exception handling, constructors and compiler transformations. They can be explored by extending *this same file* rather than starting new unrelated classes.
+
+## Step 5: Loading, linking and initialisation
+
+When a class is needed, the runtime may go through:
+
+```text
+Loading -> Linking (verification, preparation, resolution) -> Initialisation
+```
+
+Resolution may be deferred; do not mistake this teaching sequence for a requirement that every reference resolves eagerly.
+
+The nested `Order` class contains a static initialiser that prints `Order class initialised`. Run the application and notice when the message appears relative to `Preparing order 101`. This makes **initialisation timing** observable without writing a complicated reflective program.
+
+## Step 6: Class loaders
+
+The example prints the loader associated with `OrderLab.class` and with `String.class`. A `null` loader value from `Class.getClassLoader()` commonly indicates bootstrap loading.
+
+Parent delegation is a common class-loading policy: a loader usually delegates to its parent before defining a class itself. Do not confuse a class's *name* with its runtime identity: the defining loader matters too.
+
+## Step 7: Interpretation and JIT optimisation
+
+`javap` displays class-file bytecode. It does **not** show optimised machine code. HotSpot may interpret code, compile hot methods and apply optimisations such as inlining. The speed or exact machine instructions depend on execution history, JIT strategy and JVM version.
+
+For one observable loading trace:
+
+```bash
+java -Xlog:class+load=info -cp programming-languages/java/jvm/bytecode/examples OrderLab
+```
+
+Expect substantial JVM output; filter for `OrderLab` to locate the relevant classes.
+
+## Check your understanding
+
+1. Why are a Java source line and a bytecode instruction not interchangeable?
+2. What is `CA FE BA BE` used for?
+3. What is the difference between linking and initialisation?
+4. Why does `String.class.getClassLoader()` differ from the application's loader?
+5. Can `javap` reveal the final JIT machine code?
+
+**Source scope:** Follows the provided *Class Loading and Bytecode Technology* PDF's six major headings: class format, bytecode instructions, compile-time processing, loading stages, loaders and runtime optimisation. Normative references: [JVMS Class Files](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-4.html) and [Loading and Linking](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-5.html).
