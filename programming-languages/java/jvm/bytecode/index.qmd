@@ -1,0 +1,79 @@
+---
+title: "Class Files, Loading and Bytecode"
+description: "Compile, inspect and initialise one order-processing class without scattering unrelated snippets."
+---
+
+# What happens before the JVM processes order 101?
+
+We continue the same one-order service. Here the question changes: how does `OrderLab.java` become instructions that the JVM can load and execute?
+
+## Step 1 — Start with a minimal class
+
+[Open `OrderLab.java`](examples/OrderLab.java). It contains one `main`, an `Order` class and a few methods that let us inspect increasingly interesting features.
+
+```bash
+cd programming-languages/java/jvm/bytecode/examples
+javac OrderLab.java
+java OrderLab
+javap -c -p OrderLab
+javap -v OrderLab
+```
+
+## Step 2 — Read the class-file header
+
+A Java class file begins with the four-byte magic number **`CA FE BA BE`**, followed by version information, the constant pool and class/member structures. The class-file major version depends on the JDK used to compile it; the PDF's major version **52** describes Java 8, not every modern class file. Use `javap -v` for the actual version.
+
+The constant pool contains symbolic information, not a simple list of all objects held on the Java heap. The JVM resolves symbolic references as required during linking and execution.
+
+## Step 3 — Trace a method call
+
+In `process(101)`, a local variable stores an integer and the programme creates an `Order`. The exact bytecode varies by compiler, but expect to recognise instructions such as:
+
+- `new` to create an instance;
+- `dup` and `invokespecial` during construction;
+- `iload` / `istore` for integer local variables;
+- `invokevirtual` for an ordinary instance method invocation;
+- `ireturn` for an integer result.
+
+Read the **actual** disassembly next to the source; do not learn a hard-coded constant-pool index from a slide because the index can change after editing.
+
+## Step 4 — Explain compiler transformations
+
+Add the enhanced for-loop over order IDs in `main`. Inspect how its bytecode differs from the source-level syntax. Compare source constructs and bytecode for `switch`, string concatenation and exception handling one feature at a time. An important rule: the compiler need not produce the exact instruction sequence suggested by a conceptual drawing.
+
+## Step 5 — Loading, linking and initialisation
+
+```text
+Load class bytes
+   -> Link: verify, prepare, resolve (resolution may be lazy)
+   -> Initialise: run class initialisation when required
+   -> Execute methods
+```
+
+The `Order` nested class has a static initialiser that prints a marker. Observe **when it prints** relative to the rest of the programme. Preparing a class and initialising it are not the same action.
+
+Class-loader **delegation** normally checks parent loaders before a child defines a class. This is a loader policy and mechanism; it is not the same as “every class is always loaded by the bootstrap loader.” Use `OrderLab.class.getClassLoader()` and `String.class.getClassLoader()` for a simple comparison; `null` conventionally denotes bootstrap loading in this API.
+
+## Step 6 — Execution and optimisation
+
+Interpreting bytecode and JIT compiling frequently executed methods are implementation strategies. HotSpot may inline, remove allocations via escape analysis and optimise loops. **Do not infer JIT machine code from a `javap` listing**: `javap` shows bytecode, not optimised machine code.
+
+## Diagnostic commands
+
+```bash
+java -Xlog:class+load=info OrderLab
+javap -c -p OrderLab
+javap -v OrderLab
+```
+
+JVM logging categories and JIT options are implementation/version-specific. Avoid unbounded dynamic class generation just to trigger metaspace exhaustion.
+
+## Source mapping
+
+The supplied *Class Loading and Bytecode* PDF covers class-file structure, bytecode, compiler transformations, loading/linking/initialisation, class loaders and runtime optimisation. This chapter follows that scope but deliberately starts with a far smaller example.
+
+- [JVMS Java 27 — Chapter 4, Class File Format](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-4.html)
+- [JVMS Java 27 — Chapter 5, Loading, Linking and Initialising](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-5.html)
+- [JVMS Java 27 — Chapter 6, Instructions](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-6.html)
+
+[Back to JVM topics](../index.qmd)
