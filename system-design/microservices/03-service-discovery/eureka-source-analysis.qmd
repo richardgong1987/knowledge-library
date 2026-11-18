@@ -1,48 +1,48 @@
 ---
 title: "Eureka Internals and Lifecycle"
-description: "Microservices lesson outline, mapped to Day 1 §4.3 of the supplied course."
+description: "A worked microservices lesson using the shop-services example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 1 §4.3. **Running system:** Order, Product, and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## What occurs beyond the annotation?
 
-**Source material:** Day 1 §4.3 of the uploaded Spring Cloud course PDF.
+The original course examines Spring Boot auto-configuration, Eureka Server startup, registration interfaces, service removal, renewal and discovery caches. Source-level analysis helps answer a practical question: **what must happen before Order sees a newly started Product instance?**
 
-## The running example
+~~~text
+Product startup
+  -> client registration
+  -> server stores lease and metadata
+  -> periodic renewal
+  -> Order refreshes local registry view
+  -> Order selects Product endpoint
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+The path is asynchronous. Successful registration does not imply an immediately refreshed consumer cache.
 
-## Knowledge outline
+## Read the source by responsibility
 
-### Spring Boot auto-configuration
+The course highlights automatic configuration activated by Spring Cloud dependencies and annotations; server initialisation sets up registry endpoints and scheduling, and client code handles lifecycle notifications.
 
-*Explanation and worked example to be added.*
+When reviewing an implementation, follow **one operation at a time**:
 
-### Server initialisation
+1. Registration: where is instance metadata validated and stored?
+2. Renewal: which operation updates liveness, and what happens after missed renewals?
+3. Discovery: how is the instance list retrieved and cached by a consumer?
+4. Deregistration/eviction: how is a removed instance excluded from future lookups?
 
-*Explanation and worked example to be added.*
+Avoid reading entire internal packages without a concrete question: framework internals change more often than the service-discovery concept.
 
-### Registration endpoints
+## Consistency implications
 
-*Explanation and worked example to be added.*
+Peer registries may not have identical views during network delays. Order can also have a cached view that differs from either server. Therefore a discovery result is a **routing hint**, not an end-to-end guarantee.
 
-### Service removal
+## Practical debugging exercise
 
-*Explanation and worked example to be added.*
+Restart Product B while Order is running. Sketch which caches and registry records would need to update before Order routes to B. The Node lab's static list is intentionally simpler: it has no registration, expiry or refresh mechanism.
 
-### Discovery, renewal, heartbeat, status changes, and local cache refresh
+## Test your reasoning
 
-*Explanation and worked example to be added.*
+Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
-## Architecture and interactive teaching (planned)
-
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
-
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Service Registry and Discovery](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)

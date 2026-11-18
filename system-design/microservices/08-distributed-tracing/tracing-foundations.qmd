@@ -1,44 +1,46 @@
 ---
 title: "Tracing Concepts"
-description: "Microservices lesson outline, mapped to Day 3 §4.1–4.2 of the supplied course."
+description: "A worked microservices lesson using one small shop example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 3 §4.1–§4.2. The running application contains Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Logs from one service are not enough
 
-**Source material:** Day 3 §4.1–4.2 of the uploaded Spring Cloud course PDF.
+A request enters Gateway, reaches Order and fans out to Product and User. Each service may log a successful request, yet the overall checkout can still be slow. The course introduces distributed tracing to reconstruct this **cross-service causal path**.
 
-## The running example
+~~~text
+Trace 8af...
+  Gateway span          0–120 ms
+    Order span          10–115 ms
+      Product HTTP      20–105 ms
+      User HTTP         22–35 ms
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+A **trace** represents one logical operation; a **span** represents one timed operation within it, usually with a parent-child relationship. A trace ID connects operations; a span ID identifies a particular operation.
 
-## Knowledge outline
+## Propagating context
 
-### Why multi-service requests are difficult to diagnose
+Gateway must pass trace context to Order, and Order must pass it into outgoing Product/User requests. Without propagation, every service may create a separate trace and the viewer cannot reconstruct the path.
 
-*Explanation and worked example to be added.*
+The lab propagates a simplified `x-trace-id` header for teaching. A real tracing implementation should use interoperable trace-context standards and library instrumentation rather than inventing its own header protocol.
 
-### Trace and span concepts
+## Instrument key boundaries
 
-*Explanation and worked example to be added.*
+Create server spans for inbound HTTP and client spans for outgoing HTTP. Add safe attributes such as route, service, HTTP status and error category. Avoid collecting credentials, secret values or customer data in span attributes.
 
-### Trace context
+## Trace and logs complement each other
 
-*Explanation and worked example to be added.*
+Traces show the **shape and timing** of one request. Metrics aggregate behaviour across all requests. Logs provide detailed local events. Consistent context IDs let an operator move between these views.
 
-### Spring Cloud Sleuth overview
+## Legacy naming
 
-*Explanation and worked example to be added.*
+The course introduces Spring Cloud Sleuth. Modern Spring observability commonly uses **Micrometer Tracing**, which succeeded Sleuth; the tracing concepts themselves remain stable.
 
-## Architecture and interactive teaching (planned)
+[Micrometer Tracing](https://docs.micrometer.io/tracing/reference/) · [OpenTelemetry](https://opentelemetry.io/docs/concepts/signals/traces/).
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+## Check your understanding
 
-## Historical implementation notes
+Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Distributed Tracing](index.qmd) · [Microservices overview](../index.qmd)
+[Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)

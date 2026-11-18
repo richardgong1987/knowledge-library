@@ -1,48 +1,55 @@
 ---
 title: "Overload, Resource Isolation, and Cascading Failure"
-description: "Microservices lesson outline, mapped to Day 2 §4 and §5.1 of the supplied course."
+description: "A worked shop microservices lesson."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 2 §4 and §5.1. **Running system:** Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## One slow dependency can consume an entire service
 
-**Source material:** Day 2 §4 and §5.1 of the uploaded Spring Cloud course PDF.
+Suppose Product normally replies in 30 ms, but a database incident raises latency to 5 seconds. Order may accept new requests faster than those waiting on Product complete. In-flight work grows, memory and connection pools fill, and even unrelated Order endpoints become slow. The course calls this **cascading failure** or a service avalanche.
 
-## The running example
+A quick estimate clarifies the mechanism. By Little's law, average in-flight work is approximately
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+$$
+L = \lambda W
+$$
 
-## Knowledge outline
+where $\lambda$ is throughput in requests per second and $W$ is average time in seconds. At 100 requests/s and 0.03 s, around 3 requests are in flight; at 5 s, around **500** can be in flight if arrival rate is sustained.
 
-### Concurrent load and bottlenecks
+## Four complementary protections
 
-*Explanation and worked example to be added.*
+**Timeout:** cap waiting for Product. **Bulkhead:** reserve limited concurrency so Product cannot consume every Order resource. **Circuit breaker:** temporarily stop attempting a downstream dependency after repeated failures. **Fallback:** provide a deliberately degraded response when appropriate.
 
-### Cascading failure
+~~~text
+Request -> admission limit -> deadline -> Product
+                                | failure
+                                v
+                         circuit / fallback
+~~~
 
-*Explanation and worked example to be added.*
+These techniques solve different problems. A circuit breaker alone may not limit all resource use; a timeout alone may still permit too many simultaneous requests.
 
-### Thread-pool isolation
+## Tiny conceptual bulkhead
 
-*Explanation and worked example to be added.*
+~~~js
+let inFlight = 0;
+async function guarded(call) {
+  if (inFlight >= 20) throw new Error('Busy');
+  inFlight++;
+  try { return await call(); }
+  finally { inFlight--; }
+}
+~~~
 
-### Fallback and degradation
+This local counter illustrates the shape of a **single-process** concurrency limit, not a distributed quota. Choose capacity based on downstream concurrency and service-level latency targets.
 
-*Explanation and worked example to be added.*
+## Practice
 
-### Rate limiting
+The shop lab simulates an 800 ms Product response with a 350 ms Order timeout. Trigger it with the slow order request and inspect the returned 503. Then imagine 1,000 concurrent callers: a bounded bulkhead would reject excess work rather than allowing unlimited waiting.
 
-*Explanation and worked example to be added.*
+## Review questions
 
-## Architecture and interactive teaching (planned)
+What failure does this technique address? Which state belongs to the caller and which belongs to the provider? What would you measure to confirm that it works?
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
-
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Resilience and Service Protection](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop lab](../examples/README.md) · [Microservices index](../index.qmd)

@@ -1,48 +1,43 @@
 ---
 title: "Evolution of Application Architecture"
-description: "Microservices lesson outline, mapped to Day 1 §1.1 of the supplied course."
+description: "A worked lesson in the shop-service microservices learning path."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Source:** Supplied Spring Cloud course, Day 1 §1.1. **Example:** the shop system with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Start with the shop, not a framework
 
-**Source material:** Day 1 §1.1 of the uploaded Spring Cloud course PDF.
+A small online shop offers three business operations: look up a product, identify a customer and place an order. The first implementation may contain three modules in **one process**. A customer placing an order invokes the Product and User modules as ordinary function calls. All three modules are deployed together.
 
-## The running example
+As the shop grows, teams may want to release the Product catalogue independently of Order processing. This is an organisational and operational requirement, not something a large number of Java classes automatically creates.
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+## Four architectural stages
 
-## Knowledge outline
+**Monolith:** one deployment contains the product, order and user logic. It can still be internally modular. Calls are local, transactions are easier, and debugging is straightforward. A change to the Product module generally triggers a deployment of the whole application.
 
-### Monolithic architecture
+**Vertically separated applications:** independent business applications are deployed apart. The shop's catalogue and checkout could become separate deployables even if each remains a monolith. The boundary may still be too coarse for more teams or workload differences.
 
-*Explanation and worked example to be added.*
+**Service-oriented architecture (SOA):** applications share service contracts and reusable capabilities. The provided course introduces SOA in terms of service composition and, in some historical deployments, an enterprise service bus. An ESB is **not a required property** of all SOA systems.
 
-### Vertical application architecture
+**Microservices:** smaller, business-aligned services can be deployed and scaled independently. The shop may run several Product instances while deploying Order separately. Calls now cross a network boundary, and ownership of data becomes an explicit design decision.
 
-*Explanation and worked example to be added.*
+## Compare the coupling
 
-### Service-oriented architecture (SOA)
+~~~text
+Monolith:   Checkout -> Product module (same process)
+Separated:  Order service --HTTP--> Product service
+~~~
 
-*Explanation and worked example to be added.*
+A service boundary adds deployment independence but also timeouts, failures, authentication, tracing and cross-service data consistency. Merely distributing the code can make a small system worse.
 
-### Microservices architecture
+## When not to split
 
-*Explanation and worked example to be added.*
+If a tiny team maintains one low-traffic shop, start with a modular monolith. Move to separate services when independent release cadence, team ownership, isolation or scalability can justify the operational cost.
 
-### SOA and microservices compared
+## Review and extension
 
-*Explanation and worked example to be added.*
+Explain this design to another engineer using the running example. Identify one benefit, one failure mode and the condition under which you would choose a simpler design.
 
-## Architecture and interactive teaching (planned)
+**Try it:** The [shop lab](../examples/README.md) uses several HTTP servers in a single process to teach boundaries; it does not claim to implement isolated production deployments.
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
-
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Microservice Foundations](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop lab](../examples/README.md) · [Microservices learning path](../index.qmd)

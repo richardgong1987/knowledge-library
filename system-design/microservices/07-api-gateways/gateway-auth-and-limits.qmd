@@ -1,48 +1,49 @@
 ---
 title: "Gateway Authentication, Rate Limiting, and Availability"
-description: "Microservices lesson outline, mapped to Day 3 §3.4–3.6 of the supplied course."
+description: "A worked microservices lesson using one small shop example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 3 §3.4–§3.6. The running application contains Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## The edge is both a security and capacity boundary
 
-**Source material:** Day 3 §3.4–3.6 of the uploaded Spring Cloud course PDF.
+The course extends Gateway with authentication, traffic-limiting algorithms, Sentinel and high availability. In our shop, an anonymous visitor may view Product, but placing an order requires the customer to be authenticated and authorised to act for a given user.
 
-## The running example
+An edge filter can validate a signed token, but Order must still enforce that the subject may place an order for that customer. Trusting a caller-provided userId without checking identity creates a security flaw.
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+## Token bucket versus leaky bucket
 
-## Knowledge outline
+A **token bucket** accrues capacity at a configured rate up to a burst allowance. Each accepted request consumes a token. Short bursts may be admitted while the long-run rate remains limited.
 
-### Centralised authentication
+~~~text
+tokens = min(capacity, tokens + elapsed * refillRate)
+if tokens >= 1:
+    tokens -= 1
+    accept
+else:
+    reject with 429
+~~~
 
-*Explanation and worked example to be added.*
+A **leaky bucket** conceptualises a steady output rate from a queue or counter. Actual algorithms vary; decide whether to reject, queue or smooth bursty requests.
 
-### Gateway filtering
+## Beware per-instance limits
 
-*Explanation and worked example to be added.*
+If three gateway instances each permit 100 requests/s locally, the **aggregate** cap may approach 300 requests/s. A globally enforced quota requires coordination or a dedicated shared limiter, and that shared system itself needs a failure policy.
 
-### Rate-limiting algorithms
+## High availability
 
-*Explanation and worked example to be added.*
+Run multiple gateway instances behind a stable ingress or load balancer, with health checks, graceful restarts and capacity headroom. A redundant gateway does not remove Product or Order as dependencies.
 
-### Sentinel-based limiting in the course
+## Response semantics
 
-*Explanation and worked example to be added.*
+Rate limiting generally responds with HTTP **429**; unavailable upstream dependencies may require 502/503; invalid credentials commonly return 401; forbidden operations return 403. Stable error shapes help clients behave safely.
 
-### High availability
+## Security reminder
 
-*Explanation and worked example to be added.*
+Our teaching lab has no authentication. Do not deploy its order endpoint as a real public checkout service.
 
-## Architecture and interactive teaching (planned)
+## Check your understanding
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to API Gateways and Edge Routing](index.qmd) · [Microservices overview](../index.qmd)
+[Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)

@@ -1,48 +1,52 @@
 ---
 title: "Feign Configuration and Internals"
-description: "Microservices lesson outline, mapped to Day 2 §2–3 of the supplied course."
+description: "A worked shop microservices lesson."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 2 §2–§3. **Running system:** Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## A client needs policy as well as an interface
 
-**Source material:** Day 2 §2–3 of the uploaded Spring Cloud course PDF.
+The source discusses Feign configuration, request compression, log levels and internal execution. Those concerns apply even if Order is written in NestJS instead of Spring.
 
-## The running example
+A remote-client design should specify:
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+| Setting | Why it matters |
+|---|---|
+| Deadline | Prevent one Product request from holding Order forever |
+| Retry policy | Recover from transient failures without unsafe duplicate work |
+| Authentication | Propagate an allowed credential, never secrets from untrusted clients |
+| Logging | Observe latency and outcomes without exposing personal or secret data |
+| Compression | Reduce payload bytes when size makes it worthwhile |
+| Connection pooling | Avoid reconnecting for every request |
 
-## Knowledge outline
+## Use the smallest useful example
 
-### Client configuration
+~~~ts
+const response = await fetch(productUrl, {
+  headers: { 'x-request-id': requestId },
+  signal: AbortSignal.timeout(350)
+});
+if (!response.ok) throw new Error('HTTP ' + response.status);
+const product = await response.json();
+~~~
 
-*Explanation and worked example to be added.*
+A **350 ms deadline** here is a tutorial setting, not a universal production target. If Order has a total budget of 700 ms, independent sequential calls of 500 ms each cannot meet it. Timeout design starts at the user-facing deadline.
 
-### Request compression
+## Compression and logging
 
-*Explanation and worked example to be added.*
+Compression is most useful on sufficiently large responses. It adds CPU work and complicates troubleshooting; tiny JSON objects may see no meaningful benefit. Logging entire payloads can expose customer information and increase storage costs. Prefer trace/request IDs, method, route template, status, elapsed time and selected service.
 
-### Logging levels
+## How an HTTP-client proxy works conceptually
 
-*Explanation and worked example to be added.*
+An interface proxy maps a declared operation to an HTTP method, path and parameter encoding, applies interceptors, selects a transport and turns the response back into a result or error. The course's Feign source walkthrough is valuable as an example of this pipeline, even if exact internals differ today.
 
-### Source-level workflow
+## Practical review
 
-*Explanation and worked example to be added.*
+Keep transport policy in ProductClient, not scattered across controllers. After moving clients behind one boundary, it becomes easier to introduce service discovery, tracing and circuit breaking without rewriting business decisions.
 
-### Review of registry and service invocation
+## Review questions
 
-*Explanation and worked example to be added.*
+What failure does this technique address? Which state belongs to the caller and which belongs to the provider? What would you measure to confirm that it works?
 
-## Architecture and interactive teaching (planned)
-
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
-
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Declarative Service Clients](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop lab](../examples/README.md) · [Microservices index](../index.qmd)

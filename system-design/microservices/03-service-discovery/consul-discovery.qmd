@@ -1,44 +1,46 @@
 ---
 title: "Consul: Registration and Discovery"
-description: "Microservices lesson outline, mapped to Day 1 §5.2–5.5 of the supplied course."
+description: "A worked microservices lesson using the shop-services example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 1 §5.1–§5.5. **Running system:** Order, Product, and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Keep the same service discovery need
 
-**Source material:** Day 1 §5.2–5.5 of the uploaded Spring Cloud course PDF.
+The course introduces **Consul** as an alternative registry and covers its agent model, registering a shop service, discovering instances and using key/value data.
 
-## The running example
+The architectural goal is unchanged: Order asks for a healthy Product endpoint by service identity, not by a hard-coded host.
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+## What changes compared with Eureka?
 
-## Knowledge outline
+Consul combines service discovery with health-check information and a key/value interface. A service may be registered through an agent and discovered through HTTP or DNS interfaces. Health checks help consumers avoid endpoints known to be unhealthy.
 
-### Consul concepts and comparison with Eureka
+~~~text
+Product instance -> Consul agent -> Consul catalogue
+Order ----------- service discovery query -----^
+~~~
 
-*Explanation and worked example to be added.*
+The **catalogue** and the **health view** are related but different: a registered service may not currently pass its checks. Consumers should use the discovery interface that supplies the intended health semantics.
 
-### Service registration
+## Key/value data is not a database replacement
 
-*Explanation and worked example to be added.*
+The course uses Consul KV to illustrate centrally stored settings. It can hold small configuration values, but that does not make it a general-purpose transactional storage engine for orders or customer records.
 
-### Service lookup
+~~~text
+shop/product/currency = JPY
+shop/order/max-items  = 10
+~~~
 
-*Explanation and worked example to be added.*
+These are conceptual keys, not a prescribed production namespace. Access control and change propagation must be designed separately.
 
-### Key-value storage
+## Choosing a discovery system
 
-*Explanation and worked example to be added.*
+Evaluate who operates it, health semantics, failover behaviour, authentication, consistency needs and platform integration. Kubernetes DNS may cover simple discovery; Consul can be useful across heterogeneous runtimes and network boundaries.
 
-## Architecture and interactive teaching (planned)
+**Historical source check:** The course's discussion of project availability and replacements is time-specific. Always consult current vendor release and support documentation before choosing a registry.
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+## Test your reasoning
 
-## Historical implementation notes
+Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Service Registry and Discovery](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)

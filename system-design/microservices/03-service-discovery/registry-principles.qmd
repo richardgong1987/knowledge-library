@@ -1,44 +1,38 @@
 ---
 title: "Registry and Discovery Principles"
-description: "Microservices lesson outline, mapped to Day 1 §3.1 and §5.1 of the supplied course."
+description: "A worked microservices lesson using the shop-services example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 1 §3.1. **Running system:** Order, Product, and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Why a service name is better than a fixed address
 
-**Source material:** Day 1 §3.1 and §5.1 of the uploaded Spring Cloud course PDF.
+Order needs Product. But Product could have instances at ports 4101 and 4104 today, then a different IP tomorrow. Hard-coding those addresses inside Order makes every deployment a coordination task.
 
-## The running example
+A **registry** keeps service-instance records such as a logical name, host, port and optional health information. A provider registers or is registered by infrastructure; a consumer discovers one or more candidates and then chooses where to send a request.
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+~~~text
+Product A ----register----> Registry <----lookup---- Order
+Product B ----register---->    |                       |
+                               +----instance list------+
+~~~
 
-## Knowledge outline
+Registration and discovery are separate: an instance being present in the registry does not guarantee its next HTTP request will succeed. A failed node can remain listed until its lease or health state expires.
 
-### Role of a service registry
+## Push or pull discovery
 
-*Explanation and worked example to be added.*
+In *client-side discovery*, Order obtains instances and chooses one (the course later uses Ribbon). In *server-side discovery*, Order sends to a stable name or proxy and the proxy selects the instance. Both still need a source of current endpoint information.
 
-### Registration, lookup, heartbeats
+A discovery client may cache records to avoid a registry lookup on every call. This improves performance but creates staleness windows. After a Product crash, Order might briefly choose the dead instance.
 
-*Explanation and worked example to be added.*
+## Practical design checks
 
-### Registry choices
+Evaluate service identity, lease duration, removal behaviour, split-brain behaviour, security of registration and whether the registry itself is highly available. Do not point every request at one registry server without considering failure.
 
-*Explanation and worked example to be added.*
+The original course compares Eureka and Consul. Kubernetes deployments can instead resolve service names through platform DNS and Services, depending on operational requirements. Discovery is a **capability**, not necessarily a separate tool.
 
-### Availability and failure considerations
+## Test your reasoning
 
-*Explanation and worked example to be added.*
+Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
-## Architecture and interactive teaching (planned)
-
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
-
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Service Registry and Discovery](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)

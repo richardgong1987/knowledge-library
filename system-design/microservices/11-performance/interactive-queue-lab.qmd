@@ -1,0 +1,70 @@
+---
+title: "Interactive Queueing Experiment"
+description: "Explore the relationship between request arrival rate, processing capacity, and backlog."
+---
+
+## A problem visible only under sustained load
+
+In our shop, Order receives requests and depends on Product. If demand arrives faster than Order can process it, unfinished requests begin to accumulate. No circuit breaker or gateway can manufacture capacity. Before choosing an infrastructure component, compare the *arrival rate* $\lambda$ with the *service rate* $\mu$.
+
+For a deliberately simplified deterministic model with no initial backlog, no maximum queue and constant rates, queued work after $t$ seconds is
+
+$$
+Q(t)=\max\left(0,(\lambda-\mu)t\right).
+$$
+
+This model ignores stochastic arrivals, service-time variation, timeouts, retries and finite resources. It is useful for illustrating **direction**, not predicting exact real-world queue length.
+
+## Change the rates
+
+~~~{ojs}
+viewof arrivalRate = Inputs.range([0, 250], {
+  label: "Arrival rate (requests/second)",
+  value: 100,
+  step: 5
+})
+~~~
+
+~~~{ojs}
+viewof capacity = Inputs.range([10, 200], {
+  label: "Processing capacity (requests/second)",
+  value: 80,
+  step: 5
+})
+~~~
+
+~~~{ojs}
+backlog = Array.from({length: 31}, (_, second) => ({
+  second,
+  queued: Math.max(0, (arrivalRate - capacity) * second)
+}))
+Plot.plot({
+  width: 720,
+  height: 350,
+  x: {label: "Time (seconds)"},
+  y: {label: "Approximate queued requests", domain: [0, Math.max(10, 30 * (arrivalRate - capacity) + 10)]},
+  marks: [
+    Plot.ruleY([0], {stroke: "gray"}),
+    Plot.line(backlog, {x: "second", y: "queued", stroke: "steelblue", strokeWidth: 3}),
+    Plot.dot(backlog.filter(d => d.second === 30), {x: "second", y: "queued", fill: "orange", r: 5})
+  ]
+})
+~~~
+
+## Interpret the result
+
+When $\lambda$ is greater than $\mu$, the waiting work grows every second. When $\lambda$ is at most $\mu$ and the initial queue is empty, the deterministic approximation stays at zero. Real services may still exhibit waiting because arrivals and execution times fluctuate.
+
+At 100 requests/s in and 80 requests/s processed, the *net* backlog growth is 20 requests/s; after 30 seconds, about 600 requests accumulate in this simplified model. Add a finite queue limit of 200 and the system must eventually reject, shed, delay, or divert requests.
+
+## Connect the mathematics to the implementation
+
+- A **timeout** limits how long a caller waits, but does not increase Product throughput.
+- A **concurrency limit** bounds active downstream work.
+- A **rate limiter** controls admitted demand.
+- A **queue** can absorb bursts, but not an indefinitely higher sustained arrival rate.
+- A **circuit breaker** avoids repeatedly sending traffic to a failing dependency.
+
+These controls can be combined, but their settings must follow real measurements and business priorities. For actual load testing, read [JMeter: Load Testing Basics](jmeter-basics.qmd) and [Analysing High Load](high-load-analysis.qmd).
+
+[← Performance and Load Testing](index.qmd)

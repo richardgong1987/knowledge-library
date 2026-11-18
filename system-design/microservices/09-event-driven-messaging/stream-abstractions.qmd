@@ -1,48 +1,55 @@
 ---
 title: "Spring Cloud Stream: Core Concepts"
-description: "Microservices lesson outline, mapped to Day 4 §1.1–1.2 of the supplied course."
+description: "A worked lesson based on the supplied Spring Cloud course."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 4 §1.1–§1.2. **Running example:** a shop with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## The limitation of synchronous calls
 
-**Source material:** Day 4 §1.1–1.2 of the uploaded Spring Cloud course PDF.
+Order can call Product and User synchronously to validate a checkout. But sending an order confirmation email does not necessarily need to block the customer until email delivery completes. The course introduces messaging to reduce this tight timing dependency.
 
-## The running example
+~~~text
+Order -> event "order.placed" -> broker -> Notification consumer
+                                      -> Analytics consumer
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+A **producer** publishes a message to a logical destination; a **consumer** processes it. A broker manages transport and delivery. Messaging changes when components interact, not merely the syntax of their methods.
 
-## Knowledge outline
+## Why Stream has a binder
 
-### Why message brokers decouple services
+RabbitMQ talks about exchanges and queues; Kafka talks about topics, partitions and consumer groups. The course introduces a **Binder** that maps framework-level channels/destinations onto broker-specific primitives.
 
-*Explanation and worked example to be added.*
+This abstraction can reduce application coupling to a broker. It does **not** make all brokers semantically identical: acknowledgement, ordering, redelivery, partition assignment and retention still vary.
 
-### Binders
+## Minimal business event
 
-*Explanation and worked example to be added.*
+~~~json
+{
+  "type": "order.placed",
+  "orderId": 42,
+  "userId": 9,
+  "productId": 7,
+  "occurredAt": "2026-11-18T00:00:00Z"
+}
+~~~
 
-### Bindings and destinations
+The timestamp above illustrates an event shape, not a real order. Event schemas need versioning and stable identifiers so consumers can evolve independently.
 
-*Explanation and worked example to be added.*
+## Correctness before scalability
 
-### Publish/subscribe
+A producer can crash after saving an order but before publishing its event. A consumer can process an event and crash before acknowledging it. These failure windows motivate the **transactional outbox**, idempotent consumers and explicit delivery semantics.
 
-*Explanation and worked example to be added.*
+The small lab emits an in-process EventEmitter event. That is useful pedagogically but **not durable, distributed messaging**.
 
-### RabbitMQ and Kafka abstractions
+## Current Spring Cloud Stream direction
 
-*Explanation and worked example to be added.*
+The supplied PDFs use historical annotation/channel patterns. Modern Spring Cloud Stream recommends a **functional** model based on Supplier, Function and Consumer rather than the older EnableBinding/StreamListener style.
 
-## Architecture and interactive teaching (planned)
+[Spring Cloud Stream reference](https://docs.spring.io/spring-cloud-stream/reference/).
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+## Questions to answer aloud
 
-## Historical implementation notes
+What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Event-Driven Messaging](index.qmd) · [Microservices overview](../index.qmd)
+[Shop lab](../examples/README.md) · [Microservices course](../index.qmd)

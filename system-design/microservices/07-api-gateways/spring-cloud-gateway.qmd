@@ -1,48 +1,57 @@
 ---
 title: "Spring Cloud Gateway"
-description: "Microservices lesson outline, mapped to Day 3 §3.1–3.3 and §3.7 of the supplied course."
+description: "A worked microservices lesson using one small shop example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 3 §3.1–§3.3, §3.7. The running application contains Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Separate routing decisions from filter behaviour
 
-**Source material:** Day 3 §3.1–3.3 and §3.7 of the uploaded Spring Cloud course PDF.
+Spring Cloud Gateway models a request as a **route**, selected using **predicates**, that passes through **filters**. The course develops static routing, path rewriting, local/global filters and the execution flow.
 
-## The running example
+For the shop, a route matches requests beginning with `/api/products/` and forwards them to the Product service.
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+~~~yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: product-route
+          uri: http://127.0.0.1:4101
+          predicates:
+            - Path=/api/products/**
+          filters:
+            - RewritePath=/api/products/(?<rest>.*), /products/${rest}
+~~~
 
-## Knowledge outline
+This is **conceptual Spring Cloud Gateway route configuration** drawn from a common historical style; configuration keys and escaping must be verified against the currently selected Gateway server variant and version before use. It is intentionally not asserted to be ready for every modern release.
 
-### Routes, predicates, and filters
+## Predicate versus filter
 
-*Explanation and worked example to be added.*
+A **predicate** answers whether the current request matches a route. A **filter** transforms or governs a matching request/response—for example, rewriting a path, adding a header, or applying a rate limit.
 
-### Static and dynamic routing
+~~~text
+HTTP request -> predicate matches -> pre-filter -> upstream
+                                           |         |
+                                     post-filter <- response
+~~~
 
-*Explanation and worked example to be added.*
+Ordering matters. Authentication should happen before forwarding protected requests; error handling must still execute when a later stage fails.
 
-### Path rewriting
+## Dynamic routes
 
-*Explanation and worked example to be added.*
+Static routes can live in files. Dynamically managed routes may be loaded from another source, including service discovery in suitable configurations. Dynamic updates ease operations but can introduce configuration inconsistency and security risks.
 
-### Local and global filters
+## What to observe
 
-*Explanation and worked example to be added.*
+Log the route ID, upstream target, request ID, result status and elapsed time. Distinguish gateway-generated errors from upstream-generated errors; otherwise a Product failure can be mistaken for a routing bug.
 
-### Execution flow
+**Modern caution:** Gateway has different server runtimes and configuration models. Choose one intentionally and consult its matching reference pages instead of copying an old annotation-based tutorial.
 
-*Explanation and worked example to be added.*
+[Official Spring Cloud Gateway reference](https://docs.spring.io/spring-cloud-gateway/reference/).
 
-## Architecture and interactive teaching (planned)
+## Check your understanding
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to API Gateways and Edge Routing](index.qmd) · [Microservices overview](../index.qmd)
+[Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)

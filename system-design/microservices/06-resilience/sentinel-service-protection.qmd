@@ -1,44 +1,46 @@
 ---
 title: "Sentinel: Service Protection"
-description: "Microservices lesson outline, mapped to Day 2 §7 of the supplied course."
+description: "A worked shop microservices lesson."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 2 §7. **Running system:** Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## From circuit breaking to traffic governance
 
-**Source material:** Day 2 §7 of the uploaded Spring Cloud course PDF.
+The source introduces **Sentinel** as a Hystrix alternative and compares their isolation, throttling, exception-rate and response-time approaches. Sentinel's focus includes protecting named resources with configurable flow, degradation and system rules.
 
-## The running example
+In the shop, the important resource is not simply the whole Order process. Different routes have different costs: listing products may be cheap, while checkout may require validation and persistence.
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+## Define resource and rule separately
 
-## Knowledge outline
+~~~text
+Resource: order.create
+Rule:     admit no more than a configured workload
+Action:   reject or degrade excess requests
+~~~
 
-### Sentinel concepts
+The rule should be supported by measurements. A fixed 50-request/s cap may be safe for one environment and too restrictive for another; response-time and concurrency limits can be more meaningful for expensive work.
 
-*Explanation and worked example to be added.*
+## Distinguish limiting from breaking
 
-### Comparison with Hystrix
+A **rate limiter** controls incoming demand even when dependencies are healthy. A **circuit breaker** reacts to degradation or failure to protect a dependency. A **bulkhead** protects finite concurrency or resources. Sentinel can express different kinds of protection rules, but these concepts should not be collapsed into one word.
 
-*Explanation and worked example to be added.*
+## Central dashboard considerations
 
-### Dashboard
+The course connects applications to Sentinel's console and explores protecting generic resources, REST calls and Feign clients. A dashboard is a control plane. Protect its access, verify that rules are actually applied to instances, and observe how behaviour changes when the control plane is unavailable.
 
-*Explanation and worked example to be added.*
+## Minimal mental experiment
 
-### Protecting generic resources, REST calls, and Feign calls
+At 200 new checkout requests per second, a downstream Product dependency can sustainably handle only 80. Admission control before expensive work reduces the chance of accumulating a large backlog. But rejecting 120 requests/s affects the customer experience and needs an explicit response policy.
 
-*Explanation and worked example to be added.*
+## Modern comparison
 
-## Architecture and interactive teaching (planned)
+Sentinel remains a distinct ecosystem choice; Spring Cloud CircuitBreaker/Resilience4j is another route. Compare operational maturity and requirements rather than treating a course's replacement narrative as a timeless ranking.
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+[Sentinel project](https://github.com/alibaba/Sentinel) · [Spring Cloud CircuitBreaker](https://docs.spring.io/spring-cloud-circuitbreaker/reference/index.html).
 
-## Historical implementation notes
+## Review questions
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
+What failure does this technique address? Which state belongs to the caller and which belongs to the provider? What would you measure to confirm that it works?
 
-[Back to Resilience and Service Protection](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop lab](../examples/README.md) · [Microservices index](../index.qmd)

@@ -1,48 +1,43 @@
 ---
 title: "Eureka Operations and High Availability"
-description: "Microservices lesson outline, mapped to Day 1 §4.1–4.2 of the supplied course."
+description: "A worked microservices lesson using the shop-services example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 1 §4.1–§4.2. **Running system:** Order, Product, and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## The registry is now critical infrastructure
 
-**Source material:** Day 1 §4.1–4.2 of the uploaded Spring Cloud course PDF.
+If Order can contact only one Eureka server, a registry failure may prevent new lookups, registration or recovery. The course extends Eureka to a cluster and discusses delayed registration, instance eviction and displaying IP addresses.
 
-## The running example
+A typical high-availability configuration uses multiple Eureka servers that replicate registration information. Clients are configured with more than one registry endpoint so that a single server failure is not an immediate control-plane outage.
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+~~~text
+          Eureka A <----peer data----> Eureka B
+            ^   ^                        ^   ^
+            |   +---- Product A          |   +---- Product B
+            +-------- Order -----------+
+~~~
 
-## Knowledge outline
+## Separate discovery availability from business availability
 
-### Multiple Eureka servers
+An existing client may retain a cached instance list when the registry is unavailable. This can keep some requests flowing, but the cached list may become stale. New instances might be invisible until discovery is restored.
 
-*Explanation and worked example to be added.*
+A common mistake is to measure only registry health. Instead track registration age, lease renewals, successful discovery lookups and the rate of calls to unavailable instances.
 
-### Clients connecting to a cluster
+## Operational questions
 
-*Explanation and worked example to be added.*
+**Slow registration:** check when the client sends registration, when servers incorporate it and when consumers refresh their cache. These are three different events.
 
-### Slow registration
+**Slow eviction:** a crashed Product node can appear healthy for a while. A request timeout or connection failure remains possible even after correct discovery.
 
-*Explanation and worked example to be added.*
+**Wrong IP address:** the service may publish an interface unreachable from consumers. Verify advertised addresses across containers, hosts and network namespaces.
 
-### Instance eviction
+## Deliberate trade-off
 
-*Explanation and worked example to be added.*
+Shorter leases reduce stale entries but increase sensitivity to temporary network disruption. Longer leases tolerate short interruptions but delay eviction. Tune from observed failure behaviour, not from a universal magic number.
 
-### Displaying instance IP addresses
+## Test your reasoning
 
-*Explanation and worked example to be added.*
+Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
-## Architecture and interactive teaching (planned)
-
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
-
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Service Registry and Discovery](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)

@@ -1,44 +1,57 @@
 ---
 title: "Distributed Systems and CAP"
-description: "Microservices lesson outline, mapped to Day 1 §1.2 of the supplied course."
+description: "A worked lesson in the shop-service microservices learning path."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Source:** Supplied Spring Cloud course, Day 1 §1.2. **Example:** the shop system with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## A remote call changes the failure model
 
-**Source material:** Day 1 §1.2 of the uploaded Spring Cloud course PDF.
+In the monolith, the Order module calls Product.get(7) in memory. After splitting services, Order asks a remote Product endpoint. The request must travel through a protocol, be processed by another component, and return a response.
 
-## The running example
+~~~text
+Client -> Order -> network -> Product
+                   ^       |
+                   |_______|
+               response or failure
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+Order can distinguish a received 404 response from a transport timeout, but a timeout alone does **not** prove whether the remote side processed the request. This ambiguity matters especially for operations with side effects.
 
-## Knowledge outline
+## REST and RPC
 
-### Remote service calls
+A REST-style interaction often exchanges an HTTP representation such as JSON:
 
-*Explanation and worked example to be added.*
+~~~http
+GET /products/7 HTTP/1.1
+Host: product-service
+~~~
 
-### Network boundaries and failure
+An RPC system exposes operations through a protocol such as gRPC. Both involve serialization and transport; their interface styles and tooling differ. Neither is automatically reliable because the call looks like an ordinary local method.
 
-*Explanation and worked example to be added.*
+## Understand CAP precisely
 
-### The CAP principle
+The supplied course introduces CAP as a core distributed-system concept. For a *replicated data system undergoing a network partition*, it cannot always provide both linearizable consistency and availability for every request. Here **availability** means each non-failing node returns a response; consistency means requests behave like one up-to-date copy. CAP does not claim that normal applications must choose two fixed labels forever.
 
-*Explanation and worked example to be added.*
+Our simple shop lab has two **stateless** Product instances with identical sample data. It does not implement a replicated database and cannot demonstrate a full CAP trade-off. A separate data store replicated across regions would make that decision relevant.
 
-### Why distributed calls differ from local calls
+## Failures to classify
 
-*Explanation and worked example to be added.*
+- **Product 404:** the service replied successfully, but the item was absent.
+- **Product 500:** the service replied with an application error.
+- **Timeout:** the caller has no timely result; the remote outcome may be uncertain.
+- **Partition:** some nodes cannot exchange messages even though they are running.
 
-## Architecture and interactive teaching (planned)
+These distinctions determine whether to retry, return an error, use a cached view, or defer work.
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+## An engineering rule
 
-## Historical implementation notes
+Choose a deadline, make side-effecting operations idempotent where appropriate, and do not assume network calls have local-call semantics.
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
+## Review and extension
 
-[Back to Microservice Foundations](index.qmd) · [Microservices overview](../index.qmd)
+Explain this design to another engineer using the running example. Identify one benefit, one failure mode and the condition under which you would choose a simpler design.
+
+**Experiment:** Run the shop lab and add `&slow=1` to a POST order request. The deliberate slow Product response causes a 503 from Order.
+
+[Run the tiny shop lab](../examples/README.md) · [Microservices learning path](../index.qmd)

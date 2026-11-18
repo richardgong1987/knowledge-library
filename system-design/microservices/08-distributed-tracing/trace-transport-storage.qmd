@@ -1,44 +1,43 @@
 ---
 title: "Trace Transport and Persistence"
-description: "Microservices lesson outline, mapped to Day 3 §4.7–4.8 of the supplied course."
+description: "A worked microservices lesson using one small shop example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 3 §4.7–§4.8. The running application contains Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Where should trace data go?
 
-**Source material:** Day 3 §4.7–4.8 of the uploaded Spring Cloud course PDF.
+The course demonstrates sending trace data via **RabbitMQ** and persisting it for later analysis. These address separate concerns:
 
-## The running example
+1. **Transport:** move spans from services toward a collector.
+2. **Buffering:** absorb temporary spikes and interruptions.
+3. **Persistence:** retain and index spans for searching.
+4. **Query:** retrieve whole traces or related spans.
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+~~~text
+Order -> exporter -> message transport -> collector -> storage -> UI
+~~~
 
-## Knowledge outline
+A broker can decouple a producer from a temporarily unavailable collector, but this is not automatically lossless. Queue durability, message retention, backpressure and exporter buffering all matter.
 
-### RabbitMQ as a trace transport
+## Failure cases
 
-*Explanation and worked example to be added.*
+If the trace exporter blocks on an unavailable backend, it must not destroy the availability of Order. Prefer bounded buffering and non-blocking export where appropriate. If the queue fills, the system needs an intentional drop or throttling policy.
 
-### Collector configuration
+A persistent backend can become expensive as trace volume and high-cardinality attributes grow. Set retention and sampling according to operational objectives, then measure whether enough representative traces remain.
 
-*Explanation and worked example to be added.*
+## Original lab versus production
 
-### Storing trace data
+Our shop lab logs a trace ID and returns it in HTTP headers; it has **no trace collector or database**. This keeps the core code tiny while making it clear what the next infrastructure layer must provide.
 
-*Explanation and worked example to be added.*
+## Modern implementation path
 
-### Operational considerations
+Use standard OpenTelemetry exporters, an OpenTelemetry Collector if appropriate, and a supported backend. The source course's RabbitMQ transport is one historical architecture, not a compulsory choice.
 
-*Explanation and worked example to be added.*
+[OpenTelemetry Collector](https://opentelemetry.io/docs/collector/) · [Zipkin](https://zipkin.io/).
 
-## Architecture and interactive teaching (planned)
+## Check your understanding
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Distributed Tracing](index.qmd) · [Microservices overview](../index.qmd)
+[Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)

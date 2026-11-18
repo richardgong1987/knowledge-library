@@ -1,44 +1,53 @@
 ---
 title: "Stream Producers and Consumers"
-description: "Microservices lesson outline, mapped to Day 4 §1.3–1.4 of the supplied course."
+description: "A worked lesson based on the supplied Spring Cloud course."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 4 §1.3–§1.4. **Running example:** a shop with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Extend Order with a notification step
 
-**Source material:** Day 4 §1.3–1.4 of the uploaded Spring Cloud course PDF.
+Once Order accepts a purchase, it emits `order.placed`. The Notification consumer can send an email asynchronously. This is not a request-response call: Order does not have to wait for the consumer's result to acknowledge its own request, assuming the event has been accepted by the broker according to the intended durability policy.
 
-## The running example
+~~~text
+POST /orders -> persist order -> publish order.placed
+                                     |
+                                  message
+                                     v
+                              Notification worker
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+## A tiny in-process analogy
 
-## Knowledge outline
+~~~js
+import { EventEmitter } from 'node:events';
+const bus = new EventEmitter();
+bus.on('order.placed', ({ orderId }) => {
+  console.log('Send confirmation for order', orderId);
+});
+bus.emit('order.placed', { orderId: 42 });
+~~~
 
-### RabbitMQ preparation
+The runnable lab contains this pattern. It demonstrates a **logical producer/consumer boundary**, but EventEmitter neither persists events nor delivers them across processes.
 
-*Explanation and worked example to be added.*
+## When replacing it with a broker
 
-### Message producer
+Define a destination, a producer library or binding, a consumer group, acknowledgement rules and a retry/dead-letter strategy. Order should publish stable event data rather than an entire internal database entity.
 
-*Explanation and worked example to be added.*
+For a NestJS system using an appropriate microservice transport, the equivalent concepts are **emit** for events and an **@EventPattern** handler on the consumer. The actual broker configuration depends on the chosen transport.
 
-### Message consumer
+## Designing an idempotent consumer
 
-*Explanation and worked example to be added.*
+Assume an order event may be delivered more than once. Use the unique event/order ID to recognise already-processed deliveries; if sending external email, think carefully about deduplication across crashes.
 
-### Custom bindings and channels
+## Important guarantee
 
-*Explanation and worked example to be added.*
+A queue smooths bursts and loosens temporal coupling, but it may introduce delay and eventual consistency. It cannot guarantee business-level exactly-once side effects by itself.
 
-## Architecture and interactive teaching (planned)
+[NestJS microservices messaging](https://docs.nestjs.com/microservices/basics).
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+## Questions to answer aloud
 
-## Historical implementation notes
+What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Event-Driven Messaging](index.qmd) · [Microservices overview](../index.qmd)
+[Shop lab](../examples/README.md) · [Microservices course](../index.qmd)

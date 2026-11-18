@@ -1,44 +1,48 @@
 ---
 title: "Initial HTTP Service Calls"
-description: "Microservices lesson outline, mapped to Day 1 §3.5 of the supplied course."
+description: "A worked lesson in the shop-service microservices learning path."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Source:** Supplied Spring Cloud course, Day 1 §3.5. **Example:** the shop system with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Order needs Product data
 
-**Source material:** Day 1 §3.5 of the uploaded Spring Cloud course PDF.
+In the original Spring course, Order uses RestTemplate to call Product and later discovers the problems created by a hard-coded URL. We can express the same dependency using standard browser-compatible HTTP APIs in Node.js.
 
-## The running example
+~~~js
+async function getProduct(id) {
+  const res = await fetch('http://127.0.0.1:4101/products/' + id, {
+    signal: AbortSignal.timeout(350)
+  });
+  if (!res.ok) throw new Error('Product HTTP ' + res.status);
+  return res.json();
+}
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+The important part is not the library: Order explicitly makes a **remote request** and must account for latency and failure. The executable lab includes this pattern in its `fetchJSON` helper.
 
-## Knowledge outline
+## Why a literal host becomes a problem
 
-### RestTemplate basics
+When Product scales from one to two instances, `4101` may not be the best address. An instance can be restarted, replaced or removed. A fixed host also makes environment configuration awkward. Later chapters introduce a registry, client-side or server-side load balancing, and a declarative client.
 
-*Explanation and worked example to be added.*
+## Treat responses as remote data
 
-### Requesting product data from the order service
+Check response status, parse the expected schema, and place a deadline on calls. A success code does not guarantee the data fits your business contract. Validation and versioning protect the consumer from accidental provider changes.
 
-*Explanation and worked example to be added.*
+One failed call should not always make the entire application unhealthy. Decide whether the result is essential. Order creation cannot safely proceed if it cannot check the requested product price; a non-essential recommendation could simply be omitted.
 
-### Hard-coded addresses
+## Why retries are not trivial
 
-*Explanation and worked example to be added.*
+Retrying a **GET** that reads product data is usually simpler than blindly retrying a **POST** that creates an order. If the POST succeeded but its response was lost, retrying without an idempotency key can create duplicates.
 
-### The motivation for discovery and client abstractions
+## Connection to the next topic
 
-*Explanation and worked example to be added.*
+We now know *what* service to request but not *which running instance* to contact. That is the starting problem for service registration and discovery.
 
-## Architecture and interactive teaching (planned)
+## Review and extension
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+Explain this design to another engineer using the running example. Identify one benefit, one failure mode and the condition under which you would choose a simpler design.
 
-## Historical implementation notes
+**Experiment:** Run the lab, call the Product API directly, then call the same resource through the Gateway. Compare the URLs and response bodies.
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Running Case Study: Shop Services](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop lab](../examples/README.md) · [Microservices learning path](../index.qmd)

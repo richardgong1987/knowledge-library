@@ -1,40 +1,57 @@
 ---
 title: "Spring Cloud Bus and Refresh"
-description: "Microservices lesson outline, mapped to Day 4 §2.5–2.6 of the supplied course."
+description: "A worked lesson based on the supplied Spring Cloud course."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 4 §2.5–§2.6. **Running example:** a shop with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## One changed setting, many instances
 
-**Source material:** Day 4 §2.5–2.6 of the uploaded Spring Cloud course PDF.
+Suppose Order has three replicas. A manual configuration refresh request to one replica does not guarantee that the others re-read settings. The source introduces **Spring Cloud Bus**, which uses a broker-backed event mechanism to distribute refresh notifications.
 
-## The running example
+~~~text
+Configuration changed
+         |
+  refresh notification
+         v
+      Message bus
+      /    |     \
+   Order A B      C
+       reload configuration
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+The bus distributes a **signal**; each instance still needs to fetch and apply the current configuration appropriately. A signal can be delayed or missed, so delivery observability and reconciliation matter.
 
-## Knowledge outline
+## Avoid treating updates as transactions
 
-### Message bus purpose
+A distributed configuration refresh does not guarantee that every Order instance switches at one exact instant. For a period, different replicas may operate under different setting versions.
 
-*Explanation and worked example to be added.*
+Design changes so mixed versions are safe. For example, changing a timeout from 350 ms to 400 ms is usually less risky than changing a wire protocol or removing an endpoint abruptly.
 
-### Propagating configuration refresh
+## A conceptual event
 
-*Explanation and worked example to be added.*
+~~~json
+{
+  "type": "config.refresh",
+  "application": "order",
+  "version": "config-184"
+}
+~~~
 
-### Config Server integration
+This is an original illustration rather than a Spring Cloud Bus wire format.
 
-*Explanation and worked example to be added.*
+## Security and operations
 
-## Architecture and interactive teaching (planned)
+The ability to trigger fleet-wide refresh can alter production behaviour. Protect refresh endpoints, authenticate bus participants, validate config changes and audit who authorised them.
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+Measure delivery delay, applied version per replica and refresh failures. If all instances must converge eventually, reconcile periodically rather than relying on one broadcast alone.
 
-## Historical implementation notes
+## When not to refresh dynamically
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
+Changing connection topology, TLS credentials or other complex resources may require a rolling restart instead. The convenience of refresh is subordinate to correctness.
 
-[Back to Distributed Configuration](index.qmd) · [Microservices overview](../index.qmd)
+## Questions to answer aloud
+
+What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
+
+[Shop lab](../examples/README.md) · [Microservices course](../index.qmd)

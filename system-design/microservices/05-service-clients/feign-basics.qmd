@@ -1,44 +1,60 @@
 ---
 title: "Feign: Declarative HTTP Calls"
-description: "Microservices lesson outline, mapped to Day 2 §1 of the supplied course."
+description: "A worked shop microservices lesson."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 2 §1. **Running system:** Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Problem: URL construction leaks into business code
 
-**Source material:** Day 2 §1 of the uploaded Spring Cloud course PDF.
+When Order needs Product, the first implementation constructs a URL, sends a request and parses the result. As APIs grow, every caller must repeat path construction, parameters, headers and error handling.
 
-## The running example
+The supplied Spring course introduces **Feign**: a Java interface describes the remote operation, and the framework creates an HTTP client implementation. The business service can call a typed method without manually concatenating a URL.
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+~~~text
+Order -> ProductClient.findById(7) -> HTTP GET /products/7
+~~~
 
-## Knowledge outline
+The interface is a *network contract*, not an ordinary in-process method call. It can time out, receive invalid data or fail because an instance has vanished.
 
-### Why hand-built URLs become difficult
+## Equivalent small NestJS-style adapter
 
-*Explanation and worked example to be added.*
+NestJS can make the boundary explicit by wrapping HTTP in a provider method:
 
-### Client interface and annotations
+~~~ts
+import { Injectable } from '@nestjs/common';
 
-*Explanation and worked example to be added.*
+@Injectable()
+export class ProductClient {
+  async findById(id: number) {
+    const response = await fetch(
+      'http://127.0.0.1:4101/products/' + id,
+      { signal: AbortSignal.timeout(350) }
+    );
+    if (!response.ok) throw new Error('Product unavailable');
+    return response.json();
+  }
+}
+~~~
 
-### Calling the product service
+This illustrates *separating the remote client from the Order business logic*. It is an illustrative provider requiring a NestJS application, not a complete runnable file. The zero-dependency lab has the equivalent HTTP call.
 
-*Explanation and worked example to be added.*
+## Feign and Ribbon in the course
 
-### Relation between Feign and Ribbon in the supplied course
+The course's OpenFeign setup integrates with Ribbon and Eureka. Eureka resolves a logical service; Ribbon selects an instance; Feign expresses the HTTP operation. Those are **three different jobs**.
 
-*Explanation and worked example to be added.*
+In newer Spring Cloud integrations, use current OpenFeign and load-balancer documentation instead of assuming Ribbon is present.
 
-## Architecture and interactive teaching (planned)
+## Contract design
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+A good client has explicit request and response shapes, request deadlines, validation, errors and an ownership model for authentication headers. Hiding the URL construction must not hide the remote call's cost.
 
-## Historical implementation notes
+## Choose the right abstraction
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
+Use a declarative client when many endpoints and consumers benefit from consistent typing and configuration. For one simple request, a small hand-written wrapper can remain clearer.
 
-[Back to Declarative Service Clients](index.qmd) · [Microservices overview](../index.qmd)
+## Review questions
+
+What failure does this technique address? Which state belongs to the caller and which belongs to the provider? What would you measure to confirm that it works?
+
+[Run the tiny shop lab](../examples/README.md) · [Microservices index](../index.qmd)

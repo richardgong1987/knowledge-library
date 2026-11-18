@@ -1,44 +1,47 @@
 ---
 title: "Client-side and Server-side Load Balancing"
-description: "Microservices lesson outline, mapped to Day 1 §6–7 of the supplied course."
+description: "A worked microservices lesson using the shop-services example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 1 §6–7. **Running system:** Order, Product, and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Product now has two instances
 
-**Source material:** Day 1 §6–7 of the uploaded Spring Cloud course PDF.
+Order may send a request to Product A or Product B. We need an instance-selection policy. The course compares **client-side** and **server-side** load balancing.
 
-## The running example
+~~~text
+Client-side: Order -> choose A or B -> Product instance
+Server-side: Order -> Stable Proxy -> choose A or B
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+With client-side balancing, Order uses a registry's instance list and applies a rule locally. With server-side balancing, a gateway, service or proxy makes the selection; Order can use one stable destination name.
 
-## Knowledge outline
+## Compare the trade-offs
 
-### Why multiple service instances matter
+A client-side strategy avoids a central request-processing hop but duplicates selection logic in clients and may rely on stale caches. A server-side strategy centralises routing and cross-cutting controls but introduces proxy capacity, configuration and failure concerns.
 
-*Explanation and worked example to be added.*
+Neither architecture guarantees an even CPU load. A round-robin rule balances **request counts**, not necessarily work. If one request takes a second and another takes a millisecond, identical counts can imply very different utilisation.
 
-### Client-side versus server-side balancing
+## Make the policy measurable
 
-*Explanation and worked example to be added.*
+Measure successful request rate, latency, failure rate, current in-flight work, instance saturation and distribution per endpoint. Determine whether retries could accidentally amplify traffic to a struggling node.
 
-### How discovery supplies endpoints
+## The lab
 
-*Explanation and worked example to be added.*
+Order keeps a two-item list of Product URLs and advances an index after each order attempt:
 
-### Choosing instances
+~~~js
+const target = productInstances[nextProduct++ % productInstances.length];
+~~~
 
-*Explanation and worked example to be added.*
+This is the smallest possible example of **client-side round robin**. It is not service discovery and does not automatically remove a failed endpoint.
 
-## Architecture and interactive teaching (planned)
+## Challenge
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+If Product A becomes slow but keeps returning 200, will round robin protect Order? Not by itself. You still need deadlines, optional health-aware selection, and resilience controls.
 
-## Historical implementation notes
+## Test your reasoning
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
+Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
-[Back to Load Balancing](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)

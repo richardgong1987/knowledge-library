@@ -1,48 +1,54 @@
 ---
 title: "Spring Cloud Config"
-description: "Microservices lesson outline, mapped to Day 4 §2.2–2.4 of the supplied course."
+description: "A worked lesson based on the supplied Spring Cloud course."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 4 §2.2–§2.4. **Running example:** a shop with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Give the shop a configuration server
 
-**Source material:** Day 4 §2.2–2.4 of the uploaded Spring Cloud course PDF.
+The source introduces **Spring Cloud Config Server** and clients, a backing configuration repository, manual refresh and a high-availability arrangement.
 
-## The running example
+~~~text
+Git-backed configuration
+          |
+     Config Server
+          |
+    Order / Product
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+At startup, each service obtains configuration appropriate to its application, environment and version. Keeping configuration in a revisioned repository improves auditability and rollback.
 
-## Knowledge outline
+## What to configure centrally
 
-### Config Server and clients
+Order's Product timeout, selected feature flags and non-secret routing policy are reasonable examples. Database passwords and private keys need encrypted transport, least-privilege access and a secrets policy; a plain public Git repository is not suitable.
 
-*Explanation and worked example to be added.*
+## Version and environment resolution
 
-### Server setup
+Distinguish the *application name* from the *deployment profile*. A configuration file for a shared staging environment should not accidentally override a production-specific security setting.
 
-*Explanation and worked example to be added.*
+A conceptual request could resolve something like:
 
-### Client configuration
+~~~text
+application: order
+profile:     staging
+label:       release-2026
+~~~
 
-*Explanation and worked example to be added.*
+The exact REST endpoint and client integration should follow the currently selected Spring Cloud Config version, not historical properties from the PDF.
 
-### Manual refresh
+## Refresh is not automatically safe
 
-*Explanation and worked example to be added.*
+A configuration update may be visible in the repository but not yet in every running process. The course explores manual refresh and HA. Verify which application beans can refresh, whether secrets are reloaded safely and whether a restart is required for structural changes.
 
-### High-availability configuration
+## Reliability question
 
-*Explanation and worked example to be added.*
+If the only Config Server fails during a fleet restart, many otherwise healthy services may be unable to start. Deploy redundant configuration infrastructure and define a safe degraded-startup policy.
 
-## Architecture and interactive teaching (planned)
+[Spring Cloud Config reference](https://docs.spring.io/spring-cloud-config/reference/).
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+## Questions to answer aloud
 
-## Historical implementation notes
+What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Distributed Configuration](index.qmd) · [Microservices overview](../index.qmd)
+[Shop lab](../examples/README.md) · [Microservices course](../index.qmd)

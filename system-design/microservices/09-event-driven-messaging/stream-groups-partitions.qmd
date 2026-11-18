@@ -1,44 +1,48 @@
 ---
 title: "Consumer Groups and Partitions"
-description: "Microservices lesson outline, mapped to Day 4 §1.5–1.6 of the supplied course."
+description: "A worked lesson based on the supplied Spring Cloud course."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 4 §1.5–§1.6. **Running example:** a shop with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Scale notification processing without duplicate work
 
-**Source material:** Day 4 §1.5–1.6 of the uploaded Spring Cloud course PDF.
+If three Notification instances all subscribe independently to a broadcast event, each may send the customer the same email. A **consumer group** lets instances cooperate on a workload so that, under broker-specific rules, messages are assigned among workers rather than every worker seeing every message.
 
-## The running example
+~~~text
+orders topic
+   |    |    |
+  P0   P1   P2       partitions
+   \    |    /
+  notification group
+  worker A / worker B
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+The supplied course introduces groups and partitioning in Spring Cloud Stream. The exact mapping depends on the binder, especially RabbitMQ versus Kafka.
 
-## Knowledge outline
+## Partitioning is a trade-off
 
-### Consumer groups
+A partition key such as `userId` can keep one customer's order events together, which may help preserve per-key order. However, a single heavily active user could make one partition a hotspot.
 
-*Explanation and worked example to be added.*
+More partitions may improve parallelism, but ordering is generally scoped to a partition rather than all events in a topic. The number of active consumers that can process partitions concurrently is also limited by broker and assignment semantics.
 
-### Message partitioning
+## At-least-once and duplicates
 
-*Explanation and worked example to be added.*
+A consumer processes an event, updates its state, then acknowledges the message. If it crashes between update and acknowledgement, the broker may redeliver the event. Treat duplicate deliveries as ordinary failure scenarios.
 
-### Scaling consumers
+~~~text
+eventId=abc received -> process -> persist marker abc -> acknowledge
+eventId=abc redelivered -> marker exists -> skip side effect
+~~~
 
-*Explanation and worked example to be added.*
+The marker and business update may need to be committed together for strong duplicate protection.
 
-### Delivery implications
+## Validate under load
 
-*Explanation and worked example to be added.*
+Measure consumer lag, retry count, redelivery rate, dead-letter traffic and per-partition skew. A group that scales nicely for 100 events may behave differently when one key generates most of the traffic.
 
-## Architecture and interactive teaching (planned)
+## Questions to answer aloud
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Event-Driven Messaging](index.qmd) · [Microservices overview](../index.qmd)
+[Shop lab](../examples/README.md) · [Microservices course](../index.qmd)

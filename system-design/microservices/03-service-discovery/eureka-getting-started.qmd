@@ -1,44 +1,49 @@
 ---
 title: "Netflix Eureka: Fundamentals"
-description: "Microservices lesson outline, mapped to Day 1 §3 of the supplied course."
+description: "A worked microservices lesson using the shop-services example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 1 §3.2–§3.6. **Running system:** Order, Product, and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Apply Eureka to the shop
 
-**Source material:** Day 1 §3 of the uploaded Spring Cloud course PDF.
+The course uses a **Eureka Server** that stores instance records and Eureka Clients in Product, Order and User. Each service registers with a logical name; Order asks for the Product instance list rather than embedding one fixed URL.
 
-## The running example
+~~~text
+Order ----GET instance list----> Eureka
+  |                               ^
+  +----HTTP----> Product A         |
+                Product B ---registration/renewal---+
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+This changes the *location* problem but does not solve timeouts or overload. Order must still make an HTTP call and handle a failed Product instance.
 
-## Knowledge outline
+## Basic lifecycle
 
-### Eureka architecture
+A provider starts, submits registration metadata, renews its lease periodically and may deregister during orderly shutdown. The registry can evict instances whose lease has expired. Consumers fetch registry information and may cache it for a configured interval.
 
-*Explanation and worked example to be added.*
+The course also introduces **self-preservation**: Eureka can avoid aggressive instance eviction when renewal patterns suggest widespread network trouble. That protects against an inaccurate mass removal, but cached records might include unavailable nodes.
 
-### Register product, order, and user services
+## Instance metadata
 
-*Explanation and worked example to be added.*
+Logical service ID and network address are not interchangeable. Metadata can help describe deployment zone, instance identity or supported capabilities; never rely on incidental hostnames as business contracts.
 
-### Registry dashboard
+## Minimal conceptual pseudocode
 
-*Explanation and worked example to be added.*
+~~~text
+Product starts -> registry.register("product", host, port)
+Order starts   -> registry.lookup("product") -> [4101, 4104]
+Order chooses  -> HTTP GET /products/7
+~~~
 
-### Self-preservation and metadata
+The runnable Node lab implements the final two Product endpoints and a static list, **not** Eureka itself.
 
-*Explanation and worked example to be added.*
+## Historical note
 
-## Architecture and interactive teaching (planned)
+This is an explanation of the original course's Eureka setup. Do not copy its dependency versions or configuration without checking compatibility with the current Spring Cloud release train. A registry should not be added automatically when the deployment platform already provides suitable discovery.
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+## Test your reasoning
 
-## Historical implementation notes
+Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to Service Registry and Discovery](index.qmd) · [Microservices overview](../index.qmd)
+[Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)

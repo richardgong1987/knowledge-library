@@ -1,40 +1,44 @@
 ---
 title: "JMeter: Load Testing Basics"
-description: "Microservices lesson outline, mapped to Day 2 §4.1 of the supplied course."
+description: "A worked lesson based on the supplied Spring Cloud course."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 2 §4.1. **Running example:** a shop with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## A successful request is not a capacity test
 
-**Source material:** Day 2 §4.1 of the uploaded Spring Cloud course PDF.
+The shop works when one customer places an order. What happens at 100 requests/s? The course uses **Apache JMeter** to exercise services and investigate overload.
 
-## The running example
+Define a test journey before generating traffic:
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+~~~text
+GET product 7 -> GET user 9 -> POST order
+~~~
 
-## Knowledge outline
+Each request should have success checks. Without assertions, a test that receives thousands of 503 responses may appear to have produced high throughput even though the business function failed.
 
-### Installing JMeter
+## Model demand carefully
 
-*Explanation and worked example to be added.*
+**Virtual users** approximate concurrent actors, while **arrival rate** states how many requests begin per second. Those are not interchangeable when response time changes. Use realistic think time, response sizes and a gradual ramp.
 
-### Configuring a load scenario
+Record p50/p95/p99 latency, requests per second, failure rate, active connections and saturation of downstream dependencies. Averages conceal long-tail delays that customers feel.
 
-*Explanation and worked example to be added.*
+## Baseline, stress and endurance
 
-### Measuring service behaviour
+**Baseline:** verify one normal flow and establish latency. **Load:** run at expected volume. **Stress:** increase above target to find the limiting resource. **Endurance:** sustain realistic load long enough to expose leaks and backlog growth.
 
-*Explanation and worked example to be added.*
+Test against a controlled environment with representative data; never direct uncoordinated high-volume tests at a production site.
 
-## Architecture and interactive teaching (planned)
+## Interpret the results
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+If p95 latency rises while Product CPU is low, suspect waiting on a connection pool, database lock, DNS or network. CPU alone does not identify the bottleneck.
 
-## Historical implementation notes
+The teaching lab is single-process and stores orders in memory; it is suitable for learning endpoints, not for deriving production throughput numbers.
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
+[Apache JMeter documentation](https://jmeter.apache.org/usermanual/).
 
-[Back to Performance and Load Testing](index.qmd) · [Microservices overview](../index.qmd)
+## Questions to answer aloud
+
+What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
+
+[Shop lab](../examples/README.md) · [Microservices course](../index.qmd)

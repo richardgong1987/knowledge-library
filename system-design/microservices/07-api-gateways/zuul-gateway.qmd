@@ -1,48 +1,44 @@
 ---
 title: "Netflix Zuul Gateway"
-description: "Microservices lesson outline, mapped to Day 3 §2 of the supplied course."
+description: "A worked microservices lesson using one small shop example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 3 §2. The running application contains Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Why Zuul appears after Nginx
 
-**Source material:** Day 3 §2 of the uploaded Spring Cloud course PDF.
+The historical course introduces Netflix **Zuul** as a gateway integrated with Spring Cloud discovery and filters. Rather than configuring every target address directly in an Nginx file, the gateway can route to a logical service known to the registry.
 
-## The running example
+~~~text
+Client -> Zuul route /api/order/** -> discovered Order instance
+                      |
+                  pre / route / post / error filters
+~~~
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+The exact filter categories and execution model belong to the Zuul generation in the uploaded material. They are valuable for understanding a gateway **pipeline**, even when a newer gateway uses different APIs.
 
-## Knowledge outline
+## Filters have distinct responsibilities
 
-### Gateway service setup
+A **pre-routing filter** might attach a correlation ID or validate required credentials. A **routing filter** chooses the upstream and forwards the request. A **post-routing filter** can add response headers or record measurements. Error handling should turn upstream failures into a clear client contract.
 
-*Explanation and worked example to be added.*
+Do not trust a request header claiming to be an administrator merely because it arrived at the gateway. Authentication must validate credentials, and downstream business operations still need authorisation.
 
-### Service-oriented routing
+## Failure scenario
 
-*Explanation and worked example to be added.*
+Suppose Product is unavailable but Order remains up. A gateway should not mark the entire shop unavailable solely because one route fails. It can return a route-specific 502 or 503, depending on the failure and policy.
 
-### Default routes
+## How to read the old source code
 
-*Explanation and worked example to be added.*
+Follow one request from route match, through filter ordering, to selected upstream and final response. The course's source walkthrough explains an implementation of this path. Avoid transplanting historical filter classes directly into a new Spring project.
 
-### Filters and filter lifecycle
+## Current direction
 
-*Explanation and worked example to be added.*
+For modern Spring Cloud deployments, investigate **Spring Cloud Gateway** and compare it against ingress gateways and reverse proxies already provided by the platform.
 
-### Source analysis and limitations
+[Spring Cloud Gateway documentation](https://docs.spring.io/spring-cloud-gateway/reference/).
 
-*Explanation and worked example to be added.*
+## Check your understanding
 
-## Architecture and interactive teaching (planned)
+Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
-
-## Historical implementation notes
-
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
-
-[Back to API Gateways and Edge Routing](index.qmd) · [Microservices overview](../index.qmd)
+[Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)

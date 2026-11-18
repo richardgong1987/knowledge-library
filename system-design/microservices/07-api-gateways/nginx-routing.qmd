@@ -1,44 +1,55 @@
 ---
 title: "Nginx: Reverse Proxy and Routing"
-description: "Microservices lesson outline, mapped to Day 3 §1.3 of the supplied course."
+description: "A worked microservices lesson using one small shop example."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 3 §1.3. The running application contains Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Start with the simplest working gateway
 
-**Source material:** Day 3 §1.3 of the uploaded Spring Cloud course PDF.
+The course first teaches forward versus reverse proxy, then uses Nginx routes to send requests to Order and Product. A **reverse proxy** receives a client request and forwards it to a backend chosen by server-side configuration. The client does not need to know the backend address.
 
-## The running example
+For our shop, an illustrative Nginx config is:
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+~~~nginx
+server {
+    listen 8080;
+    location /api/products/ {
+        proxy_pass http://127.0.0.1:4101/products/;
+    }
+    location /api/orders {
+        proxy_pass http://127.0.0.1:4103/orders;
+    }
+}
+~~~
 
-## Knowledge outline
+The trailing slashes and URI part of `proxy_pass` affect how Nginx rewrites paths. Test the actual forwarded URI; a small mismatch can produce a backend 404.
 
-### Forward and reverse proxy
+## Proxy is not gateway business logic
 
-*Explanation and worked example to be added.*
+Nginx handles efficient HTTP termination, path routing and proxy-related controls. A sophisticated gateway may additionally understand business-specific policies or integrate with identity and discovery systems.
 
-### Nginx introduction
+~~~text
+Client: /api/products/7
+Nginx:  /products/7  -> Product
+~~~
 
-*Explanation and worked example to be added.*
+In the Node lab, a tiny HTTP server performs a similar rewrite without Nginx.
 
-### Order and product route forwarding
+## Timeouts must fit the budget
 
-*Explanation and worked example to be added.*
+Nginx, Order and Product each may have separate deadlines. If the gateway waits 1.2 seconds but Order gives Product 350 milliseconds, Order may fail first. A too-short edge deadline can abort otherwise successful requests; an unlimited one permits resource accumulation.
 
-### Gateway as a simple reverse proxy
+## Operational test
 
-*Explanation and worked example to be added.*
+Call the Product endpoint directly and through the reverse proxy. Verify status, headers, path, payload, latency and whether the selected instance is healthy.
 
-## Architecture and interactive teaching (planned)
+Use Nginx when you need standard reverse proxy capabilities; use a richer API gateway only when its additional policies justify the cost.
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+[Nginx proxy documentation](https://nginx.org/en/docs/http/ngx_http_proxy_module.html).
 
-## Historical implementation notes
+## Check your understanding
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
+Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
-[Back to API Gateways and Edge Routing](index.qmd) · [Microservices overview](../index.qmd)
+[Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)

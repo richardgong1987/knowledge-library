@@ -1,40 +1,46 @@
 ---
 title: "Analysing High Load"
-description: "Microservices lesson outline, mapped to Day 2 §4.2 of the supplied course."
+description: "A worked lesson based on the supplied Spring Cloud course."
 ---
 
-::: {.callout-note}
-## Lesson status
+**Course source:** Day 2 §4.2. **Running example:** a shop with Product, Order and User services.
 
-This is an outline derived from the uploaded course, not a completed chapter. Its historical code and dependency versions have not yet been modernised.
-:::
+## Observe the failure before prescribing a pattern
 
-**Source material:** Day 2 §4.2 of the uploaded Spring Cloud course PDF.
+Under load, Order waits on Product. Queueing increases, thread or connection resources become scarce, and timeouts propagate to clients. The source uses this scenario to motivate **isolation**.
 
-## The running example
+A useful first approximation is Little's law:
 
-Use the **shop application's product, order, and user services** to motivate this lesson. Extend the previous example only where the topic requires it.
+$$
+L = \lambda W
+$$
 
-## Knowledge outline
+where $L$ is average in-flight work, $\lambda$ is accepted request rate and $W$ is average duration. If 80 requests/s take 0.05 s, approximately 4 are in flight. If latency rises to 2 s at the same rate, average in-flight work approaches 160. This is a diagnostic relationship, not a universal throughput prediction.
 
-### Recognising overload symptoms
+## Choose a limit with a hypothesis
 
-*Explanation and worked example to be added.*
+A concurrency limit bounds how many Product calls can be active simultaneously. A queue absorbs brief bursts but increases waiting time. A rate limiter reduces admitted demand. A timeout caps individual wait duration. A circuit breaker protects against persistent downstream failure.
 
-### Interpreting load-test observations
+No setting can create capacity that does not exist. If average arrivals exceed sustainable throughput for long enough, queues grow until work is rejected, dropped or slowed.
 
-*Explanation and worked example to be added.*
+## Minimal overload simulation
 
-### Thread-pool isolation as a course example
+The running lab adds an 800 ms delay to the Product endpoint when an order is called with `slow=1`. Order applies a 350 ms client deadline and returns 503. This is a controlled **latency failure**, not evidence that the in-memory lab behaves like a real large deployment.
 
-*Explanation and worked example to be added.*
+~~~bash
+curl -X POST 'http://127.0.0.1:4100/api/orders?userId=9&productId=7&slow=1'
+~~~
 
-## Architecture and interactive teaching (planned)
+## Analyse by dependency
 
-Document the service interaction, introduce a request/response or event-flow diagram, then illustrate the key state changes and failure conditions. Avoid new unrelated case studies.
+Compare user-facing latency with Order's Product call duration, gateway latency, request rate, errors and resource utilisation. If most of the delay is downstream, fixing just the API controller's code will not solve it.
 
-## Historical implementation notes
+## Final design question
 
-The supplied Spring Cloud course is the starting reference. When adding runnable code, independently verify current Spring Boot, Spring Cloud, and dependency support; do not copy historical configuration into a new project unreviewed.
+Should Order reject quickly, wait longer, provide a partial result, or queue the work? The correct choice follows business semantics: delaying optional analytics differs from accepting an order without verifying its price.
 
-[Back to Performance and Load Testing](index.qmd) · [Microservices overview](../index.qmd)
+## Questions to answer aloud
+
+What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
+
+[Shop lab](../examples/README.md) · [Microservices course](../index.qmd)

@@ -1,86 +1,62 @@
 ---
 title: "Microservices Architecture"
-description: "An English study map derived from the supplied four-day Spring Cloud course."
+description: "A worked, English-language course derived from the supplied Spring Cloud training materials, using one original shop example."
 ---
 
-This section reorganises the supplied **Spring Cloud Microservices Architecture** course into concept-based chapters, rather than four day-based folders. It follows the course's **shop application** with product, order, and user services as a recurring example.
+## What you will build and understand
 
-::: {.callout-important}
-## Historical course material
+A small shop starts with **Product**, **User**, and **Order** responsibilities. Order needs Product's price and User's identity; the service boundaries become useful only after we understand how to handle remote calls, discovery, failures, security, monitoring, and asynchronous work.
 
-The uploaded source teaches specific Spring Cloud implementations, including Eureka, Ribbon, Feign, Hystrix, Zuul, Sleuth, Stream, Config, Consul, Sentinel, and Apollo. Treat the included APIs and configuration examples as **course-era material**, not automatically as current production recommendations. Versions and migrations need separate verification before implementing them.
+This tutorial develops the *same* shop throughout, rather than switching examples every time a new infrastructure product appears. The lessons explain the concepts in original English prose and use short Node.js or TypeScript snippets where helpful; they do **not** copy the source course's Java implementation.
+
+::: {.callout-tip}
+## Run the complete tiny example
+
+A single [shop-lab.mjs](examples/shop-lab.mjs) file starts Product (two instances), User, Order and a simple Gateway. It uses **Node.js 22+ without npm dependencies**:
+
+~~~bash
+node system-design/microservices/examples/shop-lab.mjs
+curl -X POST 'http://127.0.0.1:4100/api/orders?userId=9&productId=7'
+~~~
+
+It demonstrates HTTP contracts, simple routing, a timeout, round-robin instance selection, a trace ID and an **in-process** event. It does not pretend to implement real Eureka, RabbitMQ, Zipkin or persistent databases. [Read the lab guide](examples/README.md).
 :::
 
-## Knowledge tree
+## Study path
 
-1. **[Microservice Foundations](01-foundations/index.qmd)**
-   - [Evolution of Application Architecture](01-foundations/architecture-evolution.qmd)
-   - [Distributed Systems and CAP](01-foundations/distributed-systems-and-cap.qmd)
-   - [Spring Cloud Ecosystem](01-foundations/spring-cloud-overview.qmd)
+1. **[Microservice Foundations](01-foundations/index.qmd)** — Start with a modular shop application. Follow the pressure to split deployments, then confront remote-call failure and learn which components address it.
+2. **[Running Case Study: Shop Services](02-shop-case-study/index.qmd)** — Define Product, User and Order boundaries. Keep API contracts small and explicit, then make the first Product HTTP call from Order.
+3. **[Service Registry and Discovery](03-service-discovery/index.qmd)** — Replace hard-coded addresses with service identities. Learn the registry lifecycle, why stale entries exist and how Eureka and Consul address the problem.
+4. **[Load Balancing](04-load-balancing/index.qmd)** — Give Product two instances and decide where each request should go. Compare client-side versus proxy-side routing, then study the course's Ribbon implementation.
+5. **[Declarative Service Clients](05-service-clients/index.qmd)** — Move remote-call mechanics out of Order business logic. Study Feign's declarative contract, then design deadlines, logging, compression and retry policies.
+6. **[Resilience and Service Protection](06-resilience/index.qmd)** — Make Product slow and observe the cascading effects. Add deadlines, isolation and circuit-breaker reasoning; compare historical Hystrix with Sentinel and modern alternatives.
+7. **[API Gateways and Edge Routing](07-api-gateways/index.qmd)** — Move public URLs behind one entry point. Compare reverse proxies and gateways, then add route matching, filters, authentication and rate limits.
+8. **[Distributed Tracing](08-distributed-tracing/index.qmd)** — Trace one browser request through Gateway, Order, Product and User. Learn trace/span context, collection, storage and modern instrumentation.
+9. **[Event-Driven Messaging](09-event-driven-messaging/index.qmd)** — Replace a synchronous confirmation side effect with an order.placed event. Learn binders, consumers, groups, partitions, duplicates and delivery guarantees.
+10. **[Distributed Configuration](10-configuration/index.qmd)** — Separate operational settings from service binaries. Study Config Server, distributed refresh via Bus, and managed configuration releases with Apollo.
+11. **[Performance and Load Testing](11-performance/index.qmd)** — Measure more than successful HTTP responses. Use JMeter concepts, Little's law and an interactive workload experiment to reason about bottlenecks.
 
-2. **[Running Case Study: Shop Services](02-shop-case-study/index.qmd)**
-   - [Shop Service Decomposition](02-shop-case-study/service-decomposition.qmd)
-   - [Initial HTTP Service Calls](02-shop-case-study/resttemplate-calls.qmd)
+## Interactive experiment
 
-3. **[Service Registry and Discovery](03-service-discovery/index.qmd)**
-   - [Registry and Discovery Principles](03-service-discovery/registry-principles.qmd)
-   - [Netflix Eureka: Fundamentals](03-service-discovery/eureka-getting-started.qmd)
-   - [Eureka Operations and High Availability](03-service-discovery/eureka-high-availability.qmd)
-   - [Eureka Internals and Lifecycle](03-service-discovery/eureka-source-analysis.qmd)
-   - [Consul: Registration and Discovery](03-service-discovery/consul-discovery.qmd)
-   - [Consul High Availability](03-service-discovery/consul-clusters.qmd)
+Use the [Interactive Queueing Experiment](11-performance/interactive-queue-lab.qmd) to change request arrival rate and service capacity with sliders. It shows why a bounded service needs backpressure.
 
-4. **[Load Balancing](04-load-balancing/index.qmd)**
-   - [Client-side and Server-side Load Balancing](04-load-balancing/client-server-balancing.qmd)
-   - [Netflix Ribbon: Usage and Strategies](04-load-balancing/ribbon-usage.qmd)
-   - [Ribbon: Internal Workflow](04-load-balancing/ribbon-internals.qmd)
+## How to distinguish architecture from frameworks
 
-5. **[Declarative Service Clients](05-service-clients/index.qmd)**
-   - [Feign: Declarative HTTP Calls](05-service-clients/feign-basics.qmd)
-   - [Feign Configuration and Internals](05-service-clients/feign-configuration.qmd)
+| Original course component | Concept it illustrates | Current implementation direction |
+|---|---|---|
+| Eureka, Consul | Service registration and discovery | Registry or platform-native discovery |
+| Ribbon | Client-side instance selection | Spring Cloud LoadBalancer or equivalent |
+| Feign | Declarative HTTP client | Current OpenFeign or typed NestJS client |
+| Hystrix, Sentinel | Isolation, circuit breaking, traffic rules | Resilience4j/Spring Cloud CircuitBreaker or other suitable tooling |
+| Zuul, Spring Cloud Gateway | Edge routing and filters | Supported gateway/ingress implementation |
+| Sleuth, Zipkin | Tracing and trace collection | Micrometer Tracing/OpenTelemetry, compatible backend |
+| Stream | Broker-neutral message bindings | Functional Stream model or NestJS broker transport |
+| Config, Bus, Apollo | Distributed configuration and refresh | Supported central configuration solution |
 
-6. **[Resilience and Service Protection](06-resilience/index.qmd)**
-   - [Overload, Resource Isolation, and Cascading Failure](06-resilience/overload-and-isolation.qmd)
-   - [Netflix Hystrix: Circuit Breaking](06-resilience/hystrix-basics.qmd)
-   - [Hystrix Monitoring and Internals](06-resilience/hystrix-internals.qmd)
-   - [Sentinel: Service Protection](06-resilience/sentinel-service-protection.qmd)
+**Source scope:** The uploaded four-day Spring Cloud course comprises Day 1 (foundations, shop, Eureka, Consul, Ribbon), Day 2 (Feign, high concurrency, Hystrix, Sentinel), Day 3 (gateway, Nginx, Zuul, Spring Cloud Gateway, Sleuth, Zipkin), and Day 4 (Spring Cloud Stream, Spring Cloud Config/Bus, Apollo). Source section mappings appear in each lesson.
 
-7. **[API Gateways and Edge Routing](07-api-gateways/index.qmd)**
-   - [Gateway Principles](07-api-gateways/gateway-principles.qmd)
-   - [Nginx: Reverse Proxy and Routing](07-api-gateways/nginx-routing.qmd)
-   - [Netflix Zuul Gateway](07-api-gateways/zuul-gateway.qmd)
-   - [Spring Cloud Gateway](07-api-gateways/spring-cloud-gateway.qmd)
-   - [Gateway Authentication, Rate Limiting, and Availability](07-api-gateways/gateway-auth-and-limits.qmd)
+::: {.callout-important}
+## Technology currency
 
-8. **[Distributed Tracing](08-distributed-tracing/index.qmd)**
-   - [Tracing Concepts](08-distributed-tracing/tracing-foundations.qmd)
-   - [Sleuth and Zipkin](08-distributed-tracing/sleuth-zipkin.qmd)
-   - [Trace Transport and Persistence](08-distributed-tracing/trace-transport-storage.qmd)
-
-9. **[Event-Driven Messaging](09-event-driven-messaging/index.qmd)**
-   - [Spring Cloud Stream: Core Concepts](09-event-driven-messaging/stream-abstractions.qmd)
-   - [Stream Producers and Consumers](09-event-driven-messaging/stream-producers-consumers.qmd)
-   - [Consumer Groups and Partitions](09-event-driven-messaging/stream-groups-partitions.qmd)
-
-10. **[Distributed Configuration](10-configuration/index.qmd)**
-   - [Configuration Management Principles](10-configuration/config-principles.qmd)
-   - [Spring Cloud Config](10-configuration/spring-cloud-config.qmd)
-   - [Spring Cloud Bus and Refresh](10-configuration/spring-cloud-bus.qmd)
-   - [Apollo Configuration Centre](10-configuration/apollo-config.qmd)
-
-11. **[Performance and Load Testing](11-performance/index.qmd)**
-   - [JMeter: Load Testing Basics](11-performance/jmeter-basics.qmd)
-   - [Analysing High Load](11-performance/high-load-analysis.qmd)
-
-## Study method
-
-Each future lesson will begin with the problem faced by the same order, product, and user services; introduce the relevant concept; demonstrate the solution; and then examine trade-offs and failure conditions. This initial commit creates an **outline only**: it does not copy the source PDF text or claim to contain updated executable examples.
-
-## Source mapping
-
-- **Day 1 PDF:** architectural foundations, shop case study, Eureka, Consul, Ribbon.
-- **Day 2 PDF:** Feign, load testing, Hystrix, Sentinel.
-- **Day 3 PDF:** Nginx, Zuul, Spring Cloud Gateway, Sleuth, Zipkin.
-- **Day 4 PDF:** Spring Cloud Stream, Spring Cloud Config, Spring Cloud Bus, Apollo.
-
-The uploaded ZIP also includes sample projects and configuration files, which can be consulted when developing individual lessons later.
+The PDFs contain historical Spring Cloud component versions and APIs. Those are discussed as **source-era implementations**, not recommended by default for a new service. Links to current official documentation are included in relevant lessons. The independent shop lab is purposefully framework-light and original.
+:::
