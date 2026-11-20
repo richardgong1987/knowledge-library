@@ -47,3 +47,13 @@ Our teaching lab has no authentication. Do not deploy its order endpoint as a re
 Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
 [Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)
+
+## Mathematical Abstraction
+
+Edge admission requires both authorisation and capacity.
+
+$$
+\operatorname{admit}(r)=\operatorname{authorised}(r)\land (\mathrm{tokens}(t)\geq1)
+$$
+
+This is a simplified admission predicate for a token-bucket limiter. Real designs also check routes, quotas, identity scopes, and failure policies.

@@ -60,3 +60,13 @@ Use the [Interactive Queueing Experiment](11-performance/interactive-queue-lab.q
 
 The PDFs contain historical Spring Cloud component versions and APIs. Those are discussed as **source-era implementations**, not recommended by default for a new service. Links to current official documentation are included in relevant lessons. The independent shop lab is purposefully framework-light and original.
 :::
+
+## Mathematical Abstraction
+
+A microservice system can be modelled as a directed dependency graph.
+
+$$
+G=(V,E),\qquad E\subseteq V\times V
+$$
+
+$V$ consists of Product, User, Order and infrastructure nodes; $(u,v)\in E$ means $u$ depends on $v$ for a specified operation. Edge direction alone does not guarantee synchronous communication.

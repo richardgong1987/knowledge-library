@@ -59,3 +59,13 @@ Do not assume that CPU caches alone explain the JMM. The JMM specifies *allowed 
 Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
 
 [Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)
+
+## Mathematical Abstraction
+
+Conflicting accesses form a data race when neither happens-before orders the other.
+
+$$
+\operatorname{Race}(a,b)\iff\operatorname{Conflict}(a,b)\land\neg(a\mathrel{hb}b)\land\neg(b\mathrel{hb}a)
+$$
+
+$a$ and $b$ are accesses by distinct threads to the same variable, at least one being a write. This describes the ordering problem in the original stop-flag example.

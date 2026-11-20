@@ -46,3 +46,13 @@ Configuration management is not just centralised storage: it is **controlled, ob
 What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
 [Shop lab](../examples/README.md) · [Microservices course](../index.qmd)
+
+## Mathematical Abstraction
+
+The effective configuration is a validated merge of sources.
+
+$$
+C_{\rm effective}=\operatorname{validate}\bigl(\operatorname{merge}(C_{\rm defaults},C_{\rm env},C_{\rm remote})\bigr)
+$$
+
+The order of merge arguments represents an assumed override precedence; projects must document their actual precedence and reject invalid values.

@@ -46,3 +46,13 @@ Measure consumer lag, retry count, redelivery rate, dead-letter traffic and per-
 What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
 [Shop lab](../examples/README.md) · [Microservices course](../index.qmd)
+
+## Mathematical Abstraction
+
+Partitioning maps each message key to a partition; duplicates remain a separate concern.
+
+$$
+p(e)=h(\operatorname{key}(e))\bmod P
+$$
+
+$P>0$ is the partition count and $h$ a deterministic hash. This is an illustrative partitioning rule; broker-specific mapping and rebalance semantics vary.

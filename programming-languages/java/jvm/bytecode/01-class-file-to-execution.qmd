@@ -83,3 +83,13 @@ Expect substantial JVM output; filter for `OrderLab` to locate the relevant clas
 5. Can `javap` reveal the final JIT machine code?
 
 **Source scope:** Follows the provided *Class Loading and Bytecode Technology* PDF's six major headings: class format, bytecode instructions, compile-time processing, loading stages, loaders and runtime optimisation. Normative references: [JVMS Class Files](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-4.html) and [Loading and Linking](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-5.html).
+
+## Mathematical Abstraction
+
+Class identity is a pair, not just the binary name.
+
+$$
+\operatorname{Identity}(C)=\bigl(\operatorname{BinaryName}(C),\operatorname{DefiningLoader}(C)\bigr)
+$$
+
+Two classes with the same name can be distinct when their defining loaders differ.

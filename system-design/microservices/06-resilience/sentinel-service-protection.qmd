@@ -44,3 +44,13 @@ Sentinel remains a distinct ecosystem choice; Spring Cloud CircuitBreaker/Resili
 What failure does this technique address? Which state belongs to the caller and which belongs to the provider? What would you measure to confirm that it works?
 
 [Run the tiny shop lab](../examples/README.md) · [Microservices index](../index.qmd)
+
+## Mathematical Abstraction
+
+A rate limiter caps admitted demand by a policy threshold.
+
+$$
+\lambda_{\rm admitted}(t)\leq\min\bigl(\lambda_{\rm offered}(t),\lambda_{\max}(t)\bigr)
+$$
+
+This is a fluid-rate approximation; token buckets can allow bursts within an interval, so pointwise instantaneous rates may exceed a long-run refill rate.

@@ -59,3 +59,13 @@ The order-counting chapter will make this distinction concrete.
 Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
 
 [Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)
+
+## Mathematical Abstraction
+
+The transitive closure makes happens-before compositional.
+
+$$
+hb=(po\cup sw)^{+},\qquad (a\mathrel{hb}b\land b\mathrel{hb}c)\Rightarrow a\mathrel{hb}c
+$$
+
+Here $po$ is program order and $sw$ synchronises-with. The equation is not a replacement for the JLS causality requirements.

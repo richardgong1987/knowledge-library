@@ -42,3 +42,13 @@ The teaching lab is single-process and stores orders in memory; it is suitable f
 What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
 [Shop lab](../examples/README.md) · [Microservices course](../index.qmd)
+
+## Mathematical Abstraction
+
+A load test measures success as well as request rate.
+
+$$
+\operatorname{SuccessRate}=\frac{N_{\rm valid\ responses}}{N_{\rm attempted}}\,,\qquad 0\leq\operatorname{SuccessRate}\leq1
+$$
+
+'Valid' should include business assertions, not only HTTP completion. Throughput and latency must be reported alongside this proportion.

@@ -41,3 +41,13 @@ Shorter leases reduce stale entries but increase sensitivity to temporary networ
 Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
 [Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)
+
+## Mathematical Abstraction
+
+Registry replication may yield temporarily divergent membership views.
+
+$$
+D_t^{(A)}(s)\neq D_t^{(B)}(s)
+$$
+
+$A$ and $B$ identify two registry replicas. The inequality is possible during propagation delays; it does not assert permanent inconsistency.

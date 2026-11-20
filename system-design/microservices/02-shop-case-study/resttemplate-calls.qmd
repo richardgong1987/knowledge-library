@@ -46,3 +46,13 @@ Explain this design to another engineer using the running example. Identify one 
 **Experiment:** Run the lab, call the Product API directly, then call the same resource through the Gateway. Compare the URLs and response bodies.
 
 [Run the tiny shop lab](../examples/README.md) · [Microservices learning path](../index.qmd)
+
+## Mathematical Abstraction
+
+Order's end-to-end deadline constrains downstream calls.
+
+$$
+T_{\rm order}\leq D,\qquad T_{\rm order}\approx\max(T_{\rm product},T_{\rm user})+T_{\rm overhead}
+$$
+
+The approximation assumes Product and User calls run concurrently; sequential calls instead add their durations.

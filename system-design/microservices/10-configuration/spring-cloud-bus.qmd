@@ -55,3 +55,13 @@ Changing connection topology, TLS credentials or other complex resources may req
 What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
 [Shop lab](../examples/README.md) · [Microservices course](../index.qmd)
+
+## Mathematical Abstraction
+
+Refresh notifications do not guarantee simultaneous configuration states.
+
+$$
+C_t^{(1)}\neq C_t^{(2)}\quad\text{may hold during rollout}
+$$
+
+$C_t^{(i)}$ is the effective configuration at instance $i$ at time $t$. Compatible mixed-version operation is a design requirement.

@@ -60,3 +60,13 @@ Run `java JmmLab atomic`: the expected count is exactly 4,000. This demonstrates
 Which properties are guaranteed by the specification, and which outcomes could change between executions? What happens if we remove one synchronisation edge?
 
 [Back to JMM](index.qmd) · [Runnable source](examples/JmmLab.java)
+
+## Mathematical Abstraction
+
+Atomic increments preserve a worker-count invariant after all workers have completed.
+
+$$
+C_{\rm final}=C_0+\sum_{i=1}^{n}k_i
+$$
+
+$k_i$ is the number of successful increments by worker $i$. Unsynchronised read–modify–write does not guarantee the same relation.

@@ -87,3 +87,13 @@ For an accessible running process, `jcmd <pid> Thread.print` helps inspect threa
 4. Why is the Java Memory Model a different topic from runtime memory areas?
 
 **Source scope:** Adapted from the provided *Memory Structure* PDF: PC register, JVM stacks, native stacks, heap, method area, runtime constant pool, StringTable and direct memory. Implementation details are identified separately. Normative reference: [JVMS §2.5–2.6](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html).
+
+## Mathematical Abstraction
+
+A local reference in one frame may point to a heap-resident object.
+
+$$
+r\in \mathrm{Locals}(F_i),\quad o\in H,\quad r\mapsto o
+$$
+
+$F_i$ is thread $i$'s frame; $H$ denotes the abstract JVM heap. This is not a claim about JIT-optimised physical allocation.

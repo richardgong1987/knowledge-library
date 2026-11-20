@@ -91,3 +91,13 @@ These commands are diagnostic operations, not something to run automatically on 
 5. How would retaining completed orders in `pending` mimic a memory leak?
 
 **Source scope:** Based on the provided *Garbage Collection* PDF: reachability, reference strengths, marking/compaction/copying, generations, collectors and performance diagnostics. For current tuning, consult [Oracle GC Tuning](https://docs.oracle.com/en/java/javase/27/gctuning/introduction-garbage-collection-tuning.html).
+
+## Mathematical Abstraction
+
+The order becomes reclaimable after the final strong root path disappears.
+
+$$
+o\notin\operatorname{Reach}(R,E)\Longrightarrow o\text{ is eligible for reclamation}
+$$
+
+$R$ is the root set and $E$ is the strong-reference graph. This statement does not guarantee a collection time.

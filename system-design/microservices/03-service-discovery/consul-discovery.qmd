@@ -44,3 +44,13 @@ Evaluate who operates it, health semantics, failover behaviour, authentication, 
 Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
 [Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)
+
+## Mathematical Abstraction
+
+Health-aware discovery filters registered instances.
+
+$$
+D_{\rm healthy}(s)=D_{\rm registered}(s)\cap H(s)
+$$
+
+$H(s)$ is the set of instances passing the selected health criteria. Health-check success is still not a promise that the next request succeeds.

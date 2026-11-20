@@ -44,3 +44,13 @@ The course introduces Spring Cloud Sleuth. Modern Spring observability commonly 
 Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
 [Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)
+
+## Mathematical Abstraction
+
+Trace duration follows the critical path, not the sum of all parallel spans.
+
+$$
+T_{\rm request}\approx T_{\rm critical\ path}+T_{\rm uninstrumented}
+$$
+
+Concurrent Product and User spans may overlap, so summing their durations can overstate end-to-end latency.

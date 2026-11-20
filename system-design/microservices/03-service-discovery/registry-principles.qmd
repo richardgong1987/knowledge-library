@@ -36,3 +36,13 @@ The original course compares Eureka and Consul. Kubernetes deployments can inste
 Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
 [Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)
+
+## Mathematical Abstraction
+
+Discovery information has time-dependent freshness.
+
+$$
+D_t(s)\neq H_t(s)\quad\text{may hold}
+$$
+
+$D_t(s)$ denotes listed instances and $H_t(s)$ actually healthy instances. Registration does not ensure every listed endpoint responds.

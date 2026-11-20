@@ -55,3 +55,13 @@ Explain this design to another engineer using the running example. Identify one 
 **Experiment:** Run the shop lab and add `&slow=1` to a POST order request. The deliberate slow Product response causes a 503 from Order.
 
 [Run the tiny shop lab](../examples/README.md) · [Microservices learning path](../index.qmd)
+
+## Mathematical Abstraction
+
+Service operations have deadlines and partitions can block communication.
+
+$$
+T_{\rm call}=T_{\rm network}+T_{\rm service}+T_{\rm response},\qquad T_{\rm call}>D\Rightarrow\mathrm{timeout}
+$$
+
+$D$ is the caller deadline. CAP applies specifically to replicated data under partitions; it is not the inequality above or a choice of any two arbitrary properties.

@@ -46,3 +46,13 @@ Useful reference: [Spring Cloud LoadBalancer](https://docs.spring.io/spring-clou
 Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
 [Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)
+
+## Mathematical Abstraction
+
+Round-robin selection cycles through available instances.
+
+$$
+i_k=k\bmod n
+$$
+
+$k$ is the zero-based request index and $n>0$ the number of candidate instances. This idealisation excludes membership changes and retries.

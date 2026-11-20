@@ -41,3 +41,13 @@ Use standard OpenTelemetry exporters, an OpenTelemetry Collector if appropriate,
 Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
 [Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)
+
+## Mathematical Abstraction
+
+A trace pipeline transforms sampled spans into stored spans.
+
+$$
+S_{\rm stored}\subseteq S_{\rm emitted}\subseteq S_{\rm produced}
+$$
+
+Sampling, exporter failures or retention can reduce the observed set. The inclusions reflect a simplified data-flow model, not a guarantee that all spans are delivered.

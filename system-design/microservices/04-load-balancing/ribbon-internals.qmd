@@ -41,3 +41,13 @@ The concepts survive even though Ribbon itself is historical. A modern equivalen
 Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
 [Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)
+
+## Mathematical Abstraction
+
+Logical service resolution and instance selection compose into a route.
+
+$$
+\operatorname{route}(r,s)=\operatorname{send}\bigl(r,b(r,D_t(s))\bigr)
+$$
+
+$D_t(s)$ discovers candidates and $b$ chooses one. Discovery and send are not atomic, so routing can still fail.

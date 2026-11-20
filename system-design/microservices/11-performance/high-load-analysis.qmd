@@ -44,3 +44,13 @@ Should Order reject quickly, wait longer, provide a partial result, or queue the
 What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
 [Shop lab](../examples/README.md) · [Microservices course](../index.qmd)
+
+## Mathematical Abstraction
+
+Sustained overload increases queued work when demand exceeds service capacity.
+
+$$
+\frac{dQ(t)}{dt}=\lambda(t)-\mu(t)\quad\text{while }Q(t)>0
+$$
+
+$Q$ is backlog (requests), and $\lambda,\mu$ are rates in requests per second. At an empty queue, the non-negativity boundary applies; this is a simplified fluid model.

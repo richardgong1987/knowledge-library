@@ -46,3 +46,13 @@ A gateway does not replace every internal reverse proxy, nor does it make all se
 Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
 [Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)
+
+## Mathematical Abstraction
+
+A gateway is a routing function plus cross-cutting policies.
+
+$$
+g(r)=\begin{cases}\operatorname{forward}(r,u),&\operatorname{allowed}(r)\land u=\operatorname{route}(r),\\ \operatorname{reject}(r),&\text{otherwise.}\end{cases}
+$$
+
+$r$ is a request and $u$ the selected upstream. Real implementations distinguish authentication, authorisation and no-route outcomes.

@@ -41,3 +41,13 @@ Explain this design to another engineer using the running example. Identify one 
 **Try it:** The [shop lab](../examples/README.md) uses several HTTP servers in a single process to teach boundaries; it does not claim to implement isolated production deployments.
 
 [Run the tiny shop lab](../examples/README.md) · [Microservices learning path](../index.qmd)
+
+## Mathematical Abstraction
+
+A split moves a module call across a process boundary.
+
+$$
+\operatorname{Cost}_{\rm remote}=\operatorname{Cost}_{\rm local}+L_{\rm network}+L_{\rm serialise}+L_{\rm protocol}
+$$
+
+This is an illustrative cost decomposition; the addends depend on what is counted and need measurement. Deployment independence may justify the overhead.

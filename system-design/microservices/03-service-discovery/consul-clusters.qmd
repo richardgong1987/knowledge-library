@@ -40,3 +40,13 @@ A microservice architecture needs *both* a control-plane availability strategy (
 Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
 [Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)
+
+## Mathematical Abstraction
+
+Raft-style majority requirements depend on the voting-server count.
+
+$$
+q=\left\lfloor\frac{n}{2}\right\rfloor+1
+$$
+
+For $n$ voting servers, $q$ is the majority quorum needed for typical committed writes. This does not describe every possible read consistency mode.

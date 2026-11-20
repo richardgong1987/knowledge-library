@@ -55,3 +55,13 @@ Historical Hystrix annotations and AOP internals depend on the course's framewor
 What failure does this technique address? Which state belongs to the caller and which belongs to the provider? What would you measure to confirm that it works?
 
 [Run the tiny shop lab](../examples/README.md) · [Microservices index](../index.qmd)
+
+## Mathematical Abstraction
+
+A bulkhead bounds concurrent work in one dependency.
+
+$$
+0\leq C_{\rm product}(t)\leq C_{\max}
+$$
+
+$C_{\rm product}(t)$ is the number of concurrent admitted Product calls. Waiting and rejection policies must still be specified.

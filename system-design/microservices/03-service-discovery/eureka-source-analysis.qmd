@@ -46,3 +46,13 @@ Restart Product B while Order is running. Sketch which caches and registry recor
 Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
 [Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)
+
+## Mathematical Abstraction
+
+A usable endpoint becomes visible after both registration and client refresh.
+
+$$
+T_{\rm visible}\geq T_{\rm registered},\qquad T_{\rm visible}=T_{\rm registered}+\Delta_{\rm propagation}
+$$
+
+$\Delta_{\rm propagation}\geq0$ represents replication and cache delays in a simplified timing model.

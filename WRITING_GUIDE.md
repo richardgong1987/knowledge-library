@@ -34,3 +34,26 @@ title: "Concept Name"
 description: "A concise statement of the problem addressed."
 ---
 ```
+
+## Mathematical formalisation in computer-science lessons
+
+**Global editorial requirement:** Use mathematical notation whenever it improves precision or abstraction. For every JVM and Microservices lesson, conclude with a **Mathematical Abstraction** section. Apply the same principle to future computer-science, algorithm and system-design chapters as appropriate.
+
+1. Begin with one concrete running example; derive an abstraction from its actual states, actions, constraints or dependencies.
+2. Define every symbol, domain, unit and condition that readers need to interpret the relation.
+3. Prefer sets, functions, relations, transition systems, invariants, graphs, inequalities and equations according to what the concept really expresses.
+4. Distinguish **normative guarantees**, **definitions**, **idealised models**, **approximations**, **heuristics** and **measured observations**. Do not present the last three as specification theorems.
+5. Write LaTeX in Quarto using inline `$...$` and display `$$...$$`. Introduce notation in the body where it helps; close the lesson with a concise mathematical synthesis.
+6. Explain the formal relation in clear English, map it back to the same code or example, and state limits or assumptions.
+7. Do not add ornamental formulae just to make a page look academic. Where no useful formalisation exists, explain the limitation instead of inventing false precision.
+
+### Good examples
+
+- **JMM:** `hb = (po ∪ sw)⁺` expresses ordering (with correct symbol definitions).
+- **JVM GC:** live objects form the root-reachable set of a reference graph.
+- **Microservices:** model dependencies as a directed graph; model deadlines as inequalities and circuit breakers as state transitions.
+- **Queues:** use Little's law only under appropriate assumptions, and distinguish it from a deterministic queue-growth approximation.
+
+### Required closing section
+
+Use `## Mathematical Abstraction`, include a display formula or formal relation when justified, and explain the symbols and assumptions immediately below it.

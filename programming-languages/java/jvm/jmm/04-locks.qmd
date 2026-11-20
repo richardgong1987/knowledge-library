@@ -64,3 +64,13 @@ A monitor can coordinate compound state and waiting, but contention can limit th
 Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
 
 [Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)
+
+## Mathematical Abstraction
+
+Monitor release and subsequent acquisition establish a synchronisation edge.
+
+$$
+\operatorname{unlock}(m)\xrightarrow{sw}\operatorname{lock}(m)\quad\Rightarrow\quad\operatorname{unlock}(m)\mathrel{hb}\operatorname{lock}(m)
+$$
+
+$m$ denotes the same monitor. Mutual exclusion applies to code that consistently uses that monitor to protect the shared invariant.

@@ -63,3 +63,13 @@ Trace the edges from `latestOrder=102` to the worker's read. Then explain why re
 Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
 
 [Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)
+
+## Mathematical Abstraction
+
+A volatile flag can publish an earlier ordinary write.
+
+$$
+W(\mathrm{order})\xrightarrow{po}W_v(\mathrm{ready})\xrightarrow{sw}R_v(\mathrm{ready})\xrightarrow{po}R(\mathrm{order})
+$$
+
+The middle edge requires the correctly ordered volatile accesses of the same field; by transitivity, the ordinary write happens-before the later read. It does not make `counter++` atomic.

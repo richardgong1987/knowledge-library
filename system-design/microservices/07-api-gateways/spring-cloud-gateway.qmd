@@ -55,3 +55,13 @@ Log the route ID, upstream target, request ID, result status and elapsed time. D
 Explain the request or event path end to end. Which component can fail, and which information would you collect to diagnose that failure?
 
 [Run the original small lab](../examples/README.md) · [Course overview](../index.qmd)
+
+## Mathematical Abstraction
+
+A predicate selects the route and filters transform the request.
+
+$$
+p_i(r)=\mathrm{true}\Rightarrow r' = F_i(r),\quad \mathrm{upstream}=\operatorname{route}_i(r')
+$$
+
+$p_i$ is a route predicate; $F_i$ denotes its filter chain. This abstracts the gateway model rather than a particular runtime's exact ordering.

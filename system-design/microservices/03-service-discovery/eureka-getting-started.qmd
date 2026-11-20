@@ -47,3 +47,13 @@ This is an explanation of the original course's Eureka setup. Do not copy its de
 Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
 [Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)
+
+## Mathematical Abstraction
+
+Eureka instance membership changes through registration and expiry.
+
+$$
+D_{t+1}(s)=(D_t(s)\cup R_t(s))\setminus X_t(s)
+$$
+
+$R_t$ is newly registered membership and $X_t$ removed membership. This is an abstract set transition, not Eureka's exact internal algorithm.

@@ -45,3 +45,13 @@ If Product A becomes slow but keeps returning 200, will round robin protect Orde
 Name the component that owns this responsibility, explain its behaviour during a failure, and identify one configuration or metric you would verify in production.
 
 [Run the tiny shop example](../examples/README.md) · [Microservices course index](../index.qmd)
+
+## Mathematical Abstraction
+
+Load distribution is a mapping from requests to endpoints.
+
+$$
+b:R\rightarrow I,\qquad N_i=\bigl|\{r\in R:b(r)=i\}\bigr|
+$$
+
+$N_i$ counts assigned requests on instance $i$. Equal counts do not imply equal CPU cost or latency.

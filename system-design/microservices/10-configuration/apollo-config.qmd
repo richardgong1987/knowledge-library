@@ -46,3 +46,13 @@ Both address distributed configuration, but their administration models, integra
 What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
 [Shop lab](../examples/README.md) · [Microservices course](../index.qmd)
+
+## Mathematical Abstraction
+
+Configuration publication is a versioned transition.
+
+$$
+C^{(v)}\xrightarrow{\mathrm{approved\ release}}C^{(v+1)}
+$$
+
+This is a governance model: approval, distribution and effective application are distinct events, not an atomic global transaction.

@@ -53,3 +53,13 @@ For a performance test, also distinguish correctness from throughput, machine ar
 Which properties are guaranteed by the specification, and which outcomes could change between executions? What happens if we remove one synchronisation edge?
 
 [Back to JMM](index.qmd) · [Runnable source](examples/JmmLab.java)
+
+## Mathematical Abstraction
+
+A stress test samples behaviours rather than exhausting all legal executions.
+
+$$
+\operatorname{Observed}(T)\subseteq\operatorname{Allowed}_{\rm JMM}(T)
+$$
+
+For conforming implementations and accurate measurements, observed outcomes form a subset of permitted outcomes; an unobserved outcome may still be allowed.

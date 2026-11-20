@@ -53,3 +53,13 @@ A breaker with too little traffic may falsely trip from a tiny sample. A breaker
 What failure does this technique address? Which state belongs to the caller and which belongs to the provider? What would you measure to confirm that it works?
 
 [Run the tiny shop lab](../examples/README.md) · [Microservices index](../index.qmd)
+
+## Mathematical Abstraction
+
+A circuit breaker is a state machine responding to failure evidence.
+
+$$
+S_{t+1}=\delta(S_t,e_t),\quad S_t\in\{\mathrm{closed},\mathrm{open},\mathrm{halfOpen}\}
+$$
+
+$e_t$ denotes a call outcome or timer event and $\delta$ the configured transition policy. This abstracts Hystrix rather than specifying its exact thresholds.

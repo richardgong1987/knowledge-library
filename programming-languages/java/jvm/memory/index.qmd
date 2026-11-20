@@ -73,3 +73,13 @@ Try `jcmd <pid> Thread.print`, `jcmd <pid> GC.heap_info`, and `jcmd <pid> VM.nat
 The attached *Memory Structure* PDF covers PC, stacks, heap, method area, StringTable and direct memory. Its diagrams are learning aids; normative definitions are in [JVMS §2.5–§2.6](https://docs.oracle.com/javase/specs/jvms/se27/html/jvms-2.html). Consult the [Java 27 tool guide](https://docs.oracle.com/en/java/javase/27/docs/specs/man/jcmd.html) for command details.
 
 [Back to JVM topics](../index.qmd)
+
+## Mathematical Abstraction
+
+Runtime areas can be classified according to whether they belong to a thread or are shared.
+
+$$
+\mathcal{R}_{i}=\{PC_i,\mathrm{Stack}_i\},\quad\mathcal{R}_{\rm shared}=\{\mathrm{Heap},\mathrm{MethodArea}\}
+$$
+
+Here $i$ identifies a thread; this conceptual partition does not prescribe a physical implementation.

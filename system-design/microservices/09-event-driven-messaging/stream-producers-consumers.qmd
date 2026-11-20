@@ -51,3 +51,13 @@ A queue smooths bursts and loosens temporal coupling, but it may introduce delay
 What problem does this design solve? Which guarantee does it give, and which guarantee does it **not** give? How would you detect incorrect operation?
 
 [Shop lab](../examples/README.md) · [Microservices course](../index.qmd)
+
+## Mathematical Abstraction
+
+A successful order publication and consumer processing are different states.
+
+$$
+\mathrm{created}(o)\Rightarrow\mathrm{publishRequested}(e_o)\quad\not\Rightarrow\quad\mathrm{processed}(e_o)
+$$
+
+$e_o$ is the order-created event. The second implication is invalid without further durability, delivery and processing guarantees.

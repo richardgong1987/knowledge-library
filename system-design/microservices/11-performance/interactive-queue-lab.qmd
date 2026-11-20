@@ -68,3 +68,13 @@ At 100 requests/s in and 80 requests/s processed, the *net* backlog growth is 20
 These controls can be combined, but their settings must follow real measurements and business priorities. For actual load testing, read [JMeter: Load Testing Basics](jmeter-basics.qmd) and [Analysing High Load](high-load-analysis.qmd).
 
 [← Performance and Load Testing](index.qmd)
+
+## Mathematical Abstraction
+
+The interactive visualisation uses a deterministic fluid-queue approximation.
+
+$$
+Q(t)=\max\{0,(\lambda-\mu)t\}\quad\text{for }Q(0)=0
+$$
+
+$\lambda$ and $\mu$ are constant offered and service rates. This intentionally excludes finite capacity, variable processing times and retries.

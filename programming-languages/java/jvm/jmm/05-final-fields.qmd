@@ -60,3 +60,13 @@ Make the snapshot contain a mutable `List<String>`. Which operations are protect
 Explain which operations establish a happens-before relationship in this chapter. Distinguish a language guarantee from behaviour that merely happened in one execution.
 
 [Back to the JMM learning tree](index.qmd) · [Single runnable Java file](examples/JmmLab.java)
+
+## Mathematical Abstraction
+
+Constructor-time final-field guarantees and explicit reference publication address different boundaries.
+
+$$
+\operatorname{Snapshot}(o)=(\mathrm{id}(o),\mathrm{market}(o)),\quad\operatorname{countDown}\xrightarrow{hb}\operatorname{returnFromAwait}
+$$
+
+The latch relationship presupposes an await released by the count reaching zero. A final reference does not make subsequently mutated objects deeply immutable.
