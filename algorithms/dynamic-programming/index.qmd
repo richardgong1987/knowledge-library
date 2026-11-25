@@ -1,95 +1,594 @@
 ---
 title: "Dynamic Programming"
-description: "Learn Dynamic Programming with a complete numerical recurrence, proof, counterexample and small tested implementation."
+description: "From counting stairs to Burst Balloons: the five steps of every dynamic program (state, transition, base case, evaluation order, answer), 1D and 2D tables, the 0/1 knapsack, LCS, LIS in O(n log n), and hard interview problems solved math-first."
 ---
 
-## One problem you can understand by hand
+Dynamic programming solves a big problem by solving its small pieces **once each**, writing every answer in a table, and building bigger answers out of smaller ones. This lesson starts with a staircase, learns the five steps that every dynamic program follows, and climbs through one-dimensional tables, grids, two strings, the knapsack, and the longest increasing subsequence, up to interval problems such as Burst Balloons.
 
-**LeetCode 198 — House Robber.** You have houses with values [2,7,9,3,1]. You cannot take two neighbouring houses. A greedy choice of the largest immediately visible house can block a better combination later.
+All code is in [`DynamicProgrammingLab.java`](DynamicProgrammingLab.java). Run it from this folder with `java DynamicProgrammingLab.java`; it checks every number on this page and prints `OK`.
 
-A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
+## The problem
 
-## The approach that looks convincing but fails
+A street has five houses holding $2, 7, 9, 3, 1$ pounds. A burglar alarm rings if two **neighbouring** houses are robbed on the same night. What is the most a thief can take?
 
-Enumerate all subsets of houses and discard adjacent selections. There are up to 2^n subset choices, even though the outcome depends only on the last couple of positions.
+- **Trying every choice** means checking every subset of houses: $2^5 = 32$ subsets for 5 houses, but $2^{100} \approx 1.3 \times 10^{30}$ for 100 houses. Far too many.
+- **Being greedy**, always grabbing the richest house still allowed, happens to work here ($9 + 2 + 1 = 12$), but fails on the street $4, 5, 4$: greedy takes the 5 and blocks both 4s, getting 5 instead of $4 + 4 = 8$.
 
-Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
+We want a method that is always right and takes about one step per house. Dynamic programming gives exactly that, and the answer for $2, 7, 9, 3, 1$ is 12.
 
-## The key reasoning step
+## Explain it like I'm ten
 
-Define a state by the FIRST i houses rather than by the exact list of already chosen houses. Any optimal answer either skips house i or takes it. Those cases are exhaustive and do not overlap.
+::: {.callout-tip}
+Write `1+1+1+1+1+1+1+1 =` on a piece of paper and ask a friend for the total. They count slowly: "eight". Now write one more `1+` at the front. They say "nine" at once. How did they get it so fast? **They did not count again. They remembered that the rest was eight**, and added one.
 
-## From actual numbers to mathematics
+That is the whole of dynamic programming: *remember the answers to smaller questions, so you never work them out twice.* This retelling comes from a much-shared Quora answer by Jonathan Paulson, written for someone asking how to explain dynamic programming to a four-year-old.
+
+Think of a staircase. To know how many ways there are to reach step 5, you only need the number of ways to reach step 4 and step 3, because your last stride came from one of those. So you start at the bottom, write the count on each step in chalk, and walk up. Every step's number is a sum of two numbers already written below it.
+
+The strange name has a story. Richard Bellman, who developed the method at the RAND Corporation in the 1950s, wrote in his autobiography *Eye of the Hurricane* (1984) that he chose "dynamic programming" partly to hide the mathematics from a Secretary of Defense who disliked the word "research". "Programming" meant planning, as in a timetable, not writing code. Aditya Bhargava's *Grokking Algorithms* teaches the same idea by filling in a knapsack grid cell by cell, and so will Level 4.
+:::
+
+## From simple to advanced
+
+### Level 1: the five steps, on a staircase
+
+You climb a staircase taking **1 or 2 steps** at a time. How many different ways reach step $n$? Every dynamic program is built in the same five steps:
+
+1. **State.** Name the small question. $W(i)$ is the number of ways to reach step $i$.
+2. **Transition.** Write the big answer in terms of smaller ones. The last stride came from step $i-1$ or step $i-2$.
+3. **Base case.** Answer the smallest questions directly. $W(0) = 1$ (standing still at the bottom is one way) and $W(1) = 1$.
+4. **Evaluation order.** Compute each state only after the states it needs. Here that is $i = 2, 3, 4, \dots$, bottom to top.
+5. **Answer.** Say which state is the final answer. Here it is $W(n)$.
 
 $$
-DP[i]=\max(DP[i-1],DP[i-2]+a_i)
+W(i) = W(i-1) + W(i-2), \qquad W(0) = 1, \quad W(1) = 1
 $$
 
-**What every symbol means:** DP[i] is the maximum money obtainable from houses 1 through i; a_i is the money at house i. DP[i−1] means skip house i; DP[i−2]+a_i means take i and therefore skip its neighbour. Base cases: DP[0]=0 and DP[−1]=0 in this 1-based description.
+where:
 
-**Now substitute numbers into that same relationship:** For houses [2,7,9,3,1]: DP[1]=max(0,0+2)=2; DP[2]=max(2,0+7)=7; DP[3]=max(7,2+9)=11; DP[4]=max(11,7+3)=11; DP[5]=max(11,11+1)=12. The best total is 12 (2+9+1).
+- $W(i)$ is the number of ways to stand on step $i$;
+- $W(i-1)$ counts the ways whose last stride was a single step, and $W(i-2)$ those whose last stride was a double step;
+- the two groups never overlap, so their sizes simply add.
 
-If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
+Example: $W(2) = 1 + 1 = 2$, $W(3) = 2 + 1 = 3$, $W(4) = 3 + 2 = 5$, $W(5) = 5 + 3 = 8$. For step 3 the three ways are $1{+}1{+}1$, $1{+}2$ and $2{+}1$. These are the Fibonacci numbers.
 
-## Why the result is actually correct
-
-Assume smaller prefixes have optimal stored results. Every feasible solution for i either includes i (forcing exclusion of i−1) or excludes i; taking the larger of both optimal subcases is therefore optimal.
-
-A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
-
-## Actual implementation
-
-The [original, tested JavaScript implementation](../examples/patterns.mjs) exports `houseRobber`:
-
-~~~js
-import { houseRobber } from '../examples/patterns.mjs';
-
-console.log(houseRobber([2,7,9,3,1]));
-~~~
-
-Run this from a `.mjs` file inside this topic directory. The same function is exercised by [the unit tests](../examples/patterns.test.mjs). The implementation is intentionally tiny so the recurrence remains visible.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function houseRobber(a) {
-  let beforePrevious = 0, previous = 0;
-  for (const money of a) {
-    const current = Math.max(previous, beforePrevious + money);
-    beforePrevious = previous; previous = current;
-  }
-  return previous;
+```java
+static long climbWays(int n) {
+    long[] ways = new long[n + 1];
+    ways[0] = 1;                                     // one way to climb nothing: do nothing
+    for (int i = 1; i <= n; i++) {
+        ways[i] = ways[i - 1] + (i >= 2 ? ways[i - 2] : 0);
+    }
+    return ways[n];
 }
-~~~
+```
 
-**Walk through the important lines:**
+Each step costs one addition, so step 45 costs 45 additions and gives $1{,}836{,}311{,}903$ ways. This is LeetCode 70. Plain recursion without the table recomputes the same steps billions of times; the [Memoization](../memoization/index.qmd) lesson counts exactly how many.
 
-1. `previous` is the best result for the prefix ending immediately before the current house.
-2. `beforePrevious` is the best for the prefix two houses earlier.
-3. `current` chooses between SKIPPING the house (`previous`) and TAKING it (`beforePrevious + money`).
-4. Shift the two saved answers forward; the whole DP table is unnecessary.
-5. On `[2,7,9,3,1]`, successive optima are **2,7,11,11,12**.
+### Level 2: a choice at every step
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+The robber's street from *The problem* adds a **choice**. At each house you either skip it or rob it, and robbing it forbids the house before.
 
-## Complexity and failure conditions
+$$
+B(i) = \max\big(B(i-1),\ B(i-2) + a_i\big), \qquad B(0) = 0, \quad B(1) = a_1
+$$
 
-**Cost model:** O(n) time because each house is processed once; O(1) extra space after storing only the previous two states. n is number of houses.
+where:
 
-**A classic mistake:** Greedy 'always take the largest remaining house' does not correctly preserve adjacency constraints; DP solves a global choice using local reusable subproblems. If the houses form a circle (LC 213), the first and last cannot both be selected, so use two linear cases.
+- $B(i)$ is the most cash from the first $i$ houses;
+- $a_i$ is the cash in house $i$, counting from 1;
+- $B(i-1)$ is the best if house $i$ is **skipped**;
+- $B(i-2) + a_i$ is the best if house $i$ is **robbed**, which means house $i-1$ was not.
 
-In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+Example: $a = 2, 7, 9, 3, 1$.
 
-## Try teaching it back
+| $i$ | $a_i$ | skip: $B(i-1)$ | rob: $B(i-2) + a_i$ | $B(i)$ |
+| --- | --- | --- | --- | --- |
+| 1 | 2 | 0 | 2 | **2** |
+| 2 | 7 | 2 | $0 + 7 = 7$ | **7** |
+| 3 | 9 | 7 | $2 + 9 = 11$ | **11** |
+| 4 | 3 | 11 | $7 + 3 = 10$ | **11** |
+| 5 | 1 | 11 | $11 + 1 = 12$ | **12** |
 
-Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+The answer is $B(5) = 12$, from houses 1, 3 and 5. On the street $4, 5, 4$ the table gives $B = 4, 5, 8$, so the right answer 8 appears where greedy found only 5.
 
-## Reference and community insight
+```java
+static int rob(int[] money) {
+    int[] best = new int[money.length + 1];          // best[i] = most cash from the first i houses
+    if (money.length > 0) best[1] = money[0];
+    for (int i = 2; i <= money.length; i++) {
+        best[i] = Math.max(best[i - 1], best[i - 2] + money[i - 1]); // skip house i, or rob it
+    }
+    return best[money.length];
+}
+```
 
-**CLRS relationship:** CLRS Chapter 14 (dynamic programming: optimal substructure and overlapping problems).. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+Only the last two entries are ever read, so two variables could replace the array, using $O(1)$ space. This is LeetCode 198.
 
-**Related classic LeetCode example:** LeetCode 198 — House Robber — [community/official practice link](https://leetcode.com/discuss/post/1747722/how-to-solve-dynamic-programming-problems-in-coding-interviews/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+### Level 3: two dimensions
 
-[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+Some problems need **two numbers** to describe a small question. Then the table is a grid.
+
+**Grid paths.** A robot starts in the top-left cell of a grid and may only move right or down. How many paths reach the bottom-right cell, if some cells hold rocks?
+
+$$
+P(r, c) =
+\begin{cases}
+0 & \text{cell } (r, c) \text{ holds a rock} \\
+1 & (r, c) = (0, 0) \\
+P(r-1, c) + P(r, c-1) & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $P(r, c)$ is the number of paths from the start to row $r$, column $c$, both counted from 0;
+- $P(r-1, c)$ counts paths arriving from above and $P(r, c-1)$ paths arriving from the left;
+- a cell outside the grid has 0 paths.
+
+Example: a $3 \times 3$ grid, open on the left and with a rock in the middle on the right.
+
+```text
+open grid        rock in the middle
+1  1  1          1  1  1
+1  2  3          1  0  1
+1  3  6          1  1  2
+```
+
+The open grid has 6 paths, because $P(2,2) = P(1,2) + P(2,1) = 3 + 3 = 6$. With the rock, $P(1,1) = 0$ and only the 2 paths around the edge survive.
+
+```java
+static int gridPaths(boolean[][] blocked) {
+    int rows = blocked.length, cols = blocked[0].length;
+    int[][] paths = new int[rows][cols];
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            if (blocked[r][c]) continue;             // a rock: zero paths end here
+            if (r == 0 && c == 0) paths[r][c] = 1;
+            else paths[r][c] = (r > 0 ? paths[r - 1][c] : 0) + (c > 0 ? paths[r][c - 1] : 0);
+        }
+    }
+    return paths[rows - 1][cols - 1];
+}
+```
+
+**Two strings: the longest common subsequence (LCS).** A *subsequence* keeps letters in order but may skip some: `ace` is a subsequence of `abcde`. Given two strings $x$ and $y$, find the length of the longest string that is a subsequence of both. This is LeetCode 1143.
+
+$$
+L(i, j) =
+\begin{cases}
+0 & i = 0 \text{ or } j = 0 \\
+L(i-1, j-1) + 1 & x_i = y_j \\
+\max\big(L(i-1, j),\ L(i, j-1)\big) & x_i \ne y_j
+\end{cases}
+$$
+
+where:
+
+- $L(i, j)$ is the LCS length of the first $i$ letters of $x$ and the first $j$ letters of $y$;
+- $x_i$ is the $i$-th letter of $x$, counting from 1;
+- if the last letters match, they can end the common subsequence, so add 1 to the answer without them;
+- if they differ, at least one of them is not used, so drop the last letter of $x$ or of $y$ and keep the better result.
+
+Example: $x = \texttt{abcde}$, $y = \texttt{ace}$. Each cell uses the cell above, the cell to the left, or the cell diagonally up-left:
+
+| | "" | a | c | e |
+| --- | --- | --- | --- | --- |
+| "" | 0 | 0 | 0 | 0 |
+| a | 0 | **1** | 1 | 1 |
+| b | 0 | 1 | 1 | 1 |
+| c | 0 | 1 | **2** | 2 |
+| d | 0 | 1 | 2 | 2 |
+| e | 0 | 1 | 2 | **3** |
+
+The bold cells are the matches: `a` = `a` gives $0 + 1 = 1$, `c` = `c` gives $1 + 1 = 2$, and `e` = `e` gives $2 + 1 = 3$. So $L(5, 3) = 3$, from `ace`.
+
+```java
+static int[][] commonTable(String a, String b) {
+    int[][] common = new int[a.length() + 1][b.length() + 1]; // common[i][j] = LCS of a[0..i) and b[0..j)
+    for (int i = 1; i <= a.length(); i++) {
+        for (int j = 1; j <= b.length(); j++) {
+            if (a.charAt(i - 1) == b.charAt(j - 1)) common[i][j] = common[i - 1][j - 1] + 1;
+            else common[i][j] = Math.max(common[i - 1][j], common[i][j - 1]);
+        }
+    }
+    return common;
+}
+```
+
+The table has $(m + 1)(n + 1)$ cells for strings of lengths $m$ and $n$, here $6 \times 4 = 24$, each filled in $O(1)$: $O(mn)$ time.
+
+### Level 4: the 0/1 knapsack table
+
+A bag holds at most 5 kg. Three items are on the table:
+
+| Item | Weight $w$ | Value $v$ | Value per kg |
+| --- | --- | --- | --- |
+| A | 1 | 1 | 1.00 |
+| B | 3 | 4 | 1.33 |
+| C | 4 | 5 | 1.25 |
+
+Each item is taken **whole or not at all** (that is the "0/1"). Greedy by value per kg takes B, then A (C no longer fits), for value $4 + 1 = 5$. The best is A and C, value 6. To find it reliably, let the state remember both how many items we have considered and how much room is left:
+
+$$
+K(i, c) =
+\begin{cases}
+K(i-1, c) & w_i > c \\
+\max\big(K(i-1, c),\ K(i-1, c - w_i) + v_i\big) & w_i \le c
+\end{cases}
+\qquad K(0, c) = 0
+$$
+
+where:
+
+- $K(i, c)$ is the best value using only the first $i$ items with a bag of capacity $c$;
+- $w_i$ and $v_i$ are the weight and value of item $i$;
+- $K(i-1, c)$ means **leave** item $i$; $K(i-1, c - w_i) + v_i$ means **take** it, which uses $w_i$ of the room.
+
+Example: fill the table row by row. Columns are capacities $c = 0$ to $5$:
+
+| Items allowed | $c=0$ | $c=1$ | $c=2$ | $c=3$ | $c=4$ | $c=5$ |
+| --- | --- | --- | --- | --- | --- | --- |
+| none | 0 | 0 | 0 | 0 | 0 | 0 |
+| A | 0 | 1 | 1 | 1 | 1 | 1 |
+| A, B | 0 | 1 | 1 | 4 | 5 | 5 |
+| A, B, C | 0 | 1 | 1 | 4 | 5 | **6** |
+
+Three cells worked out:
+
+- $K(2, 3) = \max(K(1, 3),\ K(1, 0) + 4) = \max(1, 0 + 4) = 4$: take B alone.
+- $K(2, 4) = \max(K(1, 4),\ K(1, 1) + 4) = \max(1, 1 + 4) = 5$: take A and B.
+- $K(3, 5) = \max(K(2, 5),\ K(2, 1) + 5) = \max(5, 1 + 5) = 6$: take C and, in the remaining 1 kg, the best of A and B, which is A.
+
+```java
+static int[][] knapsackTable(int[] weight, int[] value, int capacity) {
+    int n = weight.length;
+    int[][] best = new int[n + 1][capacity + 1];     // best[i][c] = top value from the first i items within weight c
+    for (int i = 1; i <= n; i++) {
+        for (int c = 0; c <= capacity; c++) {
+            best[i][c] = best[i - 1][c];             // leave item i
+            if (weight[i - 1] <= c) {
+                best[i][c] = Math.max(best[i][c], best[i - 1][c - weight[i - 1]] + value[i - 1]); // take item i
+            }
+        }
+    }
+    return best;
+}
+```
+
+The table has $(n + 1)(W + 1)$ cells, here $4 \times 6 = 24$. Each row only reads the row above, so one array of length $W + 1$ suffices if $c$ runs **downwards** from $W$ to $w_i$; running upwards would let an item be taken twice, which is the *unbounded* knapsack instead. Note that the cost $O(nW)$ grows with the **number** $W$, not with its number of digits, so a capacity of $10^{9}$ is out of reach. This is why knapsack is NP-hard in general but easy for small capacities.
+
+### Level 5: longest increasing subsequence, then faster
+
+Given the sequence $3, 1, 4, 1, 5, 9, 2, 6$, find the longest subsequence that **strictly increases**. This is LeetCode 300.
+
+**First version, $O(n^2)$.** Let the state be "the longest increasing subsequence that **ends** at position $i$":
+
+$$
+E(i) = 1 + \max \lbrace E(j) : j < i,\ a_j < a_i \rbrace
+$$
+
+where:
+
+- $E(i)$ is the length of the longest increasing subsequence whose last element is $a_i$;
+- the maximum runs over earlier positions $j$ whose value is smaller, because only those can come just before $a_i$;
+- the maximum of an empty set counts as 0, so $E(i) \ge 1$;
+- the answer is the largest $E(i)$ over all $i$, because the best subsequence must end somewhere.
+
+Example: for $a = 3, 1, 4, 1, 5, 9, 2, 6$ the values are $E = 1, 1, 2, 1, 3, 4, 2, 4$. For instance $E(6)$, at the value 9, is $1 + \max(E(1), E(2), E(3), E(4), E(5)) = 1 + 3 = 4$, from $1, 4, 5, 9$. The answer is $\max E = 4$.
+
+```java
+static int[] endsHereTable(int[] a) {
+    int[] endsHere = new int[a.length];              // endsHere[i] = longest increasing run ending at a[i]
+    for (int i = 0; i < a.length; i++) {
+        endsHere[i] = 1;
+        for (int j = 0; j < i; j++) {
+            if (a[j] < a[i]) endsHere[i] = Math.max(endsHere[i], endsHere[j] + 1);
+        }
+    }
+    return endsHere;
+}
+
+static int lisQuadratic(int[] a) {
+    return Arrays.stream(endsHereTable(a)).max().orElse(0); // the best run ends somewhere
+}
+```
+
+**Second version, $O(n \log n)$.** Change the state. Instead of one entry per position, keep one entry per **length**:
+
+$$
+T_k = \min \lbrace \text{last value of an increasing subsequence of length } k + 1 \text{ seen so far} \rbrace
+$$
+
+where:
+
+- $T_k$ is the smallest possible "tail" for a subsequence of length $k + 1$; a small tail is best, because it leaves the most room to grow;
+- $T_0 < T_1 < T_2 < \dots$ always holds, so the array is sorted and can be binary-searched;
+- each new value $x$ replaces the first $T_k \ge x$, or is appended if every $T_k < x$; the length of $T$ is the answer.
+
+Example: the same sequence.
+
+| Read $x$ | Where it goes | $T$ afterwards |
+| --- | --- | --- |
+| 3 | append | 3 |
+| 1 | replaces 3 | 1 |
+| 4 | append | 1, 4 |
+| 1 | replaces 1 | 1, 4 |
+| 5 | append | 1, 4, 5 |
+| 9 | append | 1, 4, 5, 9 |
+| 2 | replaces 4 | 1, 2, 5, 9 |
+| 6 | replaces 9 | 1, 2, 5, **6** |
+
+The final length is **4**. The array $1, 2, 5, 6$ is not itself a subsequence of the input; only its length is meaningful. This is called *patience sorting*, after the card game in which you deal cards onto the leftmost pile whose top card is not smaller.
+
+```java
+static int lisFast(int[] a) {
+    int[] tails = new int[a.length];                 // tails[k] = smallest last value of an increasing run of length k + 1
+    int size = 0;
+    for (int x : a) {
+        int lo = 0, hi = size;                       // binary search for the first tail >= x
+        while (lo < hi) {
+            int mid = (lo + hi) / 2;
+            if (tails[mid] < x) lo = mid + 1;
+            else hi = mid;
+        }
+        tails[lo] = x;                               // x extends a run, or gives a run a smaller tail
+        if (lo == size) size++;
+    }
+    return size;
+}
+```
+
+For $n = 10^5$ values the first version does about $n^2 / 2 = 5 \times 10^9$ comparisons, the second about $n \log_2 n \approx 10^5 \times 17 = 1.7 \times 10^6$. Searching for the first tail $\ge x$ (not $> x$) is what makes the subsequence *strictly* increasing: three 7s give length 1.
+
+### Level 6: the shapes a dynamic program takes
+
+Every dynamic program is one of a handful of shapes. Recognising the shape tells you the state.
+
+| Shape | State | Typical transition | Example | Cost |
+| --- | --- | --- | --- | --- |
+| Line | position $i$ | from $i-1$, $i-2$, … | stairs, house robber, coin change | $O(n)$ or $O(nk)$ |
+| Grid | cell $(r, c)$ | from above and left | grid paths, minimum path sum | $O(rc)$ |
+| Two sequences | prefixes $(i, j)$ | match, or drop a letter | LCS, edit distance | $O(mn)$ |
+| Knapsack | item $i$, room $c$ | leave or take | 0/1 knapsack, subset sum | $O(nW)$ |
+| Interval | range $(i, j)$ | split at some $k$ | Burst Balloons, matrix chains | $O(n^3)$ |
+| Subset | bitmask of used items | add one item | travelling salesman | $O(2^n n^2)$, see [Bitmask](../bitmask/index.qmd) |
+| Tree | node $v$ | combine the children | largest independent set in a tree | $O(n)$ |
+| Game | position | best reply to the opponent | see [Minimax](../minimax/index.qmd) | states × moves |
+
+Two standard tricks apply to every shape. **Space saving**: if a row only reads the previous row, keep two rows (or one, filled in the right direction). **Reconstruction**: to print the chosen items rather than just the best value, walk back from the answer cell and ask, at each cell, which branch of the $\max$ produced it.
+
+## Why it works and what it costs
+
+**Why it is correct.** Two properties must hold.
+
+- *Optimal substructure*: the best answer to a big state is built from best answers to smaller states. For the robber, the best haul from houses 1 to $i$ that robs house $i$ must use the best haul from houses 1 to $i-2$; any worse haul there could be swapped for the best one and improve the total.
+- *Evaluation order*: every state is computed after all the states it reads. Then a proof by **strong induction** over that order works: the base cases are right by definition; if every earlier entry is right, the transition considers every possible last decision and picks the best, so the new entry is right too. In the robber table, $B(3) = 11$ is correct because $B(1) = 2$ and $B(2) = 7$ were already correct, and the last decision is either "skip house 3" or "rob house 3".
+
+If the states and their dependencies formed a cycle, no order would exist. That is the test: the dependency graph of the states must be a *directed acyclic graph*, and the evaluation order is a topological order of it.
+
+**What it costs.** Count states and multiply by the work per state:
+
+$$
+\text{time} = \sum_{s} (\text{choices at } s), \qquad \text{space} = \text{number of states stored}
+$$
+
+where the sum runs over every state $s$ in the table, and the choices are the options the transition compares.
+
+Example: the five-house street has 5 states with 2 choices each, $5 \times 2 = 10$ operations. The LCS of `abcde` and `ace` has $5 \times 3 = 15$ non-border cells with up to 3 options, at most 45 operations. LIS in its first version has $0 + 1 + \dots + 7 = 28$ inner comparisons for $n = 8$, which is $\frac{n(n-1)}{2}$.
+
+| Problem | States | Work per state | Time | Space |
+| --- | --- | --- | --- | --- |
+| Stairs, house robber | $n$ | $O(1)$ | $O(n)$ | $O(1)$ after space saving |
+| Grid paths, LCS, edit distance | $mn$ | $O(1)$ | $O(mn)$ | $O(\min(m, n))$ |
+| 0/1 knapsack | $nW$ | $O(1)$ | $O(nW)$ | $O(W)$ |
+| LIS | $n$ | $O(n)$, or $O(\log n)$ | $O(n^2)$, or $O(n \log n)$ | $O(n)$ |
+| Burst Balloons | $n^2$ | $O(n)$ | $O(n^3)$ | $O(n^2)$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| A state that forgets something the future depends on | Wrong answers on some inputs, such as a knapsack state with no "room left" | Ask: given only this state, is the best future decided? If not, add the missing fact |
+| Off-by-one between "first $i$ items" and "index $i$" | `ArrayIndexOutOfBoundsException`, or the first item ignored | Size the table $n + 1$ and read item $i$ as `a[i - 1]`, as every table on this page does |
+| Filling cells before the cells they read | Zeros or stale values used in the transition | Check the evaluation order against the recurrence: interval DPs go by length, not by $i$ |
+| 1D knapsack with capacity running upwards | Items are used more than once | Run $c$ from $W$ down to $w_i$ for 0/1; upwards is the unbounded variant |
+| `Integer.MAX_VALUE` as "impossible", then adding 1 | Overflow to a large negative number, which wins every `min` | Use a sentinel such as `amount + 1`, as Coin Change below does |
+| Assuming the LIS `tails` array is an actual subsequence | Printing a sequence that is not in the input | Store a parent index per element if the sequence itself is needed |
+| Using DP when a greedy rule is provably enough, or greedy when it is not | Too slow, or wrong on a counterexample | Test the greedy rule against the DP on small inputs; see [Greedy](../greedy/index.qmd) |
+
+## Interview problems
+
+Each solution starts with the recurrence. Once the state and the transition are right, the code is a short pair of loops.
+
+### 1. LeetCode 322: Coin Change (Medium)
+
+**Problem.** Given coin values and an amount, return the fewest coins that add up to the amount, or $-1$ if it cannot be made. Coins may be reused. For coins $1, 2, 5$ and amount 11 the answer is 3, from $5 + 5 + 1$.
+
+**Math first.** Whatever the best answer is, it has a **last coin** $c$. Removing it leaves a best answer for $a - c$:
+
+$$
+F(a) =
+\begin{cases}
+0 & a = 0 \\
+1 + \min_{c \in C,\ c \le a} F(a - c) & a > 0
+\end{cases}
+$$
+
+where:
+
+- $F(a)$ is the fewest coins that make amount $a$;
+- $C$ is the set of coin values;
+- the minimum of an empty set, or over amounts that cannot be made, is $\infty$, which becomes the answer $-1$.
+
+Example: $C = \lbrace 1, 2, 5 \rbrace$.
+
+| $a$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| $F(a)$ | 0 | 1 | 1 | 2 | 2 | 1 | 2 | 2 | 3 | 3 | 2 | **3** |
+
+The last cell: $F(11) = 1 + \min(F(10), F(9), F(6)) = 1 + \min(2, 3, 2) = 3$.
+
+**Idea.** Fill $F$ from 0 up to the amount; each cell tries every coin as the last one. Use `amount + 1` for "impossible", since no answer needs more than `amount` coins of value at least 1.
+
+```java
+static int coinChange(int[] coins, int amount) {
+    int[] fewest = new int[amount + 1];              // fewest[a] = fewest coins that make a
+    Arrays.fill(fewest, amount + 1);                 // amount + 1 means "impossible": no answer needs that many
+    fewest[0] = 0;
+    for (int a = 1; a <= amount; a++) {
+        for (int c : coins) {
+            if (c <= a) fewest[a] = Math.min(fewest[a], fewest[a - c] + 1);
+        }
+    }
+    return fewest[amount] > amount ? -1 : fewest[amount];
+}
+```
+
+**Answer.** `coinChange([1, 2, 5], 11) = 3`, `coinChange([2], 3) = -1`, and `coinChange([1, 3, 4], 6) = 2` (from $3 + 3$, where greedy would use $4 + 1 + 1$). Time $O(A \cdot k)$ for amount $A$ and $k$ coins: at LeetCode's limits, $A = 10^4$ and $k = 12$, that is $1.2 \times 10^5$ steps. Space $O(A)$.
+
+### 2. LeetCode 72: Edit Distance (Medium)
+
+**Problem.** Return the fewest single-letter **insertions, deletions and replacements** that turn one word into another. For `horse` → `ros` the answer is 3: replace h with r (`rorse`), delete r (`rose`), delete e (`ros`).
+
+**Math first.** Look at the last letters of the two prefixes. If they match, they cost nothing. If not, the last edit was one of three:
+
+$$
+D(i, j) =
+\begin{cases}
+i & j = 0 \\
+j & i = 0 \\
+D(i-1, j-1) & x_i = y_j \\
+1 + \min\big(D(i-1, j-1),\ D(i-1, j),\ D(i, j-1)\big) & x_i \ne y_j
+\end{cases}
+$$
+
+where:
+
+- $D(i, j)$ is the edit distance from the first $i$ letters of $x$ to the first $j$ letters of $y$;
+- $D(i-1, j-1) + 1$ **replaces** $x_i$ by $y_j$;
+- $D(i-1, j) + 1$ **deletes** $x_i$;
+- $D(i, j-1) + 1$ **inserts** $y_j$ at the end;
+- the borders are $i$ deletions to reach the empty word, or $j$ insertions from it.
+
+Example: $x = \texttt{horse}$, $y = \texttt{ros}$. The full table:
+
+| | "" | r | o | s |
+| --- | --- | --- | --- | --- |
+| "" | 0 | 1 | 2 | 3 |
+| h | 1 | 1 | 2 | 3 |
+| o | 2 | 2 | **1** | 2 |
+| r | 3 | **2** | 2 | 2 |
+| s | 4 | 3 | 3 | **2** |
+| e | 5 | 4 | 4 | **3** |
+
+Some cells worked out:
+
+- $D(1, 1)$: h ≠ r, so $1 + \min(D(0,0), D(0,1), D(1,0)) = 1 + \min(0, 1, 1) = 1$ (replace).
+- $D(2, 2)$: o = o, so $D(1, 1) = 1$.
+- $D(3, 1)$: r = r, so $D(2, 0) = 2$ (delete h and o).
+- $D(4, 3)$: s = s, so $D(3, 2) = 2$.
+- $D(5, 3)$: e ≠ s, so $1 + \min(D(4, 2), D(4, 3), D(5, 2)) = 1 + \min(3, 2, 4) = 3$ (delete e).
+
+**Idea.** This is the LCS grid of Level 3 with three moves instead of two. Fill the borders, then the rows, and read the bottom-right cell.
+
+```java
+static int[][] editTable(String a, String b) {
+    int[][] d = new int[a.length() + 1][b.length() + 1]; // d[i][j] = edits that turn a[0..i) into b[0..j)
+    for (int i = 0; i <= a.length(); i++) d[i][0] = i;   // delete all i letters
+    for (int j = 0; j <= b.length(); j++) d[0][j] = j;   // insert all j letters
+    for (int i = 1; i <= a.length(); i++) {
+        for (int j = 1; j <= b.length(); j++) {
+            if (a.charAt(i - 1) == b.charAt(j - 1)) d[i][j] = d[i - 1][j - 1];
+            else d[i][j] = 1 + Math.min(d[i - 1][j - 1], Math.min(d[i - 1][j], d[i][j - 1])); // replace, delete, insert
+        }
+    }
+    return d;
+}
+
+static int minDistance(String a, String b) {
+    return editTable(a, b)[a.length()][b.length()];
+}
+```
+
+**Answer.** `minDistance("horse", "ros") = 3` and `minDistance("intention", "execution") = 5`. Time and space $O(mn)$: for the 500-letter words LeetCode allows, $501 \times 501 \approx 251{,}000$ cells. Keeping only two rows cuts space to $O(n)$. This recurrence is the one published by Wagner and Fischer in 1974; the distance itself is named after Vladimir Levenshtein.
+
+### 3. LeetCode 312: Burst Balloons (Hard)
+
+**Problem.** Balloons in a row carry numbers. Bursting balloon $k$ earns $\text{left} \times k \times \text{right}$, using its current neighbours, and treats the ends as 1. Burst all balloons for the most coins. For `[3, 1, 5, 8]` the answer is 167.
+
+**Math first.** Choosing the **first** balloon to burst is hopeless, because its neighbours then change. Choose the **last** one instead. Pad the row with a 1 at each end, giving $p_0, p_1, \dots, p_{n+1}$. If $k$ is the last balloon burst strictly between $i$ and $j$, then at that moment its neighbours are exactly $p_i$ and $p_j$, and the balloons left of $k$ and right of $k$ were burst independently:
+
+$$
+B(i, j) = \max_{i < k < j} \big( B(i, k) + p_i \, p_k \, p_j + B(k, j) \big), \qquad B(i, i+1) = 0
+$$
+
+where:
+
+- $B(i, j)$ is the most coins from bursting every balloon strictly between positions $i$ and $j$, with $i$ and $j$ still standing;
+- $k$ is the last balloon burst in that range, earning $p_i \, p_k \, p_j$;
+- $B(i, i+1) = 0$ because there is nothing between neighbours;
+- the answer is $B(0, n+1)$.
+
+Example: `[3, 1, 5, 8]` padded is $p = 1, 3, 1, 5, 8, 1$ at positions 0 to 5.
+
+- $B(1, 3)$, only the 1 at position 2 between 3 and 5: $3 \cdot 1 \cdot 5 = 15$.
+- $B(1, 4)$, the 1 and the 5 between 3 and 8: last is 5, so $B(1, 3) + 3 \cdot 5 \cdot 8 + B(3, 4) = 15 + 120 + 0 = 135$; last is 1 gives less.
+- $B(0, 4)$, the 3, 1, 5 between 1 and 8: last is 3, so $B(0, 1) + 1 \cdot 3 \cdot 8 + B(1, 4) = 0 + 24 + 135 = 159$.
+- $B(0, 5)$, everything: last is 8, so $B(0, 4) + 1 \cdot 8 \cdot 1 + B(4, 5) = 159 + 8 + 0 = \mathbf{167}$.
+
+Read forwards, that is the order 1, 5, 3, 8, earning $15 + 120 + 24 + 8 = 167$.
+
+**Idea.** This is an *interval* DP: a range's answer depends on shorter ranges inside it, so fill the table by increasing gap $j - i$.
+
+```java
+static int maxCoins(int[] nums) {
+    int n = nums.length;
+    int[] p = new int[n + 2];                        // the balloons with a 1 added at each end
+    p[0] = p[n + 1] = 1;
+    for (int i = 0; i < n; i++) p[i + 1] = nums[i];
+    int[][] best = new int[n + 2][n + 2];            // best[i][j] = most coins from bursting everything strictly between i and j
+    for (int gap = 2; gap <= n + 1; gap++) {
+        for (int i = 0; i + gap <= n + 1; i++) {
+            int j = i + gap;
+            for (int k = i + 1; k < j; k++) {        // k is the LAST balloon to burst between i and j
+                best[i][j] = Math.max(best[i][j], best[i][k] + p[i] * p[k] * p[j] + best[k][j]);
+            }
+        }
+    }
+    return best[0][n + 1];
+}
+```
+
+**Answer.** `maxCoins([3, 1, 5, 8]) = 167` and `maxCoins([1, 5]) = 10`. There are about $\frac{(n+2)^2}{2}$ ranges with up to $n$ choices of $k$: $O(n^3)$ time, roughly $\frac{n^3}{6} = 4.5 \times 10^6$ steps for LeetCode's $n = 300$, and $O(n^2)$ space.
+
+## Mathematical Abstraction
+
+A dynamic program is a function on a directed acyclic graph of states, evaluated in topological order:
+
+$$
+\text{DP}(s) = \operatorname{opt}_{p \in \text{Pred}(s)} \big( \text{DP}(p) \otimes w(p, s) \big), \qquad
+\text{time} = \sum_{s} \lvert \text{Pred}(s) \rvert
+$$
+
+where:
+
+- $s$ is a state and $\text{Pred}(s)$ is the set of smaller states it is built from, its *predecessors*;
+- $\operatorname{opt}$ is $\max$, $\min$ or $\sum$, depending on whether we maximise, minimise or count;
+- $\otimes$ combines a predecessor's answer with the cost $w(p, s)$ of the last decision, usually by $+$;
+- base states have no predecessors and are given directly, and $\lvert \text{Pred}(s) \rvert$ is how many predecessors $s$ has.
+
+Example: for the staircase, $\operatorname{opt}$ is $\sum$, $\text{Pred}(i) = \lbrace i-1, i-2 \rbrace$ and $w = 0$, so $\text{DP}(5) = \text{DP}(4) + \text{DP}(3) = 5 + 3 = 8$ at a cost of 2 per state. For Coin Change with coins $1, 2, 5$, $\operatorname{opt}$ is $\min$, $\text{Pred}(a) = \lbrace a-1, a-2, a-5 \rbrace$ and $w = 1$ coin, so $\text{DP}(11) = \min(2, 3, 2) + 1 = 3$ at a cost of 3 per state. A problem is a dynamic program exactly when its states form such a graph and the best answer at a state is built from the best answers at its predecessors.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 14, "Dynamic Programming": rod cutting (14.1), elements of dynamic programming (14.3) and longest common subsequence (14.4). Section 15.2, "Elements of the greedy strategy", compares greedy algorithms with dynamic programming. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Computer Science: An Interdisciplinary Approach*, §2.3 "Recursion", whose "Dynamic programming" part covers top-down and bottom-up Fibonacci and the longest common subsequence in Java: <https://introcs.cs.princeton.edu/java/23recursion/>.
+- Jeff Erickson, *Algorithms* (2019), Chapter 3, "Dynamic Programming", including the history of Bellman's name for it: <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- Richard Bellman, *Dynamic Programming* (Princeton University Press, 1957); and *Eye of the Hurricane: An Autobiography* (World Scientific, 1984) for the origin of the name.
+- Aditya Bhargava, *Grokking Algorithms* (Manning, 2016), Chapter 9, "Dynamic programming".
+- Jonathan Paulson's answer to "How should I explain dynamic programming to a 4-year-old?" on Quora, retold above in our own words.
+- Robert A. Wagner and Michael J. Fischer, "The String-to-String Correction Problem", *Journal of the ACM* 21(1), 1974.
+- LeetCode: [70. Climbing Stairs](https://leetcode.com/problems/climbing-stairs/), [198. House Robber](https://leetcode.com/problems/house-robber/), [1143. Longest Common Subsequence](https://leetcode.com/problems/longest-common-subsequence/), [300. Longest Increasing Subsequence](https://leetcode.com/problems/longest-increasing-subsequence/), [322. Coin Change](https://leetcode.com/problems/coin-change/), [72. Edit Distance](https://leetcode.com/problems/edit-distance/), [312. Burst Balloons](https://leetcode.com/problems/burst-balloons/).
+
+[← Dynamic Programming and Decision Making](../groups/03-optimisation.qmd) · [Memoization →](../memoization/index.qmd)

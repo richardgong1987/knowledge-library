@@ -1,62 +1,416 @@
 ---
 title: "Minimax"
-description: "Learn Minimax with a complete numerical recurrence, proof, counterexample and small tested implementation."
+description: "Choosing the best move against an opponent who answers with the worst one for you: game trees, value = max over my moves of min over replies, the score-difference DP, alpha–beta pruning and its b^(d/2) best case, evaluation functions and chance nodes, and hard interview problems solved math-first."
 ---
 
-## One problem you can understand by hand
+Minimax is the rule for playing against someone who wants you to lose. You assume every reply will be the one that hurts you most, and among your moves you choose the one whose **worst case is best**. This lesson draws the game tree, turns the rule into a recursion, makes it fast with a table, makes it faster with alpha–beta pruning, and ends with three interview problems, one of which has no opponent at all, only a malicious answer.
 
-**LeetCode 486 — Predict the Winner.** You know the remaining numbers, but the opponent deliberately tries to reduce your final lead. A naive largest-current-value choice can fail.
+All code is in [`MinimaxLab.java`](MinimaxLab.java). Run it from this folder with `java MinimaxLab.java`; it checks every number on this page and prints `OK`.
 
-A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
+## The problem
 
-## The approach that looks convincing but fails
+Four coins lie in a row, worth $3, 9, 1, 2$. You and a friend take turns taking **one coin from either end**; you go first. Each of you wants to finish with more money.
 
-Try each initial choice greedily, ignoring the best reply from the other player.
+- **Grabbing the bigger end** looks sensible. You take the 3 (it beats the 2), your friend takes the 9, you take the 2, your friend takes the 1. You lose, $5$ to $10$.
+- **Thinking ahead** wins. Take the 2 instead. Now the ends are 3 and 1, and whichever your friend takes, the 9 becomes an end for you. You win, $11$ to $4$.
 
-Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
+Trying every line of play works for 4 coins, but each turn has 2 choices, so 40 coins have $2^{39} \approx 5.5 \times 10^{11}$ lines. Minimax with a table needs only $\frac{40 \times 41}{2} = 820$ entries.
 
-## The key reasoning step
+## Explain it like I'm ten
 
-At each node of the game tree, the current player chooses the branch with the best worst-case consequence. For end-picking games, using a score difference turns the opponent's optimisation into a minus sign.
+::: {.callout-tip}
+Two children share a cake with the rule *"I cut, you choose."* If you cut, how should you cut? You know your brother will grab the bigger piece, so whatever you cut, **you get the smaller piece**. The best you can do is make the smaller piece as big as possible, which means cutting exactly in half. You have maximised your minimum. That is minimax.
 
-## From actual numbers to mathematics
+In a game you do this again and again: "If I move here, what is the worst my opponent can do to me? And then what is the best I can do after that?" Drawn on paper, the moves branch like a tree, and you work from the leaves back up to the root.
+
+John von Neumann proved the minimax theorem for two-player zero-sum games in 1928. Claude Shannon's 1950 paper "Programming a Computer for Playing Chess" proposed that a chess machine should look a few moves ahead, score the positions it reaches, and back the scores up the tree by minimax, which is still how game programs think. Donald Knuth and Ronald Moore analysed the shortcut called *alpha–beta pruning* in 1975, and showed how much of the tree it can skip.
+:::
+
+## From simple to advanced
+
+### Level 1: one move each
+
+You choose a move $a$, then your opponent chooses a reply $b$, and you score $U(a, b)$. Your opponent wants your score low.
 
 $$
-V(s)=\max_{a\in Moves(s)}\bigl(-V(next(s,a))+\operatorname{gain}(s,a)\bigr)
+V = \max_{a} \min_{b} U(a, b)
 $$
 
-**What every symbol means:** s is the current game state; Moves(s) lists available actions; next(s,a) is the resulting state; gain(s,a) is the current player's immediate score; V(s) is the optimal score difference for the player whose turn it is.
+where:
 
-**Now substitute numbers into that same relationship:** If one move gains 3 immediately and leaves the opponent an advantage V=5, its resulting value is 3−5=−2. Another move gains 1 but leaves opponent advantage V=−1, giving 1−(−1)=2; the second move is better despite the smaller immediate gain.
+- $a$ ranges over your moves and $b$ over the opponent's replies;
+- $U(a, b)$ is your score after $a$ and $b$; a zero-sum game means the opponent's score is $-U$;
+- $\min_b U(a, b)$ is the **worst case** of move $a$, because the opponent picks the reply;
+- $V$, the *minimax value*, is the best of those worst cases, the score you can **guarantee**.
 
-If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
+Example: three moves, each with three replies.
 
-## Why the result is actually correct
+| My move | Reply 1 | Reply 2 | Reply 3 | Worst case $\min_b$ |
+| --- | --- | --- | --- | --- |
+| A | 4 | 6 | 5 | **4** |
+| B | 7 | 2 | 9 | 2 |
+| C | 3 | 8 | 1 | 1 |
 
-For each possible move, the remaining game's value is optimally controlled by the opponent. Negating that value expresses the current player's eventual differential; taking the maximum gives the best guaranteed outcome.
+So $V = \max(4, 2, 1) = 4$, by move A. An optimist would choose B for its 9; a smart opponent answers with the 2.
 
-A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
+```java
+static int minimaxTwoPly(int[][] tree) {
+    int best = Integer.MIN_VALUE;
+    for (int[] replies : tree) {
+        int worst = Integer.MAX_VALUE;
+        for (int score : replies) worst = Math.min(worst, score); // they pick what hurts me most
+        best = Math.max(best, worst);                             // I pick the move whose worst case is best
+    }
+    return best;
+}
+```
 
-## Actual implementation
+### Level 2: game trees of any depth
 
-For this strategic/state-space problem, construct a memo table keyed by the state from the formula above. The table should return the exact score difference or feasibility result for that state; verify the two-pile numerical example before considering large inputs. The mathematics is the main result; a production framework would add no understanding here.
+Real games have many turns. Draw each position as a node and each move as an edge: that is the **game tree**. The maximising player ("MAX") and the minimising player ("MIN") alternate by level, and the leaves are finished games with a score for MAX.
 
-## Complexity and failure conditions
+$$
+V(s) =
+\begin{cases}
+U(s) & s \text{ is a leaf} \\
+\max_{s' \in \operatorname{Moves}(s)} V(s') & \text{MAX is to move in } s \\
+\min_{s' \in \operatorname{Moves}(s)} V(s') & \text{MIN is to move in } s
+\end{cases}
+$$
 
-**Cost model:** Exponential search without state reuse for a general game tree; interval-game DP can have O(n²) distinct states when only two ends may be removed.
+where:
 
-**A classic mistake:** Minimax presumes the opponent plays optimally. If chance changes the next state, use expectimax or a stochastic game model; a wider tree is not automatically better without correct evaluation.
+- $s$ is a position and $\operatorname{Moves}(s)$ the positions one move away;
+- $U(s)$ is the score of a finished game, from MAX's point of view;
+- $V(s)$ is the score MAX can guarantee from $s$ if both sides play perfectly.
 
-In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+Example: a tree of depth 3 with 8 leaves. MAX moves at the root, MIN at the next level, MAX again, and then the game ends.
 
-## Try teaching it back
+```text
+MAX                      root = max(5, 0) = 5
+              ┌───────────────┴───────────────┐
+MIN       min(5, 9) = 5                   min(2, 0) = 0
+          ┌───────┴───────┐               ┌───────┴───────┐
+MAX   max(3,5)=5     max(6,9)=9      max(1,2)=2      max(0,-1)=0
+       3     5        6     9         1     2         0     -1
+```
 
-Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+Each value is computed from the level below, so the root is worth **5**. MAX's best first move is the left one.
 
-## Reference and community insight
+```java
+record Node(int score, List<Node> children) {
+    static Node leaf(int score) {
+        return new Node(score, List.of());
+    }
 
-**CLRS relationship:** Connect to CLRS Chapter 14 dynamic programming; minimax is not a dedicated CLRS 4e chapter.. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+    static Node of(Node... children) {
+        return new Node(0, List.of(children));
+    }
 
-**Related classic LeetCode example:** LeetCode 486 — Predict the Winner — [community/official practice link](https://leetcode.com/problems/predict-the-winner/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+    boolean isLeaf() {
+        return children.isEmpty();
+    }
+}
 
-[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+static int minimax(Node node, boolean maxToMove) {
+    if (node.isLeaf()) return node.score();
+    int best = maxToMove ? Integer.MIN_VALUE : Integer.MAX_VALUE;
+    for (Node child : node.children()) {
+        int value = minimax(child, !maxToMove);
+        best = maxToMove ? Math.max(best, value) : Math.min(best, value);
+    }
+    return best;
+}
+```
+
+A tree with $b$ moves per position and depth $d$ has $b^d$ leaves, and plain minimax visits every one: $2^3 = 8$ here, but $10^6$ for $b = 10$ and $d = 6$. A shorter way to write the same rule is **negamax**: score every position for the player to move, so $V(s) = \max_{s'} \big(-V(s')\big)$, and one `max` serves both players.
+
+### Level 3: the same positions again and again: minimax with a table
+
+In the coin game of *The problem*, different move orders reach the same position. Taking the left coin then the right one leaves the same row as right then left. So, as in [Dynamic Programming](../dynamic-programming/index.qmd), give each **position** one table entry instead of one tree node per path. A position is the remaining row $a_i, \dots, a_j$, and its value is the lead the player to move can guarantee:
+
+$$
+D(i, j) = \max\big(a_i - D(i+1, j),\ a_j - D(i, j-1)\big), \qquad D(i, i) = a_i
+$$
+
+where:
+
+- $D(i, j)$ is the best (my total $-$ your total) on coins $i$ to $j$ for the player about to move;
+- $a_i - D(i+1, j)$ means "take the left coin, then you lead by $D(i+1, j)$ on the rest", and similarly for the right coin;
+- this is negamax: the minus sign is the opponent's best reply.
+
+Example: $a = 3, 9, 1, 2$ (indices 0 to 3). Fill the table by the length of the row:
+
+- single coins: $D(0,0) = 3$, $D(1,1) = 9$, $D(2,2) = 1$, $D(3,3) = 2$;
+- $D(0,1) = \max(3 - 9,\ 9 - 3) = 6$, $D(1,2) = \max(9 - 1,\ 1 - 9) = 8$, $D(2,3) = \max(1 - 2,\ 2 - 1) = 1$;
+- $D(0,2) = \max(3 - D(1,2),\ 1 - D(0,1)) = \max(3 - 8,\ 1 - 6) = -5$;
+- $D(1,3) = \max(9 - D(2,3),\ 2 - D(1,2)) = \max(9 - 1,\ 2 - 8) = 8$;
+- $D(0,3) = \max(3 - D(1,3),\ 2 - D(0,2)) = \max(3 - 8,\ 2 + 5) = \mathbf{7}$.
+
+The lead is 7, and the total is 15, so the first player gets $\frac{15 + 7}{2} = 11$ and the second gets 4, by taking the 2 first. Greedy's choice, the 3, is worth only $-5$.
+
+```java
+static int bestLead(int[] a) {
+    int n = a.length;
+    int[][] lead = new int[n][n];
+    for (int i = n - 1; i >= 0; i--) {
+        lead[i][i] = a[i];
+        for (int j = i + 1; j < n; j++) {
+            lead[i][j] = Math.max(a[i] - lead[i + 1][j], a[j] - lead[i][j - 1]); // take the left end or the right end
+        }
+    }
+    return lead[0][n - 1];
+}
+```
+
+There are $\frac{n(n+1)}{2}$ positions with 2 moves each: $O(n^2)$ instead of $2^{n-1}$ lines of play. For $n = 4$ that is 10 entries; for $n = 40$, 820.
+
+### Level 4: alpha–beta pruning
+
+Often the tree has no repeated positions to share, and it is simply too big. Alpha–beta pruning skips branches that **cannot change the answer**. It carries two numbers down the tree:
+
+$$
+\alpha = \text{the best score MAX is already sure of}, \qquad \beta = \text{the best score MIN is already sure of}, \qquad \text{stop when } \alpha \ge \beta
+$$
+
+where:
+
+- $\alpha$ (alpha) starts at $-\infty$ and only rises; $\beta$ (beta) starts at $+\infty$ and only falls;
+- both are about lines of play already explored above the current node;
+- when $\alpha \ge \beta$, one player already has a better option elsewhere and will never let the game reach this node, so its remaining children are skipped.
+
+Example: the Level 1 tree, with MAX at the root.
+
+- Move A: MIN looks at 4, 6, 5 and returns 4. Now $\alpha = 4$: MAX is sure of at least 4.
+- Move B: the first reply is 7, so MIN can hold B to 7 or less. The second reply is 2, so MIN can hold B to 2: $\beta = 2 \le \alpha = 4$. MAX will never choose B, whatever the third reply is. **Skip the 9.**
+- Move C: the first reply is 3, so $\beta = 3 \le 4$. **Skip the 8 and the 1.**
+
+The answer is still 4, after looking at **6 of the 9 leaves**. On the depth-3 tree of Level 2, alpha–beta looks at 5 of the 8 leaves: the 9, the 0 and the $-1$ are never needed.
+
+```java
+static int alphaBeta(Node node, boolean maxToMove, int alpha, int beta) {
+    if (node.isLeaf()) {
+        leavesSeen++;
+        return node.score();
+    }
+    for (Node child : node.children()) {
+        int value = alphaBeta(child, !maxToMove, alpha, beta);
+        if (maxToMove) alpha = Math.max(alpha, value);
+        else beta = Math.min(beta, value);
+        if (alpha >= beta) break;                    // the other player will never allow this line, so stop
+    }
+    return maxToMove ? alpha : beta;
+}
+```
+
+It is called with `alpha = Integer.MIN_VALUE` and `beta = Integer.MAX_VALUE`. How much it saves depends on the **order** in which moves are tried. If the best move is always tried first, Knuth and Moore proved that the number of leaves examined is the minimum possible:
+
+$$
+L_{\text{best}}(b, d) = b^{\lceil d/2 \rceil} + b^{\lfloor d/2 \rfloor} - 1 \approx 2\, b^{d/2}
+$$
+
+where:
+
+- $b$ is the number of moves per position and $d$ the depth of the tree;
+- $\lceil d/2 \rceil$ and $\lfloor d/2 \rfloor$ are $d/2$ rounded up and down;
+- with the worst ordering nothing is pruned and all $b^d$ leaves are examined.
+
+Example: $b = 10$, $d = 6$. Plain minimax examines $10^6 = 1{,}000{,}000$ leaves; perfectly ordered alpha–beta examines $10^3 + 10^3 - 1 = \mathbf{1{,}999}$, about 500 times fewer. For $b = 3$, $d = 2$ the minimum is $3 + 3 - 1 = 5$ of 9 leaves. The lab counts both cases leaf by leaf. Since $b^{d/2} = (\sqrt{b})^d$, good ordering makes the tree behave as if it had $\sqrt{10} \approx 3.2$ moves per position, so in the same time a program can search about **twice as deep**.
+
+### Level 5: real game programs
+
+Chess has far too many positions to reach the end of the game, so programs follow Shannon's plan:
+
+1. **Cut off at a fixed depth** and score the position with an *evaluation function*, an estimate such as "material: queen 9, rook 5, bishop 3, knight 3, pawn 1".
+2. **Order moves well**, so alpha–beta prunes close to its best case: try captures first, and try first the move that was best in the previous, shallower search (*iterative deepening*).
+3. **Remember positions** already searched in a hash table, a *transposition table*. That is [Memoization](../memoization/index.qmd) applied to the game tree, and the same idea as the table of Level 3.
+
+Games with dice add **chance nodes**, whose value is an average rather than a choice. This is called *expectiminimax*:
+
+$$
+V(\text{chance}) = \sum_{k} p_k \, V(s_k)
+$$
+
+where $p_k$ is the probability of outcome $k$ (the $p_k$ add up to 1) and $s_k$ is the position it leads to. Example: a coin flip that leads to a position worth 4 or one worth 10 has value $0.5 \times 4 + 0.5 \times 10 = 7$.
+
+Games where both players move **at the same time**, like rock–paper–scissors, have no pure minimax move; von Neumann's theorem says that the best guarantee then comes from a random mix of moves. For rock–paper–scissors that mix is one third each, and it guarantees an average score of 0.
+
+## Why it works and what it costs
+
+**Why minimax is right.** By induction on the height of the tree (*backward induction*). A leaf's value is its score. If the values of all children are right, then at a MAX node MAX can reach any child, so the best guaranteed score is the largest child value; at a MIN node MIN picks, so MAX can only count on the smallest. No strategy for MAX can guarantee more than $V$, because MIN can always follow the replies that achieve the minima.
+
+**Why alpha–beta gives the same answer.** It only skips a child when $\alpha \ge \beta$. Say this happens at a MIN node: the MIN node is already worth at most $\beta$, and MAX already has a different option worth $\alpha \ge \beta$ higher up. Whatever the skipped children are worth, they can only lower this MIN node, which MAX was not going to choose anyway. The argument for a MAX node is the mirror image. So the root value is unchanged; only the work drops.
+
+**What it costs.**
+
+| Method | Work | On this page's examples |
+| --- | --- | --- |
+| Plain minimax | all $b^d$ leaves | 9 leaves (Level 1), 8 leaves (Level 2), $10^6$ for $b = 10$, $d = 6$ |
+| Alpha–beta, best order | $b^{\lceil d/2 \rceil} + b^{\lfloor d/2 \rfloor} - 1$ leaves | 5 of 9, and 1,999 instead of $10^6$ |
+| Alpha–beta, worst order | $b^d$ leaves | no saving |
+| Minimax with a table | positions $\times$ moves | coin row of 4: 10 positions $\times$ 2 moves |
+
+Memory is the depth of the recursion, $O(d)$, for the tree searches, and one entry per position for the table.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Assuming the opponent plays badly | Moves that look great and lose, such as move B for its 9 | Score every move by its worst reply |
+| Forgetting the minus sign in negamax | The opponent's lead is added to yours | $V = \text{gain} - V(\text{next})$, always from the mover's point of view |
+| `-Integer.MIN_VALUE` in negamax | Overflow: it is still `Integer.MIN_VALUE` | Start from `-Integer.MAX_VALUE`, or use a large finite constant |
+| Pruning with `alpha > beta` instead of `>=` | Correct but slower | Prune as soon as `alpha >= beta` |
+| Reusing a pruned value as exact | Wrong scores stored in a transposition table | A pruned search returns only a bound; store it with a flag saying "at least" or "at most" |
+| Trusting the minimax value of a depth-limited search | Blunders just beyond the horizon | Search deeper where captures are pending (*quiescence search*) |
+| A greedy "take the bigger end" rule | Loses 5 to 10 on the row 3, 9, 1, 2 | Use the table $D(i, j)$ of Level 3 |
+
+## Interview problems
+
+Each solution writes the game value as a max of mins (or a negamax), states what a position is, and fills a table.
+
+### 1. LeetCode 486: Predict the Winner (Medium)
+
+**Problem.** Two players alternately take a number from either end of an array, player 1 first. Return true if player 1's total can be at least player 2's (a tie counts as a win for player 1). `[1, 5, 2]` gives false; `[1, 5, 233, 7]` gives true.
+
+**Math first.** This is exactly the coin game of Level 3:
+
+$$
+\text{player 1 wins} \iff D(0, n-1) \ge 0, \qquad D(i, j) = \max\big(a_i - D(i+1, j),\ a_j - D(i, j-1)\big)
+$$
+
+where $D(i, j)$ is the best lead of the player to move on $a_i, \dots, a_j$, and $D(i, i) = a_i$.
+
+Example: $a = 1, 5, 2$. $D(0,1) = \max(1 - 5,\ 5 - 1) = 4$ and $D(1,2) = \max(5 - 2,\ 2 - 5) = 3$, so $D(0,2) = \max(1 - D(1,2),\ 2 - D(0,1)) = \max(1 - 3,\ 2 - 4) = -2 < 0$. Whatever player 1 takes, player 2 takes the 5. For $1, 5, 233, 7$ the same table gives $D(0, 3) = 222$: player 1 takes the 1, and whichever end player 2 takes, player 1 gets the 233.
+
+**Idea.** Reuse the table of Level 3 and compare with 0.
+
+```java
+static boolean predictTheWinner(int[] nums) {
+    return bestLead(nums) >= 0;
+}
+```
+
+**Answer.** false for `[1, 5, 2]` (lead $-2$), true for `[1, 5, 233, 7]` (lead 222), true for `[1, 1]` (a tie). $O(n^2)$ time and space: for LeetCode's $n = 20$, $\frac{20 \times 21}{2} = 210$ entries, against $2^{19} = 524{,}288$ lines of play.
+
+### 2. LeetCode 375: Guess Number Higher or Lower II (Medium)
+
+**Problem.** A number is hidden between 1 and $n$. Each wrong guess $x$ costs $x$ pounds, and you are told "higher" or "lower". What is the least money that guarantees a win, **whatever** the number is? For $n = 10$ the answer is 16.
+
+**Math first.** There is no real opponent, but "whatever the number is" means the worst case, so the answer behaves like a malicious opponent. You minimise over guesses; the answer maximises over the two sides:
+
+$$
+C(i, j) = \min_{i \le x \le j} \Big( x + \max\big(C(i, x - 1),\ C(x + 1, j)\big) \Big), \qquad C(i, j) = 0 \text{ if } i \ge j
+$$
+
+where:
+
+- $C(i, j)$ is the money that guarantees finding a number known to lie in $i, \dots, j$;
+- $x$ is your guess, which costs $x$ if wrong; a range of one number costs nothing, since you just say it;
+- $\max$ is the worse of "lower" (the range $i, \dots, x - 1$) and "higher" ($x + 1, \dots, j$).
+
+Example: $n = 4$.
+
+- $C(1, 2) = 1$ (guess 1; if wrong, it is 2), $C(2, 3) = 2$, $C(3, 4) = 3$.
+- $C(1, 3) = \min(1 + C(2,3),\ 2 + 0,\ 3 + C(1,2)) = \min(3, 2, 4) = 2$: guess the middle.
+- $C(2, 4) = \min(2 + C(3,4),\ 3 + 0,\ 4 + C(2,3)) = \min(5, 3, 6) = 3$.
+- $C(1, 4) = \min(1 + C(2,4),\ 2 + \max(0, C(3,4)),\ 3 + \max(C(1,2), 0),\ 4 + C(1,3)) = \min(4, 5, 4, 6) = \mathbf{4}$.
+
+Guessing 3 first costs 3, and then "lower" leaves 1 or 2 (one more pound) while "higher" means 4 (free): at most 4.
+
+**Idea.** An interval table filled from short ranges to long ones, exactly like Burst Balloons in [Dynamic Programming](../dynamic-programming/index.qmd), with a $\min$ over $\max$ inside.
+
+```java
+static int getMoneyAmount(int n) {
+    int[][] cost = new int[n + 2][n + 2];            // cost[lo][hi] = money that guarantees a win when the number is in lo..hi
+    for (int lo = n; lo >= 1; lo--) {
+        for (int hi = lo + 1; hi <= n; hi++) {
+            cost[lo][hi] = Integer.MAX_VALUE;
+            for (int x = lo; x <= hi; x++) {         // I guess x; the answer sends me to the worse side
+                int worst = x + Math.max(cost[lo][x - 1], cost[x + 1][hi]);
+                cost[lo][hi] = Math.min(cost[lo][hi], worst);
+            }
+        }
+    }
+    return cost[1][n];
+}
+```
+
+**Answer.** 0 for $n = 1$, 1 for $n = 2$, 2 for $n = 3$, 4 for $n = 4$, and **16** for $n = 10$. About $\frac{n^2}{2}$ ranges with up to $n$ guesses each: $O(n^3)$ time, roughly $\frac{n^3}{6} \approx 1.3 \times 10^6$ steps for LeetCode's $n = 200$, and $O(n^2)$ space. Binary search is not the answer: it minimises the number of guesses, not the money.
+
+### 3. LeetCode 1872: Stone Game VIII (Hard)
+
+**Problem.** Stones with values stand in a row. Alice and Bob alternate, Alice first. While more than one stone remains, the player to move chooses $x > 1$, removes the leftmost $x$ stones, **adds their sum to their own score**, and puts back one new stone with that sum on the left. Alice wants to maximise (Alice's score $-$ Bob's score) and Bob to minimise it. Return that difference with perfect play. `[-1, 2, -3, 4, -5]` gives 5.
+
+**Math first.** The new left stone always equals a **prefix sum** of the original row, so a position is just "how far the merged stone reaches". Let $P_t = s_0 + \dots + s_t$. A move that merges up to original index $t$ scores $P_t$. Let $D(j)$ be the best lead for the player to move when the next move must end at some $t \ge j$:
+
+$$
+D(j) = \max_{j \le t \le n-1} \big( P_t - D(t + 1) \big), \quad D(n) = 0, \qquad\text{so}\qquad D(j) = \max\big( D(j + 1),\ P_j - D(j + 1) \big)
+$$
+
+where:
+
+- $s_t$ is the value of original stone $t$, and $P_t$ is the score of a move that merges everything up to $t$;
+- after that move the opponent faces $D(t + 1)$, which counts against the mover (negamax);
+- the short form holds because $D(j + 1)$ is already the best over all $t \ge j + 1$, so only $t = j$ is new; it applies for $j \le n - 2$, with $D(n - 1) = P_{n-1}$ (the last move takes everything);
+- the first move must take at least 2 stones, so it ends at $t \ge 1$, and the answer is $D(1)$.
+
+Example: $s = -1, 2, -3, 4, -5$, so $P = -1, 1, -2, 2, -3$.
+
+- $D(4) = P_4 = -3$.
+- $D(3) = \max(D(4),\ P_3 - D(4)) = \max(-3,\ 2 + 3) = 5$.
+- $D(2) = \max(5,\ P_2 - 5) = \max(5, -7) = 5$.
+- $D(1) = \max(5,\ P_1 - 5) = \max(5, -4) = \mathbf{5}$.
+
+Alice merges the first four stones for $P_3 = 2$; Bob must merge the remaining two for $P_4 = -3$; the difference is $2 - (-3) = 5$.
+
+**Idea.** Compute the prefix sums, then sweep $j$ from right to left keeping only the current $D$. A table that looked $O(n^2)$ collapses to a running maximum.
+
+```java
+static int stoneGameVIII(int[] stones) {
+    int n = stones.length;
+    int[] prefix = new int[n];
+    prefix[0] = stones[0];
+    for (int i = 1; i < n; i++) prefix[i] = prefix[i - 1] + stones[i];
+    int best = prefix[n - 1];                        // D(n-1): the only move left takes everything
+    for (int j = n - 2; j >= 1; j--) {
+        best = Math.max(best, prefix[j] - best);     // D(j) = max(D(j+1), P[j] - D(j+1))
+    }
+    return best;
+}
+```
+
+**Answer.** 5 for `[-1, 2, -3, 4, -5]`, 13 for `[7, -6, 5, 10, 5, -2, -6]`, and $-22$ for `[-10, -12]`, where Alice must take both stones and Bob never moves. $O(n)$ time and $O(n)$ space for the prefix sums: $10^5$ steps for LeetCode's $n = 10^5$, where the plain recursion over $(j, t)$ pairs would take about $5 \times 10^9$.
+
+## Mathematical Abstraction
+
+The minimax value of a position is defined from the leaves upwards, and alpha–beta computes the same value while skipping provably irrelevant branches:
+
+$$
+V(s) =
+\begin{cases}
+U(s) & s \text{ terminal} \\
+\max_{s'} V(s') & \text{MAX to move} \\
+\min_{s'} V(s') & \text{MIN to move}
+\end{cases}
+\qquad
+L_{\alpha\beta} \ge b^{\lceil d/2 \rceil} + b^{\lfloor d/2 \rfloor} - 1
+$$
+
+where:
+
+- $s'$ ranges over the positions one move from $s$, and $U(s)$ is the final score for MAX;
+- $L_{\alpha\beta}$ is the number of leaves alpha–beta examines on a uniform tree with $b$ moves per position and depth $d$; the bound is reached when moves are perfectly ordered.
+
+Example: the Level 1 tree has $V = \max(\min(4, 6, 5), \min(7, 2, 9), \min(3, 8, 1)) = \max(4, 2, 1) = 4$, and alpha–beta finds it after 6 of the 9 leaves. For $b = 10$ and $d = 6$ the bound is $1{,}000 + 1{,}000 - 1 = 1{,}999$ leaves, against $1{,}000{,}000$ for plain minimax. When positions repeat, the same value is computed once per position by a table, as in $D(i, j)$.
+
+## References
+
+- Stuart Russell and Peter Norvig, *Artificial Intelligence: A Modern Approach*, 4th edition (Pearson, 2020), Chapter 5, "Adversarial Search and Games": the minimax search algorithm, alpha–beta pruning, move ordering and heuristic cut-offs. <https://aima.cs.berkeley.edu/contents.html>.
+- Donald E. Knuth and Ronald W. Moore, "An Analysis of Alpha-Beta Pruning", *Artificial Intelligence* 6(4), 293–326 (1975).
+- Claude E. Shannon, "Programming a Computer for Playing Chess", *Philosophical Magazine*, Series 7, 41(314), 256–275 (1950).
+- John von Neumann, "Zur Theorie der Gesellschaftsspiele", *Mathematische Annalen* 100, 295–320 (1928).
+- Jeff Erickson, *Algorithms* (2019), Chapter 2, "Backtracking", section "Game Trees": <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), does not cover game-tree search; the interval tables in the interview problems follow its Chapter 14, "Dynamic Programming". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- LeetCode: [486. Predict the Winner](https://leetcode.com/problems/predict-the-winner/), [375. Guess Number Higher or Lower II](https://leetcode.com/problems/guess-number-higher-or-lower-ii/), [1872. Stone Game VIII](https://leetcode.com/problems/stone-game-viii/).
+
+[← Game Theory](../game-theory/index.qmd) · [Dynamic Programming and Decision Making](../groups/03-optimisation.qmd) · [Bitmask →](../bitmask/index.qmd)

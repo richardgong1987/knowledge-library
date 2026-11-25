@@ -1,62 +1,420 @@
 ---
 title: "Game Theory"
-description: "Learn Game Theory with a complete numerical recurrence, proof, counterexample and small tested implementation."
+description: "Two-player games with perfect information: winning and losing positions (N and P), the rule win(s) ⇔ some move reaches a losing state, Nim and Bouton's XOR theorem, Sprague–Grundy values and mex, score games, draws by retrograde analysis, and hard interview problems solved math-first."
 ---
 
-## One problem you can understand by hand
+Combinatorial game theory answers one question: *in this position, with both players playing perfectly, who wins?* There is no luck and nothing is hidden, so every position has a definite answer. This lesson starts with a pile of sweets, finds the single rule that decides every such game, meets the famous XOR trick for Nim, turns any game into a Nim heap with Sprague–Grundy values, and ends with score games and games that can go on for ever.
 
-**LeetCode 877 — Stone Game; strategic decisions.** Two rational players alternate choices, and one player's gain may reduce the other's. Ordinary single-agent maximisation is insufficient because the opponent also chooses.
+All code is in [`GameTheoryLab.java`](GameTheoryLab.java). Run it from this folder with `java GameTheoryLab.java`; it checks every number on this page and prints `OK`.
 
-A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
+## The problem
 
-## The approach that looks convincing but fails
+Three heaps of counters hold 3, 4 and 5. Two players take turns; a move removes **any number of counters from one heap**. Whoever takes the last counter wins. This game is **Nim**. Should you move first, and if so, what is your move?
 
-Choose the larger end pile each turn; the opponent may exploit this decision by controlling the next remaining interval.
+- Searching the game by hand is hopeless: from $(3, 4, 5)$ there are already $3 + 4 + 5 = 12$ possible first moves, and each leads to a different game.
+- A computer could store all $4 \times 5 \times 6 = 120$ positions here. But ten heaps of up to 100 counters have $101^{10} \approx 1.1 \times 10^{20}$ positions, far too many.
 
-Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
+There is a one-line answer: write the heap sizes in binary and XOR them. $3 \oplus 4 \oplus 5 = 2$, which is not 0, so the first player wins, by taking 2 counters from the heap of 3.
 
-## The key reasoning step
+## Explain it like I'm ten
 
-Write each state as the remaining interval of piles and the player to move. Under a zero-sum model, the value is your immediate gain minus the best value the opponent can force afterwards.
+::: {.callout-tip}
+Put 10 sweets on the table. You and a friend take turns eating 1 or 2 of them, and whoever eats the **last** sweet wins. Here is the secret: *always leave your friend a number of sweets that divides by 3.* If you leave 3, your friend eats 1 or 2, and you eat the rest. If you leave 6, whatever they do you can get back to 3. So from 10 you eat 1, leaving 9, and you can never lose.
 
-## From actual numbers to mathematics
+Positions like 3, 6 and 9 are **losing positions** for the player about to move. The trick for every game of this kind is the same: *a position is winning if you can move to a losing one; it is losing if every move goes to a winning one.* Work backwards from the end, and you can label every position.
+
+The German mathematician Ernst Zermelo wrote down this backwards labelling in 1913, for chess. Jeff Erickson retells it in the "Game Trees" section of his book *Algorithms* as the difference between *good* and *bad* positions. Charles Bouton solved Nim completely in 1901, using binary numbers, and gave the game its name. Elwyn Berlekamp, John Conway and Richard Guy later collected hundreds of such games in *Winning Ways for your Mathematical Plays*.
+:::
+
+## From simple to advanced
+
+### Level 1: winning and losing positions
+
+A position is an **N-position** if the **N**ext player (the one about to move) can force a win, and a **P-position** if the **P**revious player (the one who just moved) can. Under *normal play*, a player who cannot move loses.
 
 $$
-V(l,r)=\max(a_l-V(l+1,r),\ a_r-V(l,r-1))
+\text{win}(s) \iff \exists\, s' \in \operatorname{Moves}(s) : \neg\, \text{win}(s')
 $$
 
-**What every symbol means:** V(l,r) is the maximum achievable score DIFFERENCE (current player minus opponent) from piles l through r. a_l and a_r are the stones at the left and right ends. The minus signs subtract the opponent's subsequent best advantage.
+where:
 
-**Now substitute numbers into that same relationship:** For two piles [2,5], choosing left 2 leaves 5 to the opponent: difference 2−5=−3. Choosing right 5 leaves 2: difference 5−2=3. Hence V(0,1)=max(−3,3)=3, so the first player should take 5.
+- $s$ is a position and $\operatorname{Moves}(s)$ is the set of positions one move away;
+- $\exists$ means "there is at least one", and $\neg$ means "not";
+- so $s$ is winning (an N-position) when **some** move reaches a losing position, and losing (a P-position) when **every** move reaches a winning one;
+- a position with no moves has nothing to choose from, so it is losing.
 
-If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
+Example: the sweets game, removing 1 or 2. Position 0 has no moves, so it loses. Position 1 can move to 0, which loses, so 1 wins; 2 can move to 0, so 2 wins. Position 3 can only move to 2 or 1, both winning, so **3 loses**. The pattern repeats: $n$ loses exactly when $n$ is a multiple of 3.
 
-## Why the result is actually correct
+Now a less obvious game: a move removes **1, 3 or 4** sweets.
 
-After choosing one end, the game swaps players. The opponent then plays optimally for their own score difference, which must be subtracted from the original player's score. Exhausting both legal moves yields the optimal current score difference.
+| $n$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Moves to | — | 0 | 1 | 2, 0 | 3, 1, 0 | 4, 2, 1 | 5, 3, 2 | 6, 4, 3 | 7, 5, 4 | 8, 6, 5 | 9, 7, 6 |
+| Result | **P** | N | **P** | N | N | N | N | **P** | N | **P** | N |
 
-A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
+Position 7 is P because its moves reach 6, 4 and 3, all N. Position 8 is N because it can reach 7. The P-positions are $0, 2, 7, 9, 14, 16, \dots$: the numbers that leave remainder 0 or 2 when divided by 7.
 
-## Actual implementation
+```java
+static boolean[] winTable(int maxStones, int[] moves) {
+    boolean[] win = new boolean[maxStones + 1];      // win[n]: the player to move with n stones can force a win
+    for (int n = 1; n <= maxStones; n++) {
+        for (int m : moves) {
+            if (m <= n && !win[n - m]) {             // this move leaves the opponent in a losing position
+                win[n] = true;
+                break;
+            }
+        }
+    }
+    return win;
+}
+```
 
-For this strategic/state-space problem, construct a memo table keyed by the state from the formula above. The table should return the exact score difference or feasibility result for that state; verify the two-pile numerical example before considering large inputs. The mathematics is the main result; a production framework would add no understanding here.
+This is a dynamic program over positions, filled from the end of the game backwards. It works for any game whose positions can be listed and in which play always ends.
 
-## Complexity and failure conditions
+### Level 2: Nim and the XOR theorem
 
-**Cost model:** O(n²) interval states and O(1) decisions per state; O(n²) table space, where n is number of piles.
+The table method needs one entry per position, and Nim with many heaps has too many. Bouton's theorem replaces the whole table with one number, the **nim-sum**:
 
-**A classic mistake:** The recurrence assumes perfect information, alternating turns, deterministic scores and zero-sum payoff. Cooperative, simultaneous or stochastic games require different models.
+$$
+x = h_1 \oplus h_2 \oplus \dots \oplus h_k, \qquad \text{the position is P} \iff x = 0
+$$
 
-In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+where:
 
-## Try teaching it back
+- $h_1, \dots, h_k$ are the heap sizes;
+- $\oplus$ is exclusive or (XOR, Java's `^`): write the numbers in binary and, in each column, write 1 if the column has an odd number of 1s, otherwise 0;
+- $x$ is the nim-sum.
 
-Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+Example: heaps $3, 4, 5$.
 
-## Reference and community insight
+```text
+3 = 0 1 1
+4 = 1 0 0
+5 = 1 0 1
+    -----
+x = 0 1 0   = 2
+```
 
-**CLRS relationship:** CLRS dynamic programming provides the state-and-recurrence method, but full strategic game theory is beyond its main coverage.. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+The middle column has one 1, so it is 1; the other columns have two 1s each, so they are 0. Since $x = 2 \ne 0$, the first player wins. The winning move shrinks some heap $h$ to $h \oplus x$, whenever that is smaller: $3 \oplus 2 = 1 < 3$, so take 2 counters from the heap of 3. The new position $1, 4, 5$ has nim-sum $001 \oplus 100 \oplus 101 = 000 = 0$, a P-position for the opponent.
 
-**Related classic LeetCode example:** LeetCode 877 — Stone Game; strategic decisions — [community/official practice link](https://leetcode.com/problems/stone-game/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+```java
+static int nimSum(int... heaps) {
+    int x = 0;
+    for (int h : heaps) x ^= h;
+    return x;
+}
 
-[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+record NimMove(int heap, int newSize) {}
+
+static Optional<NimMove> winningNimMove(int[] heaps) {
+    int x = nimSum(heaps);
+    for (int i = 0; i < heaps.length; i++) {
+        int target = heaps[i] ^ x;                   // the size that would make the nim-sum 0
+        if (target < heaps[i]) return Optional.of(new NimMove(i, target));
+    }
+    return Optional.empty();                         // nim-sum 0: every move hands the opponent a win
+}
+```
+
+**Why it works**, in three facts that match the rule of Level 1:
+
+1. *The end has $x = 0$.* No counters means $0 \oplus 0 \oplus \dots = 0$, and the player to move has lost.
+2. *From $x = 0$ every move gives $x \ne 0$.* A move changes one heap, so it changes at least one bit of that heap, which flips the same bit of $x$.
+3. *From $x \ne 0$ some move gives $x = 0$.* Let $d$ be the highest 1-bit of $x$; some heap $h$ has a 1 in position $d$. Then $h \oplus x$ clears that bit and changes only lower bits, so $h \oplus x < h$, and shrinking $h$ to $h \oplus x$ makes the nim-sum $x \oplus x = 0$. For $x = 2 = 010$, the heap $3 = 011$ has that bit, and $3 \oplus 2 = 1$.
+
+So the positions with $x = 0$ are exactly the P-positions. The lab confirms this against a brute-force search of every three-heap position with heaps up to 7.
+
+### Level 3: Sprague–Grundy: every game is secretly a Nim heap
+
+Suppose you play **several games at once**: on your turn you choose one game and make a move in it, and whoever cannot move in any game loses. Two piles of the 1-3-4 game from Level 1, say. Knowing which single piles are winning is not enough. The Sprague–Grundy theorem (Roland Sprague, 1935; Patrick Grundy, 1939) gives each position a number that behaves exactly like a Nim heap:
+
+$$
+g(s) = \operatorname{mex} \lbrace g(s') : s' \in \operatorname{Moves}(s) \rbrace, \qquad
+g(G_1 + G_2 + \dots + G_k) = g(G_1) \oplus g(G_2) \oplus \dots \oplus g(G_k)
+$$
+
+where:
+
+- $\operatorname{mex}$ ("minimum excluded") of a set is the smallest non-negative integer **not** in it; for example $\operatorname{mex} \lbrace 0, 1, 3 \rbrace = 2$ and $\operatorname{mex} \emptyset = 0$;
+- $g(s)$ is the Grundy value of position $s$, and $g(s) = 0$ exactly when $s$ is a P-position;
+- $G_1 + \dots + G_k$ means the games played side by side, and the sum is a P-position exactly when the XOR of the Grundy values is 0.
+
+Example: the 1-3-4 game, where position $n$ can move to $n - 1$, $n - 3$ and $n - 4$.
+
+| $n$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Values one move away | — | 0 | 1 | 0, 0 | 1, 1, 0 | 2, 0, 1 | 3, 1, 0 | 2, 2, 1 | 0, 3, 2 | 1, 2, 3 | 0, 0, 2 |
+| $g(n)$ | 0 | 1 | 0 | 1 | 2 | 3 | 2 | 0 | 1 | 0 | 1 |
+
+For instance $g(5) = \operatorname{mex} \lbrace g(4), g(2), g(1) \rbrace = \operatorname{mex} \lbrace 2, 0, 1 \rbrace = 3$. The zeros sit at 0, 2, 7 and 9, the P-positions of Level 1. Now two piles together:
+
+- piles 4 and 6: $g = 2 \oplus 2 = 0$, so the player to move **loses**;
+- piles 5 and 6: $g = 3 \oplus 2 = 1 \ne 0$, so the player to move **wins**, by moving to a sum with value 0: taking 1 from the pile of 5 gives piles 4 and 6.
+
+```java
+static int[] grundyTable(int maxStones, int[] moves) {
+    int[] g = new int[maxStones + 1];
+    for (int n = 1; n <= maxStones; n++) {
+        Set<Integer> reachable = new HashSet<>();
+        for (int m : moves) if (m <= n) reachable.add(g[n - m]);
+        int mex = 0;
+        while (reachable.contains(mex)) mex++;       // the smallest value no move reaches
+        g[n] = mex;
+    }
+    return g;
+}
+```
+
+A pile with Grundy value $v$ acts like a Nim heap of $v$ counters: it can move to positions of every smaller value (that is what $\operatorname{mex}$ guarantees), just as a heap of $v$ can shrink to any smaller size. The lab checks the two-pile rule against a brute-force search for every pair of piles up to 10.
+
+### Level 4: games with scores
+
+Many games end with points rather than a simple win or loss. Then each position has a **value**: the best lead the player to move can guarantee, counting their own points minus the opponent's. With both players maximising their own lead:
+
+$$
+V(s) = \max_{a \in \operatorname{Moves}(s)} \big( r(s, a) - V(T(s, a)) \big), \qquad V(\text{end}) = 0
+$$
+
+where:
+
+- $V(s)$ is the best (my points $-$ your points) from position $s$ onwards, for the player about to move;
+- $r(s, a)$ is the points that move $a$ earns now, and $T(s, a)$ is the position it leads to;
+- after my move it is your turn, and your best lead $V(T(s, a))$ counts **against** me, hence the minus sign.
+
+Example: stones worth $4, -1, 2$ lie in a row, and each turn takes 1 or 2 stones from the front. From the end backwards:
+
+- $V(\text{only } 2) = 2$.
+- $V(-1, 2) = \max(-1 - 2,\ (-1 + 2) - 0) = \max(-3, 1) = 1$: take both.
+- $V(4, -1, 2) = \max(4 - 1,\ (4 - 1) - 2) = \max(3, 1) = 3$.
+
+So the first player takes just the 4, the opponent takes $-1$ and $2$ for a net 1, and the first player wins by $4 - 1 = 3$.
+
+```java
+static int bestMargin(int[] values, int maxTake) {
+    int n = values.length;
+    int[] lead = new int[n + 1];                     // lead[i] = best (mine - theirs) when stones i.. remain and I move
+    for (int i = n - 1; i >= 0; i--) {
+        lead[i] = Integer.MIN_VALUE;
+        int taken = 0;
+        for (int k = 1; k <= maxTake && i + k <= n; k++) {
+            taken += values[i + k - 1];
+            lead[i] = Math.max(lead[i], taken - lead[i + k]); // I gain taken, then the opponent leads by lead[i + k]
+        }
+    }
+    return lead[0];
+}
+```
+
+This "my score minus yours" form is called **negamax**. It is the same as minimax with one player maximising and the other minimising, written for both at once; the [Minimax](../minimax/index.qmd) lesson builds on it.
+
+### Level 5: games that can go round in circles
+
+Some games can loop: two pieces chasing each other on a graph may return to an earlier position. Zermelo already treated endless play as a **draw**. Backwards labelling still works, but it must start from the **known** endings and spread outwards, a method called *retrograde analysis*:
+
+$$
+\text{result}(s) =
+\begin{cases}
+\text{win} & \text{some move from } s \text{ reaches a position labelled loss} \\
+\text{loss} & \text{every move from } s \text{ reaches a position labelled win} \\
+\text{draw} & \text{neither ever becomes true}
+\end{cases}
+$$
+
+where "win" and "loss" are from the point of view of the player to move in $s$, and labels are assigned one at a time, starting from the finished positions.
+
+Example: a position with 3 moves. The first time one of its moves is found to lose for the opponent, it is labelled **win** at once. Otherwise, each move found to *win* for the opponent decreases a counter from 3; when the counter reaches 0, every move is bad and it is labelled **loss**. If a cycle keeps some move unlabelled for ever, the counter never reaches 0, and the position stays a **draw**. Interview problem 3 below, LeetCode 913, implements exactly this.
+
+## Why it works and what it costs
+
+**Why the labels are right.** For a game that always ends, use induction on the number of moves left (*backward induction*). A finished position is labelled correctly by the rules of the game. If every position closer to the end is labelled correctly, the rule $\text{win}(s) \iff \exists\, s' : \neg\,\text{win}(s')$ labels $s$ correctly: if some move reaches a losing position, take it and the opponent loses; if every move reaches a winning position, whatever you do the opponent wins. For games with cycles, retrograde analysis labels a position only when its result is forced by already-proved labels, so every label is proved; anything never forced is a position from which neither player can force a result, which is a draw.
+
+**What it costs.**
+
+| Method | Work | On this page's example |
+| --- | --- | --- |
+| Win/loss table (Level 1) | positions $\times$ moves | positions 0 to 10 with 3 moves each: 33 checks |
+| Nim-sum (Level 2) | $O(k)$ for $k$ heaps | 3 heaps: 2 XORs, instead of a table of 120 positions |
+| Grundy table (Level 3) | positions $\times$ moves | 11 values, each the mex of at most 3 numbers |
+| Score game (Level 4) | positions $\times$ moves | 3 positions $\times$ 2 moves = 6 steps |
+| Retrograde analysis (Level 5) | states $+$ (state, move) pairs | Cat and Mouse: $2n^2$ states, about $2n^3$ pairs |
+
+The big saving in Nim and Sprague–Grundy is that a sum of games needs **one value per game**, not one entry per combination of positions.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Labelling a position with no moves as a win | Every label flips | Under normal play the player who cannot move **loses**, so $\text{win}(0) = \text{false}$ |
+| Adding heap sizes instead of XOR-ing them | Wrong winner: heaps 1, 2, 3 add up to 6, yet their nim-sum is $1 \oplus 2 \oplus 3 = 0$, a loss for the player to move | Use `^`; Nim is decided by the nim-sum |
+| Applying the nim-sum to a game that is not Nim | Wrong answers in take-away games such as the 1-3-4 game | Compute Grundy values first, then XOR them |
+| `mex` as "largest value plus one" | Wrong Grundy values whenever a gap exists, such as $\lbrace 0, 2 \rbrace$ | The smallest missing value: $\operatorname{mex} \lbrace 0, 2 \rbrace = 1$ |
+| Plain recursion on a game that can loop | `StackOverflowError`, or an endless search | Retrograde analysis from the endings; unlabelled positions are draws |
+| Maximising your own points and ignoring the opponent's | Overestimates your result | Score the lead $V = r - V(\text{next})$, as in Level 4 |
+| "Misère" play (last mover loses) treated as normal play | Wrong moves near the end of the game | Check the rules; misère Nim needs a different move once every heap has at most one counter |
+
+## Interview problems
+
+Each solution first decides what a **position** is and what its value means, then applies the rule of Level 1 or Level 4.
+
+### 1. LeetCode 877: Stone Game (Medium)
+
+**Problem.** An **even** number of piles stand in a row, and the total number of stones is **odd**. Alice and Bob alternately take a whole pile from either end, Alice first. Whoever has more stones wins. Does Alice win with perfect play? For `[5, 3, 4, 5]` the answer is true.
+
+**Math first.** Colour the piles by position: even indices $0, 2, 4, \dots$ and odd indices $1, 3, 5, \dots$.
+
+$$
+E = \sum_{i \text{ even}} p_i, \qquad O = \sum_{i \text{ odd}} p_i, \qquad E + O \text{ odd} \implies E \ne O
+$$
+
+where:
+
+- $p_i$ is the number of stones in pile $i$;
+- $E$ and $O$ are the totals of the even-indexed and odd-indexed piles.
+
+Example: $[5, 3, 4, 5]$ gives $E = 5 + 4 = 9$ and $O = 3 + 5 = 8$. Alice wants the even piles. She takes pile 0 (5 stones). The row is now piles 1, 2, 3, whose two ends, 1 and 3, are both odd, so Bob must take an odd pile; that uncovers an even pile for Alice. She ends with $9$, Bob with $8$.
+
+**Idea.** With an even number of piles the two ends always have different colours, so Alice can choose a colour and take **every** pile of that colour. The totals differ, so she picks the larger one and wins. This is a *strategy* argument: no search is needed.
+
+```java
+static boolean stoneGame(int[] piles) {
+    return true;                                     // even pile count, odd total: Alice takes the richer colour
+}
+```
+
+**Answer.** true, always. The lab confirms it against the full score-difference table (the one in the [Minimax](../minimax/index.qmd) lesson) for all 312 four-pile rows with 1 to 5 stones per pile and an odd total: Alice's best lead is positive every time, and for $[5, 3, 4, 5]$ it is exactly $9 - 8 = 1$. $O(1)$ time and space.
+
+### 2. LeetCode 1406: Stone Game III (Hard)
+
+**Problem.** Stones with values (possibly negative) stand in a row. Alice and Bob alternately take **1, 2 or 3** stones from the front, Alice first. Return `"Alice"`, `"Bob"` or `"Tie"` for the winner with perfect play. `[1, 2, 3, 7]` gives `"Bob"`.
+
+**Math first.** A position is just the index $i$ of the first stone left. Level 4's value with up to 3 stones per move:
+
+$$
+V(i) = \max_{k \in \lbrace 1, 2, 3 \rbrace,\ i + k \le n} \Big( \sum_{t=i}^{i+k-1} v_t \; - \; V(i + k) \Big), \qquad V(n) = 0
+$$
+
+where:
+
+- $V(i)$ is the best lead for the player to move when stones $i, \dots, n - 1$ remain;
+- $v_t$ is the value of stone $t$, and $k$ is how many stones the move takes;
+- the answer is `"Alice"` if $V(0) > 0$, `"Bob"` if $V(0) < 0$ and `"Tie"` if $V(0) = 0$.
+
+Example: $v = 1, 2, 3, 7$.
+
+- $V(4) = 0$ and $V(3) = 7$.
+- $V(2) = \max(3 - 7,\ 3 + 7 - 0) = \max(-4, 10) = 10$.
+- $V(1) = \max(2 - 10,\ 2 + 3 - 7,\ 2 + 3 + 7 - 0) = \max(-8, -2, 12) = 12$.
+- $V(0) = \max(1 - 12,\ 1 + 2 - 10,\ 1 + 2 + 3 - 7) = \max(-11, -7, -1) = -1$.
+
+$V(0) = -1 < 0$: even Alice's best move, taking 1, 2 and 3, leaves Bob the 7, and she loses $6$ to $7$.
+
+**Idea.** Fill $V$ from the back with the `bestMargin` loop of Level 4, using `maxTake = 3`, and read the sign.
+
+```java
+static String stoneGameIII(int[] values) {
+    int lead = bestMargin(values, 3);
+    return lead > 0 ? "Alice" : lead < 0 ? "Bob" : "Tie";
+}
+```
+
+**Answer.** `"Bob"` for `[1, 2, 3, 7]`, `"Alice"` for `[1, 2, 3, -9]` (she takes all three and leaves Bob the $-9$), `"Tie"` for `[1, 2, 3, 6]`. There are $n + 1$ positions with at most 3 moves each: $O(n)$ time and $O(n)$ space, at most $1.5 \times 10^5$ steps for LeetCode's $n = 5 \times 10^4$. Keeping only the last 3 values of $V$ makes the space $O(1)$.
+
+### 3. LeetCode 913: Cat and Mouse (Hard)
+
+**Problem.** An undirected graph has nodes $0, \dots, n - 1$; node 0 is a hole. The mouse starts at node 1 and moves first, the cat starts at node 2; each turn the player to move **must** move along an edge. The cat may not enter the hole. The cat wins if it lands on the mouse, the mouse wins if it reaches the hole, and a repeated position is a draw. Return 1 (mouse wins), 2 (cat wins) or 0 (draw). For `[[2,5], [3], [0,4,5], [1,4,5], [2,3], [0,2,3]]` the answer is 0.
+
+**Math first.** A state is $(m, c, t)$: mouse node, cat node, whose turn. The game can cycle, so use Level 5's retrograde analysis, with a counter of moves not yet known to lose:
+
+$$
+\text{deg}(m, c, t) = \begin{cases} \lvert N(m) \rvert & t = \text{mouse} \\ \lvert N(c) \setminus \lbrace 0 \rbrace \rvert & t = \text{cat} \end{cases}, \qquad
+\text{a state loses for its mover when its counter reaches } 0
+$$
+
+where:
+
+- $N(v)$ is the set of neighbours of node $v$, and $\lvert \cdot \rvert$ counts its elements;
+- $\text{deg}(m, c, t)$ is the starting counter: the number of legal moves for the player to move;
+- the known endings are $(0, c, t)$, a mouse win, and $(c, c, t)$, a cat win, for every cat node $c \ge 1$;
+- when a state's result becomes known, each state that can move into it is updated: if that result is a win for the player who moves there, the predecessor is a win at once; otherwise its counter drops by 1.
+
+Example: the graph `[[1,3], [0], [3], [0,2]]`. The mouse at node 1 has a single neighbour, node 0, the hole. The ending $(0, 2, \text{cat to move})$ is a mouse win, and $(1, 2, \text{mouse to move})$ can move into it, and that result is a win for the mover, the mouse. So the start is labelled 1 at once. In the six-node example the start state is never forced either way: neither player can make the other's counter reach 0, so it stays unlabelled and the answer is the draw, 0.
+
+**Idea.** Count each state's legal moves; queue the known endings; pull results backwards along the edges until no more labels are forced. Whatever is still unlabelled is a draw.
+
+```java
+static int[][][] countMoves(int[][] graph) {
+    int n = graph.length;
+    int[][][] movesLeft = new int[n][n][2];          // moves not yet known to lose, for the player to move
+    for (int m = 0; m < n; m++) {
+        for (int c = 1; c < n; c++) {
+            movesLeft[m][c][MOUSE_TURN] = graph[m].length;
+            movesLeft[m][c][CAT_TURN] = graph[c].length;
+            for (int next : graph[c]) if (next == 0) movesLeft[m][c][CAT_TURN]--; // the cat may not enter the hole
+        }
+    }
+    return movesLeft;
+}
+```
+
+```java
+static int catMouseGame(int[][] graph) {
+    int n = graph.length;
+    int[][][] result = new int[n][n][2];             // result[mouse][cat][turn]; DRAW until proved otherwise
+    int[][][] movesLeft = countMoves(graph);
+    Deque<int[]> solved = new ArrayDeque<>();
+    for (int c = 1; c < n; c++) {
+        for (int turn = 0; turn < 2; turn++) {
+            result[0][c][turn] = MOUSE_WINS;         // the mouse is in the hole
+            result[c][c][turn] = CAT_WINS;           // the cat caught the mouse
+            solved.add(new int[] {0, c, turn});
+            solved.add(new int[] {c, c, turn});
+        }
+    }
+    while (!solved.isEmpty()) {
+        int[] s = solved.poll();
+        int m = s[0], c = s[1], turn = s[2], outcome = result[m][c][turn];
+        int prevTurn = 1 - turn;                     // the player who moved into state s
+        for (int from : prevTurn == MOUSE_TURN ? graph[m] : graph[c]) {
+            int pm = prevTurn == MOUSE_TURN ? from : m, pc = prevTurn == CAT_TURN ? from : c;
+            if (pc == 0 || result[pm][pc][prevTurn] != DRAW) continue;
+            boolean moverWins = outcome == (prevTurn == MOUSE_TURN ? MOUSE_WINS : CAT_WINS);
+            if (moverWins || --movesLeft[pm][pc][prevTurn] == 0) { // one winning move, or every move loses
+                result[pm][pc][prevTurn] = outcome;
+                solved.add(new int[] {pm, pc, prevTurn});
+            }
+        }
+    }
+    return result[1][2][MOUSE_TURN];
+}
+```
+
+**Answer.** 0 for the six-node example, 1 for `[[1,3], [0], [3], [0,2]]`, and 2 for `[[2], [2], [0,1]]`, where the mouse's only move from node 1 is onto the cat at node 2. There are $2n^2$ states and each is labelled at most once; each label scans the predecessors along one node's edges, so the time is $O(n^3)$ and the space $O(n^2)$. For LeetCode's $n = 50$ that is $5{,}000$ states and at most about $2 \times 50^3 = 250{,}000$ predecessor checks.
+
+## Mathematical Abstraction
+
+A finite two-player game with perfect information is solved by one recursive rule, and a sum of games by one XOR:
+
+$$
+\text{win}(s) \iff \exists\, s' \in \operatorname{Moves}(s) : \neg\,\text{win}(s'), \qquad
+\text{win}(G_1 + \dots + G_k) \iff g(G_1) \oplus \dots \oplus g(G_k) \ne 0
+$$
+
+where:
+
+- $\text{win}(s)$ says whether the player to move in position $s$ can force a win, and $\operatorname{Moves}(s)$ is the set of positions one move away;
+- $g(G) = \operatorname{mex} \lbrace g(G') : G' \in \operatorname{Moves}(G) \rbrace$ is the Sprague–Grundy value of game $G$;
+- $G_1 + \dots + G_k$ is the games played side by side, and $\oplus$ is XOR.
+
+Example: in the 1-3-4 game, position 7 moves only to 6, 4 and 3, which are all winning, so 7 is losing. Two piles of 5 and 6 have Grundy values 3 and 2, and $3 \oplus 2 = 1 \ne 0$, so the player to move wins. Nim is the case $g(h) = h$: heaps $3, 4, 5$ give $3 \oplus 4 \oplus 5 = 2 \ne 0$, a first-player win.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), does not treat combinatorial games; the win/loss and Grundy tables above are instances of its Chapter 14, "Dynamic Programming". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Charles L. Bouton, "Nim, A Game with a Complete Mathematical Theory", *Annals of Mathematics*, Second Series, 3, 35–39 (1901–1902).
+- Roland Sprague, "Über mathematische Kampfspiele", *Tôhoku Mathematical Journal* 41, 438–444 (1935); Patrick M. Grundy, "Mathematics and Games", *Eureka* 2, 6–8 (1939).
+- Elwyn R. Berlekamp, John H. Conway and Richard K. Guy, *Winning Ways for your Mathematical Plays* (Academic Press, 1982).
+- Jeff Erickson, *Algorithms* (2019), Chapter 2, "Backtracking", section "Game Trees", on good and bad positions and Zermelo's 1913 definition: <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- Ernst Zermelo, "Über eine Anwendung der Mengenlehre auf die Theorie des Schachspiels", *Proceedings of the Fifth International Congress of Mathematicians* (1913).
+- LeetCode: [877. Stone Game](https://leetcode.com/problems/stone-game/), [1406. Stone Game III](https://leetcode.com/problems/stone-game-iii/), [913. Cat and Mouse](https://leetcode.com/problems/cat-and-mouse/).
+
+[← Greedy](../greedy/index.qmd) · [Dynamic Programming and Decision Making](../groups/03-optimisation.qmd) · [Minimax →](../minimax/index.qmd)

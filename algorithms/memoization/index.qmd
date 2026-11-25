@@ -1,70 +1,454 @@
 ---
 title: "Memoization"
-description: "Learn Memoization with a complete numerical recurrence, proof, counterexample and small tested implementation."
+description: "Top-down dynamic programming: why plain recursion explodes, exact call counts for Fibonacci (2,692,537 calls for fib(30) against 59), how to choose a memo key, top-down versus bottom-up, Java pitfalls, and hard interview problems solved math-first."
 ---
 
-## One problem you can understand by hand
+Memoization makes a recursive function remember its answers. The first time it is asked a question, it works the answer out and writes it down; every later time, it just reads the note. The code stays a plain recursion, but it runs as fast as a dynamic-programming table. This lesson counts the calls exactly, shows how to choose what to remember, and ends with three interview problems where the hard part is choosing the right **key**.
 
-**LeetCode 70 — Climbing Stairs; recursion with cached results.** Count ways to reach step 5 when each move is one or two stairs. Plain recursion feels simple but computes the same step counts again and again.
+All code is in [`MemoizationLab.java`](MemoizationLab.java). Run it from this folder with `java MemoizationLab.java`; it checks every number on this page and prints `OK`.
 
-A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
+## The problem
 
-## The approach that looks convincing but fails
+The Fibonacci numbers are $0, 1, 1, 2, 3, 5, 8, 13, \dots$, where each is the sum of the two before it. The definition turns straight into code:
 
-Recursive 'ways(n-1)+ways(n-2)' branches twice at most steps. The subproblem for step 3 appears repeatedly, wasting time.
+```java
+static long fibNaive(int n) {
+    calls++;
+    if (n < 2) return n;
+    return fibNaive(n - 1) + fibNaive(n - 2);
+}
+```
 
-Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
+It is correct, and it is hopeless. Computing `fibNaive(30) = 832,040` enters the function **2,692,537 times**. For `fibNaive(50)` it would be about 40.7 billion calls. Yet there are only 31 different questions, `fib(0)` to `fib(30)`. The same small questions are being asked again and again.
 
-## The key reasoning step
+## Explain it like I'm ten
 
-Memoisation stores the answer associated with a STATE. The state here is remaining steps, not the path used to reach them. The first computation fills a cache entry; later calls reuse it.
+::: {.callout-tip}
+Your teacher sets a sheet of sums, and many of them repeat: $17 \times 23$ appears five times. The first time, you work it out and write $17 \times 23 = 391$ in the corner of the page. The next four times, you just look in the corner. That corner is a **memo**, and using it is **memoization** (from "memo", a note to yourself; there is no "r").
 
-## From actual numbers to mathematics
+The idea is very old. More than a thousand years ago the Indian scholar Virahāṅka counted the rhythms of Sanskrit poetry, and noticed that the number of rhythms of length $n$ is the sum of the counts for lengths $n-1$ and $n-2$: the Fibonacci rule, long before Fibonacci. Jeff Erickson opens the dynamic-programming chapter of his free book *Algorithms* with this story, and then shows how remembering earlier counts makes the computation fast.
+
+The word came much later. In 1968 Donald Michie, a British researcher in artificial intelligence, proposed "memo functions" in the journal *Nature*: a function made of a *rule* (how to compute an answer) and a *rote* (a table of answers already computed). Erickson notes that Michie was inspired by Arthur Samuel's checkers program, which remembered positions it had already evaluated.
+:::
+
+## From simple to advanced
+
+### Level 1: count the calls
+
+Each call to `fibNaive(n)` with $n \ge 2$ makes two more calls. Let $C(n)$ be the number of calls made by `fibNaive(n)`, including the first one.
 
 $$
-W(n)=W(n-1)+W(n-2),\quad W(0)=1,\ W(1)=1
+C(n) = 1 + C(n-1) + C(n-2), \qquad C(0) = C(1) = 1, \qquad\text{so}\qquad C(n) = 2F(n+1) - 1
 $$
 
-**What every symbol means:** W(n) counts ways to climb n remaining steps. W(n−1) counts solutions starting with a one-step move, W(n−2) those starting with a two-step move; W(0)=1 counts the one way to finish from an already completed staircase.
+where:
 
-**Now substitute numbers into that same relationship:** W(2)=W(1)+W(0)=1+1=2; W(3)=2+1=3; W(4)=3+2=5; W(5)=5+3=8. If recursion revisits W(3), return the cached value 3 rather than branching again.
+- $C(n)$ counts every time the function is entered while computing `fibNaive(n)`;
+- the $1$ is the call itself, and $C(n-1)$ and $C(n-2)$ are its two sub-calls;
+- $F(m)$ is the $m$-th Fibonacci number, with $F(1) = F(2) = 1$;
+- the closed form holds because $C(n) + 1$ obeys the Fibonacci rule: $C(n) + 1 = (C(n-1) + 1) + (C(n-2) + 1)$, starting from $C(0) + 1 = C(1) + 1 = 2 = 2F(1) = 2F(2)$.
 
-If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
+Example:
 
-## Why the result is actually correct
+- $C(2) = 1 + C(1) + C(0) = 1 + 1 + 1 = 3$, and $2F(3) - 1 = 2 \cdot 2 - 1 = 3$.
+- $C(5) = 2F(6) - 1 = 2 \cdot 8 - 1 = 15$.
+- $C(30) = 2F(31) - 1 = 2 \cdot 1{,}346{,}269 - 1 = 2{,}692{,}537$.
+- $C(50) = 2F(51) - 1 = 2 \cdot 20{,}365{,}011{,}074 - 1 = 40{,}730{,}022{,}147$.
 
-The first move is either one or two steps, and these cases are disjoint. With correct base cases, induction proves the recurrence. Memoisation changes performance, not the underlying mathematical result.
+The calls grow like the Fibonacci numbers themselves, about $1.618^n$. Here is the call tree for $n = 5$. Every repeated subtree is wasted work: `fib(3)` is computed twice and `fib(2)` three times.
 
-A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
+```text
+fib(5)
+├── fib(4)
+│   ├── fib(3)
+│   │   ├── fib(2) ── fib(1), fib(0)
+│   │   └── fib(1)
+│   └── fib(2) ── fib(1), fib(0)
+└── fib(3)
+    ├── fib(2) ── fib(1), fib(0)
+    └── fib(1)
+```
 
-## Actual implementation
+Counting the nodes by label gives one `fib(5)`, one `fib(4)`, two `fib(3)`, three `fib(2)`, five `fib(1)` and three `fib(0)`: $1 + 1 + 2 + 3 + 5 + 3 = 15$ calls for 6 distinct questions.
 
-The [original, tested JavaScript implementation](../examples/patterns.mjs) exports `houseRobber`:
+### Level 2: write each answer down
 
-~~~js
-import { houseRobber } from '../examples/patterns.mjs';
+Add a table `memo`, where `memo[n] == 0` means "not solved yet". This works because every $F(n)$ with $n \ge 2$ is positive. The recursion is the same, with one extra line at the top and the answer saved at the bottom:
 
-console.log(houseRobber([2,1,1,2]));
-~~~
+```java
+static long fibMemo(int n, long[] memo) {
+    calls++;
+    if (n < 2) return n;
+    if (memo[n] != 0) return memo[n];                // solved before: read the note
+    memo[n] = fibMemo(n - 1, memo) + fibMemo(n - 2, memo);
+    return memo[n];
+}
+```
 
-Run this from a `.mjs` file inside this topic directory. The same function is exercised by [the unit tests](../examples/patterns.test.mjs). The implementation is intentionally tiny so the recurrence remains visible.
+Now each $n$ from 2 up is **computed** once, and each computation makes exactly two calls. Every other call returns at once.
 
-## Complexity and failure conditions
+$$
+C_{\text{memo}}(n) = 1 + 2(n - 1) = 2n - 1, \qquad n \ge 1
+$$
 
-**Cost model:** O(n) time and O(n) memo/recursion space for n steps, versus exponential time for uncached recursion.
+where:
 
-**A classic mistake:** Caching based on an incomplete state is incorrect. For pathfinding with remaining steps AND current position, using only remaining steps as cache key can mix different subproblems.
+- $C_{\text{memo}}(n)$ is the number of calls made by `fibMemo(n)`;
+- the $1$ is the first call;
+- $n - 1$ is how many values ($2, 3, \dots, n$) are actually computed, and each makes 2 calls.
 
-In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+Example: $C_{\text{memo}}(5) = 2 \cdot 5 - 1 = 9$ and $C_{\text{memo}}(30) = 2 \cdot 30 - 1 = \mathbf{59}$, against 2,692,537 without the memo: about 45,600 times fewer. Even `fibMemo(90)` takes only $179$ calls, and $F(90) = 2{,}880{,}067{,}194{,}370{,}816{,}120$ still fits in a `long`.
 
-## Try teaching it back
+The memo turns the call **tree** into a call **graph** with one node per distinct question. That graph is exactly the dependency graph of the dynamic program in the [Dynamic Programming](../dynamic-programming/index.qmd) lesson; memoization just walks it from the top instead of filling it from the bottom.
 
-Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+### Level 3: choosing the memo key
 
-## Reference and community insight
+The memo maps a **key** to an answer. The key must describe the question completely:
 
-**CLRS relationship:** CLRS Chapter 14 (top-down memoisation and bottom-up dynamic programming).. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+> The key contains every argument that can change the answer, and nothing else.
 
-**Related classic LeetCode example:** LeetCode 70 — Climbing Stairs; recursion with cached results — [community/official practice link](https://leetcode.com/discuss/post/458695/dynamic-programming-patternsDP/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+Forget an argument, and two different questions share a slot, so one gets the other's answer. Add an unnecessary one, such as the path taken so far, and questions that should share a slot never do, and the speed-up vanishes.
 
-[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+Take the binomial coefficient, the number of ways to choose $k$ things from $n$. It has **two** arguments, so the key needs both:
+
+$$
+\binom{n}{k} = \binom{n-1}{k-1} + \binom{n-1}{k}, \qquad \binom{n}{0} = \binom{n}{n} = 1
+$$
+
+where:
+
+- $\binom{n}{k}$ is the number of $k$-element subsets of $n$ items;
+- $\binom{n-1}{k-1}$ counts the subsets that contain the last item, and $\binom{n-1}{k}$ those that do not.
+
+Example: $\binom{5}{2} = \binom{4}{1} + \binom{4}{2} = 4 + 6 = 10$.
+
+Two `int`s pack into one `long` key: the first goes in the high 32 bits, the second in the low 32.
+
+$$
+\text{key}(n, k) = n \cdot 2^{32} + k
+$$
+
+where $2^{32} = 4{,}294{,}967{,}296$ shifts $n$ clear of $k$, so different pairs never collide while $0 \le k < 2^{32}$. Example: $\text{key}(5, 2) = 5 \cdot 4{,}294{,}967{,}296 + 2 = 21{,}474{,}836{,}482$.
+
+```java
+static final Map<Long, Long> chooseMemo = new HashMap<>();
+
+static long choose(int n, int k) {
+    if (k == 0 || k == n) return 1;
+    long key = (long) n << 32 | k;                   // pack (n, k) into one long
+    Long known = chooseMemo.get(key);
+    if (known != null) return known;
+    long result = choose(n - 1, k - 1) + choose(n - 1, k);
+    chooseMemo.put(key, result);
+    return result;
+}
+```
+
+`choose(5, 2)` stores 6 entries. In general the non-base states have $1 \le k' \le k$ and $1 \le n' - k' \le n - k$, so there are $k(n - k)$ of them: $2 \times 3 = 6$ here. For $\binom{30}{15} = 155{,}117{,}520$ the memo holds $15 \times 15 = 225$ entries, while the plain recursion, whose call tree has one leaf per counted subset, makes $2 \times 155{,}117{,}520 - 1 = 310{,}235{,}039$ calls.
+
+How to pick the key for common problems:
+
+| Problem | What decides the rest of the answer | Key | Wrong key and what goes wrong |
+| --- | --- | --- | --- |
+| Fibonacci | $n$ | `n` | — |
+| Binomial | $n$ and $k$ | `n` and `k` packed into one `long` | `n` alone: $\binom{5}{1}$ and $\binom{5}{2}$ share a slot |
+| Word Break (below) | where the unread suffix starts | `start` index | the substring itself: correct, but copies letters for every key |
+| Frog Jump (below) | the stone **and** the last jump | `(stone, jump)` | `stone` alone: a frog that arrived with a small jump is wrongly told it cannot continue |
+| Scramble String (below) | two start positions and a length | `memo[i][j][len]` | the two substrings: correct, but slow and memory-hungry |
+
+### Level 4: top-down or bottom-up?
+
+Memoization (top-down) and tabulation (bottom-up) compute the same values. They differ in **which** states they visit and **how** they get there.
+
+$$
+\text{time} = \lvert R \rvert \times (\text{work per state}), \qquad R = \text{the set of states actually reached}
+$$
+
+where:
+
+- $R$ is the set of distinct questions the recursion asks, starting from the original one;
+- $\lvert R \rvert$ is how many there are;
+- the work per state is the loop inside the function, not counting the recursive calls, which are charged to the states they reach.
+
+Example: for Frog Jump on the stones $0, 1, 3, 5, 6, 8, 12, 17$ (interview problem 2), a full table would have $8$ stones $\times$ $8$ possible jump lengths $= 64$ cells. The memoised recursion stores only **8** of them, because most (stone, jump) pairs can never happen. Each state tries 3 jumps, so the work is about $8 \times 3 = 24$ steps.
+
+| | Top-down (memoization) | Bottom-up (tabulation) |
+| --- | --- | --- |
+| Code | the recurrence as written, plus a memo | loops in a correct evaluation order |
+| States visited | only the reachable ones | all of them |
+| Evaluation order | found automatically by the recursion | you must work it out |
+| Recursion depth | can overflow the stack | none |
+| Space saving | hard | easy: keep only the rows still needed |
+
+The stack is a real limit. `fibMemo(1_000_000)` throws `StackOverflowError` on a default JVM, because it nests a million calls before the first one returns. The bottom-up loop of the [Dynamic Programming](../dynamic-programming/index.qmd) lesson has no such limit.
+
+### Level 5: memoization in real Java
+
+**A memo is only valid for a pure function**: the same arguments must always give the same answer. A function that reads the clock, a random number, or a field that changes cannot be memoised safely.
+
+**Use an array when the keys are small integers**, a `HashMap` when they are sparse or large. Arrays of a wrapper type, `Boolean[]` or `Long[]`, give a free "not solved yet" marker: `null`.
+
+**Do not call `computeIfAbsent` recursively on the same `HashMap`.** This looks like the neatest memo in Java:
+
+```java
+static final Map<Integer, Long> fibCache = new HashMap<>();
+
+static long fibComputeIfAbsent(int n) {
+    if (n < 2) return n;
+    return fibCache.computeIfAbsent(n, m -> fibComputeIfAbsent(m - 1) + fibComputeIfAbsent(m - 2));
+}
+```
+
+but the inner calls insert into the map while the outer `computeIfAbsent` is still running. Since Java 9, `HashMap` detects this and throws `ConcurrentModificationException`; the lab checks that it does. Use the explicit `get`, compute, `put` pattern of `choose` instead.
+
+**Bounded caches.** A memo that lives for the whole program grows forever. Real caches evict old entries, usually the *least recently used* one, which is built from a hash map and a doubly linked list (see [Doubly Linked List](../doubly-linked-list/index.qmd)).
+
+## Why it works and what it costs
+
+**Why it is correct.** The invariant is: *every entry in the memo equals the true value of the function at that key.*
+
+- *Initially* the memo is empty, so the invariant holds.
+- *A cached return* gives the stored value, which is true by the invariant.
+- *A computed return* evaluates the original recurrence. By induction on the depth of the recursion, its sub-calls return true values, so the result is true, and storing it keeps the invariant.
+
+The memoised function therefore returns exactly what the plain recursion returns, as long as the function is pure and the key includes every argument that affects the result.
+
+**What it costs.** Each state in $R$ is computed once. Its loop runs once, and every recursive call it makes is either a computation (charged to the state it reaches) or a lookup.
+
+| Function | States $\lvert R \rvert$ | Work per state | Calls | Memory |
+| --- | --- | --- | --- | --- |
+| `fibNaive(30)` | 31 distinct, but no memo | $O(1)$ | 2,692,537 | recursion depth 30 |
+| `fibMemo(30)` | 29 computed | 2 calls | 59 | 31 longs |
+| `choose(30, 15)` | 225 | 2 calls | at most $1 + 2 \times 225 = 451$ | 225 map entries |
+| Frog Jump, 8 stones | 8 stored | 3 jumps | about 24 | 8 map entries |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| The key leaves out an argument | Wrong answers, because two different questions share a slot | List every argument that changes the result; all of them go in the key |
+| The key includes the path so far | Correct but as slow as no memo, because no two keys are equal | Keep only what decides the future, such as the index, not the list of choices |
+| Memoising an impure function | Stale or wrong answers | Memoise only functions whose result depends on their arguments alone |
+| `0` as "unknown" when 0 is a real answer | The value is recomputed every time, or a real 0 is skipped | Use `Boolean[]` or `Long[]` with `null`, or a separate `boolean[] known` |
+| Recursive `computeIfAbsent` on a `HashMap` | `ConcurrentModificationException` | Use `get`, compute, then `put` |
+| Very deep recursion | `StackOverflowError` | Convert to a bottom-up loop, or reduce the depth |
+| Shifting an `int` by 32 to build a key | Collisions, because Java masks an `int` shift distance to 0–31, so `n << 32` is just `n` | Cast to `long` first: `(long) n << 32` |
+| One memo shared by unrelated inputs | The second test case reads the first one's answers | Create a fresh memo per call, as the interview classes below do |
+
+## Interview problems
+
+Each solution states the recurrence first and then says exactly which arguments form the key. The code is the recurrence plus a memo; the solver object holds the fixed inputs, so the recursive method takes only the state.
+
+### 1. LeetCode 139: Word Break (Medium)
+
+**Problem.** Given a string $s$ and a dictionary of words, can $s$ be split into dictionary words (each word may be reused)? `"leetcode"` with `["leet", "code"]` gives true; `"catsandog"` with `["cats", "dog", "sand", "and", "cat"]` gives false.
+
+**Math first.** Let $n = \lvert s \rvert$ and let $D$ be the dictionary. A split of the suffix starting at $i$ begins with some word $s[i..j)$:
+
+$$
+W(i) =
+\begin{cases}
+\text{true} & i = n \\
+\bigvee_{j=i+1}^{n} \big( s[i..j) \in D \ \wedge\ W(j) \big) & i < n
+\end{cases}
+$$
+
+where:
+
+- $W(i)$ says whether the suffix starting at position $i$ can be split;
+- $s[i..j)$ is the substring from $i$ up to, but not including, $j$;
+- $\bigvee$ means "at least one of", and $\wedge$ means "and";
+- the key is just $i$: the future depends only on where the unread suffix starts.
+
+Example: $s = \texttt{leetcode}$, $D = \lbrace \texttt{leet}, \texttt{code} \rbrace$, $n = 8$.
+
+- $W(8) = \text{true}$, the empty suffix.
+- $W(4)$: $s[4..8) = \texttt{code} \in D$ and $W(8)$ is true, so $W(4) = \text{true}$.
+- $W(0)$: $s[0..4) = \texttt{leet} \in D$ and $W(4)$ is true, so $W(0) = \text{true}$.
+
+For `catsandog`, the word `cat` leaves `sandog`, and then `sand` leaves `og`; the word `cats` leaves `andog`, and then `and` leaves `og`. No dictionary word starts `og`, so $W(7) = \text{false}$, and therefore $W(0) = \text{false}$. The memo makes sure each position is worked out only once.
+
+**Idea.** Try every first word; recurse on the rest; remember each position's answer in a `Boolean[]`, where `null` means unknown.
+
+```java
+static final class WordBreak {
+    final String s;
+    final Set<String> words;
+    final Boolean[] memo;                            // memo[start] = can s[start..) be split? null = not known yet
+
+    WordBreak(String s, List<String> words) {
+        this.s = s;
+        this.words = new HashSet<>(words);
+        this.memo = new Boolean[s.length() + 1];
+    }
+
+    boolean canSplit(int start) {
+        if (start == s.length()) return true;
+        if (memo[start] != null) return memo[start];
+        boolean ok = false;
+        for (int end = start + 1; end <= s.length() && !ok; end++) {
+            ok = words.contains(s.substring(start, end)) && canSplit(end);
+        }
+        return memo[start] = ok;
+    }
+}
+
+static boolean wordBreak(String s, List<String> words) {
+    return new WordBreak(s, words).canSplit(0);
+}
+```
+
+**Answer.** true for `leetcode`, true for `applepenapple` with `["apple", "pen"]`, false for `catsandog`. There are $n + 1$ states, each trying up to $n$ end positions and building a substring of up to $n$ letters: $O(n^3)$ time and $O(n)$ memo. For LeetCode's $n = 300$ that is at most $2.7 \times 10^7$ letter copies; stopping `end` at the longest dictionary word (20 letters) cuts it to about $300 \times 20 \times 20 = 120{,}000$.
+
+### 2. LeetCode 403: Frog Jump (Hard)
+
+**Problem.** Stones lie at increasing positions in a river, the first at 0. A frog on stone 0 must first jump exactly 1 unit. If its last jump was $k$ units, its next jump must be $k - 1$, $k$ or $k + 1$ units, forwards, and it must land on a stone. Can it reach the last stone? For stones `[0, 1, 3, 5, 6, 8, 12, 17]` the answer is true; for `[0, 1, 2, 3, 4, 8, 9, 11]` it is false.
+
+**Math first.** The position alone does not decide the future; the last jump does too. So the state is a pair:
+
+$$
+R(i, k) = [\, i = n - 1 \,] \ \vee \bigvee_{\substack{d \in \lbrace k-1, k, k+1 \rbrace \\ d > 0,\ x_i + d \in S}} R\big(\operatorname{idx}(x_i + d),\ d\big)
+$$
+
+where:
+
+- $R(i, k)$ says whether the frog can finish when it stands on stone $i$ having just jumped $k$ units;
+- $x_i$ is the position of stone $i$, $S$ is the set of all positions, and $\operatorname{idx}(x)$ is the index of the stone at position $x$;
+- $[\, i = n - 1 \,]$ is true on the last stone;
+- the start is $R(0, 0)$: with $k = 0$ the only positive choice is $d = 1$, which is the required first jump.
+
+Example: stones $0, 1, 3, 5, 6, 8, 12, 17$.
+
+- $R(0, 0)$: jump 1 to position 1, so ask $R(1, 1)$.
+- $R(1, 1)$: jumps 0, 1, 2; only $1 + 2 = 3$ is a stone, so ask $R(2, 2)$ at position 3.
+- $R(2, 2)$: $3 + 2 = 5$ is a stone, so ask $R(3, 2)$ at position 5.
+- $R(3, 2)$: first try $5 + 1 = 6$, giving $R(4, 1)$. From 6 with $k = 1$ only $6 + 2 = 8$ works, giving $R(5, 2)$, and from 8 with $k = 2$ the positions 9, 10, 11 are all water: **false**. So $R(4, 1)$ is false.
+- Back in $R(3, 2)$, try $5 + 3 = 8$, giving $R(5, 3)$. From 8 with $k = 3$: $8 + 4 = 12$ is a stone, giving $R(6, 4)$, and $12 + 5 = 17$ is the last stone: **true**.
+
+The jumps are $1, 2, 2, 3, 4, 5$, and the memo ends up holding 8 pairs, two of them (stone 6 after a 1-jump, stone 8 after a 2-jump) remembered as dead ends.
+
+**Idea.** Map each position to its index for $O(1)$ landing checks. Recurse on the three possible jumps, and memoise on the pair (stone, last jump), packed into a `long`.
+
+```java
+static final class FrogJump {
+    final int[] stones;
+    final Map<Integer, Integer> indexOf = new HashMap<>(); // stone position -> its index
+    final Map<Long, Boolean> memo = new HashMap<>();
+
+    FrogJump(int[] stones) {
+        this.stones = stones;
+        for (int i = 0; i < stones.length; i++) indexOf.put(stones[i], i);
+    }
+
+    boolean canFinish(int i, int lastJump) {         // standing on stone i, having just jumped lastJump units
+        if (i == stones.length - 1) return true;
+        long key = (long) i << 32 | lastJump;        // the future depends on both, so the key holds both
+        Boolean known = memo.get(key);
+        if (known != null) return known;
+        boolean ok = false;
+        for (int jump = lastJump - 1; jump <= lastJump + 1 && !ok; jump++) {
+            Integer next = jump > 0 ? indexOf.get(stones[i] + jump) : null;
+            ok = next != null && canFinish(next, jump);
+        }
+        memo.put(key, ok);
+        return ok;
+    }
+}
+
+static boolean canCross(int[] stones) {
+    return new FrogJump(stones).canFinish(0, 0);     // a last jump of 0 makes the first jump exactly 1
+}
+```
+
+**Answer.** true for `[0, 1, 3, 5, 6, 8, 12, 17]`; false for `[0, 1, 2, 3, 4, 8, 9, 11]`, because the gap from 4 to 8 needs a jump of 4 right after a jump of 1. Jumps grow by at most 1 per stone, so on stone $i$ the last jump is at most $i$, giving at most $\frac{n^2}{2}$ states with 3 tries each: $O(n^2)$ time and space. For LeetCode's $n = 2{,}000$ that is at most $2 \times 10^6$ states.
+
+### 3. LeetCode 87: Scramble String (Hard)
+
+**Problem.** Scramble a string by splitting it into two non-empty parts, optionally swapping them, and scrambling each part again, recursively. Given $a$ and $b$ of equal length, can $b$ be produced from $a$? `"great"` → `"rgeat"` is true; `"abcde"` → `"caebd"` is false.
+
+**Math first.** A piece is described by where it starts in $a$, where it starts in $b$, and its length. The first split of $a$'s piece is at some $k$, and the halves are either kept in order or swapped:
+
+$$
+S(i, j, \ell) = \big[\, a[i..i{+}\ell) = b[j..j{+}\ell) \,\big] \ \vee \bigvee_{k=1}^{\ell-1} \Big( \big( S(i, j, k) \wedge S(i{+}k, j{+}k, \ell{-}k) \big) \vee \big( S(i, j{+}\ell{-}k, k) \wedge S(i{+}k, j, \ell{-}k) \big) \Big)
+$$
+
+where:
+
+- $S(i, j, \ell)$ says whether $b[j..j{+}\ell)$ is a scramble of $a[i..i{+}\ell)$;
+- $k$ is the length of $a$'s left half;
+- *kept in order*: $a$'s left half matches the left $k$ letters of $b$'s piece, and the right halves match;
+- *swapped*: $a$'s left half matches the **last** $k$ letters of $b$'s piece, and $a$'s right half matches the first $\ell - k$;
+- the key is the triple $(i, j, \ell)$, three small integers, so a 3D array works.
+
+Example: $a = \texttt{great}$, $b = \texttt{rgeat}$, so the question is $S(0, 0, 5)$.
+
+- Split at $k = 2$, kept in order: is `rg` a scramble of `gr`, and is `eat` a scramble of `eat`?
+- `eat` = `eat` letter for letter, so $S(2, 2, 3)$ is true.
+- For `gr` versus `rg`, split at $k = 1$ and **swap**: $a$'s `g` against $b$'s last letter `g` is true, and $a$'s `r` against $b$'s first letter `r` is true. So $S(0, 0, 2)$ is true.
+- Both halves are true, so $S(0, 0, 5)$ is **true**.
+
+**Idea.** Recurse on all splits and both orders, stopping at the first success; memoise each $(i, j, \ell)$ in a `Boolean[][][]`. Checking first that the two pieces contain the same letters prunes most branches, but is not needed for correctness.
+
+```java
+static final class Scramble {
+    final String a, b;
+    final Boolean[][][] memo;                        // memo[i][j][len], null = not known yet
+
+    Scramble(String a, String b) {
+        this.a = a;
+        this.b = b;
+        int n = a.length();
+        this.memo = new Boolean[n][n][n + 1];
+    }
+
+    boolean matches(int i, int j, int len) {         // is b[j..j+len) a scramble of a[i..i+len)?
+        if (memo[i][j][len] != null) return memo[i][j][len];
+        boolean ok = a.regionMatches(i, b, j, len);
+        for (int k = 1; k < len && !ok; k++) {
+            ok = (matches(i, j, k) && matches(i + k, j + k, len - k))              // halves kept in order
+                    || (matches(i, j + len - k, k) && matches(i + k, j, len - k)); // halves swapped
+        }
+        return memo[i][j][len] = ok;
+    }
+}
+
+static boolean isScramble(String a, String b) {
+    return a.length() == b.length() && new Scramble(a, b).matches(0, 0, a.length());
+}
+```
+
+**Answer.** true for `great` / `rgeat`, false for `abcde` / `caebd`, true for `a` / `a`. There are at most $n \times n \times (n + 1)$ states, each trying $\ell - 1$ splits with 4 sub-questions: $O(n^4)$ time and $O(n^3)$ space. For LeetCode's $n = 30$ that is $30 \times 30 \times 31 = 27{,}900$ states and under a million splits. Without the memo the same recursion branches four ways at every split and is exponential.
+
+## Mathematical Abstraction
+
+A memo function pairs a rule $f$ with a table $M$, and consults the table first:
+
+$$
+\operatorname{memo}(s) =
+\begin{cases}
+M[s] & s \in \operatorname{dom}(M) \\
+M[s] \leftarrow f(s) & \text{otherwise}
+\end{cases}
+\qquad
+\text{calls} = 1 + \sum_{s \in R} c(s)
+$$
+
+where:
+
+- $s$ is the state, made of every argument that affects the answer;
+- $\operatorname{dom}(M)$ is the set of states already in the table, and $M[s] \leftarrow f(s)$ means "compute $f(s)$, using $\operatorname{memo}$ for the sub-questions, store it, and return it";
+- $R$ is the set of states that are computed rather than looked up;
+- $c(s)$ is the number of recursive calls made while computing $s$.
+
+Example: for `fibMemo(30)`, $R = \lbrace 2, 3, \dots, 30 \rbrace$ has 29 states with $c(s) = 2$ each, so calls $= 1 + 29 \times 2 = 59$. Without $M$, every call is a computation and the count is $2F(31) - 1 = 2{,}692{,}537$. The whole art of memoization is choosing $s$: complete enough that $f(s)$ is determined, small enough that states repeat.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 14, "Dynamic Programming": rod cutting (14.1) is solved both top-down with memoization and bottom-up, and 14.3, "Elements of dynamic programming", discusses when memoization pays. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Computer Science: An Interdisciplinary Approach*, §2.3 "Recursion", "Top-down dynamic programming" (`TopDownFibonacci.java`): <https://introcs.cs.princeton.edu/java/23recursion/>.
+- Jeff Erickson, *Algorithms* (2019), Chapter 3, "Dynamic Programming", sections on Virahāṅka's rule and "Memo(r)ization: Remember Everything": <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- Donald Michie, "'Memo' Functions and Machine Learning", *Nature* 218, 19–22 (1968): <https://doi.org/10.1038/218019a0>.
+- Java SE 21 API, `HashMap.computeIfAbsent`, which documents the `ConcurrentModificationException`: <https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/HashMap.html>.
+- LeetCode: [509. Fibonacci Number](https://leetcode.com/problems/fibonacci-number/), [139. Word Break](https://leetcode.com/problems/word-break/), [403. Frog Jump](https://leetcode.com/problems/frog-jump/), [87. Scramble String](https://leetcode.com/problems/scramble-string/).
+
+[← Dynamic Programming](../dynamic-programming/index.qmd) · [Dynamic Programming and Decision Making](../groups/03-optimisation.qmd) · [Greedy →](../greedy/index.qmd)

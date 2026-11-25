@@ -1,70 +1,450 @@
 ---
 title: "Bitmask"
-description: "Learn Bitmask with a complete numerical recurrence, proof, counterexample and small tested implementation."
+description: "Sets stored as the bits of one integer: building masks, testing, setting and clearing bits, enumerating subsets and submasks (3^n in total), dynamic programming over subsets with Held–Karp (O(2^n n^2)), row masks, and hard interview problems solved math-first."
 ---
 
-## One problem you can understand by hand
+A bitmask stores a set of small numbers in a single integer: bit $i$ is 1 when $i$ is in the set. Then "add $i$", "is $i$ in it?" and "union" are single machine instructions, and a set can be used as an array index. That makes it possible to write dynamic programs whose state is "which items have I used so far?", and it turns problems that look like $n!$ into $2^n$. This lesson starts with light switches and ends with the travelling salesman and three hard interview problems.
 
-**LeetCode 698 — Partition to K Equal Sum Subsets.** A subset of available items must be represented as part of a DP state. Storing the list of chosen elements in every key is cumbersome.
+All code is in [`BitmaskLab.java`](BitmaskLab.java). Run it from this folder with `java BitmaskLab.java`; it checks every number on this page and prints `OK`.
 
-A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
+## The problem
 
-## The approach that looks convincing but fails
+A delivery van starts at depot 0, must visit shops 1, 2 and 3 once each, and return. The distances are:
 
-Use long strings or sorted copies to identify the same subset repeatedly. A set of n choices has exactly 2^n possibilities, but representations should be compact.
+| | 0 | 1 | 2 | 3 |
+| --- | --- | --- | --- | --- |
+| **0** | 0 | 1 | 4 | 3 |
+| **1** | 1 | 0 | 2 | 5 |
+| **2** | 4 | 2 | 0 | 1 |
+| **3** | 3 | 5 | 1 | 0 |
 
-Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
+What is the shortest round trip?
 
-## The key reasoning step
+- **Trying every order** of the shops works here: $3! = 6$ orders, and the best, $0 \to 1 \to 2 \to 3 \to 0$, costs $1 + 2 + 1 + 3 = 7$. But with 16 stops there are $15! \approx 1.3 \times 10^{12}$ orders.
+- Most of those orders share work. Once you know the shortest way to visit **the set** $\lbrace 1, 2 \rbrace$ ending at 2, the order inside that set no longer matters. So the right state is *a set of visited stops plus where you are*, and a set of up to 16 stops fits in the bits of one `int`. That gives $2^{16} \times 16^2 \approx 16.8$ million steps instead of $10^{12}$.
 
-Use one bit per item index: a 1 means 'already chosen' and 0 means 'available'. Repeated values at different indices still receive different bits.
+## Explain it like I'm ten
 
-## From actual numbers to mathematics
+::: {.callout-tip}
+Picture a row of 4 light switches, numbered 3, 2, 1, 0 from left to right. Each is up (1) or down (0). The pattern `1101` means switches 3, 2 and 0 are on and switch 1 is off. Read as a binary number, `1101` is $8 + 4 + 1 = 13$. So **the number 13 is a name for the set $\lbrace 0, 2, 3 \rbrace$**.
+
+With 4 switches there are $2 \times 2 \times 2 \times 2 = 16$ patterns, so every set of the numbers 0 to 3 has a name from 0 (all off) to 15 (all on). Flipping one switch, or asking "is switch 2 on?", takes the computer a single step.
+
+Now think of a pizza menu with 4 toppings. Every possible pizza is one switch pattern, and "the cheapest way to make the pizza with toppings $\lbrace 0, 2, 3 \rbrace$" can be written in box number 13 of a table. That is dynamic programming over subsets. Donald Knuth gives this whole toolbox a long section, "Bitwise tricks and techniques", in Volume 4A of *The Art of Computer Programming*; Henry Warren's *Hacker's Delight* is a book-length collection of the same tricks.
+:::
+
+## From simple to advanced
+
+### Level 1: a set is a number
+
+Give each item a position $0, 1, \dots, n - 1$. A set $S$ of items becomes the number whose bit $i$ is 1 exactly when $i \in S$:
 
 $$
-mask(S)=\sum_{i\in S}2^i
+\operatorname{mask}(S) = \sum_{i \in S} 2^i
 $$
 
-**What every symbol means:** S is a set of chosen ZERO-BASED indices, i is an item index, 2^i is the binary place value for that index, and mask(S) is the integer encoding the subset.
+where:
 
-**Now substitute numbers into that same relationship:** For items at positions {0,2,3}, mask=2⁰+2²+2³=1+4+8=13, whose binary representation is 1101. It marks items 0,2,3 as chosen and item 1 as absent. Testing bit 2 uses (13 & 4) ≠ 0.
+- $S$ is a set of items numbered from 0, and $i \in S$ means item $i$ is in it;
+- $2^i$ is the value of bit $i$: $1, 2, 4, 8, \dots$;
+- different sets get different numbers, and the $2^n$ subsets of $n$ items get exactly the numbers $0$ to $2^n - 1$.
 
-If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
+Example: $S = \lbrace 0, 2, 3 \rbrace$ gives $2^0 + 2^2 + 2^3 = 1 + 4 + 8 = 13$, which is `1101` in binary. The empty set is 0, and all four items, $\lbrace 0, 1, 2, 3 \rbrace$, is $15 = $ `1111`.
 
-## Why the result is actually correct
+```java
+static int maskOf(int... members) {
+    int mask = 0;
+    for (int i : members) mask |= (1 << i);
+    return mask;
+}
 
-Binary positional representation is unique. Each bit carries one independent yes/no choice, so no two distinct subsets of fixed indices share the same mask.
+static List<Integer> membersOf(int mask) {
+    List<Integer> members = new ArrayList<>();
+    for (int i = 0; i < 31; i++) if (has(mask, i)) members.add(i);
+    return members;
+}
+```
 
-A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
+`1 << i` is $2^i$: a 1 shifted left by $i$ places. An `int` has 32 bits, but bit 31 is the sign bit, so sets of up to 31 items fit safely; a `long` holds 63, and `java.util.BitSet` any number.
 
-## Actual implementation
+### Level 2: every set operation is one instruction
 
-The [original, tested JavaScript implementation](../examples/patterns.mjs) exports `subsets`:
+| Operation | Java | On $m = 13 =$ `1101` | Result |
+| --- | --- | --- | --- |
+| Is $i$ in the set? | `((m >> i) & 1) == 1` | $i = 1$: `110` & `1` $= 0$ | no |
+| Add $i$ | `m` OR `(1 << i)` | $i = 1$: `1101` OR `0010` | $15 =$ `1111` |
+| Remove $i$ | `m & ~(1 << i)` | $i = 2$: `1101` & `1011` | $9 =$ `1001` |
+| Toggle $i$ | `m ^ (1 << i)` | $i = 0$: `1101` ^ `0001` | $12 =$ `1100` |
+| Size $\lvert S \rvert$ | `Integer.bitCount(m)` | three 1s | 3 |
+| Union with $6 =$ `0110` | `m` OR `6` | | $15$ |
+| Intersection with 6 | `m & 6` | | $4 =$ `0100` |
+| Difference, minus 6 | `m & ~6` | | $9 =$ `1001` |
 
-~~~js
-import { subsets } from '../examples/patterns.mjs';
+(The table writes OR in words, because the Java operator is the vertical bar.) One more trick isolates the **lowest** item of a set:
 
-console.log(subsets([1,2,3]));
-~~~
+$$
+x \,\&\, (-x) = 2^{t(x)}, \qquad -x = \sim x + 1
+$$
 
-Run this from a `.mjs` file inside this topic directory. The same function is exercised by [the unit tests](../examples/patterns.test.mjs). The implementation is intentionally tiny so the recurrence remains visible.
+where:
 
-## Complexity and failure conditions
+- $\&$ is bitwise AND and $\sim x$ flips every bit of $x$;
+- $-x = \sim x + 1$ is how Java stores negative numbers (*two's complement*);
+- $t(x)$ is the number of trailing zeros of $x$, so $2^{t(x)}$ is its lowest 1-bit.
 
-**Cost model:** O(1) bit operations for fixed-width masks; a full subset DP has up to O(2^n) states, n being item count.
+Example: $x = 12 = $ `...01100`. Flipping gives `...10011`, and adding 1 gives $-12 = $ `...10100`. Then `01100` & `10100` $=$ `00100` $= 4$: the lowest item of $\lbrace 2, 3 \rbrace$ is 2, and $2^2 = 4$. For $x = 13$ the answer is $1 = 2^0$.
 
-**A classic mistake:** Bitmask tricks rely on finite integer width. JavaScript bitwise operations convert to signed 32-bit integers, so a plain (1 << i) is unsafe for arbitrary i≥31; use BigInt for wider masks.
+```java
+static boolean has(int mask, int i) { return ((mask >> i) & 1) == 1; }
+static int add(int mask, int i)     { return mask | (1 << i); }
+static int remove(int mask, int i)  { return mask & ~(1 << i); }
+static int toggle(int mask, int i)  { return mask ^ (1 << i); }
+static int lowestBit(int mask)      { return mask & -mask; }
+```
 
-In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+### Level 3: listing subsets, and submasks of a mask
 
-## Try teaching it back
+**All subsets** of $n$ items are simply the numbers `0, 1, …, (1 << n) - 1`, so one `for` loop visits them. For $n = 3$ they are $0, 1, \dots, 7$, i.e. $\emptyset, \lbrace 0 \rbrace, \lbrace 1 \rbrace, \lbrace 0, 1 \rbrace, \lbrace 2 \rbrace, \dots, \lbrace 0, 1, 2 \rbrace$. Note the useful order: every subset of a mask is a smaller number than the mask, so increasing order is a valid evaluation order for a DP that builds sets from smaller sets.
 
-Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+**All submasks of one mask** $m$ (the subsets of a given set) come from a single update rule:
 
-## Reference and community insight
+$$
+s \leftarrow (s - 1) \,\&\, m, \qquad \text{starting from } s = m, \text{ until } s = 0
+$$
 
-**CLRS relationship:** CLRS Chapter 14 DP and Appendix B sets; bitmask encoding is a common implementation technique.. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+where:
 
-**Related classic LeetCode example:** LeetCode 698 — Partition to K Equal Sum Subsets — [community/official practice link](https://leetcode.com/problems/partition-to-k-equal-sum-subsets/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+- $s$ is the current submask, and $s - 1$ turns the lowest 1-bit of $s$ into 0 and every bit below it into 1;
+- $\&\, m$ then throws away the bits that are not in $m$, leaving the next smaller submask.
 
-[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+Example: $m = 13 = $ `1101`. Starting at 13: $12 \,\&\, 13 = 12$; $11 \,\&\, 13 = $ `1011` & `1101` $= 9$; $8 \,\&\, 13 = 8$; $7 \,\&\, 13 = $ `0111` & `1101` $= 5$; then $4$, then $3 \,\&\, 13 = 1$, then $0$. So the submasks are $13, 12, 9, 8, 5, 4, 1, 0$: all $2^3 = 8$ subsets of $\lbrace 0, 2, 3 \rbrace$, in decreasing order.
+
+```java
+static List<Integer> submasks(int m) {
+    List<Integer> result = new ArrayList<>();
+    for (int s = m; ; s = (s - 1) & m) {
+        result.add(s);
+        if (s == 0) break;                           // 0 is the last submask; (0 - 1) & m would wrap round to m
+    }
+    return result;
+}
+```
+
+How much work is it to visit every submask of **every** mask? A mask with $k$ items has $2^k$ submasks, and $\binom{n}{k}$ masks have $k$ items:
+
+$$
+\sum_{m=0}^{2^n - 1} 2^{\lvert m \rvert} = \sum_{k=0}^{n} \binom{n}{k} 2^k = (1 + 2)^n = 3^n
+$$
+
+where $\lvert m \rvert$ is the number of 1-bits of $m$, and the middle step is the binomial theorem. Example: $n = 4$ gives $3^4 = 81$ (mask, submask) pairs, and $n = 10$ gives $59{,}049$, against $4^{10} = 1{,}048{,}576$ if every pair of masks were tried and the non-submasks thrown away. For $n = 16$: $3^{16} \approx 4.3 \times 10^7$ against $4^{16} \approx 4.3 \times 10^9$. Each item is either outside $m$, in $m$ but not in $s$, or in both: three choices per item, which is another way to see $3^n$.
+
+### Level 4: dynamic programming over subsets: Held–Karp
+
+Back to the delivery van. The state remembers **which stops have been visited** (a mask) and **where the van is now**:
+
+$$
+\text{best}(S, v) = \min_{u \in S \setminus \lbrace v \rbrace} \Big( \text{best}\big(S \setminus \lbrace v \rbrace,\ u\big) + d(u, v) \Big), \qquad \text{best}(\lbrace 0 \rbrace, 0) = 0
+$$
+
+where:
+
+- $S$ is the set of stops visited so far, always including the depot 0, and $v \in S$ is the stop where the path ends;
+- $\text{best}(S, v)$ is the length of the shortest path that starts at 0, visits exactly the stops in $S$, and ends at $v$;
+- $u$ is the stop visited just before $v$, and $d(u, v)$ is the distance from $u$ to $v$;
+- the tour is $\min_{v \ne 0} \big( \text{best}(\text{all}, v) + d(v, 0) \big)$: end anywhere, then drive home.
+
+Example: the distances of *The problem*. Sets are written as lists of stops:
+
+| $S$ | ends at | computed as | best |
+| --- | --- | --- | --- |
+| $\lbrace 0, 1 \rbrace$ | 1 | $0 + d(0,1)$ | 1 |
+| $\lbrace 0, 2 \rbrace$ | 2 | $0 + d(0,2)$ | 4 |
+| $\lbrace 0, 3 \rbrace$ | 3 | $0 + d(0,3)$ | 3 |
+| $\lbrace 0, 1, 2 \rbrace$ | 2 | $\text{best}(\lbrace 0,1 \rbrace, 1) + d(1,2) = 1 + 2$ | 3 |
+| $\lbrace 0, 1, 2 \rbrace$ | 1 | $\text{best}(\lbrace 0,2 \rbrace, 2) + d(2,1) = 4 + 2$ | 6 |
+| $\lbrace 0, 1, 3 \rbrace$ | 3 | $1 + d(1,3) = 1 + 5$ | 6 |
+| $\lbrace 0, 1, 3 \rbrace$ | 1 | $3 + d(3,1) = 3 + 5$ | 8 |
+| $\lbrace 0, 2, 3 \rbrace$ | 3 | $4 + d(2,3) = 4 + 1$ | 5 |
+| $\lbrace 0, 2, 3 \rbrace$ | 2 | $3 + d(3,2) = 3 + 1$ | 4 |
+| all | 1 | $\min(4 + d(2,1),\ 5 + d(3,1)) = \min(6, 10)$ | 6 |
+| all | 2 | $\min(8 + d(1,2),\ 6 + d(3,2)) = \min(10, 7)$ | 7 |
+| all | 3 | $\min(6 + d(1,3),\ 3 + d(2,3)) = \min(11, 4)$ | 4 |
+
+The tour is $\min(6 + d(1,0),\ 7 + d(2,0),\ 4 + d(3,0)) = \min(6 + 1,\ 7 + 4,\ 4 + 3) = \mathbf{7}$. Two entries tie because $0 \to 1 \to 2 \to 3 \to 0$ and its reverse $0 \to 3 \to 2 \to 1 \to 0$ are the same loop.
+
+```java
+static final int INF = Integer.MAX_VALUE / 2;        // "no such path"; half of MAX_VALUE so INF + distance cannot overflow
+
+static int[][] heldKarpTable(int[][] dist) {
+    int n = dist.length;
+    int[][] best = new int[1 << n][n];
+    for (int[] row : best) Arrays.fill(row, INF);
+    best[1][0] = 0;                                  // only city 0 visited, standing on it
+    for (int mask = 1; mask < 1 << n; mask++) {
+        for (int v = 0; v < n; v++) {
+            int before = remove(mask, v);
+            if (!has(mask, v) || before == 0) continue;
+            for (int u = 0; u < n; u++) {            // u = the city visited just before v
+                if (has(before, u)) best[mask][v] = Math.min(best[mask][v], best[before][u] + dist[u][v]);
+            }
+        }
+    }
+    return best;
+}
+
+static int shortestTour(int[][] dist) {
+    int n = dist.length, full = (1 << n) - 1;
+    int[][] best = heldKarpTable(dist);
+    int tour = INF;
+    for (int v = 1; v < n; v++) tour = Math.min(tour, best[full][v] + dist[v][0]); // return home to city 0
+    return tour;
+}
+```
+
+Masks are visited in increasing order, and `before` is always smaller than `mask`, so every entry is final before it is read. The cost is $2^n$ masks $\times$ $n$ end stops $\times$ $n$ previous stops:
+
+$$
+T(n) = 2^n \cdot n^2
+$$
+
+where $n$ is the number of stops, depot included. Example: $n = 4$ gives $16 \times 16 = 256$ steps; $n = 16$ gives $65{,}536 \times 256 = 16{,}777{,}216 \approx 16.8$ million, against $15! \approx 1.3 \times 10^{12}$ orders. The memory is $2^n \cdot n$ entries, about one million `int`s (4 MB) for $n = 16$. Michael Held and Richard Karp, and independently Richard Bellman, published this algorithm in 1962. The travelling salesman problem is NP-hard, so exponential time is expected; the point is that $2^n$ is far smaller than $n!$.
+
+### Level 5: masks as rows of a grid
+
+A mask can also describe **one row** of a grid: bit $j$ says whether seat $j$ in the row is taken. Constraints between neighbouring seats become shifts:
+
+$$
+\text{no two neighbours} \iff r \,\&\, (r \gg 1) = 0
+$$
+
+where:
+
+- $r$ is the row mask, and $r \gg 1$ shifts it one place to the right, lining each seat up with its left neighbour;
+- a 1 in the AND means some seat and its neighbour are both taken.
+
+Example: $r = 5 = $ `0101`: $0101 \,\&\, 0010 = 0$, allowed. $r = 6 = $ `0110`: $0110 \,\&\, 0011 = 0010 \ne 0$, two neighbours. Of the 16 rows of width 4, exactly 8 are allowed, and of the 256 rows of width 8, exactly 55; these are Fibonacci numbers, $F(w + 2)$.
+
+```java
+static boolean noTwoAdjacent(int row) {
+    return (row & (row >> 1)) == 0;                  // shifting by one lines each seat up with its neighbour
+}
+
+static int countRowPatterns(int width) {
+    int count = 0;
+    for (int row = 0; row < 1 << width; row++) if (noTwoAdjacent(row)) count++;
+    return count;
+}
+```
+
+A DP over rows then keeps one table entry per allowed mask of the current row and, for each one, tries every allowed mask of the previous row that does not clash with it. That is the method behind LeetCode 1349, Maximum Students Taking Exam (Hard), and behind tiling problems such as counting domino coverings.
+
+## Why it works and what it costs
+
+**Why it is correct.** The mask encoding is a *bijection*: each subset of $\lbrace 0, \dots, n - 1 \rbrace$ has exactly one number in $0, \dots, 2^n - 1$, and each such number is exactly one subset (binary representation is unique). So an array indexed by masks is the same as a table indexed by sets. A DP over subsets is correct by the usual induction over the evaluation order: in Held–Karp, $S \setminus \lbrace v \rbrace$ is a proper subset of $S$, hence a smaller number, so increasing mask order computes it first. And the optimal path ending at $v$ through $S$ must reach $v$ from some $u$ by an optimal path through $S \setminus \lbrace v \rbrace$ ending at $u$; otherwise swapping in the better prefix would shorten it.
+
+**What it costs.**
+
+| Task | Work | On this page's numbers |
+| --- | --- | --- |
+| One set operation | $O(1)$ | `13 & ~4 = 9` in one instruction |
+| All subsets of $n$ items | $2^n$ | $n = 4$: 16 |
+| All submasks of all masks | $3^n$ | $n = 4$: 81; $n = 10$: 59,049 |
+| Held–Karp | $2^n n^2$ time, $2^n n$ memory | $n = 16$: 16.8 million steps |
+| Row masks of width $w$ | $2^w$ patterns, $F(w + 2)$ allowed | $w = 8$: 256 patterns, 55 allowed |
+
+Bitmask methods are for **small** $n$: about $n \le 20$ for $2^n n$ work, $n \le 16$ for $2^n n^2$ or $3^n$. Beyond that the tables no longer fit in time or memory.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `mask & 1 << i == 0` without brackets | A compile error in Java (`int & boolean`), because `==` binds tighter than `&`; in C it silently tests the wrong thing | Write `((mask >> i) & 1) == 1`, or use a helper such as `has` |
+| `1 << i` for $i \ge 31$ in an `int` | Negative numbers or wrong bits; `1 << 32` is 1 | Use `1L << i` and a `long` |
+| Submask loop that tests `s > 0` in the `for` | The empty submask is never visited | Visit `s`, then `break` after `s == 0`, as `submasks` does |
+| Allocating `new int[1 << n][n]` for $n = 25$ | `OutOfMemoryError`: $2^{25} \times 25$ ints is over 3 GB | Check the sizes first; bitmask DP is for $n \le$ about 20 |
+| A Held–Karp state without the current stop | Wrong lengths: the next distance depends on where you are | The state is (visited set, current stop) |
+| `Integer.MAX_VALUE + distance` | Overflow to a negative "shortest" path | Use `MAX_VALUE / 2` as infinity, as `INF` does |
+| Counting set size with a loop over all 32 bits | Correct but slow inside a hot DP | `Integer.bitCount(mask)` is one instruction on most CPUs |
+
+## Interview problems
+
+Each solution names the mask (what its bits mean) before anything else. Then the recurrence is the same shape as Level 4.
+
+### 1. LeetCode 698: Partition to K Equal Sum Subsets (Medium)
+
+**Problem.** Can the array be split into $k$ groups with equal sums? `[4, 3, 2, 3, 5, 2, 1]` with $k = 4$ gives true: $(5), (1, 4), (2, 3), (2, 3)$. At most 16 numbers.
+
+**Math first.** Each group must sum to $T = \frac{\text{total}}{k}$. Fill the groups one after another, using a mask for the numbers used so far. Whatever order produced a mask, the group currently being filled holds the total of the mask modulo $T$:
+
+$$
+\text{fill}(S) = \Big( \sum_{i \in S} a_i \Big) \bmod T, \qquad S \text{ reachable} \ \wedge\ i \notin S \ \wedge\ \text{fill}(S) + a_i \le T \implies S \cup \lbrace i \rbrace \text{ reachable}
+$$
+
+where:
+
+- $S$ is the mask of numbers already placed, and $a_i$ is the $i$-th number;
+- $\text{fill}(S)$ is how full the current group is; $0$ means the last group just closed;
+- adding $a_i$ is allowed only if it does not overflow the current group, and every reachable mask is built this way, starting from the empty mask;
+- the answer is true exactly when the full mask is reachable.
+
+Example: total $= 20$, $k = 4$, so $T = 5$. One path through the masks: place 5 ($\text{fill} = 5 \bmod 5 = 0$, group closed), then 4 (fill 4), then 1 (fill $5 \to 0$), then 3 (fill 3), then 2 (fill $5 \to 0$), then 3, then 2 (fill $5 \to 0$). Every number is used and the last group closed exactly, so the answer is true. For `[1, 2, 3, 4]` with $k = 3$ the total 10 is not divisible by 3, so it is false at once.
+
+**Idea.** Only reachability needs storing, because $\text{fill}(S)$ is fixed by $S$. Walk the masks in increasing order and extend each reachable one by every unused number.
+
+```java
+static boolean canPartitionKSubsets(int[] nums, int k) {
+    int total = Arrays.stream(nums).sum();
+    if (total % k != 0) return false;
+    int target = total / k, n = nums.length;
+    int[] fill = new int[1 << n];                    // fill[mask] = sum in the bucket being filled; -1 = unreachable
+    Arrays.fill(fill, -1);
+    fill[0] = 0;
+    for (int mask = 0; mask < 1 << n; mask++) {
+        if (fill[mask] < 0) continue;
+        for (int i = 0; i < n; i++) {
+            int next = add(mask, i);
+            if (next != mask && fill[next] < 0 && fill[mask] + nums[i] <= target) {
+                fill[next] = (fill[mask] + nums[i]) % target; // a full bucket closes; the next one starts at 0
+            }
+        }
+    }
+    return fill[(1 << n) - 1] == 0;
+}
+```
+
+**Answer.** true for the example, false for `[1, 2, 3, 4]` with $k = 3$, and false for `[2, 2, 2, 2, 3, 4, 5]` with $k = 4$ (the 4 needs a 1). $2^n$ masks $\times$ $n$ numbers: for $n = 16$, $65{,}536 \times 16 = 1{,}048{,}576$ steps, and $2^n$ ints of memory.
+
+### 2. LeetCode 847: Shortest Path Visiting All Nodes (Hard)
+
+**Problem.** An undirected connected graph has $n \le 12$ nodes. Return the length of the shortest walk that visits every node; it may start and end anywhere and reuse nodes and edges. For `[[1,2,3], [0], [0], [0]]` (a star with centre 0) the answer is 4: $1 \to 0 \to 2 \to 0 \to 3$.
+
+**Math first.** The node alone is not enough to describe progress; you also need the set already visited. Each edge costs 1, so breadth-first search finds shortest walks in the graph of **states**:
+
+$$
+\text{dist}\big(w,\ S \cup \lbrace w \rbrace\big) \le \text{dist}(v, S) + 1 \quad \text{for every edge } v\text{–}w, \qquad \text{answer} = \min_{v} \text{dist}(v, \text{all})
+$$
+
+where:
+
+- a state is $(v, S)$: standing on node $v$ having visited the set $S$;
+- $\text{dist}(v, S)$ is the fewest edges needed to reach that state;
+- all $n$ states $(v, \lbrace v \rbrace)$ start at distance 0, because the walk may start anywhere.
+
+Example: the star. Level 0: $(0, \lbrace 0 \rbrace), (1, \lbrace 1 \rbrace), (2, \lbrace 2 \rbrace), (3, \lbrace 3 \rbrace)$. Level 1 includes $(0, \lbrace 0, 1 \rbrace)$. Level 2 includes $(2, \lbrace 0, 1, 2 \rbrace)$. Level 3 includes $(0, \lbrace 0, 1, 2 \rbrace)$. Level 4 includes $(3, \lbrace 0, 1, 2, 3 \rbrace)$, the full set, so the answer is **4**.
+
+**Idea.** A breadth-first search from all start states at once, level by level, with a `seen[node][mask]` table so each state is entered once. The first full mask taken from the queue gives the answer.
+
+```java
+record State(int node, int visited) {}
+
+static int shortestPathLength(int[][] graph) {
+    int n = graph.length, full = (1 << n) - 1;
+    boolean[][] seen = new boolean[n][1 << n];
+    Deque<State> queue = new ArrayDeque<>();
+    for (int v = 0; v < n; v++) {                    // start everywhere at once
+        queue.add(new State(v, 1 << v));
+        seen[v][1 << v] = true;
+    }
+    for (int steps = 0; !queue.isEmpty(); steps++) {
+        for (int size = queue.size(); size > 0; size--) {
+            State s = queue.poll();
+            if (s.visited() == full) return steps;
+            for (int w : graph[s.node()]) {
+                int visited = add(s.visited(), w);
+                if (!seen[w][visited]) {
+                    seen[w][visited] = true;
+                    queue.add(new State(w, visited));
+                }
+            }
+        }
+    }
+    throw new IllegalArgumentException("the graph is not connected");
+}
+```
+
+**Answer.** 4 for the star, 4 for `[[1], [0,2,4], [1,3,4], [2], [1,2]]` (for example $0 \to 1 \to 4 \to 2 \to 3$), and 0 for a single node. There are $n \cdot 2^n$ states, each scanning its node's edges: $O(2^n \cdot E)$ time, where $E$ is the number of edges, and $O(n \cdot 2^n)$ memory. For $n = 12$ that is $12 \times 4{,}096 = 49{,}152$ states.
+
+### 3. LeetCode 1125: Smallest Sufficient Team (Hard)
+
+**Problem.** A project needs up to 16 skills, and up to 60 people each have some of them. Return a smallest team (by index) that together has every skill. With skills `java, nodejs, reactjs` and people `[java], [nodejs], [nodejs, reactjs]` the answer is `[0, 2]`.
+
+**Math first.** Two kinds of masks: a **skill mask** for what a team covers, and, because at most 60 people exist, a **people mask** in a `long` for who is in the team. Treat each person like a knapsack item:
+
+$$
+\text{size}(S \cup K_p) \leftarrow \min\big(\text{size}(S \cup K_p),\ \text{size}(S) + 1\big), \qquad \text{size}(\emptyset) = 0
+$$
+
+where:
+
+- $S$ is a skill mask that some team already covers, and $\text{size}(S)$ the fewest people known to cover it;
+- $K_p$ is the skill mask of person $p$, so $S \cup K_p$ is what the team covers after adding $p$;
+- people are processed one at a time, and alongside each size the team itself is stored as a people mask; the answer is the team for the full skill mask.
+
+Example: java is bit 0, nodejs bit 1, reactjs bit 2. Then $K_0 = $ `001` $= 1$, $K_1 = $ `010` $= 2$, $K_2 = $ `110` $= 6$.
+
+- Person 0: from $\emptyset$, mask 1 gets size 1, team $\lbrace 0 \rbrace$.
+- Person 1: from $\emptyset$, mask 2 gets $\lbrace 1 \rbrace$; from mask 1, mask $1 \cup 2 = 3$ gets $\lbrace 0, 1 \rbrace$.
+- Person 2: from $\emptyset$, mask 6 gets $\lbrace 2 \rbrace$; from mask 1, mask $1 \cup 6 = 7$ (all skills) gets $\lbrace 0, 2 \rbrace$, size 2. From mask 3 the full mask would need 3 people, which is worse.
+
+The full mask 7 ends with team $\lbrace 0, 2 \rbrace$.
+
+**Idea.** One table over skill masks ($2^{16} = 65{,}536$ entries), updated once per person. Store both the size and the team mask, so the answer can be read back without a second pass.
+
+```java
+static int[] smallestSufficientTeam(String[] skills, List<List<String>> people) {
+    Map<String, Integer> bit = new HashMap<>();
+    for (int i = 0; i < skills.length; i++) bit.put(skills[i], i);
+    int full = (1 << skills.length) - 1;
+    long[] team = new long[full + 1];                // team[mask] = the people, as bits, of a smallest team covering mask
+    int[] size = new int[full + 1];
+    Arrays.fill(size, Integer.MAX_VALUE);            // MAX_VALUE = no team found yet
+    size[0] = 0;
+    for (int p = 0; p < people.size(); p++) {
+        int skillsOfP = 0;
+        for (String s : people.get(p)) skillsOfP |= (1 << bit.get(s));
+        for (int mask = 0; mask <= full; mask++) {
+            if (size[mask] == Integer.MAX_VALUE) continue;
+            int covered = mask | skillsOfP;
+            if (size[mask] + 1 < size[covered]) {    // adding person p gives a smaller team for covered
+                size[covered] = size[mask] + 1;
+                team[covered] = team[mask] | (1L << p);
+            }
+        }
+    }
+    return membersOfLong(team[full]);
+}
+
+static int[] membersOfLong(long people) {
+    return IntStream.range(0, 64).filter(p -> ((people >> p) & 1) == 1).toArray();
+}
+```
+
+**Answer.** `[0, 2]` for the example, and `[1, 2]` for LeetCode's second example with six skills and six people. Time $O(P \cdot 2^m)$ for $P$ people and $m$ skills: $60 \times 65{,}536 = 3{,}932{,}160$ steps at the limits. Memory $O(2^m)$: one `int` and one `long` per skill mask, under 1 MB.
+
+## Mathematical Abstraction
+
+A bitmask is the binary name of a set, and dynamic programming over subsets walks those names in increasing order:
+
+$$
+\operatorname{mask}(S) = \sum_{i \in S} 2^i, \qquad
+\text{DP}(S) = \operatorname{opt}_{x \in S} \Big( \text{DP}\big(S \setminus \lbrace x \rbrace\big) \otimes c(S, x) \Big)
+$$
+
+where:
+
+- $S \subseteq \lbrace 0, \dots, n - 1 \rbrace$ is a set of items, and $\operatorname{mask}(S)$ its integer name in $0, \dots, 2^n - 1$;
+- $\operatorname{opt}$ is $\min$, $\max$ or "any", $x$ is the item added last, and $c(S, x)$ the cost of adding it, combined by $\otimes$ (usually $+$);
+- $S \setminus \lbrace x \rbrace$ always has a smaller mask than $S$, so increasing order is a correct evaluation order; extra state, such as the current stop in Held–Karp, is added as a second index.
+
+Example: $\operatorname{mask}(\lbrace 0, 2, 3 \rbrace) = 1 + 4 + 8 = 13$, and removing item 2 gives $13 - 4 = 9 < 13$. Held–Karp is this pattern with $\operatorname{opt} = \min$ and a second index for the current stop: on the four stops of *The problem* it finds the tour of length 7 in $2^4 \cdot 4^2 = 256$ steps, and on 16 stops in about 16.8 million instead of $15! \approx 1.3 \times 10^{12}$.
+
+## References
+
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 4A, *Combinatorial Algorithms, Part 1* (Addison-Wesley, 2011), §7.1.3, "Bitwise Tricks and Techniques"; first issued as Volume 4, Fascicle 1 (2009).
+- Henry S. Warren, Jr., *Hacker's Delight*, 2nd edition (Addison-Wesley, 2012).
+- Michael Held and Richard M. Karp, "A Dynamic Programming Approach to Sequencing Problems", *Journal of the Society for Industrial and Applied Mathematics* 10(1), 196–210 (1962); and Richard Bellman, "Dynamic Programming Treatment of the Travelling Salesman Problem", *Journal of the ACM* 9(1), 61–63 (1962).
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), has no chapter on bitmasks; it treats the travelling-salesperson problem in Chapter 34, "NP-Completeness", and in 35.2, "The traveling-salesperson problem". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Java SE 21 API: `Integer.bitCount`, `Integer.numberOfTrailingZeros` and `java.util.BitSet`: <https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Integer.html>.
+- LeetCode: [698. Partition to K Equal Sum Subsets](https://leetcode.com/problems/partition-to-k-equal-sum-subsets/), [847. Shortest Path Visiting All Nodes](https://leetcode.com/problems/shortest-path-visiting-all-nodes/), [1125. Smallest Sufficient Team](https://leetcode.com/problems/smallest-sufficient-team/), [1349. Maximum Students Taking Exam](https://leetcode.com/problems/maximum-students-taking-exam/).
+
+[← Minimax](../minimax/index.qmd) · [Dynamic Programming and Decision Making →](../groups/03-optimisation.qmd)

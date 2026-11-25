@@ -1,94 +1,470 @@
 ---
 title: "Greedy"
-description: "Learn Greedy with a complete numerical recurrence, proof, counterexample and small tested implementation."
+description: "When taking the best-looking step is provably optimal: the greedy-choice property, exchange-argument and stays-ahead proofs, interval scheduling, coin systems where greedy fails, fractional versus 0/1 knapsack, Huffman codes, and hard interview problems solved math-first."
 ---
 
-## One problem you can understand by hand
+A greedy algorithm builds its answer one step at a time and, at every step, takes the option that looks best **right now**, never going back. When it works it is the simplest and fastest method there is, usually one sort and one scan. The catch is that it often does not work, and it is easy to believe a wrong greedy rule. This lesson shows how to tell the difference: with a proof, and with a brute-force test on small cases.
 
-**LeetCode 435 — Non-overlapping Intervals.** Choose the maximum number of non-overlapping meetings. A locally plausible rule such as selecting the earliest STARTING meeting can block many shorter ones.
+All code is in [`GreedyLab.java`](GreedyLab.java). Run it from this folder with `java GreedyLab.java`; it checks every number on this page and prints `OK`.
 
-A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
+## The problem
 
-## The approach that looks convincing but fails
+A school has one hall and six requests to use it on Saturday. Each request has a start and an end hour:
 
-Consider every subset of meetings and test overlaps. This is correct but expensive; choosing the wrong local rule is faster but wrong.
+| Request | A | B | C | D | E | F |
+| --- | --- | --- | --- | --- | --- | --- |
+| Start–end | 1–4 | 3–5 | 0–6 | 5–7 | 5–9 | 8–10 |
 
-Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
+Two bookings may not overlap, although one may start exactly when another ends. **How many requests can be accepted?**
 
-## The key reasoning step
+- Trying every subset means $2^6 = 64$ checks; with 100 requests it is $2^{100} \approx 1.3 \times 10^{30}$.
+- A greedy rule needs one sort and one pass. But **which** rule? "Earliest start first" accepts C (0–6) and then only F: 2 bookings. "Earliest end first" accepts A, D and F: 3 bookings, which is the best possible.
 
-Sort meetings by FINISH time. Take the first compatible meeting that finishes earliest. It leaves at least as much remaining time for future meetings as any other choice.
+Choosing the right rule, and proving it right, is the whole subject.
 
-## From actual numbers to mathematics
+## Explain it like I'm ten
+
+::: {.callout-tip}
+A playground has one bouncy castle and a queue of children, each wanting it from one time to another. To let the **most** children have a turn, always let in the child who will **finish soonest**. That child leaves the castle free as early as possible, so nobody who could have fitted is squeezed out.
+
+Greedy rules can also fool you. A shopkeeper giving change in British or American coins always hands over the biggest coin that fits, and that always gives the fewest coins. But imagine a country whose coins are worth 1, 3 and 4. To pay 6, the biggest-coin rule gives $4 + 1 + 1$, three coins, when $3 + 3$, two coins, was possible. Grabbing the 4 felt clever and was a mistake.
+
+Jeff Erickson opens the greedy chapter of his book *Algorithms* with two quotations side by side: Gordon Gekko's "greed is good" from the film *Wall Street*, and H. L. Mencken's remark that every human problem has a solution that is "neat, plausible, and wrong". His advice is that intuition is a tricky beast, and the only way to trust a greedy algorithm is to prove that it works.
+:::
+
+## From simple to advanced
+
+### Level 1: the greedy choice, and how it fails
+
+A greedy algorithm repeats one rule: among the options still allowed, take the one with the best score.
 
 $$
-a^*=\arg\min_{a\in\mathcal A_{\mathrm{compatible}}}end(a)
+a_t \in \arg\max_{a \in A_t} g(a)
 $$
 
-**What every symbol means:** A_compatible is the set of meetings that start after or at the previously chosen end; end(a) is the finish time of meeting a; a* is the compatible meeting with minimum finish time.
+where:
 
-**Now substitute numbers into that same relationship:** Meetings A=[1,4], B=[2,3], C=[3,5]. Choosing earliest start A blocks B and C, giving 1 meeting. Choosing earliest FINISH B (end 3) allows C (start 3), giving 2. This small case exposes the important rule.
+- $t = 1, 2, 3, \dots$ counts the steps;
+- $A_t$ is the set of options still allowed at step $t$, given what was already chosen;
+- $g(a)$ is the score the rule uses, such as "coin value" or "minus the end time";
+- $\arg\max$ means "an option where $g$ is largest", and $a_t$ is the option taken; it is never undone.
 
-If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
+Example: making change for 63 cents with coins $25, 10, 5, 1$, the score is the coin's value, and $A_t$ is the coins no larger than what is still owed. The steps take $25$ (38 left), $25$ (13 left), $10$ (3 left), $1, 1, 1$: **6 coins**, which is optimal.
 
-## Why the result is actually correct
-
-Exchange argument: take an optimal schedule and replace its first activity with the activity that finishes earliest. The replacement does not finish later, so it leaves all later chosen activities feasible and does not reduce the schedule's size. Repeat on the remaining interval.
-
-A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
-
-## Actual implementation
-
-The [original, tested JavaScript implementation](../examples/patterns.mjs) exports `maxNonOverlapping`:
-
-~~~js
-import { maxNonOverlapping } from '../examples/patterns.mjs';
-
-console.log(maxNonOverlapping([[1,4],[2,3],[3,5]]));
-~~~
-
-Run this from a `.mjs` file inside this topic directory. The same function is exercised by [the unit tests](../examples/patterns.test.mjs). The implementation is intentionally tiny so the recurrence remains visible.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function maxNonOverlapping(intervals) {
-  const a = [...intervals].sort((x, y) => x[1] - y[1]);
-  let end = -Infinity, count = 0;
-  for (const [start, stop] of a)
-    if (start >= end) { count++; end = stop; }
-  return count;
+```java
+static List<Integer> greedyChange(int[] coinsLargestFirst, int amount) {
+    List<Integer> used = new ArrayList<>();
+    for (int coin : coinsLargestFirst) {
+        while (amount >= coin) {
+            used.add(coin);
+            amount -= coin;
+        }
+    }
+    return used;
 }
-~~~
+```
 
-**Walk through the important lines:**
+With coins $4, 3, 1$ the same rule fails. Writing $G(a)$ for the number of coins greedy uses on amount $a$:
 
-1. Sort intervals by finish time; this order encodes the greedy-choice proof.
-2. `end` is the finish of the most recently selected interval.
-3. A new activity is compatible if `start >= end` (half-open meetings may touch at endpoints).
-4. Keeping the earliest-finishing compatible meeting leaves maximum space for all later activities.
-5. From `[1,4], [2,3], [3,5]`, select the second and third, for a result of **2**.
+$$
+G(a) = 1 + G\big(a - \max \lbrace c \in C : c \le a \rbrace\big), \qquad G(0) = 0
+$$
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+where $C$ is the set of coin values and $\max \lbrace c \in C : c \le a \rbrace$ is the biggest coin that fits. Example: with $C = \lbrace 1, 3, 4 \rbrace$, $G(6) = 1 + G(2) = 1 + 1 + G(1) = 1 + 1 + 1 + G(0) = 3$, from $4 + 1 + 1$. The optimum is $3 + 3$, **2 coins**. The first coin, 4, cannot be part of any best answer for 6, and greedy never takes a choice back.
 
-## Complexity and failure conditions
+What separates the two coin systems is the **greedy-choice property**: *some optimal solution contains the greedy first choice.* It holds for $25, 10, 5, 1$ and fails for $4, 3, 1$. Every correct greedy algorithm needs it, plus *optimal substructure*: after the first choice, the rest of an optimal solution is an optimal solution of what remains.
 
-**Cost model:** O(n log n) sorting followed by O(n) scanning, where n is meeting count; additional space depends on sorting implementation.
+### Level 2: interval scheduling and the exchange argument
 
-**A classic mistake:** Greedy is not 'always choose the biggest/best-looking thing'. The choice needs a proof. Coin values [1,3,4] and amount 6 defeat largest-coin greedy (4+1+1=3 coins, while 3+3=2); dynamic programming is required in the general coin-change problem.
+Back to the hall. The rule is **"keep the booking that ends first, throw away everything that overlaps it, repeat"**:
 
-In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+$$
+g_1 = \arg\min_{I \in \mathcal{I}} f(I), \qquad \text{then repeat on } \lbrace I \in \mathcal{I} : s(I) \ge f(g_1) \rbrace
+$$
 
-## Try teaching it back
+where:
 
-Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+- $\mathcal{I}$ is the set of requests, and each request $I$ has a start $s(I)$ and an end $f(I)$;
+- $g_1$ is the greedy first pick, the request that ends earliest;
+- the next round only keeps requests that start at or after $g_1$ ends.
 
-## Reference and community insight
+Example: sorted by end the requests are A (4), B (5), C (6), D (7), E (9), F (10).
 
-**CLRS relationship:** CLRS Chapter 15 (activity-selection problem and greedy-choice proof).. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+| Request | Start–end | Starts at or after the hall is free? | Decision | Hall free from |
+| --- | --- | --- | --- | --- |
+| A | 1–4 | $1 \ge -\infty$ | keep | 4 |
+| B | 3–5 | $3 < 4$ | skip | 4 |
+| C | 0–6 | $0 < 4$ | skip | 4 |
+| D | 5–7 | $5 \ge 4$ | keep | 7 |
+| E | 5–9 | $5 < 7$ | skip | 7 |
+| F | 8–10 | $8 \ge 7$ | keep | 10 |
 
-**Related classic LeetCode example:** LeetCode 435 — Non-overlapping Intervals — [community/official practice link](https://leetcode.com/discuss/post/7137681/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+Three bookings: **A, D, F**.
 
-[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+```java
+record Meeting(String name, int start, int end) {}
+
+static List<Meeting> pickByEarliestEnd(List<Meeting> meetings) {
+    List<Meeting> byEnd = new ArrayList<>(meetings);
+    byEnd.sort(Comparator.comparingInt(Meeting::end));
+    List<Meeting> chosen = new ArrayList<>();
+    int freeFrom = Integer.MIN_VALUE;
+    for (Meeting m : byEnd) {
+        if (m.start() >= freeFrom) {                 // fits after the last meeting we kept
+            chosen.add(m);
+            freeFrom = m.end();
+        }
+    }
+    return chosen;
+}
+```
+
+**Why earliest end is right: the exchange argument.** Take *any* optimal schedule $O$, sorted by end time, with first booking $o_1$. Since $g_1$ ends earliest of all requests:
+
+$$
+f(g_1) \le f(o_1) \quad\Longrightarrow\quad O' = (O \setminus \lbrace o_1 \rbrace) \cup \lbrace g_1 \rbrace \text{ is valid and } \lvert O' \rvert = \lvert O \rvert
+$$
+
+where:
+
+- $O \setminus \lbrace o_1 \rbrace$ is $O$ without its first booking, and $\cup \lbrace g_1 \rbrace$ adds the greedy one;
+- $O'$ is valid because every other booking in $O$ starts at or after $f(o_1) \ge f(g_1)$, so none overlaps $g_1$;
+- $\lvert O \rvert$ is the number of bookings, unchanged by the swap.
+
+Example: $O = \lbrace \text{B}, \text{D}, \text{F} \rbrace$ is also optimal, with $o_1 = \text{B}$ ending at 5. Greedy's $g_1 = \text{A}$ ends at $4 \le 5$. Swapping B for A gives $\lbrace \text{A}, \text{D}, \text{F} \rbrace$, still valid, still 3 bookings. So some optimal schedule starts with greedy's choice (the greedy-choice property), and the same argument applies to the remaining requests: by induction, greedy is optimal.
+
+The same proof can be told as **"greedy stays ahead"**: the $r$-th greedy booking ends no later than the $r$-th booking of any valid schedule, $f(g_r) \le f(o_r)$. Against $O = \lbrace \text{B}, \text{D}, \text{F} \rbrace$: $4 \le 5$, $7 \le 7$, $10 \le 10$. If $O$ had a fourth booking, it would start after $f(o_3) \ge f(g_3)$, so greedy could have taken it too.
+
+Other natural rules fail, and a single counterexample is enough to reject each one:
+
+| Rule | Counterexample | Rule keeps | Best |
+| --- | --- | --- | --- |
+| Earliest start | the six requests above: C (0–6) blocks A, B, D, E | C, F: 2 | 3 |
+| Shortest booking | 1–5, 4–6, 5–10: the short 4–6 overlaps both others | 4–6: 1 | 2 |
+| Earliest end | none: proved above | | |
+
+### Level 3: fractional knapsack works, 0/1 knapsack does not
+
+A bag holds 5 kg. Item A weighs 1 kg and is worth 1, B weighs 3 kg and is worth 4, C weighs 4 kg and is worth 5. If items **can be cut** (flour, sand, gold dust), greedy by value per kilogram is optimal:
+
+$$
+\rho_i = \frac{v_i}{w_i}, \qquad \text{take } x_i = \min(w_i, \text{room}) \text{ kg of each item in decreasing order of } \rho_i
+$$
+
+where:
+
+- $v_i$ and $w_i$ are the value and weight of item $i$, and $\rho_i$ (rho) is its value per kilogram;
+- $x_i$ is the amount of item $i$ taken, and "room" is the capacity still free.
+
+Example: $\rho_A = 1$, $\rho_B = 4/3 \approx 1.33$, $\rho_C = 5/4 = 1.25$, so the order is B, C, A. Take all 3 kg of B (value 4, 2 kg left), then 2 of C's 4 kg (value $1.25 \times 2 = 2.5$, 0 kg left). Total: $4 + 2.5 = \mathbf{6.5}$.
+
+```java
+record Item(String name, int weight, int value) {
+    double perKg() {
+        return (double) value / weight;
+    }
+}
+
+static double fractionalKnapsack(List<Item> items, int capacity) {
+    List<Item> best = new ArrayList<>(items);
+    best.sort(Comparator.comparingDouble(Item::perKg).reversed());
+    double total = 0;
+    int room = capacity;
+    for (Item it : best) {
+        int take = Math.min(it.weight(), room);      // the whole item, or the slice that still fits
+        total += it.perKg() * take;
+        room -= take;
+    }
+    return total;
+}
+```
+
+The exchange argument: if a solution holds 1 kg of a worse item while 1 kg of a better item is left out, swapping that kilogram gains $\rho_{\text{better}} - \rho_{\text{worse}} > 0$. So an optimal solution never does that, which is exactly greedy's order.
+
+If items must be taken **whole**, the same rule takes B (2 kg left), cannot fit C, takes A: value $4 + 1 = 5$. But A and C together weigh 5 kg and are worth **6**. The swap argument breaks because you cannot swap a single kilogram of an indivisible item. The 0/1 knapsack needs the table from the [Dynamic Programming](../dynamic-programming/index.qmd) lesson.
+
+### Level 4: greedy with a heap: Huffman codes
+
+To send the word `abracadabra` in binary, a fixed-length code needs 3 bits for each of its 5 different letters: $11 \times 3 = 33$ bits. Frequent letters deserve short codes. David Huffman's 1952 algorithm builds the best possible *prefix code* (no code word is the start of another, so the message decodes without separators) with one greedy rule: **join the two rarest symbols into one, and repeat.**
+
+The letter counts are a: 5, b: 2, r: 2, c: 1, d: 1. With a min-heap of counts:
+
+1. Join c (1) and d (1) into a node of weight 2.
+2. Join two of the three weight-2 nodes, say b and r, into weight 4.
+3. Join the cd node (2) and the br node (4) into weight 6.
+4. Join a (5) and the rest (6) into weight 11, the root.
+
+Each letter's code length is its depth in the resulting tree, so a gets 1 bit and b, r, c, d get 3 bits each. The total length is
+
+$$
+B = \sum_{i} f_i \, \ell_i = \sum_{\text{merges}} (\text{weight of the merged node})
+$$
+
+where:
+
+- $f_i$ is how often symbol $i$ occurs and $\ell_i$ is the length of its code word;
+- the second sum holds because each merge adds one bit to every symbol beneath it, which costs exactly the merged weight.
+
+Example: $B = 5 \cdot 1 + 2 \cdot 3 + 2 \cdot 3 + 1 \cdot 3 + 1 \cdot 3 = 23$, and also $2 + 4 + 6 + 11 = 23$. That is 10 bits fewer than the fixed-length 33. The proof is again an exchange: some optimal tree has the two rarest symbols as the deepest siblings, because swapping a rarer symbol deeper never increases $B$.
+
+Erickson tells the story: Huffman was a student in Robert Fano's information theory class at MIT and chose to write a term paper on optimal codes instead of sitting the final exam, not knowing that Fano and Claude Shannon had tried and failed to solve it. After months without success he gave up, and the solution came to him as he was throwing his notes away.
+
+### Level 5: how to know a greedy rule is safe
+
+There are three tools, and good engineers use all of them.
+
+1. **Try to break it.** Before proving anything, hunt for a counterexample with small inputs.
+2. **Test it against the truth.** Compare greedy with an exact method (dynamic programming or brute force) on every small input:
+
+```java
+static int fewestCoins(int[] coins, int amount) {
+    int[] fewest = new int[amount + 1];
+    Arrays.fill(fewest, amount + 1);
+    fewest[0] = 0;
+    for (int a = 1; a <= amount; a++) {
+        for (int c : coins) if (c <= a) fewest[a] = Math.min(fewest[a], fewest[a - c] + 1);
+    }
+    return fewest[amount];
+}
+
+static int firstGreedyFailure(int[] coinsLargestFirst, int limit) {
+    for (int amount = 1; amount <= limit; amount++) {
+        if (greedyChange(coinsLargestFirst, amount).size() != fewestCoins(coinsLargestFirst, amount)) return amount;
+    }
+    return -1;                                       // greedy was optimal for every amount up to limit
+}
+```
+
+For coins $4, 3, 1$ this returns **6** at once. For $25, 10, 5, 1$ it finds no failure up to 1,000 cents. A passing test is evidence, not proof; but a failing test is a proof that the rule is wrong.
+
+3. **Prove it**, with one of two patterns:
+    - *Exchange argument*: take any optimal solution that differs from greedy, swap one of its choices for greedy's, and show it does not get worse (Levels 2, 3 and 4).
+    - *Greedy stays ahead*: show by induction that after each step greedy's partial solution is at least as good as any other's (Level 2).
+
+Greedy algorithms appear all over this site: Dijkstra's shortest paths and Kruskal's and Prim's minimum spanning trees are greedy, each with its own exchange proof (see [Shortest Path](../shortest-path/index.qmd) and [Minimum Spanning Tree](../minimum-spanning-tree/index.qmd)). Jack Edmonds showed in 1971 that the structures on which the simple "best weight first" greedy is always optimal are exactly the *matroids*, the structure behind spanning trees.
+
+## Why it works and what it costs
+
+**Why it works.** Every greedy proof has the same two-part shape:
+
+- *Greedy-choice property*: there is an optimal solution that contains the first greedy choice. Proved by exchange: take an optimal solution without it, swap the greedy choice in, and show the result is still valid and no worse.
+- *Optimal substructure*: once the first choice is made, what remains is a smaller instance of the same problem, and an optimal solution of it, together with the first choice, is optimal overall.
+
+Then induction on the number of steps finishes the proof. For the hall: A is in an optimal schedule; what remains is "schedule the requests starting at 4 or later", namely D, E, F; greedy picks D first by the same argument; and so on.
+
+**What it costs.** Most greedy algorithms are a sort followed by a scan, or a heap:
+
+| Algorithm | Work | On this page's example |
+| --- | --- | --- |
+| Interval scheduling | sort $O(n \log n)$ + scan $O(n)$ | 6 requests: about $6 \log_2 6 \approx 16$ comparisons, then 6 checks |
+| Coin greedy | $O(k + \text{coins used})$ | 63 cents: 4 coin values, 6 coins handed out |
+| Fractional knapsack | sort $O(n \log n)$ + scan $O(n)$ | 3 items, 2 taken |
+| Huffman | $n - 1$ merges, each $O(\log n)$ on a heap | 5 letters, 4 merges |
+
+Compare that with $2^n$ subsets for brute force, or $O(nW)$ for the knapsack table.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Trusting a greedy rule because it works on the examples | Wrong answers on hidden tests, such as coins $1, 3, 4$ for amount 6 | Compare with brute force on all small inputs, then prove it |
+| Sorting intervals by start instead of end | Too few intervals kept: C (0–6) blocks three others | Sort by end for "keep the most"; sort by start for merging intervals |
+| Treating touching intervals as overlapping | One interval too few, since 1–2 and 2–3 can both stay | Use `start >= freeFrom`, not `>` |
+| Using value per kilogram for the 0/1 knapsack | 5 instead of 6 on items A, B, C | Use the DP table when items cannot be split |
+| `(a, b) -> a[1] - b[1]` as a comparator | Wrong order when the subtraction overflows for large values | `Comparator.comparingInt(iv -> iv[1])` |
+| A greedy that needs to undo choices | Code full of special cases | Use a heap to drop the worst choice so far, as in Course Schedule III below |
+
+## Interview problems
+
+Each solution states the greedy rule as a formula, then the reason it is safe. The code is short once both are clear.
+
+### 1. LeetCode 55: Jump Game (Medium)
+
+**Problem.** `nums[i]` is the longest jump allowed from index $i$. Starting at index 0, can you reach the last index? `[2, 3, 1, 1, 4]` gives true; `[3, 2, 1, 0, 4]` gives false.
+
+**Math first.** Track the farthest index reachable using only indices up to $i$:
+
+$$
+r_i = \max(r_{i-1},\ i + a_i), \qquad r_{-1} = 0, \qquad \text{fail if } i > r_{i-1}
+$$
+
+where:
+
+- $a_i$ is `nums[i]`, the jump length available at index $i$;
+- $r_i$ is the farthest index reachable from any of the indices $0, 1, \dots, i$;
+- if $i > r_{i-1}$, index $i$ cannot be reached, and nothing beyond it can be either.
+
+Example: $a = 2, 3, 1, 1, 4$ gives $r_0 = 2$, $r_1 = \max(2, 1 + 3) = 4$, and $4$ is the last index, so true. With $a = 3, 2, 1, 0, 4$: $r_0 = 3$, $r_1 = \max(3, 3) = 3$, $r_2 = 3$, $r_3 = \max(3, 3 + 0) = 3$, and then $i = 4 > 3$: false. Index 3 holds a 0 that every path lands on.
+
+**Idea.** One pass, keeping only $r$. It is safe because reachable indices always form a prefix: if you can reach index $j$, you can reach every index before it.
+
+```java
+static boolean canJump(int[] nums) {
+    int reach = 0;                                   // farthest index reachable so far
+    for (int i = 0; i < nums.length; i++) {
+        if (i > reach) return false;                 // a gap: index i can never be reached
+        reach = Math.max(reach, i + nums[i]);
+    }
+    return true;
+}
+```
+
+**Answer.** true, false, and true for `[0]` (already at the end). $O(n)$ time, $O(1)$ space: for LeetCode's $n = 10^4$, at most $10^4$ steps. A DP over "can index $i$ be reached?" would cost $O(n \cdot \max a_i)$.
+
+### 2. LeetCode 435: Non-overlapping Intervals (Medium)
+
+**Problem.** Return the fewest intervals to remove so that the rest do not overlap (touching is allowed). For `[[1,2], [2,3], [3,4], [1,3]]` the answer is 1: remove `[1,3]`.
+
+**Math first.** Removing the fewest is the same as keeping the most, which is Level 2:
+
+$$
+\text{removed} = n - k^{*}, \qquad k^{*} = \text{size of the earliest-end greedy schedule}
+$$
+
+where $n$ is the number of intervals and $k^{*}$ is the largest number of pairwise non-overlapping intervals.
+
+Example: sorted by end, the intervals are $[1,2]$, $[2,3]$, $[1,3]$, $[3,4]$. Greedy keeps $[1,2]$, then $[2,3]$ (since $2 \ge 2$), skips $[1,3]$ (since $1 < 3$), keeps $[3,4]$. So $k^{*} = 3$ and removed $= 4 - 3 = 1$.
+
+**Idea.** Run the interval-scheduling greedy and count what it keeps.
+
+```java
+static int eraseOverlapIntervals(int[][] intervals) {
+    int[][] byEnd = intervals.clone();
+    Arrays.sort(byEnd, Comparator.comparingInt((int[] iv) -> iv[1]));
+    int kept = 0, freeFrom = Integer.MIN_VALUE;
+    for (int[] iv : byEnd) {
+        if (iv[0] >= freeFrom) {                     // the same rule as pickByEarliestEnd
+            kept++;
+            freeFrom = iv[1];
+        }
+    }
+    return intervals.length - kept;
+}
+```
+
+**Answer.** 1 for the example, 2 for `[[1,2], [1,2], [1,2]]`, and 0 for `[[1,2], [2,3]]`. $O(n \log n)$ time for the sort and $O(n)$ space for the copy; for LeetCode's $n = 10^5$, about $10^5 \times 17 = 1.7 \times 10^6$ comparisons.
+
+### 3. LeetCode 135: Candy (Hard)
+
+**Problem.** Children stand in a line with ratings. Each child gets at least one candy, and a child with a higher rating than a **neighbour** must get more than that neighbour. Return the fewest candies. `[1, 0, 2]` gives 5 (candies 2, 1, 2).
+
+**Math first.** The two rules, "more than the left neighbour" and "more than the right neighbour", can each be met greedily by one pass. Each child then needs the larger of the two:
+
+$$
+L_i = \begin{cases} L_{i-1} + 1 & r_i > r_{i-1} \\ 1 & \text{otherwise} \end{cases}, \qquad
+R_i = \begin{cases} R_{i+1} + 1 & r_i > r_{i+1} \\ 1 & \text{otherwise} \end{cases}, \qquad
+c_i = \max(L_i, R_i)
+$$
+
+where:
+
+- $r_i$ is child $i$'s rating;
+- $L_i$ is the fewest candies for child $i$ that satisfies every rule looking **left**, and $R_i$ the same looking **right**;
+- $c_i$ is child $i$'s candies, and the answer is $\sum_i c_i$.
+
+Example: $r = 5, 3, 1, 4$.
+
+| Child | 0 | 1 | 2 | 3 |
+| --- | --- | --- | --- | --- |
+| Rating $r_i$ | 5 | 3 | 1 | 4 |
+| $L_i$ (left to right) | 1 | 1 | 1 | 2 |
+| $R_i$ (right to left) | 3 | 2 | 1 | 1 |
+| $c_i = \max(L_i, R_i)$ | **3** | **2** | **1** | **2** |
+
+Total $3 + 2 + 1 + 2 = 8$. One left-to-right pass alone would give child 0 only 1 candy, less than child 1's.
+
+**Idea.** Each $L_i$ is a lower bound that any valid answer must meet (it is forced by the chain of rising ratings to its left), and likewise $R_i$. So $c_i \ge \max(L_i, R_i)$ for every valid answer, and the $\max$ itself is valid. That makes it the minimum.
+
+```java
+static int candy(int[] ratings) {
+    int n = ratings.length;
+    int[] fromLeft = new int[n], fromRight = new int[n];
+    Arrays.fill(fromLeft, 1);
+    Arrays.fill(fromRight, 1);
+    for (int i = 1; i < n; i++) if (ratings[i] > ratings[i - 1]) fromLeft[i] = fromLeft[i - 1] + 1;
+    for (int i = n - 2; i >= 0; i--) if (ratings[i] > ratings[i + 1]) fromRight[i] = fromRight[i + 1] + 1;
+    int total = 0;
+    for (int i = 0; i < n; i++) total += Math.max(fromLeft[i], fromRight[i]); // satisfy both neighbours
+    return total;
+}
+```
+
+**Answer.** 5 for `[1, 0, 2]`, 4 for `[1, 2, 2]` (candies 1, 2, 1: equal ratings impose nothing), and 8 for `[5, 3, 1, 4]`. Three passes: $O(n)$ time, $O(n)$ space; for LeetCode's $n = 5 \times 10^4$, about $1.5 \times 10^5$ steps.
+
+### 4. LeetCode 630: Course Schedule III (Hard)
+
+**Problem.** Each course is `[duration, lastDay]`: it takes `duration` consecutive days and must be finished by `lastDay`. You take one course at a time, starting on day 1. What is the largest number of courses you can finish? For `[[100,200], [200,1300], [1000,1250], [2000,3200]]` the answer is 3.
+
+**Math first.** Two greedy facts.
+
+1. Any set of courses that can be finished at all can be finished in order of deadline (an exchange argument: swapping two adjacent courses that are out of deadline order never makes a deadline fail).
+2. So process courses by deadline, and keep a set $K$ that fits. When adding course $c$ breaks its deadline, drop the **longest** course in $K \cup \lbrace c \rbrace$:
+
+$$
+T = \sum_{k \in K} d_k \le e_c \quad \text{after each step}, \qquad \text{if } T > e_c: \ K \leftarrow K \setminus \lbrace \arg\max_{k \in K} d_k \rbrace
+$$
+
+where:
+
+- $d_k$ is the duration of course $k$ and $e_c$ is the deadline of the course just added;
+- $T$ is the day on which the kept courses finish when taken back to back;
+- dropping the longest course keeps the count as high as possible and makes $T$ as small as possible, which leaves the most room for later courses.
+
+Example: sorted by deadline the courses are $(100, 200)$, $(1000, 1250)$, $(200, 1300)$, $(2000, 3200)$.
+
+| Add course | $T$ after adding | Deadline | Action | Kept durations |
+| --- | --- | --- | --- | --- |
+| (100, 200) | 100 | 200 | fits | 100 |
+| (1000, 1250) | 1,100 | 1,250 | fits | 100, 1000 |
+| (200, 1300) | 1,300 | 1,300 | fits | 100, 1000, 200 |
+| (2000, 3200) | 3,300 | 3,200 | over: drop 2000 | 100, 1000, 200 |
+
+The answer is **3**.
+
+**Idea.** A max-heap of kept durations gives the longest one in $O(\log n)$. The invariant, after the first $i$ courses by deadline, is: *the heap holds a largest possible set of finishable courses among them, and among such sets one with the smallest total time.*
+
+```java
+static int scheduleCourse(int[][] courses) {
+    int[][] byDeadline = courses.clone();
+    Arrays.sort(byDeadline, Comparator.comparingInt((int[] c) -> c[1]));
+    PriorityQueue<Integer> taken = new PriorityQueue<>(Comparator.reverseOrder()); // longest course on top
+    int time = 0;
+    for (int[] course : byDeadline) {
+        time += course[0];
+        taken.add(course[0]);
+        if (time > course[1]) time -= taken.poll(); // over the deadline: drop the longest course so far
+    }
+    return taken.size();
+}
+```
+
+**Answer.** 3 for the example; 1 for `[[1, 2]]`; 0 for `[[3, 2], [4, 3]]`, since each course alone misses its deadline; and 2 for `[[5, 5], [4, 6], [2, 6]]`, where the 5-day course is swapped out for the 4-day and 2-day ones. $O(n \log n)$ time, $O(n)$ space: for LeetCode's $n = 10^4$, about $10^4 \times 14 \approx 1.4 \times 10^5$ heap steps.
+
+## Mathematical Abstraction
+
+A greedy algorithm commits, at each step, to the best-scoring option still allowed, and it is correct exactly when that commitment never rules out an optimal solution:
+
+$$
+a_t \in \arg\max_{a \in A_t} g(a), \qquad
+\text{greedy is optimal} \iff \forall t:\ \exists\, O^{*} \text{ optimal with } \lbrace a_1, \dots, a_t \rbrace \subseteq O^{*}
+$$
+
+where:
+
+- $a_t$ is the option taken at step $t$, from the allowed set $A_t$, by the score $g$;
+- $O^{*}$ is an optimal solution;
+- the right-hand condition says that every prefix of greedy's choices can be extended to an optimal solution; the exchange argument proves it one step at a time.
+
+Example: in the hall, the greedy prefixes $\lbrace \text{A} \rbrace$, $\lbrace \text{A}, \text{D} \rbrace$ and $\lbrace \text{A}, \text{D}, \text{F} \rbrace$ all lie inside the optimal schedule $\lbrace \text{A}, \text{D}, \text{F} \rbrace$, so greedy is optimal with 3 bookings. With coins $1, 3, 4$ and amount 6, $a_1 = 4$ is in **no** optimal solution, because the only optimal one is $\lbrace 3, 3 \rbrace$, so the condition fails at $t = 1$ and greedy returns 3 coins instead of 2.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 15, "Greedy Algorithms": an activity-selection problem (15.1), elements of the greedy strategy (15.2) and Huffman codes (15.3). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §5.5 "Data Compression", with a Java Huffman implementation: <https://algs4.cs.princeton.edu/55compression/>; and §4.3 "Minimum Spanning Trees" for greedy graph algorithms: <https://algs4.cs.princeton.edu/43mst/>.
+- Jeff Erickson, *Algorithms* (2019), Chapter 4, "Greedy Algorithms", including scheduling classes, exchange arguments and the story of Huffman's discovery: <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- Jon Kleinberg and Éva Tardos, *Algorithm Design* (Pearson, 2005), Chapter 4, "Greedy Algorithms": interval scheduling and the "greedy stays ahead" and exchange-argument proof styles.
+- David A. Huffman, "A Method for the Construction of Minimum-Redundancy Codes", *Proceedings of the IRE* 40(9), 1098–1101 (1952).
+- Jack Edmonds, "Matroids and the Greedy Algorithm", *Mathematical Programming* 1, 127–136 (1971).
+- LeetCode: [55. Jump Game](https://leetcode.com/problems/jump-game/), [435. Non-overlapping Intervals](https://leetcode.com/problems/non-overlapping-intervals/), [135. Candy](https://leetcode.com/problems/candy/), [630. Course Schedule III](https://leetcode.com/problems/course-schedule-iii/).
+
+[← Memoization](../memoization/index.qmd) · [Dynamic Programming and Decision Making](../groups/03-optimisation.qmd) · [Game Theory →](../game-theory/index.qmd)
