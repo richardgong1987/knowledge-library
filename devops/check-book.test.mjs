@@ -8,6 +8,7 @@ const read = path => readFileSync(join(root, path), 'utf8');
 
 // Each published part: the minimum lesson count (so a deleted lesson is noticed) and the lab files it must ship.
 const PARTS = {
+  ansible: { minimum: 12, lab: ['examples/README.md', 'examples/site.yml', 'examples/roles/lemonade_web/tasks/main.yml'] },
 };
 
 const LESSON_HEADINGS = [
@@ -59,8 +60,7 @@ for (const [part, { minimum }] of Object.entries(PARTS)) {
       assert.ok(read(partIndex).includes(lesson.split('/').pop()), `Not linked from part index: ${lesson}`);
       assert.ok(text.length > 6000, `Too shallow (${text.length} chars): ${lesson}`);
       for (const heading of LESSON_HEADINGS) assert.ok(text.includes(heading), `${lesson} lacks "${heading}"`);
-      assert.ok(/\| *(Keyword|Field|Command|Flag|Option|Module|Setting|Symbol)/i.test(text),
-        `No keyword reference table: ${lesson}`);
+      assert.ok(/\| *What it does *\|/.test(text), `No keyword reference table: ${lesson}`);
 
       const formulas = displayFormulas(stripFencedCode(text));
       assert.ok(formulas.length > 0, `No display formula: ${lesson}`);

@@ -58,6 +58,18 @@ jobs:
         run: |
           cargo +1.100.0 test --manifest-path programming-languages/rust/examples/Cargo.toml --workspace
           cargo +1.100.0 run --manifest-path programming-languages/rust/examples/Cargo.toml -p attribute-demo
+      - name: Verify DevOps book lessons
+        run: node --test devops/check-book.test.mjs
+      - name: Run the Ansible lab twice and prove the second run changes nothing
+        working-directory: devops/ansible/examples
+        run: |
+          pipx install ansible-core
+          ansible-playbook site.yml rolling-update.yml --syntax-check
+          ansible-playbook site.yml -e lab_root="$RUNNER_TEMP/lab"
+          ansible-playbook site.yml -e lab_root="$RUNNER_TEMP/lab" | tee "$RUNNER_TEMP/second.log"
+          if grep -E 'changed=[1-9]' "$RUNNER_TEMP/second.log"; then exit 1; fi
+          ansible-playbook rolling-update.yml -e lab_root="$RUNNER_TEMP/lab" -e lemonade_version=1.1.0
+          ansible-playbook vault-demo.yml --vault-password-file secrets/demo-vault-password.txt -e lab_root="$RUNNER_TEMP/lab"
       - name: Install Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:
