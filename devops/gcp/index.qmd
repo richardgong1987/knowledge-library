@@ -1,0 +1,110 @@
+---
+title: "Google Cloud"
+description: "Put the Lemonade Stand on Google Cloud: projects and billing, the gcloud CLI, IAM, VMs and networks, Cloud Storage, Cloud Run, Artifact Registry, databases and monitoring."
+---
+
+## Why Google Cloud
+
+Parts 1 to 3 ran the Lemonade Stand on machines you look after yourself. In this part, Google looks after the machines. You rent exactly what you need, pay by the second, and let managed products handle patching, scaling and backups.
+
+Google Cloud has hundreds of products. A small web app needs about eight of them, and this part teaches only those eight. The main path is **Cloud Run**, which runs the Lemonade container with no servers to manage. A virtual machine appears once (lesson 4), so you can see what Cloud Run does for you.
+
+## The Lemonade Stand on Google Cloud
+
+```text
+                       customer's browser
+                               │ HTTPS
+          ┌────────────────────┴─────────────────────┐
+          ▼                                          ▼
+ Cloud Storage bucket                     Cloud Run service  lemonade-web
+ lemonade-stand-dev-menu                  europe-west2, 0 to 10 instances
+ (static menu, photos)                    runs image from Artifact Registry
+                                                     │ Unix socket /cloudsql/…
+                                     ┌───────────────┴──────────────┐
+                                     ▼                              ▼
+                          Cloud SQL Postgres  lemonade-db      Firestore (default)
+                          (orders)                             (cups sold today)
+
+ Everything lives in project lemonade-stand-dev, region europe-west2 (London),
+ and is watched by Cloud Logging, Cloud Monitoring and a billing budget.
+```
+
+## Follow along safely
+
+Real cloud resources cost real money. Four habits keep the bill near zero:
+
+1. **Use the free trial.** New customers get free credit (\$300 for 90 days at the time of writing), and several products have an always-free tier.
+2. **Create a billing budget first** (lesson 9). It emails you at 50%, 90% and 100% of an amount you choose.
+3. **Use one project per experiment**, such as `lemonade-stand-dev`.
+4. **Delete the project when you are done.** `gcloud projects delete lemonade-stand-dev` removes everything inside it in one step.
+
+Every command in this part was checked against gcloud 594.0.1 with `--help` in Google's official `google-cloud-cli` Docker image. Outputs that needed a real account are marked **illustrative**: they show the real format with example values.
+
+## Lessons
+
+1. [What Google Cloud is](01-what-google-cloud-is.qmd): organizations, folders, projects, billing, regions and zones.
+2. [The gcloud CLI](02-the-gcloud-cli.qmd): logging in, configurations, command grammar, `--format` and `--filter`.
+3. [IAM and service accounts](03-iam-and-service-accounts.qmd): principals, roles, inheritance, deny rules and least privilege.
+4. [Compute Engine and VPC](04-compute-engine-and-vpc.qmd): one VM, a startup script, subnets and firewall rules.
+5. [Cloud Storage](05-cloud-storage.qmd): buckets, storage classes, a public menu, signed URLs and lifecycle rules.
+6. [Cloud Run](06-cloud-run.qmd): services, revisions, autoscaling, scale to zero, canaries and pricing.
+7. [Artifact Registry and GKE](07-artifact-registry-and-gke.qmd): image storage, tags versus digests, and k3s skills on GKE Autopilot.
+8. [Cloud SQL and Firestore](08-cloud-sql-and-firestore.qmd): Postgres for orders, documents for counters, backups and connections.
+9. [Monitoring, logging and SRE](09-monitoring-logging-and-sre.qmd): logs, uptime checks, alerts, SLOs, error budgets and billing budgets.
+
+## The lab
+
+The [`examples/`](examples/README.md) folder holds the few files the lessons use:
+
+| File | Used in | What it is |
+| --- | --- | --- |
+| [`deploy-cloud-run.sh`](examples/deploy-cloud-run.sh) | lessons 6 and 7 | build, push, deploy, canary and promote in three subcommands |
+| [`index.html`](examples/index.html) | lessons 4 and 5 | the static menu |
+| [`startup-script.sh`](examples/startup-script.sh) | lesson 4 | installs nginx on the VM and serves the menu |
+| [`lemonade-role.yaml`](examples/lemonade-role.yaml) | lesson 3 | a four-permission custom IAM role |
+| [`lifecycle.json`](examples/lifecycle.json) | lesson 5 | move photos to Nearline after 30 days, delete after 365 |
+
+The script builds the image from the Part 3 app in `devops/ci-cd/examples/lemonade-stand`.
+
+## gcloud cheat sheet
+
+| Command | What it does |
+| --- | --- |
+| `gcloud init` | first-time login and defaults |
+| `gcloud config configurations activate lemonade-dev` | switch environment |
+| `gcloud config get project` | show which project commands will use |
+| `gcloud services enable run.googleapis.com` | turn an API on |
+| `gcloud projects add-iam-policy-binding PROJECT --member=… --role=…` | grant a role |
+| `gcloud compute instances list` | list VMs |
+| `gcloud storage cp FILE gs://BUCKET/` | upload a file |
+| `gcloud run deploy SERVICE --image=IMAGE --region=europe-west2` | deploy a container |
+| `gcloud run services update-traffic SERVICE --to-latest` | send all traffic to the newest revision |
+| `gcloud artifacts docker images list REPO_PATH` | list pushed images |
+| `gcloud sql connect INSTANCE --user=postgres` | open `psql` |
+| `gcloud logging read 'severity>=ERROR' --freshness=1h` | recent errors |
+| `gcloud projects delete PROJECT` | delete everything in a project |
+| `gcloud <anything> --help` | the full manual for that command |
+
+## Coming from AWS
+
+[Part 4](../aws/index.qmd) built the same shop on AWS. Most ideas map one to one:
+
+| AWS | Google Cloud | Biggest difference |
+| --- | --- | --- |
+| Account, Organizations OUs | Project, folders | a Google Cloud project is much lighter: create one per experiment |
+| IAM users, roles, policies | IAM principals, roles, allow policies | Google binds roles on resources; there are no JSON policy documents per user |
+| EC2 | Compute Engine | per-second billing on both |
+| VPC (regional) | VPC (**global**, with regional subnets) | one Google network can span every region |
+| Security groups | VPC firewall rules with tags and priorities | rules are evaluated by priority number |
+| S3 | Cloud Storage | very similar: buckets, objects, classes, lifecycle |
+| ECR | Artifact Registry | |
+| App Runner / ECS on Fargate | Cloud Run | Cloud Run scales to zero by default |
+| EKS | GKE (Autopilot) | Autopilot also manages the nodes |
+| RDS | Cloud SQL | |
+| DynamoDB | Firestore | both are serverless; the data models differ |
+| CloudWatch | Cloud Logging and Cloud Monitoring | |
+| AWS Budgets | Cloud Billing budgets | both warn; neither stops spending by itself |
+
+## What comes next
+
+Typing `gcloud` commands is perfect for learning, but you cannot review or repeat a long list of commands easily. [Part 6: Terraform](../terraform/index.qmd) describes the same project, bucket, Cloud Run service and database as code that can be planned, reviewed and applied.

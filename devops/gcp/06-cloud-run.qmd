@@ -1,0 +1,224 @@
+---
+title: "6. Cloud Run"
+description: "Run the Lemonade container without managing servers: services and revisions, concurrency and autoscaling, scale to zero, traffic splitting and pricing."
+---
+
+Cloud Run runs a **container** and gives it an **HTTPS URL**. Google starts more copies when traffic grows, stops them when traffic stops, and bills you only while requests are being handled. For a small web app like the Lemonade Stand, it is usually the best home on Google Cloud.
+
+## The problem
+
+The owner has the `lemonade-stand` container image from Part 3. They want it online with:
+
+- no VM to patch and no cluster to run;
+- enough copies for the lunchtime rush, and **zero cost at 3 a.m.**;
+- a safe way to try a new recipe page on a few customers before everyone sees it.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Cloud Run is a **magic pop-up lemonade stall**.
+
+- When no customers are around, the stall **folds itself away**, and nobody pays a helper to stand there. That is **scale to zero**.
+- When the first customer arrives, a helper unfolds the stall in a moment. That moment is a **cold start**.
+- Each helper can serve up to **80 customers at the same time** (they are quick at pouring). That number is the **concurrency**.
+- When the queue grows, more helpers and stalls pop up by themselves. That is **autoscaling**.
+- When you invent a new recipe, you can serve it to **1 customer in 10** first and watch their faces. That is a **canary**.
+
+Google announced Cloud Run in April 2019, built on the open-source Knative project. Its product lead Steren Giannini summed it up as running any stateless, request-driven container in a fully managed environment ([Cloud Run, bringing serverless to containers](https://cloud.google.com/blog/products/serverless/cloud-run-bringing-serverless-to-containers)). Researchers at Berkeley explained why this style ("serverless") matters in [*Cloud Programming Simplified*](https://arxiv.org/abs/1902.03383) (Jonas et al., 2019): you stop renting machines and pay per use, a bit like taking a taxi instead of owning a car.
+:::
+
+## The idea, precisely
+
+### Services and revisions
+
+- A **service** (`lemonade-web`) has a stable URL, such as `https://lemonade-web-123456789012.europe-west2.run.app`.
+- Every deploy, and every settings change, creates a new **revision**, for example `lemonade-web-00002-k4d`. A revision is **immutable**: image plus settings, frozen.
+- The service's **traffic** setting says which revisions get what share of requests.
+
+### The container contract
+
+- Listen for HTTP on the port in the `PORT` environment variable (default `8080`, matching the Lemonade app).
+- Be **stateless**: anything written to local disk lives in memory and disappears with the instance. Use Cloud Storage or Cloud SQL for data.
+- Start quickly. A slow start makes every cold start slow.
+- Be built for `linux/amd64`. An image built on an Apple-silicon laptop without `--platform=linux/amd64` fails to start.
+
+### Concurrency, instances and scaling
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `--concurrency` | 80 (maximum 1000) | the most requests one instance handles at the same time |
+| `--min-instances` | 0 | instances kept warm even with no traffic (no cold starts, but you pay) |
+| `--max-instances` | 100 | a hard-ish cap on instances, which protects your bill and your database |
+| `--cpu`, `--memory` | 1 vCPU, 512 MiB | resources per instance |
+| `--timeout` | 300 s | the longest one request may take |
+
+### Who can call it
+
+`--allow-unauthenticated` grants `roles/run.invoker` to `allUsers`, which makes the service public. Without it, callers need an identity token from an account that has `run.invoker`, which is right for internal services.
+
+### Billing modes
+
+- **Request-based** (the default): CPU is only allocated while a request is being processed. You pay for instance time while at least one request is in flight, rounded up to 100 ms, plus a small fee per request.
+- **Instance-based** (`--no-cpu-throttling`): you pay for the whole life of each instance at a lower rate, and there is no per-request fee. Use it for background work between requests.
+
+## Command reference
+
+| Command or flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `gcloud run deploy` | creates or updates a service | one service per app | `gcloud run deploy lemonade-web --image=IMAGE --region=europe-west2` |
+| `--image` | deploys an existing image | pin a tag or a digest, never `latest` in prod | `--image=europe-west2-docker.pkg.dev/lemonade-stand-dev/lemonade/lemonade-stand:v1` |
+| `--source` | builds from source (Cloud Build), then deploys | uses your Dockerfile, or buildpacks if none | `gcloud run deploy lemonade-web --source=. --region=europe-west2` |
+| `--port` | the container's listening port | must match the app | `--port=8080` |
+| `--concurrency`, `--min-instances`, `--max-instances` | scaling limits | set max to protect the database | `--concurrency=80 --max-instances=10` |
+| `--cpu`, `--memory` | per-instance resources | memory in `Mi` or `Gi` | `--cpu=1 --memory=512Mi` |
+| `--allow-unauthenticated` | makes the service public | omit it for internal services | `--allow-unauthenticated` |
+| `--service-account` | the identity the code runs as | a dedicated account (lesson 3) | `--service-account=lemonade-run@lemonade-stand-dev.iam.gserviceaccount.com` |
+| `--set-env-vars` | environment variables | secrets belong in Secret Manager | `--set-env-vars=NODE_ENV=production` |
+| `--no-traffic` | deploys a revision that gets 0% | the first step of a canary | `--no-traffic` |
+| `--tag` | gives a revision its own URL | test it before sending users | `--tag=canary` |
+| `gcloud run services update-traffic` | changes the traffic split | percentages add up to 100 | `gcloud run services update-traffic lemonade-web --to-tags=canary=10` |
+| `--to-revisions`, `--to-latest` | split by revision name, or send all to the newest | `--to-latest` is the "promote" button | `--to-revisions=lemonade-web-00001-x7k=100` |
+| `gcloud run services describe` | shows URL, traffic and settings | `--format="value(status.url)"` for scripts | `gcloud run services describe lemonade-web --region=europe-west2` |
+| `gcloud run revisions list` | lists revisions | | `gcloud run revisions list --service=lemonade-web --region=europe-west2` |
+| `gcloud run services logs read` | prints recent logs | | `gcloud run services logs read lemonade-web --region=europe-west2 --limit=20` |
+| `gcloud run services delete` | deletes the service and its revisions | | `gcloud run services delete lemonade-web --region=europe-west2` |
+
+## Worked example: deploy, then a 10% canary
+
+The lab script [`examples/deploy-cloud-run.sh`](examples/deploy-cloud-run.sh) wraps these steps. The core is three commands:
+
+```bash
+# v1 for everyone.
+gcloud run deploy lemonade-web --image="$REGISTRY/lemonade-stand:v1" --region=europe-west2 \
+  --port=8080 --concurrency=80 --max-instances=10 --allow-unauthenticated
+
+# v2 deployed but hidden, reachable only at its tag URL.
+gcloud run deploy lemonade-web --image="$REGISTRY/lemonade-stand:v2" --region=europe-west2 \
+  --no-traffic --tag=canary
+
+# Send 10% of real customers to v2.
+gcloud run services update-traffic lemonade-web --region=europe-west2 --to-tags=canary=10
+```
+
+Here `REGISTRY=europe-west2-docker.pkg.dev/lemonade-stand-dev/lemonade` (lesson 7). Illustrative output of the first deploy:
+
+```text
+Deploying container to Cloud Run service [lemonade-web] in project [lemonade-stand-dev] region [europe-west2]
+✓ Deploying new service... Done.
+  ✓ Creating Revision...
+  ✓ Routing traffic...
+  ✓ Setting IAM Policy...
+Done.
+Service [lemonade-web] revision [lemonade-web-00001-x7k] has been deployed and is serving 100 percent of traffic.
+Service URL: https://lemonade-web-123456789012.europe-west2.run.app
+```
+
+After the canary step, `describe` shows the split:
+
+```text
+Traffic:
+  90% lemonade-web-00001-x7k
+  10% lemonade-web-00002-k4d
+        canary: https://canary---lemonade-web-123456789012.europe-west2.run.app
+```
+
+If v2 behaves, promote it with `update-traffic --to-latest`. If not, roll back instantly with `--to-revisions=lemonade-web-00001-x7k=100`. The old revision is still there, so a rollback needs no rebuild and no redeploy.
+
+## Rules and conventions
+
+- Deploy **immutable images** by tag or digest (`lemonade-stand:3f9c2ab`), produced by CI. Never deploy `latest` to production.
+- Always set `--max-instances`. It caps cost during a traffic spike or attack, and it stops 1,000 instances from opening 1,000 database connections.
+- Use `--min-instances=1` only when cold starts really hurt users; it costs money around the clock.
+- New versions go out as `--no-traffic --tag=canary`, then 10%, then 100%.
+- Give each service its own service account with the smallest roles (lesson 3).
+- Keep services stateless. Store files in Cloud Storage and rows in Cloud SQL or Firestore.
+- Read config from environment variables, and secrets from Secret Manager, never from the image.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| The app listens on a fixed port, not on `PORT` | `The user-provided container failed to start and listen on the port defined provided by the PORT=8080 environment variable` | read `process.env.PORT`, or set `--port` to the app's port |
+| Image built on Apple silicon | the same "failed to start" error, or `exec format error` in the logs | `docker build --platform=linux/amd64 …` |
+| Forgetting `--allow-unauthenticated` for a public site | browsers get `403 Forbidden` | redeploy with the flag, or grant `run.invoker` to `allUsers` |
+| No `--max-instances` | a surprise bill, or the database runs out of connections | `--max-instances=10` |
+| Writing uploads to local disk | files vanish when instances restart; memory fills up | write to Cloud Storage |
+| Deploying v2 straight to 100% | a bad release reaches every customer | `--no-traffic --tag=canary`, then shift gradually |
+
+## Mathematical Abstraction
+
+**How many instances?** As a first approximation, Cloud Run needs enough instances to hold all in-flight requests, within the limits you set.
+
+$$
+N \approx \min\Big( \max\Big( \Big\lceil \frac{R}{c} \Big\rceil,\ n_{\min} \Big),\ n_{\max} \Big)
+$$
+
+where:
+
+- $R$ is the number of requests in flight at the same moment;
+- $c$ is the concurrency setting (`--concurrency`), the most requests per instance;
+- $\lceil \cdot \rceil$ rounds **up**, because a half-full instance is still a whole instance;
+- $n_{\min}$ and $n_{\max}$ are `--min-instances` and `--max-instances`;
+- $\max(\cdot, n_{\min})$ keeps at least the minimum warm, and $\min(\cdot, n_{\max})$ never goes above the cap;
+- $N$ is the number of instances.
+
+Example: settings $c = 80$, $n_{\min} = 0$, $n_{\max} = 10$.
+
+- 3 a.m., $R = 0$: $\lceil 0/80 \rceil = 0$, then $\max(0, 0) = 0$, then $\min(0, 10) = 0$ instances. Cost: zero.
+- Lunch rush, $R = 200$: $\lceil 200/80 \rceil = \lceil 2.5 \rceil = 3$, then $\max(3, 0) = 3$ and $\min(3, 10) = 3$ instances.
+- A viral post, $R = 1000$: $\lceil 1000/80 \rceil = \lceil 12.5 \rceil = 13$, but $\min(13, 10) = 10$. The cap holds; the extra requests wait in a queue and may time out.
+
+This is an idealised lower bound, not Google's exact algorithm. The real autoscaler also watches CPU use and aims to keep instances below their maximum concurrency, so it often adds instances earlier.
+
+**Traffic splitting** divides requests by percentage.
+
+$$
+T_i = T \times \frac{w_i}{100}, \qquad \sum_i w_i = 100
+$$
+
+where:
+
+- $T$ is the total number of requests in a period;
+- $w_i$ is the percentage assigned to revision $i$;
+- $\sum_i w_i = 100$ says the percentages must add up to exactly 100;
+- $T_i$ is the expected number of requests revision $i$ receives.
+
+Example: with $T = 5000$ requests in the lunch hour and the canary at $w = 10$, the canary gets $5000 \times 10/100 = 500$ requests and the stable revision gets $5000 \times 90/100 = 4500$. If v2 has a bug that fails every request, $500$ customers see it, not $5000$.
+
+**Cost in request-based billing** counts resource-seconds above the monthly free allowance.
+
+$$
+\text{cost} = (V - V_0)^{+} \, p_V + (G - G_0)^{+} \, p_G + (Q - Q_0)^{+} \, p_Q
+$$
+
+where:
+
+- $t$ is the billable instance time in seconds, counted while an instance has at least one request in flight;
+- $V = t \times \text{vCPUs}$ is the vCPU-seconds and $G = t \times \text{GiB}$ the GiB-seconds of memory;
+- $Q$ is the number of requests;
+- $V_0, G_0, Q_0$ are the free monthly allowances;
+- $p_V, p_G, p_Q$ are the prices per vCPU-second, per GiB-second and per request;
+- $(x)^{+}$ means $\max(x, 0)$: below the free allowance you pay nothing.
+
+Example: at the time of writing, Tier 1 request-based prices are $p_V = 0.000024$ and $p_G = 0.0000025$ dollars, $p_Q = 0.40$ dollars per million requests, with free allowances $V_0 = 180{,}000$, $G_0 = 360{,}000$ and $Q_0 = 2{,}000{,}000$ per month (check the [pricing page](https://cloud.google.com/run/pricing)). The Lemonade Stand is busy for $t = 360{,}000$ s (100 hours) a month, with 1 vCPU and 0.5 GiB, serving $Q = 1{,}500{,}000$ requests.
+
+- $V = 360{,}000 \times 1 = 360{,}000$, so $(360{,}000 - 180{,}000) \times 0.000024 = 180{,}000 \times 0.000024 = 4.32$ dollars.
+- $G = 360{,}000 \times 0.5 = 180{,}000$, which is below $G_0$, so $0$.
+- $Q = 1.5$ million, which is below $Q_0$, so $0$.
+
+Total: about $4.32$ dollars a month. Concurrency is why it is so cheap: 80 overlapping requests on one instance count as **one** instance-second, not 80.
+
+## References
+
+- Google Cloud, [What is Cloud Run](https://cloud.google.com/run/docs/overview/what-is-cloud-run) and the [container runtime contract](https://cloud.google.com/run/docs/container-contract)
+- Google Cloud, [Maximum concurrent requests](https://cloud.google.com/run/docs/about-concurrency) and [instance autoscaling](https://cloud.google.com/run/docs/about-instance-autoscaling)
+- Google Cloud, [Minimum instances](https://cloud.google.com/run/docs/configuring/min-instances) and [maximum instances](https://cloud.google.com/run/docs/configuring/max-instances)
+- Google Cloud, [Rollbacks, gradual rollouts and traffic migration](https://cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration)
+- Google Cloud, [Allowing public (unauthenticated) access](https://cloud.google.com/run/docs/authenticating/public)
+- Google Cloud, [Cloud Run pricing](https://cloud.google.com/run/pricing) and [billing settings](https://cloud.google.com/run/docs/configuring/billing-settings)
+- Steren Giannini, [Cloud Run, bringing serverless to containers](https://cloud.google.com/blog/products/serverless/cloud-run-bringing-serverless-to-containers), Google Cloud blog, 2019
+- Eric Jonas, Johann Schleier-Smith, Vikram Sreekanti et al., [*Cloud Programming Simplified: A Berkeley View on Serverless Computing*](https://arxiv.org/abs/1902.03383), 2019
+
+---
+
+← Previous: [5. Cloud Storage](05-cloud-storage.qmd) · [Part 5 index](index.qmd) · Next: [7. Artifact Registry and GKE →](07-artifact-registry-and-gke.qmd)

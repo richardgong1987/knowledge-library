@@ -1,0 +1,212 @@
+---
+title: "7. Artifact Registry and GKE"
+description: "Store the Lemonade image in Artifact Registry, understand tags versus digests, and see how the k3s skills from Part 2 carry over to GKE Autopilot."
+---
+
+Cloud Run and GKE both pull images from a registry. On Google Cloud, that registry is **Artifact Registry**. This lesson stores the Lemonade image there, then shows what changes, and what stays the same, when you run the Part 2 manifests on Google's managed Kubernetes.
+
+## The problem
+
+1. CI builds `lemonade-stand` on every commit. The image needs a private home **in London**, next to Cloud Run, so deploys are fast and nobody outside can download it.
+2. One day the shop may need more than Cloud Run offers, such as background workers, a queue and a database in one cluster. The owner already knows k3s from Part 2. Must they learn everything again?
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+**Artifact Registry** is a **library for lunchboxes**. Each lunchbox is a container image.
+
+- A **tag** is a **sticker** on the lunchbox, such as `v1`. Stickers can be peeled off and stuck on a different box.
+- A **digest** is the box's **fingerprint**. It is calculated from what is inside, so it can never move to another box.
+- Lunchboxes are packed in **layers**: bread, filling, fruit. If ten lunchboxes use the same bread, the library keeps **one** loaf.
+
+**GKE Autopilot** is like a **hotel** instead of a house. With k3s you own the house: you fix the plumbing and buy new beds. With Autopilot you only **book rooms** (pods), say how big each room must be (resource requests), and the hotel builds and cleans the floors (nodes) for you.
+
+Google ran its own services in containers on a system called **Borg** for about a decade before it open-sourced Kubernetes in 2014. The Borg paper by Abhishek Verma and colleagues ([EuroSys 2015](https://research.google/pubs/pub43438/)) explains the ideas Kubernetes, and therefore GKE, grew from: declare what you want and let the system pack the work onto machines.
+:::
+
+## The idea, precisely
+
+### Repositories and image names
+
+An Artifact Registry Docker repository lives in one location. A full image reference has five parts:
+
+```text
+europe-west2-docker.pkg.dev / lemonade-stand-dev / lemonade / lemonade-stand : v1
+└──── registry host ───────┘  └── project ID ───┘  └ repo ─┘  └── image ────┘   └ tag
+```
+
+| Part | Lemonade value | Rule |
+| --- | --- | --- |
+| Host | `europe-west2-docker.pkg.dev` | `<location>-docker.pkg.dev` |
+| Project | `lemonade-stand-dev` | the project ID |
+| Repository | `lemonade` | created once with `gcloud artifacts repositories create` |
+| Image | `lemonade-stand` | the app name |
+| Tag or digest | `:v1` or `@sha256:…` | tags can move; digests cannot |
+
+The older Container Registry (`gcr.io`) is deprecated; new work uses Artifact Registry.
+
+### Tags and digests
+
+A **digest** is the SHA-256 hash of the image manifest. Change one byte of the image and the digest changes completely. A **tag** is just a name that points at a digest, and `docker push` can move it. So "v1 yesterday" and "v1 today" might be different images, but `@sha256:…` always means the same bytes.
+
+### Access
+
+- `roles/artifactregistry.reader`: may pull. Give it to the Cloud Run or GKE service account.
+- `roles/artifactregistry.writer`: may push. Give it to the CI service account.
+- `gcloud auth configure-docker europe-west2-docker.pkg.dev` teaches your local Docker to log in with your gcloud credentials.
+
+### GKE Autopilot in one page
+
+GKE is Google's managed Kubernetes. In **Autopilot** mode, Google also runs the nodes: you deploy pods, and GKE creates, sizes, patches and removes the machines underneath. You pay for the **CPU and memory your pods request**, plus a small hourly cluster fee.
+
+Everything from Part 2 that talks to the Kubernetes API works unchanged: `kubectl`, Deployments, Services, ConfigMaps, Secrets, Jobs, probes and resource requests. What changes is the plumbing that k3s bundled:
+
+| In k3s (Part 2) | In GKE Autopilot | What you do |
+| --- | --- | --- |
+| k3s server (control plane) | run by Google | nothing |
+| k3s agents (nodes) | created automatically from pod requests | always set `resources.requests` |
+| Flannel networking | GKE Dataplane V2 | nothing |
+| Traefik Ingress | GKE Ingress (Google Cloud load balancer) or Gateway API | replace Traefik-specific settings |
+| ServiceLB for `type: LoadBalancer` | a Google Cloud network load balancer | nothing: you get a real external IP |
+| local-path provisioner | Persistent Disk CSI, StorageClass `standard-rwo` | change `storageClassName`, or omit it |
+| `/etc/rancher/k3s/k3s.yaml` | `gcloud container clusters get-credentials` | one command |
+
+## Command reference
+
+| Command or flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `gcloud artifacts repositories create` | creates a repository | same region as Cloud Run | `gcloud artifacts repositories create lemonade --repository-format=docker --location=europe-west2` |
+| `--description` | a human note | | `--description="Lemonade images"` |
+| `gcloud auth configure-docker` | lets Docker push and pull with gcloud credentials | once per host name | `gcloud auth configure-docker europe-west2-docker.pkg.dev` |
+| `docker push` | uploads an image | tag with the full reference first | `docker push europe-west2-docker.pkg.dev/lemonade-stand-dev/lemonade/lemonade-stand:v1` |
+| `gcloud artifacts docker images list` | lists images and digests | | `gcloud artifacts docker images list europe-west2-docker.pkg.dev/lemonade-stand-dev/lemonade` |
+| `gcloud artifacts docker tags list` | shows which digest each tag points at | | `gcloud artifacts docker tags list europe-west2-docker.pkg.dev/lemonade-stand-dev/lemonade/lemonade-stand` |
+| `gcloud artifacts docker images delete` | deletes an image | add `--delete-tags` | `gcloud artifacts docker images delete …/lemonade-stand:old --delete-tags` |
+| `gcloud artifacts repositories set-cleanup-policies` | deletes old images automatically | dry-run a policy first | `… set-cleanup-policies lemonade --location=europe-west2 --policy=cleanup.json` |
+| `gcloud builds submit` | builds an image in Cloud Build, with no local Docker | | `gcloud builds submit --tag=europe-west2-docker.pkg.dev/lemonade-stand-dev/lemonade/lemonade-stand:v1` |
+| `gcloud container clusters create-auto` | creates an Autopilot cluster | regional by design | `gcloud container clusters create-auto lemonade-auto --region=europe-west2` |
+| `gcloud container clusters get-credentials` | writes a kubectl context | then use `kubectl` as in Part 2 | `gcloud container clusters get-credentials lemonade-auto --region=europe-west2` |
+| `gcloud container clusters list` / `delete` | lists or removes clusters | delete when done: the fee runs hourly | `gcloud container clusters delete lemonade-auto --region=europe-west2` |
+
+## Worked example: push once, run anywhere
+
+```bash
+REGISTRY=europe-west2-docker.pkg.dev/lemonade-stand-dev/lemonade
+
+gcloud artifacts repositories create lemonade --repository-format=docker --location=europe-west2
+gcloud auth configure-docker europe-west2-docker.pkg.dev
+
+docker build --platform=linux/amd64 -t "$REGISTRY/lemonade-stand:v1" ../ci-cd/examples/lemonade-stand
+docker push "$REGISTRY/lemonade-stand:v1"
+```
+
+Illustrative output of the push and the tag list:
+
+```text
+v1: digest: sha256:4c1e0b9f2d7a…e83a size: 1573
+
+$ gcloud artifacts docker tags list $REGISTRY/lemonade-stand
+TAG  IMAGE                                                                       DIGEST
+v1   europe-west2-docker.pkg.dev/lemonade-stand-dev/lemonade/lemonade-stand      sha256:4c1e0b9f2d7a…e83a
+```
+
+The same image now runs in both places:
+
+```bash
+# Cloud Run (lesson 6)
+gcloud run deploy lemonade-web --image="$REGISTRY/lemonade-stand:v1" --region=europe-west2
+
+# GKE Autopilot, reusing the Part 2 manifests
+gcloud container clusters create-auto lemonade-auto --region=europe-west2
+gcloud container clusters get-credentials lemonade-auto --region=europe-west2
+kubectl set image deployment/lemonade-web -n lemonade web="$REGISTRY/lemonade-stand:v1"
+```
+
+The last line assumes the Deployment from [Part 2](../k3s/index.qmd) is already applied with `kubectl apply`, and that its container is named `web`. Everything you learned there works on this cluster.
+
+## Rules and conventions
+
+- One repository per application, or per team, in the **same region** as the services that pull from it.
+- CI pushes images tagged with the **Git commit SHA** (`lemonade-stand:3f9c2ab`). Humans may add friendly tags such as `v1.2.0`.
+- Production deploys pin the **digest** (`@sha256:…`) or an immutable SHA tag, so a moved tag cannot change what runs.
+- Grant `artifactregistry.writer` only to CI, and `artifactregistry.reader` to runtimes.
+- Add a **cleanup policy** so old images do not pile up on the bill forever.
+- On Autopilot, always set CPU and memory **requests**: they are both the bill and the scheduling input.
+- Pick GKE only when you need Kubernetes features. For one stateless web app, Cloud Run is simpler and cheaper.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Skipping `configure-docker` | `denied: Unauthenticated request` on `docker push` | `gcloud auth configure-docker europe-west2-docker.pkg.dev` |
+| Pushing to a repository that does not exist | `name unknown: Repository "lemonade" not found` | create it first |
+| Wrong host name, such as `europe-west2.pkg.dev` | `no such host` | the host is `<location>-docker.pkg.dev` |
+| Deploying `:latest` | a rollback brings back the "wrong" latest | deploy a SHA tag or a digest |
+| No resource requests on Autopilot | pods get Autopilot's default size and the bill is higher than expected | set `resources.requests` on every container |
+| Keeping the Traefik-only parts of a k3s Ingress | the Ingress gets no address on GKE | use GKE Ingress or the Gateway API |
+| Forgetting the test cluster | a fee every hour, every day | `gcloud container clusters delete lemonade-auto --region=europe-west2` |
+
+## Mathematical Abstraction
+
+**A digest is a hash of the content.**
+
+$$
+d = H(m)
+$$
+
+where:
+
+- $m$ is the image manifest, the small JSON file that lists the image's layers;
+- $H$ is SHA-256, a function that turns any input into a 64-hex-digit fingerprint;
+- $d$ is the digest, written `sha256:<64 hex digits>`.
+
+Example (real output of `printf '…' | shasum -a 256` on two tiny inputs):
+
+- $H(\texttt{"lemonade v1"}) = \texttt{c8c38131…add94d27e}$
+- $H(\texttt{"lemonade v2"}) = \texttt{b02aa2a9…ba222f491}$
+
+One character changed, and the fingerprint changed completely. That is why a digest can never point at the wrong image, while a tag is only a movable label $\tau(\texttt{v1}) = d$ that a new push can repoint.
+
+**Shared layers are stored once.** A registry keeps each layer once per repository, keyed by its digest.
+
+$$
+S = \sum_{\ell \,\in\, L_1 \cup L_2 \cup \cdots \cup L_k} \operatorname{size}(\ell)
+$$
+
+where:
+
+- $k$ is the number of image versions in the repository;
+- $L_i$ is the set of layers in version $i$;
+- $L_1 \cup \cdots \cup L_k$ is the set of **distinct** layers, so a shared layer is counted only once;
+- $\operatorname{size}(\ell)$ is the compressed size of layer $\ell$ in MB;
+- $S$ is the storage used.
+
+Example: every Lemonade version shares the same Node.js base layers, about 50 MB in total, plus its own app layer of about 2 MB. With $k = 10$ versions, the distinct layers are the base (50 MB) and ten app layers ($10 \times 2 = 20$ MB), so $S = 50 + 20 = 70$ MB. Counting each image separately would give $10 \times 52 = 520$ MB. This idealised model assumes the base layers really are identical. Upgrading the base image adds a new 50 MB set.
+
+**On Autopilot you pay for what pods request.**
+
+$$
+R_{\text{cpu}} = \sum_{p \in P} r_{\text{cpu}}(p), \qquad R_{\text{mem}} = \sum_{p \in P} r_{\text{mem}}(p)
+$$
+
+where:
+
+- $P$ is the set of running pods;
+- $r_{\text{cpu}}(p)$ is pod $p$'s CPU request in vCPU (`250m` = $0.25$), and $r_{\text{mem}}(p)$ its memory request in GiB;
+- $R_{\text{cpu}}$ and $R_{\text{mem}}$ are the totals that GKE bills per hour, at its per-vCPU and per-GiB rates.
+
+Example: the Lemonade Deployment runs 3 replicas, each requesting `250m` CPU and `512Mi` memory. Then $R_{\text{cpu}} = 3 \times 0.25 = 0.75$ vCPU and $R_{\text{mem}} = 3 \times 0.5 = 1.5$ GiB. Over a 730-hour month, that is $0.75 \times 730 = 547.5$ vCPU-hours and $1.5 \times 730 = 1095$ GiB-hours, whatever size the hidden nodes are. Doubling the replicas to 6 doubles both numbers. On k3s on your own VM, by contrast, you pay for the whole VM even when it is half empty.
+
+## References
+
+- Google Cloud, [Artifact Registry overview](https://cloud.google.com/artifact-registry/docs/overview) and [Docker repositories: push and pull](https://cloud.google.com/artifact-registry/docs/docker/pushing-and-pulling)
+- Google Cloud, [Configure authentication to Artifact Registry for Docker](https://cloud.google.com/artifact-registry/docs/docker/authentication)
+- Google Cloud, [Cleanup policies](https://cloud.google.com/artifact-registry/docs/repositories/cleanup-policy)
+- Google Cloud, [Transition from Container Registry](https://cloud.google.com/artifact-registry/docs/transition/transition-from-gcr)
+- Google Cloud, [GKE Autopilot overview](https://cloud.google.com/kubernetes-engine/docs/concepts/autopilot-overview) and [Autopilot pricing](https://cloud.google.com/kubernetes-engine/pricing)
+- [OCI image specification: descriptors and digests](https://github.com/opencontainers/image-spec/blob/main/descriptor.md)
+- Abhishek Verma, Luis Pedrosa, Madhukar Korupolu, David Oppenheimer, Eric Tune and John Wilkes, [Large-scale cluster management at Google with Borg](https://research.google/pubs/pub43438/), EuroSys 2015
+
+---
+
+← Previous: [6. Cloud Run](06-cloud-run.qmd) · [Part 5 index](index.qmd) · Next: [8. Cloud SQL and Firestore →](08-cloud-sql-and-firestore.qmd)

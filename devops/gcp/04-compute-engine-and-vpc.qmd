@@ -1,0 +1,245 @@
+---
+title: "4. Compute Engine and VPC"
+description: "Rent a virtual machine, give it a startup script, and protect it with a VPC network, subnets and firewall rules."
+---
+
+Cloud Run (lesson 6) will be our main home for the Lemonade Stand. But underneath every cloud product there are virtual machines and networks. Building one VM by hand shows what the managed products do for you.
+
+## The problem
+
+The owner wants one classic web server, `web1`, in London. It should:
+
+- start nginx and show the menu by itself when it boots;
+- accept web traffic on port 80 from anyone;
+- block one troublesome address range that keeps spamming the order form;
+- accept SSH only through Google's secure tunnel, never from the open internet.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+A **VM** (virtual machine) is a **pretend computer** made from a slice of a real one. It is like renting one locker in a huge locker room: it feels like your own locker, but it sits in a row with thousands of others.
+
+The **VPC network** is the **fence and paths** around your lockers. A **subnet** is one row of lockers in one city, and each locker in the row gets a house number (an IP address).
+
+**Firewall rules** are the **guard at the gate** with a list of instructions. The guard reads the most important instruction first: rule 900 beats rule 1000. If two instructions are equally important and one says "stop", the guard says "stop".
+
+A **startup script** is the note you leave inside the locker: "When you wake up, put the menu on the wall."
+:::
+
+## The idea, precisely
+
+### Virtual machines
+
+| Part | Meaning | Lemonade value |
+| --- | --- | --- |
+| Machine type | how many vCPUs and how much memory | `e2-micro` |
+| Image | the operating system to start from | newest image in family `debian-12` from project `debian-cloud` |
+| Boot disk | a persistent disk holding the OS; it lives in the VM's zone | 10 GB, the default |
+| Zone | where the VM physically runs | `europe-west2-a` |
+| Network tags | labels that firewall rules can target | `web` |
+| Metadata | key–value notes the VM can read at `metadata.google.internal` | `startup-script`, `menu` |
+
+**Machine type names** follow `<family>-<shape>-<vCPUs>`. In the E2 family:
+
+| Shape | Memory per vCPU | Examples |
+| --- | --- | --- |
+| `micro`, `small`, `medium` | fixed sizes on shared cores | `e2-micro` = 2 shared vCPUs, 1 GB |
+| `standard` | 4 GB | `e2-standard-2`, `e2-standard-4` |
+| `highmem` | 8 GB | `e2-highmem-2` |
+| `highcpu` | 1 GB | `e2-highcpu-4` |
+
+$$
+M = n \times k
+$$
+
+where:
+
+- $M$ is the machine's memory in GB;
+- $n$ is the number of vCPUs, the last number in the name;
+- $k$ is the memory per vCPU for the shape, in GB (standard $4$, highmem $8$, highcpu $1$).
+
+Example: `e2-standard-4` has $n = 4$ and $k = 4$, so $M = 4 \times 4 = 16$ GB. `e2-highcpu-4` has the same 4 vCPUs but $k = 1$, so $M = 4 \times 1 = 4$ GB, which suits CPU-heavy work. The shared-core sizes (`micro`, `small`, `medium`) do not follow the formula; read their sizes from the table.
+
+A **startup script** is stored in the metadata key `startup-script`. It runs as root on **every** boot, so write it to be safe to run twice. Its output goes to the system journal: `sudo journalctl -u google-startup-scripts.service`.
+
+### VPC networks and subnets
+
+- A **VPC network** is **global**: one network can have subnets in many regions.
+- A **subnet** is **regional** and owns an IP range written in CIDR notation, such as `10.10.0.0/24`.
+- New projects get a `default` network in **auto mode**, with one subnet in every region. For anything real, create a **custom-mode** network and choose your own ranges.
+- In each subnet's primary range, Google keeps **4 addresses**: the first (network address), the second (default gateway), the second-to-last (reserved for future use) and the last (broadcast).
+
+### Firewall rules
+
+VPC firewall rules are **stateful**: if a request is allowed in, its reply is allowed out automatically.
+
+| Field | Meaning | Lemonade value |
+| --- | --- | --- |
+| Direction | `INGRESS` (coming in) or `EGRESS` (going out) | `INGRESS` |
+| Action | `ALLOW` or `DENY` | `ALLOW` for port 80 |
+| Rules | protocol and ports | `tcp:80` |
+| Source ranges | which senders match (ingress) | `0.0.0.0/0` (everyone) |
+| Target tags | which VMs the rule protects | `web` |
+| Priority | 0 to 65535; **lower number wins**; default 1000 | `1000` |
+
+Every network also has two **implied rules** at the lowest priority, 65535: deny all ingress and allow all egress. So anything you do not allow in is blocked.
+
+### External IPs and Cloud NAT
+
+- By default a VM gets an **ephemeral external IP**, which changes if the VM stops. Reserve a **static** one with `gcloud compute addresses create`.
+- `--no-address` gives the VM only an internal IP. That is safer, but the VM then cannot download updates by itself.
+- **Cloud NAT** fixes that: it lets internal-only VMs make **outbound** connections. Nobody on the internet can connect **in** through it. It needs a **Cloud Router**.
+- For SSH without an external IP, use **IAP TCP forwarding**: allow port 22 from Google's IAP range `35.235.240.0/20` and connect with `gcloud compute ssh --tunnel-through-iap`.
+
+## Command reference
+
+| Command or flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `gcloud compute networks create` | creates a VPC network | use `--subnet-mode=custom` | `gcloud compute networks create lemonade-net --subnet-mode=custom` |
+| `gcloud compute networks subnets create` | creates a regional subnet | ranges must not overlap | `gcloud compute networks subnets create lemonade-london --network=lemonade-net --region=europe-west2 --range=10.10.0.0/24` |
+| `gcloud compute firewall-rules create` | creates a firewall rule | name it `<network>-<allow/deny>-<what>` | `gcloud compute firewall-rules create lemonade-allow-http --network=lemonade-net --allow=tcp:80 --target-tags=web` |
+| `--direction`, `--action`, `--rules` | the long form; deny rules must use it | `--allow` is only a shortcut for allow rules; there is no `--deny` flag | `--direction=INGRESS --action=DENY --rules=tcp:80` |
+| `--source-ranges`, `--target-tags`, `--priority` | who, which VMs, how important | lower priority number wins | `--source-ranges=203.0.113.0/24 --priority=900` |
+| `gcloud compute firewall-rules list` | lists rules | | `gcloud compute firewall-rules list --filter="network:lemonade-net"` |
+| `gcloud compute instances create` | creates a VM | always give `--zone` | see the worked example |
+| `--machine-type`, `--image-family`, `--image-project` | size and operating system | a family always gives the newest image | `--machine-type=e2-micro --image-family=debian-12 --image-project=debian-cloud` |
+| `--metadata-from-file` | sets metadata values from files | `startup-script` is the special key | `--metadata-from-file=startup-script=startup-script.sh,menu=index.html` |
+| `--network`, `--subnet`, `--tags`, `--no-address` | network placement | tags connect VMs to firewall rules | `--subnet=lemonade-london --tags=web` |
+| `gcloud compute instances list` | lists VMs with their IPs | | `gcloud compute instances list` |
+| `gcloud compute ssh` | SSH with automatic key handling | add `--tunnel-through-iap` | `gcloud compute ssh web1 --zone=europe-west2-a --tunnel-through-iap` |
+| `gcloud compute instances delete` | deletes a VM and, by default, its boot disk | | `gcloud compute instances delete web1 --zone=europe-west2-a` |
+| `gcloud compute addresses create` | reserves a static external IP | regional by default | `gcloud compute addresses create web1-ip --region=europe-west2` |
+| `gcloud compute routers create` + `routers nats create` | outbound internet for internal-only VMs | one router and NAT per region | `gcloud compute routers nats create lemonade-nat --router=lemonade-router --region=europe-west2 --auto-allocate-nat-external-ips --nat-all-subnet-ip-ranges` |
+| `gcloud compute machine-types list` | shows machine types in a zone | | `gcloud compute machine-types list --filter="zone:europe-west2-a AND name~^e2-"` |
+
+## Worked example: `web1` behind a guarded gate
+
+The startup script ([`examples/startup-script.sh`](examples/startup-script.sh)) installs nginx and copies the menu from metadata into the web root:
+
+```bash
+#!/bin/bash
+# Compute Engine runs this as root on every boot of the VM.
+apt-get update
+apt-get install -y nginx
+curl -s -H "Metadata-Flavor: Google" \
+  "http://metadata.google.internal/computeMetadata/v1/instance/attributes/menu" \
+  > /var/www/html/index.html
+```
+
+The network, three firewall rules and the VM:
+
+```bash
+gcloud compute networks create lemonade-net --subnet-mode=custom
+gcloud compute networks subnets create lemonade-london \
+  --network=lemonade-net --region=europe-west2 --range=10.10.0.0/24
+
+gcloud compute firewall-rules create lemonade-allow-http --network=lemonade-net \
+  --allow=tcp:80 --source-ranges=0.0.0.0/0 --target-tags=web --priority=1000
+gcloud compute firewall-rules create lemonade-deny-spammers --network=lemonade-net \
+  --action=DENY --rules=tcp:80 --source-ranges=203.0.113.0/24 --target-tags=web --priority=900
+gcloud compute firewall-rules create lemonade-allow-iap-ssh --network=lemonade-net \
+  --allow=tcp:22 --source-ranges=35.235.240.0/20 --target-tags=web
+
+gcloud compute instances create web1 --zone=europe-west2-a \
+  --machine-type=e2-micro --image-family=debian-12 --image-project=debian-cloud \
+  --subnet=lemonade-london --tags=web \
+  --metadata-from-file=startup-script=examples/startup-script.sh,menu=examples/index.html
+```
+
+Illustrative output:
+
+```text
+Created [https://www.googleapis.com/compute/v1/projects/lemonade-stand-dev/zones/europe-west2-a/instances/web1].
+NAME  ZONE            MACHINE_TYPE  PREEMPTIBLE  INTERNAL_IP  EXTERNAL_IP  STATUS
+web1  europe-west2-a  e2-micro                   10.10.0.2    192.0.2.80   RUNNING
+
+$ curl http://192.0.2.80/
+<h1>Lemonade Stand</h1>
+```
+
+The internal IP is `10.10.0.2` because `.0` is the network address and `.1` is the gateway, so the first VM gets the next free address.
+
+::: {.callout-note}
+**Cost note.** The always-free `e2-micro` allowance applies only in `us-west1`, `us-central1` and `us-east1` (at the time of writing). In London, this VM is billed. Delete it when you finish: `gcloud compute instances delete web1 --zone=europe-west2-a`.
+:::
+
+## Rules and conventions
+
+- Create a **custom-mode** network with planned, non-overlapping ranges. Plan them so a future office VPN or a second region never clashes.
+- Target firewall rules with **network tags** (or service accounts), never "all instances", so a new VM is closed until you tag it.
+- Name rules `<network>-<allow|deny>-<purpose>` and leave gaps in priorities (900, 1000, 1100) so you can insert rules later.
+- Never open SSH (22) or RDP (3389) to `0.0.0.0/0`. Use IAP tunnelling.
+- Prefer internal-only VMs plus Cloud NAT for servers that do not serve the public directly.
+- Make startup scripts idempotent: they run on every boot.
+- Use image **families**, not fixed image names, so new VMs get security patches.
+- Treat a single VM as **zonal**: for availability, use a managed instance group across zones, or a regional service such as Cloud Run.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Firewall rule created without `--target-tags`, or the VM has no tag | `curl` to port 80 times out | add `--tags=web` to the VM (`gcloud compute instances add-tags web1 --tags=web`) |
+| Adding an allow rule at 1000 to unblock a range denied at 900 | the range is still blocked | the **lower** number wins: give the allow rule a smaller number (800), or delete the deny |
+| `--no-address` with no Cloud NAT | `apt-get update` hangs in the startup script | create a Cloud Router and Cloud NAT, or allow an external IP |
+| Overlapping subnet ranges | `The IP range … conflicts with …` | choose a range that does not overlap, e.g. `10.20.0.0/24` |
+| Expecting the external IP to survive a stop | the menu URL changes after a restart | reserve a static address |
+| Debugging the startup script blind | nginx is missing and you do not know why | read `sudo journalctl -u google-startup-scripts.service` |
+
+## Mathematical Abstraction
+
+**How many VMs fit in a subnet?** A CIDR range `/p` fixes the first $p$ bits of the 32-bit address and leaves the rest free.
+
+$$
+U = 2^{32 - p} - 4
+$$
+
+where:
+
+- $p$ is the prefix length, the number after the slash (`/24` gives $p = 24$);
+- $32 - p$ is the number of free bits in an IPv4 address;
+- $2^{32-p}$ is how many addresses the range contains;
+- $4$ is the number of addresses Google keeps in every primary range (network, gateway, second-to-last, broadcast);
+- $U$ is the number of addresses you can give to VMs.
+
+Example: `lemonade-london` is `10.10.0.0/24`, so $U = 2^{32-24} - 4 = 2^{8} - 4 = 256 - 4 = 252$ usable addresses. The smallest allowed subnet, `/29`, gives $U = 2^{3} - 4 = 8 - 4 = 4$, which is enough for a tiny test.
+
+**Which firewall rule wins?** For one packet $t$, let $M(t)$ be the set of rules that match it (direction, source, port, target). The implied deny rule always matches ingress, so $M(t)$ is never empty.
+
+$$
+\begin{aligned}
+q(t) &= \min_{f \in M(t)} \operatorname{prio}(f) \\
+\operatorname{action}(t) &=
+\begin{cases}
+\text{deny} & \text{if some } f \in M(t) \text{ with } \operatorname{prio}(f) = q(t) \text{ says deny} \\
+\text{allow} & \text{otherwise}
+\end{cases}
+\end{aligned}
+$$
+
+where:
+
+- $t$ is one incoming connection attempt;
+- $M(t)$ is the set of firewall rules whose direction, source range, protocol, port and target all match $t$;
+- $\operatorname{prio}(f)$ is rule $f$'s priority number, from 0 to 65535;
+- $q(t)$ is the smallest priority number among the matching rules, meaning the most important one;
+- if several rules share that number, a deny among them wins.
+
+Example 1: a request from `203.0.113.7` to `web1` on port 80. It matches `lemonade-deny-spammers` (900, deny), `lemonade-allow-http` (1000, allow) and the implied rule (65535, deny). Then $q = \min(900, 1000, 65535) = 900$, and the rule at 900 says deny: **blocked**.
+
+Example 2: a customer at `198.51.100.9` on port 80 matches `lemonade-allow-http` (1000) and the implied rule (65535). Then $q = 1000$, and that rule says allow: **allowed**.
+
+Example 3: the same customer tries port 5432 (Postgres). Only the implied rule matches, so $q = 65535$, deny: **blocked**. That is why a closed-by-default network is safe.
+
+## References
+
+- Google Cloud, [Compute Engine machine families](https://cloud.google.com/compute/docs/machine-resource) and [general-purpose machine types (E2)](https://cloud.google.com/compute/docs/general-purpose-machines)
+- Google Cloud, [Using startup scripts on Linux VMs](https://cloud.google.com/compute/docs/instances/startup-scripts/linux)
+- Google Cloud, [VPC networks](https://cloud.google.com/vpc/docs/vpc) and [subnets, including reserved addresses](https://cloud.google.com/vpc/docs/subnets)
+- Google Cloud, [VPC firewall rules](https://cloud.google.com/firewall/docs/firewalls)
+- Google Cloud, [Cloud NAT overview](https://cloud.google.com/nat/docs/overview) and [using IAP for TCP forwarding](https://cloud.google.com/iap/docs/using-tcp-forwarding)
+- Google Cloud, [Free tier for Compute Engine](https://cloud.google.com/free/docs/compute-getting-started)
+- [RFC 5737](https://www.rfc-editor.org/rfc/rfc5737): the documentation address ranges used in these examples
+
+---
+
+← Previous: [3. IAM and service accounts](03-iam-and-service-accounts.qmd) · [Part 5 index](index.qmd) · Next: [5. Cloud Storage →](05-cloud-storage.qmd)

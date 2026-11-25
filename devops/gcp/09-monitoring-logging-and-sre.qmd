@@ -1,0 +1,192 @@
+---
+title: "9. Monitoring, Logging and SRE"
+description: "Know when the Lemonade Stand is broken before customers tell you: logs, metrics, uptime checks, alerts, SLOs with error budgets, and billing budgets."
+---
+
+A service you cannot see is a service you cannot fix. This lesson gives the Lemonade Stand **eyes** (logs and metrics), an **alarm** (uptime checks and alerts), a **reliability target** (an SLO with an error budget), and a **spending alarm** (a billing budget).
+
+## The problem
+
+Last Saturday the order form returned errors for two hours, and the owner found out from an angry customer. They want:
+
+1. to see what the app printed when it failed;
+2. to be **woken up** when the menu is down, not every time one request fails;
+3. a fair rule for when to ship new features and when to stop and fix reliability;
+4. an email before the monthly bill passes \$20.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+**Logs** are the app's **diary**: "10:02 sold one pink lemonade", "10:03 oops, the till did not open".
+
+**Metrics** are the **scoreboard**: how many cups an hour, how long each customer waited.
+
+An **uptime check** is a friend who **knocks on the door every minute** from different cities and shouts if nobody answers.
+
+An **error budget** is a **jar of oops tokens**. Promise "the stand works 999 times out of 1,000", and you get 1 oops token for every 1,000 customers. Trying a new recipe might spend a few tokens; that is fine. When the jar is empty, you stop inventing recipes and fix the stand until the jar refills next month.
+
+This idea comes from Google's own **Site Reliability Engineering** team. In the free book [*Site Reliability Engineering*](https://sre.google/sre-book/table-of-contents/) (Beyer, Jones, Petoff and Murphy, 2016), the chapter ["Embracing Risk"](https://sre.google/sre-book/embracing-risk/) explains that aiming for 100% reliability is a mistake: users cannot tell 99.99% from 100%, and chasing the last bit stops all progress. Pick a target, measure it, and let the leftover budget pay for change.
+:::
+
+## The idea, precisely
+
+### Cloud Logging
+
+- Anything a Cloud Run container prints to **stdout or stderr** becomes a log entry. Cloud Run also writes one **request log** per HTTP request.
+- Print **one JSON object per line** and Logging understands it: the `severity` field sets the level, and `message` becomes the text.
+
+```js
+console.log(JSON.stringify({ severity: 'ERROR', message: 'till did not open', orderId: 'o-1042' }));
+```
+
+- Find entries with the **Logging query language**: `field="value"` comparisons joined with `AND` / `OR`, and `severity>=ERROR`.
+- Logs in the `_Default` bucket are kept for 30 days by default.
+
+### Cloud Monitoring
+
+- Google Cloud records **metrics** for every product automatically. For Cloud Run: `run.googleapis.com/request_count` (labelled by response code class such as `5xx`), `request_latencies` and `container/instance_count`.
+- An **uptime check** sends a request to a URL from several regions around the world, every 1, 5, 10 or 15 minutes.
+- An **alerting policy** watches a metric, or an uptime check, and notifies a **channel** (email, SMS, Slack, PagerDuty) when a condition holds for long enough.
+
+### SLIs, SLOs and error budgets
+
+| Term | Meaning | Lemonade value |
+| --- | --- | --- |
+| SLI (indicator) | a measured ratio: good events ÷ valid events | successful (non-5xx) requests ÷ all requests |
+| SLO (objective) | the target for the SLI over a window | 99.9% over 30 days |
+| Error budget | how much failure the SLO allows | 0.1% of requests |
+| Burn rate | how fast the budget is being spent, compared with "evenly over the window" | 1 means "exactly on budget" |
+
+In Cloud Monitoring, you define a **service**, attach an SLO to it in the console or the API, and create alerts on its burn rate.
+
+### Billing budgets
+
+A **budget** watches spending on a billing account and emails you at thresholds you choose. It **does not stop** spending. To cap cost, use `--max-instances`, quotas, or an automated action triggered by the budget's Pub/Sub notifications.
+
+## Command reference
+
+| Command or flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `gcloud logging read` | prints log entries matching a query | quote the query in single quotes | `gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' --limit=10` |
+| `--freshness` | how far back to look | default `1d` | `--freshness=2h` |
+| `--format` | output shape | `json` for scripts | `--format="value(timestamp,jsonPayload.message)"` |
+| `gcloud logging logs list` | lists log names in the project | | `gcloud logging logs list` |
+| `gcloud run services logs read` | recent logs of one service | the quickest look | `gcloud run services logs read lemonade-web --region=europe-west2 --limit=20` |
+| `gcloud monitoring uptime create` | creates an uptime check | check `/health`, not `/` | see the worked example |
+| `--resource-type`, `--resource-labels` | what to check | `uptime-url` needs `host` and `project_id` | `--resource-type=uptime-url --resource-labels=host=…,project_id=lemonade-stand-dev` |
+| `--path`, `--protocol`, `--period` | request path, `http`/`https`/`tcp`, minutes between checks | period is 1, 5, 10 or 15 | `--path=/health --protocol=https --period=1` |
+| `gcloud monitoring uptime list-configs` | lists uptime checks | | `gcloud monitoring uptime list-configs` |
+| `gcloud monitoring policies create` | creates an alerting policy from a file | keep policies in Git | `gcloud monitoring policies create --policy-from-file=alert-5xx.yaml` |
+| `gcloud beta monitoring channels create` | creates a notification channel | beta only at the time of writing | `gcloud beta monitoring channels create --channel-content-from-file=email.yaml` |
+| `gcloud billing budgets create` | creates a budget with alert thresholds | `percent` is a fraction: `0.5` = 50% | `gcloud billing budgets create --billing-account=01A2B3-C4D5E6-F7A8B9 --display-name="Lemonade monthly" --budget-amount=20USD --threshold-rule=percent=0.5` |
+| `gcloud billing budgets list` | lists budgets | | `gcloud billing budgets list --billing-account=01A2B3-C4D5E6-F7A8B9` |
+
+## Worked example: eyes, an alarm and a spending alarm
+
+```bash
+# Eyes: what went wrong in the last two hours?
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="lemonade-web" AND severity>=ERROR' \
+  --freshness=2h --limit=5 --format="value(timestamp,jsonPayload.message)"
+
+# Alarm: knock on /health every minute from several regions.
+gcloud monitoring uptime create lemonade-health \
+  --resource-type=uptime-url \
+  --resource-labels=host=lemonade-web-123456789012.europe-west2.run.app,project_id=lemonade-stand-dev \
+  --path=/health --protocol=https --period=1
+
+# Spending alarm: emails at 50%, 90% and 100% of $20.
+gcloud billing budgets create --billing-account=01A2B3-C4D5E6-F7A8B9 \
+  --display-name="Lemonade monthly" --budget-amount=20USD \
+  --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0
+```
+
+Illustrative output of the log query:
+
+```text
+2026-11-22T12:14:03.118Z  till did not open
+2026-11-22T12:13:58.402Z  till did not open
+2026-11-22T12:13:41.977Z  database connection refused
+```
+
+Three lines are enough to show the database went first and the till errors followed. Finally, add an alerting policy on the uptime check so a failure notifies your email channel. Keep the policy file in Git, next to the code.
+
+## Rules and conventions
+
+- Log **one JSON object per line** with a `severity`. Never log passwords, tokens or full card numbers.
+- Check `/health` with an uptime check; it should answer fast and touch only what really matters.
+- Alert on **symptoms users feel** (errors, slowness, the uptime check) rather than on causes (CPU at 80%).
+- Page a human only when the error budget is burning fast. Send slow burns to a ticket or an email.
+- Choose an SLO a little **below** what you achieve today, then tighten it once you can keep it.
+- When the error budget is spent, freeze feature releases and work on reliability until it recovers.
+- Create a billing budget on day one, and remember that it warns but never stops spending.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Printing plain text such as `ERROR: …` | every entry shows as `DEFAULT` severity, and the `severity>=ERROR` filter finds nothing | print JSON with a `severity` field |
+| Alerting on every single failed request | the owner is woken at night and starts ignoring alerts | alert on burn rate, or on the uptime check failing for several minutes |
+| Uptime check on `/` (the full menu with database calls) | alerts when only the specials box is slow | check `/health` |
+| An SLO of 100% | any one failure "breaks the SLO", and nobody dares to deploy | pick 99.9% and use the budget |
+| Thinking a budget caps spending | the bill keeps growing after the 100% email | set `--max-instances`, quotas, or automate on the budget notification |
+| `percent=50` in `--threshold-rule` | the request is rejected: `percent` must be between 0.0 and 1.0 | use a fraction: `percent=0.5` |
+
+## Mathematical Abstraction
+
+**The SLI is a ratio of good events to valid events.**
+
+$$
+\text{SLI} = \frac{g}{n}
+$$
+
+where:
+
+- $n$ is the number of valid requests in the window (excluding, for example, health checks from your own monitors);
+- $g$ is the number of those that were **good**: answered without a 5xx error;
+- $\text{SLI}$ is a number between 0 and 1, often written as a percentage.
+
+Example: in October the Lemonade Stand served $n = 1{,}000{,}000$ requests, of which $800$ failed, so $g = 999{,}200$. Then $\text{SLI} = 999{,}200 / 1{,}000{,}000 = 0.9992 = 99.92\%$.
+
+**The error budget is the failure the SLO allows.**
+
+$$
+B = (1 - s) \times n \qquad \text{or, in time,} \qquad B_t = (1 - s) \times W
+$$
+
+where:
+
+- $s$ is the SLO as a fraction, such as $0.999$;
+- $1 - s$ is the allowed failure fraction;
+- $n$ is the number of valid requests, so $B$ counts the failed requests you may have;
+- $W$ is the window length in minutes, so $B_t$ counts the minutes of downtime you may have.
+
+Example: with $s = 0.999$ and $n = 1{,}000{,}000$, $B = 0.001 \times 1{,}000{,}000 = 1{,}000$ failed requests. October used $800$, so $1{,}000 - 800 = 200$ were left: the shop could keep shipping features. In time, a 30-day window is $W = 30 \times 24 \times 60 = 43{,}200$ minutes, so $B_t = 0.001 \times 43{,}200 = 43.2$ minutes of full outage per month. Last Saturday's two-hour outage ($120$ minutes) would have spent the budget almost three times over: $120 / 43.2 \approx 2.8$.
+
+**The burn rate says how fast the budget is going.**
+
+$$
+b = \frac{e}{1 - s}, \qquad T_{\text{empty}} = \frac{W}{b}
+$$
+
+where:
+
+- $e$ is the error fraction measured right now, over a short recent period;
+- $b$ is the burn rate: $b = 1$ means the budget would last exactly the whole window, and $b > 1$ means it runs out early;
+- $W$ is the SLO window (30 days);
+- $T_{\text{empty}}$ is how long until the budget is gone if the current error rate continues.
+
+Example: during an incident, $e = 0.005$ (0.5% of requests fail). Then $b = 0.005 / 0.001 = 5$ and $T_{\text{empty}} = 30 / 5 = 6$ days. That is serious but not a 3 a.m. emergency, so an email is enough. In a full outage, $e = 1$ gives $b = 1 / 0.001 = 1000$ and $T_{\text{empty}} = 43{,}200 / 1000 = 43.2$ minutes: wake someone up. Google's [SRE Workbook](https://sre.google/workbook/alerting-on-slos/) suggests paging when $b \ge 14.4$ for an hour. That burn uses $14.4 \times 1 / 720 = 0.02$, or 2%, of a 720-hour budget in that single hour.
+
+## References
+
+- Betsy Beyer, Chris Jones, Jennifer Petoff and Niall Richard Murphy (eds.), [*Site Reliability Engineering*](https://sre.google/sre-book/table-of-contents/), O'Reilly, 2016, especially [Chapter 3: Embracing Risk](https://sre.google/sre-book/embracing-risk/) and [Chapter 4: Service Level Objectives](https://sre.google/sre-book/service-level-objectives/)
+- Google, *The Site Reliability Workbook*, [Implementing SLOs](https://sre.google/workbook/implementing-slos/) and [Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/)
+- Google Cloud, [Cloud Logging overview](https://cloud.google.com/logging/docs/overview), [structured logging](https://cloud.google.com/logging/docs/structured-logging) and [the Logging query language](https://cloud.google.com/logging/docs/view/logging-query-language)
+- Google Cloud, [Logging and viewing logs in Cloud Run](https://cloud.google.com/run/docs/logging)
+- Google Cloud, [Uptime checks](https://cloud.google.com/monitoring/uptime-checks), [alerting overview](https://cloud.google.com/monitoring/alerts) and [service monitoring and SLOs](https://cloud.google.com/stackdriver/docs/solutions/slo-monitoring)
+- Google Cloud, [Create, edit or delete budgets and budget alerts](https://cloud.google.com/billing/docs/how-to/budgets)
+
+---
+
+← Previous: [8. Cloud SQL and Firestore](08-cloud-sql-and-firestore.qmd) · [Part 5 index](index.qmd) · Next: [Part 6: Terraform →](../terraform/index.qmd)

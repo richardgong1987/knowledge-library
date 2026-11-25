@@ -1,0 +1,229 @@
+---
+title: "5. Cloud Storage"
+description: "Buckets and objects, storage classes and locations, uniform access, hosting the static menu, signed URLs and lifecycle rules."
+---
+
+Cloud Storage keeps **files** (called objects) in **buckets**. There are no disks to size and no servers to run: you put a file in, you get a URL out. It is the simplest way to put the Lemonade menu online.
+
+## The problem
+
+The Lemonade Stand has three kinds of files:
+
+1. `index.html`, the menu: public, read by every customer, changed weekly.
+2. **Drink photos**, shown on the menu for a month, then rarely looked at.
+3. **Daily sales reports**: private. Only the accountant may download them, through a link that stops working the same day.
+
+The owner wants all three stored safely and cheaply, with no server to look after.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+A **bucket** is a **big labelled box** in Google's warehouse. Every box in the whole world must have a different label, like a house address.
+
+An **object** is **one item in the box**: a photo, a web page, a report. Its name can contain slashes (`photos/pink.jpg`), so it looks like folders, but the box is really one flat list of names.
+
+**Storage classes** are **shelves**. The front shelf (Standard) costs more each month, but you can grab things any time for free. The back shelves (Nearline, Coldline, Archive) are cheaper each month, but you pay a small fee each time you fetch something, and you promise to leave things there for a minimum time.
+
+A **signed URL** is a **ticket that expires**: anyone holding it can pick up one item until the time on the ticket runs out.
+:::
+
+## The idea, precisely
+
+### Buckets and objects
+
+- A bucket name is **globally unique**: 3 to 63 characters, lowercase letters, digits, `-`, `_` and `.`, starting and ending with a letter or digit. Names must not start with `goog` or contain `google`. A good habit: start with your project ID, as in `lemonade-stand-dev-menu`.
+- An object is addressed as `gs://BUCKET/NAME`, for example `gs://lemonade-stand-dev-menu/index.html`.
+- Objects are **immutable**: "changing" a file uploads a new version that replaces the old one.
+
+### Locations
+
+| Location type | Example | Use |
+| --- | --- | --- |
+| Region | `europe-west2` | data near your customers and your Cloud Run service; cheapest |
+| Dual-region | a pair of regions, such as `eur4` | survives a regional outage |
+| Multi-region | `EU`, `US`, `ASIA` | content read from many places |
+
+The location is fixed when the bucket is created.
+
+### Storage classes
+
+| Class | Minimum storage duration | Retrieval fee | Good for |
+| --- | --- | --- | --- |
+| `STANDARD` | none | none | the menu, anything read often |
+| `NEARLINE` | 30 days | yes | photos read about once a month |
+| `COLDLINE` | 90 days | yes | quarterly reports |
+| `ARCHIVE` | 365 days | yes | records kept for the tax office |
+
+Every class has the same design target of **eleven nines** (99.999999999%) annual durability. The classes differ in price and access pattern, not in safety.
+
+### Access control
+
+- **Uniform bucket-level access** (recommended) means only IAM decides access, for the whole bucket. The older per-object ACLs are switched off.
+- **Public access prevention** blocks `allUsers` and `allAuthenticatedUsers` grants. It is a safety catch: turn it off only on buckets meant to be public.
+- To make the menu public, grant `roles/storage.objectViewer` to `allUsers` on **that bucket only**.
+
+### Static hosting and caching
+
+A public object is reachable at `https://storage.googleapis.com/BUCKET/OBJECT`. The `--web-main-page-suffix` setting (serve `index.html` for `/`) applies when you put a custom domain or a load balancer in front.
+
+Public objects without a `Cache-Control` header get `public, max-age=3600` by default. Browsers and Google's network may then serve an **old menu for up to an hour** after you upload a new one. Set a shorter `Cache-Control` on files that change.
+
+### Signed URLs
+
+A **signed URL** grants time-limited access to one private object, with no Google account needed. V4 signed URLs last at most **7 days**. When `gcloud storage sign-url` signs through a service account you impersonate (no key file), gcloud caps the duration at **12 hours**.
+
+### Lifecycle rules
+
+A **lifecycle configuration** lets Cloud Storage act on objects by itself, for example "after 30 days, move to Nearline; after 365 days, delete". Our file is [`examples/lifecycle.json`](examples/lifecycle.json):
+
+```json
+{
+  "lifecycle": {
+    "rule": [
+      { "action": { "type": "SetStorageClass", "storageClass": "NEARLINE" }, "condition": { "age": 30 } },
+      { "action": { "type": "Delete" }, "condition": { "age": 365 } }
+    ]
+  }
+}
+```
+
+`age` counts days since the object was created. Lifecycle actions run in the background and can take up to a day to apply.
+
+## Command reference
+
+`gcloud storage` is the current tool. The older `gsutil` still works but is legacy; the commands map almost one to one (`gsutil cp` becomes `gcloud storage cp`).
+
+| Command or flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `gcloud storage buckets create` | creates a bucket | name it after the project | `gcloud storage buckets create gs://lemonade-stand-dev-menu --location=europe-west2 --uniform-bucket-level-access` |
+| `--default-storage-class` | class for new objects | `STANDARD` unless you know better | `--default-storage-class=NEARLINE` |
+| `--public-access-prevention` | blocks public grants | on for every private bucket | `--public-access-prevention` |
+| `gcloud storage cp` | uploads or downloads | `-r` for folders | `gcloud storage cp index.html gs://lemonade-stand-dev-menu/` |
+| `--cache-control` | sets the `Cache-Control` header | short for files that change | `--cache-control="public, max-age=60"` |
+| `gcloud storage ls` | lists buckets or objects | `--long` adds sizes and dates | `gcloud storage ls --long gs://lemonade-stand-dev-menu` |
+| `gcloud storage cat` | prints an object | handy for small text files | `gcloud storage cat gs://lemonade-stand-dev-menu/index.html` |
+| `gcloud storage rm` | deletes objects | `-r` on a bucket deletes it **and everything in it** | `gcloud storage rm gs://lemonade-stand-dev-menu/old.html` |
+| `gcloud storage buckets add-iam-policy-binding` | grants a role on the bucket | public = `allUsers` + `objectViewer` | `gcloud storage buckets add-iam-policy-binding gs://lemonade-stand-dev-menu --member=allUsers --role=roles/storage.objectViewer` |
+| `gcloud storage buckets update` | changes bucket settings | | `gcloud storage buckets update gs://lemonade-stand-dev-menu --web-main-page-suffix=index.html` |
+| `--lifecycle-file` / `--clear-lifecycle` | sets or removes lifecycle rules | JSON with `lifecycle.rule` | `--lifecycle-file=lifecycle.json` |
+| `--no-public-access-prevention` | removes the safety catch | only on public buckets | `gcloud storage buckets update gs://lemonade-stand-dev-menu --no-public-access-prevention` |
+| `gcloud storage sign-url` | makes an expiring link | default 1 hour | `gcloud storage sign-url gs://lemonade-stand-dev-reports/2026-11-25.csv --duration=8h --impersonate-service-account=reports@lemonade-stand-dev.iam.gserviceaccount.com` |
+| `gcloud storage buckets describe` | shows a bucket's settings | | `gcloud storage buckets describe gs://lemonade-stand-dev-menu` |
+
+## Worked example: a public menu and a private report
+
+```bash
+# The public menu bucket.
+gcloud storage buckets create gs://lemonade-stand-dev-menu \
+  --location=europe-west2 --uniform-bucket-level-access
+gcloud storage cp examples/index.html gs://lemonade-stand-dev-menu/ \
+  --cache-control="public, max-age=60"
+gcloud storage buckets add-iam-policy-binding gs://lemonade-stand-dev-menu \
+  --member=allUsers --role=roles/storage.objectViewer
+gcloud storage buckets update gs://lemonade-stand-dev-menu --lifecycle-file=examples/lifecycle.json
+
+# The private reports bucket and a same-day link for the accountant.
+gcloud storage buckets create gs://lemonade-stand-dev-reports \
+  --location=europe-west2 --uniform-bucket-level-access --public-access-prevention
+gcloud storage sign-url gs://lemonade-stand-dev-reports/2026-11-25.csv --duration=8h \
+  --impersonate-service-account=reports@lemonade-stand-dev.iam.gserviceaccount.com
+```
+
+Illustrative output:
+
+```text
+$ curl -s https://storage.googleapis.com/lemonade-stand-dev-menu/index.html | grep h1
+<h1>Lemonade Stand</h1>
+
+$ gcloud storage sign-url gs://lemonade-stand-dev-reports/2026-11-25.csv --duration=8h ...
+---
+expiration: '2026-11-25 17:00:00'
+http_verb: GET
+resource: gs://lemonade-stand-dev-reports/2026-11-25.csv
+signed_url: https://storage.googleapis.com/lemonade-stand-dev-reports/2026-11-25.csv?x-goog-signature=...
+```
+
+The accountant can open the `signed_url` until 17:00. After that, the same link returns `403`.
+
+## Rules and conventions
+
+- One bucket per **purpose and audience**: public menu, private reports. Never mix public and private files in one bucket.
+- Always use **uniform bucket-level access**. Turn on **public access prevention** for every bucket that is not meant to be public.
+- Put the bucket in the **same region** as the service that reads it, to avoid cross-region transfer charges and latency.
+- Set `Cache-Control` explicitly on files that change. Use long `max-age` only for files whose name changes with their content (such as `app.3f9c2ab.js`).
+- Use lifecycle rules instead of clean-up scripts.
+- Only move objects to a colder class if they will **stay** longer than its minimum duration.
+- Share private files with **signed URLs** that live as briefly as the task needs, not by making them public "for a minute".
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| A bucket name that someone else already uses | `HTTPError 409: The requested bucket name is not available` | prefix it with your project ID |
+| Granting `allUsers` on a bucket with public access prevention | `412` / `Public access prevention is enforced` | intended for private buckets; remove the safety catch only on the menu bucket |
+| Uploading a new menu and seeing the old one | customers see old prices for up to an hour | upload with `--cache-control="public, max-age=60"` (or `no-store`) |
+| Moving files to Archive and deleting them a week later | a bill for 365 days of storage | respect the minimum duration (see below) |
+| Expecting `https://storage.googleapis.com/BUCKET/` to show `index.html` | an XML listing or an error, not the menu | link to `/index.html`, or put a load balancer with a custom domain in front |
+| `gcloud storage rm -r gs://bucket` to "empty" it | the bucket itself is gone too | use `gcloud storage rm gs://bucket/**` to keep the bucket |
+
+## Mathematical Abstraction
+
+**Monthly storage cost** is size times price per class.
+
+$$
+C = \sum_{c} s_c \times p_c
+$$
+
+where:
+
+- $c$ runs over the storage classes you use (Standard, Nearline, …);
+- $s_c$ is how much data sits in class $c$, in GB, averaged over the month;
+- $p_c$ is the price of class $c$ in your location, in dollars per GB per month;
+- $C$ is the storage part of the bill in dollars (operations and network transfer are billed separately).
+
+Example: at the time of writing, London (`europe-west2`) lists Standard at $p = 0.023$ and Nearline at $p = 0.013$ dollars per GB-month (check the [pricing page](https://cloud.google.com/storage/pricing) for today's numbers). The menu is $s = 0.001$ GB in Standard and the photo archive is $40$ GB in Nearline. Then $C = 0.001 \times 0.023 + 40 \times 0.013 = 0.000023 + 0.52 \approx 0.52$ dollars per month. Keeping the photos in Standard would cost $40 \times 0.023 = 0.92$ dollars, so Nearline saves $0.92 - 0.52 = 0.40$ dollars a month.
+
+**The minimum storage duration** means you pay for at least that many days.
+
+$$
+d_{\text{billed}} = \max(d, d_{\min})
+$$
+
+where:
+
+- $d$ is the number of days the object actually stayed in the class;
+- $d_{\min}$ is the class's minimum duration (Nearline 30, Coldline 90, Archive 365, Standard 0);
+- $\max$ picks the larger of the two;
+- $d_{\text{billed}}$ is the number of days you are charged for.
+
+Example: a photo moved to Nearline and deleted 10 days later gives $d_{\text{billed}} = \max(10, 30) = 30$ days, so you pay for 20 days of storage you did not use. Our lifecycle rule keeps photos in Nearline from day 30 to day 365, so $d = 335$ and $d_{\text{billed}} = \max(335, 30) = 335$: no penalty.
+
+**Durability** says how many objects you should expect to lose.
+
+$$
+\mathbb{E}[L] = N \times (1 - a)
+$$
+
+where:
+
+- $N$ is the number of objects stored for one year;
+- $a$ is the annual durability, $0.99999999999$ (eleven nines);
+- $1 - a = 10^{-11}$ is the chance that one particular object is lost in a year;
+- $\mathbb{E}[L]$ is the expected number of objects lost that year (an average over many years, not a promise for any one year).
+
+Example: the Lemonade Stand keeps $N = 10{,}000{,}000$ files. Then $\mathbb{E}[L] = 10^{7} \times 10^{-11} = 10^{-4}$ objects per year. Put another way, on average one object every $1 / 10^{-4} = 10{,}000$ years. Durability protects against hardware failure, not against **you** deleting the file: for that, turn on object versioning or soft delete.
+
+## References
+
+- Google Cloud, [Buckets](https://cloud.google.com/storage/docs/buckets), including [bucket naming rules](https://cloud.google.com/storage/docs/buckets#naming)
+- Google Cloud, [Storage classes](https://cloud.google.com/storage/docs/storage-classes) and [bucket locations](https://cloud.google.com/storage/docs/locations)
+- Google Cloud, [Uniform bucket-level access](https://cloud.google.com/storage/docs/uniform-bucket-level-access) and [public access prevention](https://cloud.google.com/storage/docs/public-access-prevention)
+- Google Cloud, [Object metadata, including the default Cache-Control](https://cloud.google.com/storage/docs/metadata) and [caching](https://cloud.google.com/storage/docs/caching)
+- Google Cloud, [Signed URLs](https://cloud.google.com/storage/docs/access-control/signed-urls)
+- Google Cloud, [Object Lifecycle Management](https://cloud.google.com/storage/docs/lifecycle) and [configuration examples](https://cloud.google.com/storage/docs/lifecycle-configurations)
+- Google Cloud, [Cloud Storage pricing](https://cloud.google.com/storage/pricing)
+- Google Cloud, [Hosting a static website](https://cloud.google.com/storage/docs/hosting-static-website)
+
+---
+
+← Previous: [4. Compute Engine and VPC](04-compute-engine-and-vpc.qmd) · [Part 5 index](index.qmd) · Next: [6. Cloud Run →](06-cloud-run.qmd)

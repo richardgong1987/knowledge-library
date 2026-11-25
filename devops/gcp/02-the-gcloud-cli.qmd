@@ -1,0 +1,233 @@
+---
+title: "2. The gcloud CLI"
+description: "Install gcloud, log in, keep separate settings per environment with configurations, and read the command grammar, --format and --filter."
+---
+
+Everything you can click in the Google Cloud console, you can also type. The `gcloud` command-line tool is how scripts, CI pipelines and this book talk to Google Cloud.
+
+## The problem
+
+The Lemonade Stand now has two projects: `lemonade-stand-dev` for experiments and `lemonade-stand-prod` for real customers. The owner wants to:
+
+1. type commands instead of clicking through web pages, so the steps can be saved and repeated;
+2. switch between dev and prod without retyping `--project` every time;
+3. never run a delete in prod by accident.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+`gcloud` is a **universal remote control** for Google's giant computer.
+
+Every button press is a short sentence in a fixed order: *which room*, *which thing*, *what to do*. "Living room, lights, turn on" becomes `gcloud compute instances start`.
+
+A **configuration** is a **save slot** in a video game. Slot 1 remembers you were in the "dev" world in London. Slot 2 remembers the "prod" world. Loading a slot puts you back exactly where you were.
+
+The remote can also print its answers as plain words that other programs can read. Unix pioneer Doug McIlroy taught the idea that small programs should work **together** and pass plain text to each other ([Unix philosophy](https://en.wikipedia.org/wiki/Unix_philosophy)). `gcloud --format="value(...)"` follows that idea: it prints only the value you asked for, ready for the next command.
+:::
+
+## The idea, precisely
+
+### Install and log in
+
+Install the Google Cloud CLI from the [official installer](https://cloud.google.com/sdk/docs/install), or run it without installing anything through Google's Docker image:
+
+```bash
+docker run --rm gcr.io/google.com/cloudsdktool/google-cloud-cli:slim gcloud version
+```
+
+```text
+Google Cloud SDK 594.0.1
+```
+
+Then run `gcloud init` once. It logs you in, asks for a default project and region, and saves the answers.
+
+There are **two different logins**, and beginners mix them up:
+
+| Command | Who uses the credentials | Typical use |
+| --- | --- | --- |
+| `gcloud auth login` | the `gcloud` tool itself | you typing `gcloud run deploy` |
+| `gcloud auth application-default login` | **your programs** (client libraries, Terraform) through Application Default Credentials | a Node.js script that reads Firestore from your laptop |
+
+### The command grammar
+
+Every command has the same shape:
+
+```text
+gcloud [release-level] <group> [<subgroup>] <command> [POSITIONAL] [--flags]
+gcloud                  compute  instances    create    web1         --zone=europe-west2-a
+```
+
+- **Release level** is optional: nothing means GA (stable), or `beta` / `alpha` for newer commands that may change.
+- **Group** is the product: `compute`, `run`, `storage`, `sql`, `iam`.
+- **Subgroup** is the kind of thing: `instances`, `firewall-rules`, `services`.
+- **Command** is the verb: `create`, `list`, `describe`, `update`, `delete`.
+- **Positional** is usually the name of the thing.
+- **Flags** start with `--` and look like `--name=value`.
+
+Add `--help` to any command to see its full manual.
+
+### Properties and configurations
+
+`gcloud` remembers settings called **properties**, written as `section/name`. The `core` section is the default, so `project` means `core/project`.
+
+| Property | Meaning | Example value |
+| --- | --- | --- |
+| `core/project` | the default project | `lemonade-stand-dev` |
+| `core/account` | the logged-in account | `owner@example.com` |
+| `compute/region` | the default region for Compute Engine | `europe-west2` |
+| `compute/zone` | the default zone | `europe-west2-a` |
+| `run/region` | the default region for Cloud Run | `europe-west2` |
+
+A **configuration** is a named set of properties. Only one is **active** at a time.
+
+## Command reference
+
+| Command or flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `gcloud init` | interactive first-time setup | run once per machine | `gcloud init` |
+| `gcloud auth login` | logs `gcloud` in as you | opens a browser | `gcloud auth login` |
+| `gcloud auth application-default login` | gives **your code** credentials | separate from `auth login` | `gcloud auth application-default login` |
+| `gcloud auth list` | shows accounts, marks the active one | | `gcloud auth list` |
+| `gcloud config set` | sets a property in the active configuration | `core/` can be omitted | `gcloud config set project lemonade-stand-dev` |
+| `gcloud config get` | prints the **effective** value | respects flags and env vars | `gcloud config get project` |
+| `gcloud config list` | prints the active configuration | | `gcloud config list` |
+| `gcloud config configurations create` | makes a new save slot | it activates it unless `--no-activate` | `gcloud config configurations create lemonade-prod --no-activate` |
+| `gcloud config configurations activate` | switches slot | | `gcloud config configurations activate lemonade-dev` |
+| `gcloud config configurations list` | lists slots | | `gcloud config configurations list` |
+| `--project` | overrides the project for one command | the safest way to touch prod | `--project=lemonade-stand-prod` |
+| `--configuration` | uses another slot for one command | | `--configuration=lemonade-prod` |
+| `--format` | chooses output: `json`, `yaml`, `table(...)`, `value(...)`, `csv(...)` | use `value()` in scripts | `--format="value(projectId)"` |
+| `--filter` | keeps only matching rows | `=` equals; `:` ("has") matches a word or prefix inside the value; combine with `AND`, `OR`, `NOT` | `--filter="region:europe-west2"` |
+| `--quiet`, `-q` | answers "yes" to every prompt | only in scripts you trust | `gcloud run services delete lemonade-web -q` |
+| `--verbosity` | log detail: `debug`, `info`, `warning`, `error` | `debug` when a command misbehaves | `--verbosity=debug` |
+| `--impersonate-service-account` | runs as a service account (lesson 3) | needs Token Creator on it | `--impersonate-service-account=deployer@lemonade-stand-dev.iam.gserviceaccount.com` |
+| `gcloud services enable` | turns on an API | per project | `gcloud services enable run.googleapis.com` |
+| `gcloud components list` / `install` / `update` | manages optional parts (`beta`, `kubectl`) | disabled when installed by apt, dnf or Docker: use that package manager instead | `gcloud components install beta` |
+
+## Worked example: one save slot per environment
+
+These commands ran for real in the `google-cloud-cli:slim` container, version 594.0.1, with no account logged in.
+
+```bash
+gcloud config configurations create lemonade-dev
+gcloud config set project lemonade-stand-dev
+gcloud config set run/region europe-west2
+gcloud config configurations create lemonade-prod --no-activate
+gcloud config configurations list
+```
+
+```text
+Created [lemonade-dev].
+Activated [lemonade-dev].
+Updated property [core/project].
+Updated property [run/region].
+Created [lemonade-prod].
+NAME           IS_ACTIVE  ACCOUNT  PROJECT             COMPUTE_DEFAULT_ZONE  COMPUTE_DEFAULT_REGION
+default        False
+lemonade-dev   True                lemonade-stand-dev
+lemonade-prod  False
+```
+
+Notice that `prod` is **not** active. A careless `delete` runs against dev.
+
+One real surprise: `gcloud config set compute/region europe-west2` failed in this container with `You do not currently have an active account selected`. gcloud checks Compute regions against the API, so it needs a login. `run/region` has no such check.
+
+### Which project wins?
+
+The same property can come from three places. A real run shows the order:
+
+```bash
+gcloud config get project
+CLOUDSDK_CORE_PROJECT=lemonade-stand-test gcloud config get project
+CLOUDSDK_CORE_PROJECT=lemonade-stand-test gcloud config get project --project=lemonade-stand-prod
+```
+
+```text
+lemonade-stand-dev
+lemonade-stand-test
+lemonade-stand-prod
+```
+
+The flag beats the environment variable, and the environment variable beats the configuration. Environment variables are named `CLOUDSDK_<SECTION>_<PROPERTY>`.
+
+$$
+v(k) = \operatorname{first}\big( F(k),\ E(k),\ C(k) \big)
+$$
+
+where:
+
+- $k$ is a property name, such as `core/project`;
+- $F(k)$ is the value given by a command-line flag (`--project`), or "undefined" if no flag was typed;
+- $E(k)$ is the value of the environment variable (`CLOUDSDK_CORE_PROJECT`), or undefined;
+- $C(k)$ is the value stored in the active configuration, or undefined;
+- $\operatorname{first}(\dots)$ returns the first value in the list that is defined;
+- $v(k)$ is the value gcloud actually uses.
+
+Example: in the third command, $F = \texttt{lemonade-stand-prod}$, $E = \texttt{lemonade-stand-test}$, $C = \texttt{lemonade-stand-dev}$. The first defined value is $F$, so $v = \texttt{lemonade-stand-prod}$. In the second command no flag was typed, so $F$ is undefined and $v = E = \texttt{lemonade-stand-test}$. In the first, only $C$ is defined, so $v = \texttt{lemonade-stand-dev}$.
+
+### `--format` and `--filter` in a script
+
+```bash
+gcloud config configurations list --filter="is_active=true" --format="value(name)"
+```
+
+```text
+lemonade-dev
+```
+
+`--filter` chose the rows; `--format="value(name)"` printed only the name, with no header, so a script can store it in a variable.
+
+## Rules and conventions
+
+- Create one configuration per environment and name it after the project: `lemonade-dev`, `lemonade-prod`.
+- Leave the **dev** configuration active by default. Reach prod with an explicit `--project=lemonade-stand-prod` or `--configuration=lemonade-prod`, so every prod command is visible in your history.
+- In scripts, always pass `--project` and `--region` explicitly. Never rely on whoever ran `gcloud config set` last.
+- In scripts, use `--format="value(...)"` or `--format=json`. Never parse the default table: its columns can change.
+- Use `--quiet` only in scripts, and never together with `delete` on prod unless a human approved it.
+- Use `gcloud auth application-default login` for your code and `gcloud auth login` for the CLI. On servers, use a service account instead of either (lesson 3).
+- Prefer GA commands. Use `beta` and `alpha` only when no GA command exists, and expect them to change.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Logged in with `auth login` only, then running a Node.js script | `Could not load the default credentials` | `gcloud auth application-default login` |
+| Wrong configuration active | a resource appears in the wrong project | `gcloud config configurations list`, then `activate` |
+| An old `CLOUDSDK_CORE_PROJECT` still exported in the shell | `config set project` seems to have no effect | `unset CLOUDSDK_CORE_PROJECT` (the env var beats the config) |
+| Parsing the table output in a script | the script breaks after a gcloud update | use `--format="value(field)"` |
+| Using `=` when you meant "contains" in `--filter` | the filter returns nothing | `:` matches a word or prefix: `--filter="name:lemonade"` |
+| `gcloud components install` in a Docker or apt install | `You cannot perform this action because the Google Cloud CLI component manager is disabled` | install the extra package with apt, or use an image that already has it |
+
+## Mathematical Abstraction
+
+A gcloud command reads a list $L$ of things from an API. `--filter` keeps a subset of $L$, and `--format` turns each kept item into text.
+
+$$
+\operatorname{out} = \big\lbrace\, \operatorname{fmt}(x) \;:\; x \in L,\ \varphi(x) \,\big\rbrace
+$$
+
+where:
+
+- $L$ is the full list the API returned (all configurations, all zones, all VMs);
+- $x \in L$ means "$x$ is one item of that list";
+- $\varphi(x)$ ("phi of $x$") is the filter condition, true or false for each item;
+- $\operatorname{fmt}(x)$ is the text `--format` prints for one item, for example only its name;
+- $\operatorname{out}$ is what appears on your screen.
+
+Example: in the worked example, $L = \lbrace \texttt{default}, \texttt{lemonade-dev}, \texttt{lemonade-prod} \rbrace$ has $3$ items. The condition $\varphi(x)$ is "$x$ is the active configuration". It is true only for `lemonade-dev`, so 1 of the 3 items survives. $\operatorname{fmt}$ prints only the name, so $\operatorname{out} = \lbrace \texttt{lemonade-dev} \rbrace$: one line of text.
+
+Together with the precedence rule $v(k) = \operatorname{first}(F, E, C)$, this is all gcloud does: decide **which project and region** to use, call the API, then **filter and format** the answer.
+
+## References
+
+- Google Cloud, [Install the gcloud CLI](https://cloud.google.com/sdk/docs/install)
+- Google Cloud, [gcloud CLI overview](https://cloud.google.com/sdk/gcloud) and [cheat sheet](https://cloud.google.com/sdk/docs/cheatsheet)
+- Google Cloud, [Managing gcloud CLI configurations](https://cloud.google.com/sdk/docs/configurations)
+- Google Cloud, [gcloud topic filters](https://cloud.google.com/sdk/gcloud/reference/topic/filters) and [gcloud topic formats](https://cloud.google.com/sdk/gcloud/reference/topic/formats)
+- Google Cloud, [How Application Default Credentials works](https://cloud.google.com/docs/authentication/application-default-credentials)
+- Google Cloud, [Run the gcloud CLI in a Docker container](https://cloud.google.com/sdk/docs/downloads-docker)
+- [Unix philosophy](https://en.wikipedia.org/wiki/Unix_philosophy): Doug McIlroy's principles, as summarised by Peter H. Salus in *A Quarter Century of UNIX* (1994)
+
+---
+
+← Previous: [1. What Google Cloud is](01-what-google-cloud-is.qmd) · [Part 5 index](index.qmd) · Next: [3. IAM and service accounts →](03-iam-and-service-accounts.qmd)
