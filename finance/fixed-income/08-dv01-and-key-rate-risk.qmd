@@ -1,0 +1,41 @@
+---
+title: "DV01 and Key-Rate Duration — How Much Money Is at Risk?"
+description: "A deeper but child-friendly finance lesson with original numeric examples and risk assumptions."
+---
+
+## A real question to answer
+
+**A portfolio manager says 'duration is 1.86'. Is that a large or a small dollar risk for a position worth 100 or 10 million?**
+
+Duration is a percentage sensitivity. **DV01/PVBP** converts it into currency for a change of ONE basis point. Key-rate exposures ask which parts of the yield curve drive the risk.
+
+## Build the exact relationship
+
+$$
+DV01\approx P\,D_{\mathrm{mod}}\,10^{-4}
+$$
+
+**What every symbol means:** DV01 is approximate positive monetary loss for a one-basis-point upward yield move (often named PVBP); P is current market value; D_mod is modified duration; 10^−4 is 0.0001, equal to one basis point in decimal yield.
+
+**Substitute numbers and calculate:** For price P=100 and D_mod=1.85941, DV01≈100×1.85941×0.0001=0.018594. For 10 million of market value with the same duration, DV01≈10,000,000×1.85941×0.0001=1,859.41 currency units per bp.
+
+## Why the financial reasoning works
+
+If the entire curve moves together, an overall duration gives a compact risk number. But a long-dated bond can respond differently when only the 2-year point or the 10-year point moves. For **key-rate duration**, shock one chosen curve node, rebuild/interpolate the curve and reprice, while holding the chosen spread convention consistent.
+
+## A tiny calculation, not a large framework
+
+~~~python
+from finance_lab import bond_cashflows,dv01
+print(round(dv01(bond_cashflows(),.05),6)) # 0.018594
+~~~
+
+The examples are checked, where applicable, in the [small finance calculation lab](../examples/index.qmd).
+
+## When this answer is no longer enough
+
+A key-rate bucket is defined by the bump shape and curve construction method, not only a maturity label. Two systems can report different key-rate durations unless bump size, interpolation, instruments and spread treatment match. For callable bonds reprice projected cash flows as well.
+
+**Textbook basis:** Fabozzi Handbook 8e Ch. 7 (PVBP, duration), later risk/attribution chapters; Luenberger 2e §§3.5, 4.8.. The calculations and child-friendly explanations are original.
+
+[← Fixed Income](index.qmd) · [Finance home](../index.qmd)

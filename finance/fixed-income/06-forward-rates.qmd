@@ -1,0 +1,45 @@
+---
+title: "Forward Rates — A Future Interest Rate Implied Today"
+description: "An original source-grounded fixed-income lesson explained with small arithmetic and precise financial assumptions."
+---
+
+## Begin with the question
+
+**If a one-year investment earns 4% and a two-year investment earns 5% each year, what rate would make a second-year reinvestment match the two-year deal?**
+
+Two ways of earning the SAME guaranteed future payoff should be consistent in a frictionless market. First-year growth times second-year growth must equal two-year growth.
+
+## One mathematical relationship
+
+$$
+1+f_{1,2}=\frac{(1+s_2)^2}{1+s_1}
+$$
+
+**What every symbol means:** f_(1,2) is today's implied forward rate for year one to year two, s_2 is the two-year annually compounded spot rate, and s_1 is the one-year spot rate.
+
+**Put actual numbers into the formula:** Two years at 5% grow 100 to 100×1.05²=110.25. One year at 4% grows 100 to 104. The missing second-year factor is 110.25/104≈1.060096; subtract one to get 6.009615%.
+
+## The reasoning, not just the answer
+
+The forward rate is what must fill the gap between two known growth factors. A steeper spot yield curve may imply a forward rate above either short spot rate. This is not an algebra mistake: the second year compensates for the first year earning less.
+
+**Why the method works:** This equality follows from comparing two idealised investment strategies, not from forecasting a central bank decision. The forward rate may contain term premiums, liquidity preferences and other market effects; it is NOT necessarily the rate that will be observed next year.
+
+## Check it with a tiny programme
+
+Save this inside the Finance lab directory, alongside the [single-file Python library](../examples/finance_lab.py):
+
+~~~python
+from finance_lab import forward_rate
+print(round(forward_rate(.04,.05)*100,4)) # 6.0096
+~~~
+
+Run it with Python 3. The example computes exactly the values in the calculation above, instead of introducing an unrelated finance application.
+
+## When the shortcut stops working
+
+The formula assumes consistent currency, annual compounding and funding/collateral conditions. Production systems typically derive forwards from discount factors and explicit accrual fractions instead.
+
+**Textbook basis:** Luenberger, Investment Science 2e Ch. 4 §§4.3–4.5; Fabozzi Handbook 8e Ch. 8. These are independent educational examples rather than reproductions of the books.
+
+[← Fixed Income overview](index.qmd) · [Finance learning map](../index.qmd)

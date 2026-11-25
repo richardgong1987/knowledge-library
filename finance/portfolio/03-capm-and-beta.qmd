@@ -1,0 +1,39 @@
+---
+title: "CAPM and Beta — Why Market Exposure Matters"
+description: "Explain portfolio mathematics with a small numerical example and practical risk limitations."
+---
+
+## The question
+
+**Why do investors sometimes demand a different return from two stocks even when both prices swing around a lot?**
+
+A stock that moves strongly with the broad market exposes investors to a type of risk they cannot easily eliminate through diversification. CAPM models that MARKET-LINKED risk with beta.
+
+## Build one relationship
+
+$$
+E[R_i]=r_f+\beta_i(E[R_M]-r_f)
+$$
+
+**Explain every symbol:** E[R_i] is asset i's expected return required under the CAPM model; r_f is risk-free return; β_i is its sensitivity to the market factor; E[R_M] is the expected return of the market portfolio.
+
+**Substitute concrete numbers:** If the risk-free rate is 2%, the market's expected return 8%, and the stock has β=1.2, required return=2%+1.2×(8%−2%)=2%+7.2%=**9.2%**.
+
+## Why this matters for decisions
+
+The 6-percentage-point market risk premium is multiplied by beta. A beta of 1.2 means that the stock has 20% MORE market covariance per unit of market variance than the market itself under the definition; it does NOT mean the stock always rises exactly 1.2% whenever the market rises 1%.
+
+~~~python
+from finance_lab import capm_required_return
+print(capm_required_return(.02,1.2,.08)) # .092
+~~~
+
+These minimal examples build on the [Finance calculation lab](../examples/index.qmd), where relevant.
+
+## What the model leaves out
+
+CAPM is an equilibrium model with strong assumptions. Beta estimation changes with sample window, leverage, sector and market definition; assets may have other risk factors. Expected returns are not observable facts or guaranteed outcomes.
+
+**Source basis:** Luenberger Investment Science 2e Ch. 7 (market equilibrium, security market line, CAPM).. Text and examples are independently developed.
+
+[← Portfolio overview](index.qmd) · [Finance home](../index.qmd)

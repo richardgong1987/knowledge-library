@@ -1,0 +1,48 @@
+---
+title: "No Arbitrage — Two Identical Promises, One Price"
+description: "Learn the most powerful pricing idea in mathematical finance with one coin experiment."
+---
+
+# Would you pay 102 for something you can copy for 100?
+
+Imagine two identical machines. Each guarantees **105 coins in one year**, under exactly the same conditions. A bank deposit yielding 5% can reproduce that payoff for 100 coins today.
+
+Now someone offers to sell you a claim paying the *same* 105 next year for **102 coins**. In an ideal frictionless market, you could sell the expensive claim for 102, invest 100 at the bank to cover its future obligation, and keep 2 today. That is the basic logic of **arbitrage**.
+
+## The one-price relationship
+
+$$
+P=\frac{C}{1+r}
+$$
+
+**Symbols:** $P$ is today's price of the guaranteed future payment; $C$ is the payment after one year; $r$ is a matching, available one-year rate, written as a decimal.
+
+**Substitute numbers:** Set $C=105$ and $r=0.05$. Calculate 105/1.05=**100**. A price of 102 for a genuinely identical payoff creates a potential 2-coin mismatch.
+
+## Why we care about matching payoffs
+
+Do not compare two investments merely because they both have a headline yield of 5%. You must check *currency, dates, credit quality, optionality and legal rights*. Otherwise the promised future payments are not identical, and different prices may be reasonable.
+
+In more advanced language, a **replicating portfolio** is a collection of tradable positions that generates the same payments in each future state. Matching state-by-state payoffs makes the price comparison meaningful.
+
+## Real markets are not a perfect mathematical game
+
+The simple argument assumed that you can borrow and lend at matching rates, sell short, execute instantly, and pay zero taxes or fees. Real markets have transaction costs, funding spreads, market impact, collateral rules, basis risk and defaults.
+
+Therefore 'no arbitrage' is a **pricing benchmark**, not a promise that every observed market quote is exact to infinitely many decimal places.
+
+## How this idea builds forward rates
+
+Instead of investing for two years now, you can invest for one year and agree today on how the second year's reinvestment will work. With the same future payoff, the no-arbitrage principle links those two strategies. We derive it carefully in [Forward Rates](../fixed-income/06-forward-rates.qmd).
+
+## Check by hand
+
+~~~python
+price = 105 / 1.05
+market_quote = 102
+print(price, market_quote - price)  # 100.0 2.0
+~~~
+
+**Book connection:** Luenberger, *Investment Science*, 2nd ed., §1.2 (comparison and arbitrage) and Chapter 4 (forward rates).
+
+[Previous](03-npv-and-irr.qmd) · [Next: yield versus realised return](05-total-return-vs-yield.qmd)

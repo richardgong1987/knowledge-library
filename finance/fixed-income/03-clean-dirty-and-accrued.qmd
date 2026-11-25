@@ -1,0 +1,45 @@
+---
+title: "Clean Price, Dirty Price, and Accrued Interest"
+description: "An original source-grounded fixed-income lesson explained with small arithmetic and precise financial assumptions."
+---
+
+## Begin with the question
+
+**The screen shows a bond at 101.20. Why might the settlement invoice say 102.70 instead?**
+
+The new bondholder normally receives the whole next coupon, although the previous holder owned the bond for part of the coupon period. Accrued interest makes the settlement fair under the market convention.
+
+## One mathematical relationship
+
+$$
+P_{\rm dirty}=P_{\rm clean}+AI
+$$
+
+**What every symbol means:** P_dirty is the full invoice/settlement price, P_clean is the quoted price excluding accrued interest, and AI is accrued interest for the elapsed part of the coupon period.
+
+**Put actual numbers into the formula:** Clean price 101.20 plus AI 1.50 equals a dirty settlement price of 102.70 per 100 face. The extra 1.50 is accrued coupon entitlement, not a mysterious trading fee.
+
+## The reasoning, not just the answer
+
+Imagine a coupon of 4 per half-year and assume exactly half the accrual period has elapsed under the chosen day-count rule. In a simplified proportional calculation, accrued interest is 4×1/2=2. The actual bond contract determines whether the year uses Actual/Actual, Actual/360, 30/360 or another convention.
+
+**Why the method works:** Before a coupon date, the buyer will receive the full next coupon even though part was economically earned during the seller's holding period. Quoting the clean price strips out most of the mechanical accumulation, making market prices easier to compare.
+
+## Check it with a tiny programme
+
+Save this inside the Finance lab directory, alongside the [single-file Python library](../examples/finance_lab.py):
+
+~~~python
+from finance_lab import dirty_price
+print(dirty_price(101.2,1.5)) # 102.7
+~~~
+
+Run it with Python 3. The example computes exactly the values in the calculation above, instead of introducing an unrelated finance application.
+
+## When the shortcut stops working
+
+Clean and dirty prices must be labelled correctly in software. Day counts, settlement dates, business-day calendars, ex-coupon treatment and rounding change the actual accrued-interest calculation; it is unsafe to hardcode 365 everywhere.
+
+**Textbook basis:** Fabozzi, Handbook 8e Chs. 1 and 6 plus security-specific conventions. These are independent educational examples rather than reproductions of the books.
+
+[← Fixed Income overview](index.qmd) · [Finance learning map](../index.qmd)

@@ -1,0 +1,41 @@
+---
+title: "Interest Rate Swaps — Exchange Fixed and Floating Interest"
+description: "An investment science derivatives idea explained through a single small numerical story."
+---
+
+## Imagine this situation
+
+**One company has a variable-rate loan but wants predictable interest costs. Can two parties agree to exchange interest payments?**
+
+A plain-vanilla interest-rate swap can exchange a fixed interest payment for a floating payment on the same NOTIONAL amount. The notional is usually a measurement base, not money physically exchanged at every coupon date.
+
+## Translate the story into mathematics
+
+$$
+CF_{\rm payer}=N(r_{\rm float}-r_{\rm fixed})\tau
+$$
+
+**What each symbol means:** CF_payer is the net cash flow received by a fixed-rate payer (who receives floating), N is notional principal, r_float is the period's floating coupon rate, r_fixed is fixed rate, and τ is the accrual year fraction.
+
+**Put the actual numbers in:** With notional N=100, fixed rate 5%, accrual τ=1 year, and floating rate 4% in the first year, cash to the fixed payer is 100×(0.04−0.05)=**−1**. If the floating rate is 6% in the second year, that period cash is 100×(0.06−0.05)=**+1**. The actual discounted total does not generally equal zero just because these two nominal flows cancel.
+
+## The idea behind the equation
+
+From a cash-flow perspective, the party can replace some variable interest exposure with fixed payments. In market valuation, a par fixed swap rate is chosen so the PRESENT VALUE of the fixed leg equals that of the floating leg under a consistent discount and forward-curve model.
+
+## Compute it without a large library
+
+~~~python
+notional=100
+print(notional*(.04-.05),notional*(.06-.05)) # -1, +1
+~~~
+
+Where applicable, the numerical expression is also available in the [tested finance calculation lab](../examples/index.qmd).
+
+## What changes in real markets?
+
+The illustration is a realised-rate scenario, NOT a calibration of the fair swap rate. Real swaps depend on reset/payment dates, overnight discount curves, floating-rate conventions, collateral, credit adjustments and possible multi-curve basis.
+
+**Textbook foundation:** Luenberger Investment Science 2e Ch. 12 (swaps), Ch. 4 (term structure).. All wording and examples here are original.
+
+[← Derivatives](index.qmd) · [Finance overview](../index.qmd)

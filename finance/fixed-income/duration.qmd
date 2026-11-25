@@ -1,65 +1,94 @@
 ---
-title: "Duration: Deriving Interest-Rate Sensitivity"
-description: "Derive modified duration from the same two-year bond example."
+title: "Duration — Measure the Price Change From a Small Yield Move"
+description: "Derive modified duration from the same two-year bond and see what a single basis point costs."
 ---
 
-## The problem
+# How much does a bond lose when rates rise a little?
 
-In [Bond Pricing](bond-pricing.qmd), a bond's cash flows stayed fixed while its market yield changed. We observed that its price moved in the opposite direction.
+The [bond-pricing experiment](bond-pricing.qmd) taught us that a higher yield means a lower price. But a portfolio manager needs a **number**, not just an arrow pointing down.
 
-Can we estimate **how much** its price will move if yields rise by a small amount without repricing the bond from scratch?
+Keep our one example: a bond costs 100 at 5% annual yield. It pays 5 at the end of year one and 105 at the end of year two.
 
-## Keep the same bond
-
-Our example has a face value of 100, an annual coupon of 5, and a maturity of two years. With annual compounding:
+## 1. First remember how the price is calculated
 
 $$
-P(y) = \frac{5}{1+y} + \frac{105}{(1+y)^2}
-$$ {#eq-duration-price}
-
-Differentiate the price with respect to the yield:
-
-$$
-\frac{dP}{dy} = -\frac{5}{(1+y)^2} - \frac{210}{(1+y)^3}
-$$ {#eq-duration-price-derivative}
-
-Rather than comparing derivatives across bonds of very different prices, scale the derivative by the bond's price:
-
-$$
-D_{\mathrm{mod}} = -\frac{1}{P(y)}\frac{dP}{dy}
-$$ {#eq-modified-duration}
-
-This quantity is **modified duration** under our annual-compounding convention. For a small yield change $\Delta y$:
-
-$$
-\frac{\Delta P}{P} \approx -D_{\mathrm{mod}}\Delta y
-$$ {#eq-duration-approx}
-
-Here $\Delta y$ is a decimal yield change: 10 basis points equals $0.001$.
-
-## Compute it for the example
-
-At a yield of 5%, the bond price is 100. The annual cash flows have present values $5/1.05$ and $105/1.05^2$. Macaulay duration weights each payment time by its contribution to the price:
-
-$$
-D_{\mathrm{Mac}} =
-\frac{1\cdot 5/1.05 + 2\cdot 105/1.05^2}{100}
-\approx 1.95238
+P(y)=\frac{5}{1+y}+\frac{105}{(1+y)^2}
 $$
 
-Therefore:
+**Symbols immediately explained:** $P(y)$ is the price today at annual yield $y$; 5 is year-one coupon; 105 is year-two coupon plus principal; the powers 1 and 2 count years to each payment.
+
+**Substitute real numbers:** If $y=5%=0.05$, the terms are 5/1.05≈4.7619 and 105/1.1025≈95.2381, so the price is **100**.
+
+## 2. A derivative is a very small change detector
+
+Imagine turning the yield knob a tiny amount. A derivative is the instantaneous slope of the curve at the yield you currently have.
 
 $$
-D_{\mathrm{mod}} = \frac{D_{\mathrm{Mac}}}{1.05}
-\approx 1.85941
+\frac{dP}{dy}=-\frac{5}{(1+y)^2}-\frac{210}{(1+y)^3}
 $$
 
-If the yield rises by 10 basis points, the first-order prediction is a price decline of about **0.1859%**.
+**Symbols immediately explained:** $dP/dy$ is change in price per unit change in decimal yield; the negative signs indicate falling prices when positive cash flows are discounted more heavily. The number 210 equals 2×105 because the final payment is two years away.
 
-## Explore the intuition
+**Substitute numbers:** At $y=0.05$, the derivative is −5/1.1025−210/1.157625≈**−185.9410**. A yield change of 0.001 (10 basis points) predicts a price change near −0.18594 currency units for this bond.
 
-Return to the [interactive price-yield curve](bond-pricing.qmd) and move the yield by a small increment. Modified duration describes the *local slope*, not the entire curve.
+## 3. Normalise the slope: modified duration
 
-## Limitations and next concept
+A slope of −185.94 says little until we know whether a bond costs 100 or 10,000. Divide by the starting price and reverse the sign so duration is positive for ordinary fixed cash flows.
 
-Duration is a first-order approximation. Larger yield changes reveal curvature, motivating **convexity**. Embedded options, non-parallel curve moves, and changing cash-flow assumptions require more sophisticated risk measures.
+$$
+D_{\mathrm{mod}}=-\frac{1}{P}\frac{dP}{dy}
+$$
+
+**Symbols immediately explained:** $D_{\mathrm{mod}}$ is modified duration in years under this annual-compounding convention, $P$ is current price, $dP/dy$ the price derivative with respect to decimal yield.
+
+**Substitute numbers:** $P=100$ and $dP/dy=−185.9410$, so $D_{\mathrm{mod}}=−(−185.9410)/100≈**1.85941**$.
+
+For a **100-basis-point** (1 percentage point) increase in yield, the *first-order approximation* says the percentage price drop is about 1.86%. This is a local approximation, not a promise about every large move.
+
+## 4. Macaulay duration: a weighted average payment date
+
+Another duration measure asks: **How far into the future is the average present-valued payment?**
+
+$$
+D_{\mathrm{Mac}}=\frac{1\cdot\frac{5}{1.05}+2\cdot\frac{105}{1.05^2}}{100}
+$$
+
+**Symbols immediately explained:** $D_{\mathrm{Mac}}$ is Macaulay duration in years; 1 and 2 are the payment times; 5 and 105 are cash amounts; the fractions are their discounted present values; denominator 100 is total present value.
+
+**Substitute numbers:** Multiply 4.7619 by one year and 95.2381 by two years, then divide their sum by 100: $(4.7619+190.4762)/100≈**1.95238 years**$. Most of the bond's value arrives near the end, so the weighted average is close to two years.
+
+For annual compounding, modified duration equals Macaulay duration divided by $(1+y)$. At 5%, 1.95238/1.05≈**1.85941**.
+
+## 5. Turn duration into a one-basis-point prediction
+
+$$
+\frac{\Delta P}{P}\approx-D_{\mathrm{mod}}\Delta y
+$$
+
+**Symbols immediately explained:** ΔP is the bond price change; P is starting price; D_mod is modified duration; Δy is the yield change measured as a **decimal**, not a percent label.
+
+**Substitute numbers:** A ten-basis-point rise means Δy=0.001. Relative price change≈−1.85941×0.001=−0.00185941, or −0.185941%. Price 100 would fall by about **0.18594** to 99.81406.
+
+One basis point is 0.0001 in decimal yield; expected price move≈100×1.85941×0.0001=**0.018594**. That monetary sensitivity is called DV01/PVBP.
+
+## 6. Verify with the tiniest programme
+
+~~~python
+from finance_lab import bond_cashflows, modified_duration, dv01
+c = bond_cashflows()
+print(round(modified_duration(c,.05),5)) # 1.85941
+print(round(dv01(c,.05),6))             # 0.018594
+~~~
+
+See the [original Finance lab](../examples/index.qmd) for implementation and unit tests.
+
+## What duration does NOT say
+
+- A duration of 1.86 does not mean the bond matures in 1.86 years. Its **actual maturity is two years**.
+- Modified duration estimates a **small, parallel change in the chosen single-yield measure**. Real yield curves have many maturities that can move differently.
+- The price/yield curve is **curved**; larger moves need a [convexity correction](07-convexity.qmd).
+- Callable bonds and mortgages can change cash flows when rates move, so **effective duration** may be needed.
+
+**Book connection:** Luenberger, *Investment Science*, 2nd ed., §§3.5, 4.8; Fabozzi (ed.), *Handbook*, 8th ed., Chapter 7. The numerical walk-through is independently written.
+
+[← Bond Pricing](bond-pricing.qmd) · [Next: Convexity](07-convexity.qmd) · [DV01](08-dv01-and-key-rate-risk.qmd)

@@ -1,0 +1,41 @@
+---
+title: "Diversification — Two Risky Assets Can Be Safer Together"
+description: "Explain portfolio mathematics with a small numerical example and practical risk limitations."
+---
+
+## The question
+
+**If stock A has 10% volatility and stock B has 20% volatility, what happens when you put half your money in each?**
+
+Risk is not simply the weighted average of the two individual risks. It also depends on whether their returns tend to rise and fall together. Think of two friends carrying a table: if they stumble in different directions, the table can remain steadier.
+
+## Build one relationship
+
+$$
+\sigma_p^2=w_A^2\sigma_A^2+w_B^2\sigma_B^2+2w_Aw_B\rho_{AB}\sigma_A\sigma_B
+$$
+
+**Explain every symbol:** σ_p² is portfolio variance; w_A,w_B are fractions invested in A and B; σ_A,σ_B are individual return standard deviations; ρ_AB is the correlation between their returns, from −1 to +1.
+
+**Substitute concrete numbers:** Put w_A=w_B=0.5, σ_A=10%=0.10, σ_B=20%=0.20, and assume correlation ρ=0. The cross term vanishes; variance=0.25×0.01+0.25×0.04=0.0125. Volatility is sqrt(0.0125)=**11.18%**, below the naive 0.5×10%+0.5×20%=15%.
+
+## Why this matters for decisions
+
+Variance expands the square of a weighted sum, and the cross term captures how the assets move together. With correlation +1 the result would be 15%; with correlation 0, 11.18%; with correlation −1, it can drop as low as 5% for these weights. Diversification reduces unwanted common movement; it does not make all risk disappear.
+
+~~~python
+from finance_lab import portfolio_variance
+from math import sqrt
+v=portfolio_variance([.5,.5],[[.01,0],[0,.04]])
+print(round(sqrt(v)*100,2)) # 11.18%
+~~~
+
+These minimal examples build on the [Finance calculation lab](../examples/index.qmd), where relevant.
+
+## What the model leaves out
+
+Historical correlations can change sharply during crises. Sample estimates are uncertain, and diversification across names may still leave concentrated interest-rate, currency, liquidity or credit risk.
+
+**Source basis:** Luenberger Investment Science 2e Ch. 6 (random returns and portfolio mean/variance); Fabozzi Handbook 8e Chs. 2–3.. Text and examples are independently developed.
+
+[← Portfolio overview](index.qmd) · [Finance home](../index.qmd)

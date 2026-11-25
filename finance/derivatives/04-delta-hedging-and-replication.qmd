@@ -1,0 +1,42 @@
+---
+title: "Delta Hedging — Build an Option From Simple Pieces"
+description: "An investment science derivatives idea explained through a single small numerical story."
+---
+
+## Imagine this situation
+
+**Can you create the exact payoff of our one-period call option without owning the option itself?**
+
+In a two-state world, two adjustable instruments are enough to match two state payoffs. We try holding some shares AND borrowing/lending cash to get exactly the same amounts whether the stock goes up or down.
+
+## Translate the story into mathematics
+
+$$
+\Delta=\frac{C_u-C_d}{S_u-S_d}
+$$
+
+**What each symbol means:** Δ (delta) is the number of shares in the replicating position per option; C_u,C_d are call payoffs in up/down states; S_u,S_d are the underlying's share prices in those states.
+
+**Put the actual numbers in:** For a call struck at 100 with share prices 120 or 80, payoffs are 20 or 0. Delta=(20−0)/(120−80)=**0.5 share**. Holding half a share produces future value 60 in the up state and 40 in the down state, whereas the call needs 20 and 0. Borrow **40 future coins** at 5%, equivalent to receiving 40/1.05≈38.09524 today. That subtraction makes both states match.
+
+## The idea behind the equation
+
+Cost of half a share now is 0.5×100=50. Subtract borrowed cash 38.09524, leaving initial replication cost **11.90476**, the same as the risk-neutral option value. A mismatch would offer an idealised arbitrage between the option and replica.
+
+## Compute it without a large library
+
+~~~python
+delta=(20-0)/(120-80)
+price=delta*100-40/1.05
+print(delta,round(price,5)) # 0.5, 11.90476
+~~~
+
+Where applicable, the numerical expression is also available in the [tested finance calculation lab](../examples/index.qmd).
+
+## What changes in real markets?
+
+Delta is constant only across this ONE-period, TWO-state model. In real option markets delta changes with price and time; rebalancing produces transaction costs and hedge errors. Higher-order sensitivities such as gamma and volatility (vega) matter.
+
+**Textbook foundation:** Luenberger Investment Science 2e Chs. 14–15 (replication, delta and derivative pricing).. All wording and examples here are original.
+
+[← Derivatives](index.qmd) · [Finance overview](../index.qmd)

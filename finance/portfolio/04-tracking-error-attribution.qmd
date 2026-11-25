@@ -1,0 +1,39 @@
+---
+title: "Tracking Error and Attribution — Did the Portfolio Beat Its Benchmark?"
+description: "Explain portfolio mathematics with a small numerical example and practical risk limitations."
+---
+
+## The question
+
+**Your bond portfolio gained 3% while its benchmark gained 2%. Does that mean the manager is consistently skilful?**
+
+One good period is not enough. **Active return** compares portfolio and benchmark on the same interval; **tracking error** describes how variable those active returns are; attribution tries to explain their sources.
+
+## Build one relationship
+
+$$
+a_t=R_{p,t}-R_{b,t}
+$$
+
+**Explain every symbol:** a_t is active return in period t; R_p,t is portfolio return and R_b,t benchmark return over exactly the same period. Positive means outperformance for that period.
+
+**Substitute concrete numbers:** Period 1: portfolio +3%, benchmark +2%, so active return +1 percentage point. Period 2: portfolio +1%, benchmark +2%, so active return −1 percentage point. Their mean is zero, even though the first period looked strong.
+
+## Why this matters for decisions
+
+For these two periods, using the *population* standard deviation convention, tracking error is sqrt(((+0.01−0)²+(−0.01−0)²)/2)=**1% per observation period**. The observed mean active return was 0: there is risk without persistent excess performance in this toy sample.
+
+~~~python
+from finance_lab import tracking_error
+print(tracking_error([.01,-.01])) # .01
+~~~
+
+These minimal examples build on the [Finance calculation lab](../examples/index.qmd), where relevant.
+
+## What the model leaves out
+
+Standard deviation requires a sample-versus-population convention and, when annualised, a sampling-frequency and serial-correlation assumption. Real fixed-income attribution may separate curve carry, curve moves, key-rate shocks, credit spreads, FX, allocation and security selection, with residual effects depending on model.
+
+**Source basis:** Luenberger Investment Science 2e Chs. 9–10 (data/statistics and risk); Fabozzi Handbook 8e Ch. 3 (bond benchmarks) and Part 10 (return attribution).. Text and examples are independently developed.
+
+[← Portfolio overview](index.qmd) · [Finance home](../index.qmd)

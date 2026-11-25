@@ -1,0 +1,41 @@
+---
+title: "Forwards and Futures — Agree on a Price for Later"
+description: "An investment science derivatives idea explained through a single small numerical story."
+---
+
+## Imagine this situation
+
+**A bicycle costs 100 today. You want to guarantee the purchase price one year from now. What should a simple forward delivery price be?**
+
+An idealised forward contract promises an asset in the future in exchange for a predetermined payment. A fair **delivery price** is not the same thing as the contract's **current value**.
+
+## Translate the story into mathematics
+
+$$
+F_0=S_0(1+r)^T
+$$
+
+**What each symbol means:** F_0 is the fair forward delivery price agreed today for delivery at time T; S_0 is today's underlying spot price; r is the annual risk-free financing rate; T counts years. This formula assumes no income, dividends or storage benefits/costs, and compatible financing conventions.
+
+**Put the actual numbers in:** If the bicycle (or a non-dividend-paying investment asset) costs 100 now, financing is 5% for one year, and there is no income or storage cost, the forward delivery price is 100×1.05=**105**. You can replicate delivery by borrowing 100 today, buying the item and repaying 105 next year.
+
+## The idea behind the equation
+
+If a guaranteed forward delivery cost were much above 105 in the idealised setting, a trader could buy/finance and sell forward; if much below, reverse transactions might be possible subject to short-selling and borrowing rules. Both legs create the same future asset position.
+
+## Compute it without a large library
+
+~~~python
+from finance_lab import forward_delivery_price
+print(forward_delivery_price(100,.05,1)) # 105
+~~~
+
+Where applicable, the numerical expression is also available in the [tested finance calculation lab](../examples/index.qmd).
+
+## What changes in real markets?
+
+The fair **forward delivery price** is 105, but an at-market newly written forward can have roughly ZERO initial value. Later its value changes with spot price and discount rates. Futures are typically exchange-traded and marked to market daily, so futures and forwards are not identical when rate correlations and collateral details matter.
+
+**Textbook foundation:** Luenberger Investment Science 2e Ch. 12 (forwards, futures and swaps).. All wording and examples here are original.
+
+[← Derivatives](index.qmd) · [Finance overview](../index.qmd)

@@ -1,0 +1,70 @@
+---
+title: "Finance Calculator: One Original Python File"
+description: "Run small tested financial calculations, without dependencies or a large finance framework."
+---
+
+# The calculator exists to check your understanding
+
+The [one-file source](finance_lab.py) contains the simplest possible implementations of the relationships used throughout the course. No pandas, NumPy, QuantLib or market-data service is required to run it. These are **teaching examples**, not a pricing system.
+
+From the repository root:
+
+~~~bash
+python3 finance/examples/finance_lab.py
+python3 -m unittest discover -s finance/examples -p 'test_*.py'
+~~~
+
+## Five quick experiments
+
+### 1. What if yield rises from 5% to 6%?
+
+~~~python
+from finance_lab import bond_price
+print(round(bond_price(.05),2)) # 100.00
+print(round(bond_price(.06),2)) # 98.17
+~~~
+
+**Meaning:** Cash flows are unchanged; the required yield has risen, so their present value has fallen.
+
+### 2. One bond, two market spot rates
+
+~~~python
+from finance_lab import bond_price_spot
+print(round(bond_price_spot([5,105],[.04,.05]),4)) # 100.0458
+~~~
+
+**Meaning:** Value year-one and year-two payments using separate curve points.
+
+### 3. How much does a 1-bp move cost?
+
+~~~python
+from finance_lab import dv01
+print(round(dv01([5,105],.05),6)) # 0.018594
+~~~
+
+**Meaning:** For 100 of market value, a small upward yield move of 0.0001 costs roughly 0.0186.
+
+### 4. Does combining assets help?
+
+~~~python
+from math import sqrt
+from finance_lab import portfolio_variance
+print(round(sqrt(portfolio_variance([.5,.5],[[.01,0],[0,.04]]))*100,2)) # 11.18
+~~~
+
+**Meaning:** With zero correlation, the portfolio's volatility is about 11.18%, less than the simple average 15%.
+
+### 5. The smallest useful option model
+
+~~~python
+from finance_lab import call_option_one_step
+print(round(call_option_one_step(120,80,100,.625,.05),5)) # 11.90476
+~~~
+
+**Meaning:** This uses a risk-neutral probability from an arbitrage-consistent one-period model, not a guessed historical probability.
+
+## Don't confuse an educational model with a trading model
+
+These functions assume simplified annual rates, idealised cash-flow dates and transparent inputs. Real bond systems need settlement conventions, day-count fractions, holiday calendars, coupon schedules, interpolation, curve construction, optionality and credit/market-data handling.
+
+[Source file](finance_lab.py) · [Unit tests](test_finance_lab.py) · [← Finance](../index.qmd)

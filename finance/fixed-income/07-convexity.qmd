@@ -1,0 +1,41 @@
+---
+title: "Convexity — Why a Straight-Line Duration Estimate Is Not Enough"
+description: "A deeper but child-friendly finance lesson with original numeric examples and risk assumptions."
+---
+
+## A real question to answer
+
+**Duration predicts the price fall for a small rate rise. Why does the actual price sometimes fall less than that linear prediction?**
+
+The price-yield graph of an option-free bond is curved, not straight. Duration is its tangent at the current yield; convexity adds the curvature correction.
+
+## Build the exact relationship
+
+$$
+\frac{\Delta P}{P}\approx-D_{\mathrm{mod}}\Delta y+\frac12 C(\Delta y)^2
+$$
+
+**What every symbol means:** ΔP/P is proportional price change, D_mod is modified duration in years, Δy is yield change in decimal form, and C is convexity (the second yield derivative divided by initial price), for the stated annual-compounding model.
+
+**Substitute numbers and calculate:** For our two-year 5%-coupon bond at yield 5%, D_mod≈1.85941 and C≈5.26941. If yield rises by 1%=0.01, duration-only says −1.85941%. The positive curvature correction adds 0.5×5.26941×0.01²=0.02635 percentage points; predicted change ≈−1.83306%. Exact repricing from 100 at 5% to 98.1666 at 6% gives about −1.83339%.
+
+## Why the financial reasoning works
+
+The positive second derivative of an ordinary fixed-cash-flow bond's price causes the increase in price from an equal yield fall to exceed the loss from a rise of the same magnitude, for small symmetric changes. The quadratic approximation captures this asymmetry.
+
+## A tiny calculation, not a large framework
+
+~~~python
+from finance_lab import convexity, bond_cashflows
+print(round(convexity(bond_cashflows(),.05),4)) # 5.2694
+~~~
+
+The examples are checked, where applicable, in the [small finance calculation lab](../examples/index.qmd).
+
+## When this answer is no longer enough
+
+Callable bonds and mortgages may exhibit **negative effective convexity** because their promised or expected cash flows can change when rates move. The positive-convexity conclusion applies to fixed positive cash flows, not every fixed-income product.
+
+**Textbook basis:** Fabozzi, Handbook 8e Ch. 7 (convexity); Luenberger, Investment Science 2e §3.7.. The calculations and child-friendly explanations are original.
+
+[← Fixed Income](index.qmd) · [Finance home](../index.qmd)

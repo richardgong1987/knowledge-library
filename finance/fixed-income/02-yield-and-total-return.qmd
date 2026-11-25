@@ -1,0 +1,45 @@
+---
+title: "Coupon Rate, Current Yield, and Yield to Maturity"
+description: "An original source-grounded fixed-income lesson explained with small arithmetic and precise financial assumptions."
+---
+
+## Begin with the question
+
+**A two-year bond returns 5 next year and 105 the following year. Why does someone paying 98 earn a different yield from someone paying 100?**
+
+The coupon is written into the contract; the market yield is inferred from the price. Do not confuse an interest payment with an investment return.
+
+## One mathematical relationship
+
+$$
+P=\frac{5}{1+y}+\frac{105}{(1+y)^2}
+$$
+
+**What every symbol means:** P is price today; 5 is the first coupon; 105 is the final coupon and face payment; y is the annual yield-to-maturity and 2 is the number of compounding years for the last payment.
+
+**Put actual numbers into the formula:** At y=5%, the two discounted payments are 4.7619 and 95.2381, giving price 100. At y=6%, the same payments give 4.7170 and 93.4496, price 98.1666. A buyer paying 98 needs a yield slightly **higher** than 6% to make the valuation match.
+
+## The reasoning, not just the answer
+
+Coupon rate = 5/100 = 5%, using FACE VALUE. Current yield at price 98 is 5/98≈5.10%, using MARKET PRICE. YTM solves for the rate explaining ALL future payments, including repayment of face value. Each measure asks a different question.
+
+**Why the method works:** The present values shrink as the discount rate rises: a larger denominator makes each positive present value smaller. This monotonic relationship lets bisection find the YTM from an observed price without a closed-form formula.
+
+## Check it with a tiny programme
+
+Save this inside the Finance lab directory, alongside the [single-file Python library](../examples/finance_lab.py):
+
+~~~python
+from finance_lab import yield_to_maturity
+print(round(yield_to_maturity(98,[5,105])*100,3))
+~~~
+
+Run it with Python 3. The example computes exactly the values in the calculation above, instead of introducing an unrelated finance application.
+
+## When the shortcut stops working
+
+A YTM quotation is not a guaranteed realised holding-period return: coupons might be reinvested at different rates, the bond may be sold early, or default may interrupt payment. Also check the coupon frequency and compounding convention.
+
+**Textbook basis:** Fabozzi, Handbook 8e Ch. 6; Luenberger, Investment Science 2e §§3.4–3.5. These are independent educational examples rather than reproductions of the books.
+
+[← Fixed Income overview](index.qmd) · [Finance learning map](../index.qmd)

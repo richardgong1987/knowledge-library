@@ -94,3 +94,18 @@ Use `## Mathematical Abstraction`, include a display formula or formal relation 
 10. Use LeetCode community discussions for **insight and pitfalls**, but write all explanations, code and examples independently; do not copy third-party solutions or copyrighted textbook passages.
 
 **A page consisting of generic definitions, one unexplained formula, a prompt to study, or no actual worked example is not a complete lesson.**
+
+
+## Finance lessons — beginner clarity without sacrificing rigour
+
+Use the three supplied references as the basis:
+- David G. Luenberger, *Investment Science*, 2nd ed. (2014); 1st ed. (1998) for cross-checking historical structure.
+- Frank J. Fabozzi (ed.), *The Handbook of Fixed Income Securities*, 8th ed. (2012).
+
+Do not reproduce copyrighted textbook paragraphs, tables, exercises or images. Attribute the specific chapter and write a **new** miniature example. Avoid treating historical market-specific convention details as automatically current.
+
+Each finance page must contain a **dated cash-flow story**, one important concept, an exact formula, the meaning of every symbol, a substitution with actual numerical values immediately afterwards, an explanation of **why** the equation is valid, and an explicit list of assumptions/conditions that break the shortcut.
+
+Prefer extending the same bond (face 100, annual coupon 5, two years remaining) rather than inventing an unrelated bond for every section. For advanced concepts such as duration, convexity, spot/forward rates, bootstrapping, default/recovery, portfolio covariance, CAPM and option pricing, never erase the derivation just because it seems difficult. Translate the math into ordinary language, then back into a tiny Python demonstration. All interest rates in code are **decimals**, so 5% is 0.05 and 1bp is 0.0001.
+
+The Finance lab must stay dependency-free and must pass its numeric tests before publication. Explicitly distinguish market prices from contractual payments, yield from realised return, and risk-neutral parameters from observed historical probabilities.

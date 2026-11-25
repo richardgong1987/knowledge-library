@@ -1,0 +1,59 @@
+---
+title: "Net Present Value and Internal Rate of Return"
+description: "Decide whether an investment adds value without confusing return with profit."
+---
+
+# Would you pay 95 today to receive 110 next year?
+
+Suppose a small investment costs **95 now** and pays **110 next year**. You could instead deposit the 95 in a bank earning **5%**. Is the project worthwhile?
+
+First ask the bank question: 95 at 5% becomes 99.75 next year. The project promises 110, so *under these simplified certain-cash-flow assumptions* it looks attractive.
+
+## Net present value asks: how much value is left after paying?
+
+$$
+NPV=-I_0+\sum_{t=1}^{n}\frac{C_t}{(1+r)^t}
+$$
+
+**Symbols:** $NPV$ is the value created today; $I_0$ is the initial cash paid now; $C_t$ is the cash received at future time $t$; $r$ is the suitable discount rate per period; $n$ is the last payment date; Σ means add all discounted receipts.
+
+**Substitute numbers:** There is just one receipt, so $I_0=95$, $C_1=110$, $r=0.05$. Calculate −95+110/1.05≈−95+104.7619=**9.7619**. A positive NPV means the modelled receipts are worth more than the cost at the required return.
+
+## Internal rate of return asks a different question
+
+IRR is the discount rate that makes NPV exactly zero.
+
+$$
+0=-95+\frac{110}{1+IRR}
+$$
+
+**Symbols:** Zero is the break-even NPV, 95 the up-front price, 110 the future receipt, and $IRR$ the unknown annual return in decimal form.
+
+**Substitute numbers:** Move 95 to the other side: 110/(1+IRR)=95. Therefore 1+IRR=110/95≈1.1578947, so **IRR≈15.79%**.
+
+Both methods agree on this simple one-period, conventional investment. But they answer different questions: NPV measures **value added in today's money**, while IRR is a **percentage rate**.
+
+## Why “take the highest IRR” can be wrong
+
+Consider two mutually exclusive projects with one-year payoff and a 5% discount rate.
+
+- A costs 10 and returns 12: IRR=20%; NPV=−10+12/1.05≈**1.43**.
+- B costs 100 and returns 115: IRR=15%; NPV=−100+115/1.05≈**9.52**.
+
+A has the **higher percentage**, but B creates **more money value**. If you must choose exactly one and capital constraints allow it, NPV may recommend B.
+
+With unconventional cash-flow sign patterns, IRR can have multiple solutions or no meaningful solution; this is another reason not to treat IRR as a universal decision rule.
+
+## Very small code
+
+~~~python
+price = 95
+payoff = 110
+npv = -price + payoff / 1.05
+irr = payoff / price - 1
+print(round(npv, 2), round(irr * 100, 2))  # 9.76 15.79
+~~~
+
+**Book connection:** Luenberger, *Investment Science*, 2nd ed., §§2.4–2.5 and 1st ed. Chapter 2. All numbers here are illustrative, not copied exercises.
+
+[Previous](02-compounding-and-present-value.qmd) · [Next: no arbitrage](04-no-arbitrage.qmd)

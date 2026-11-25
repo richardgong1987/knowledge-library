@@ -1,0 +1,41 @@
+---
+title: "Carry and Roll-Down — Where a Bond's Return Comes From"
+description: "A deeper but child-friendly finance lesson with original numeric examples and risk assumptions."
+---
+
+## A real question to answer
+
+**If the market yield curve does not move, can a bond still generate a return before maturity?**
+
+Yes. Time passes, you may receive coupons, and the bond becomes shorter. **Carry** and **roll-down** describe parts of this time-dependent return, but you must say exactly what 'unchanged curve' means.
+
+## Build the exact relationship
+
+$$
+HPR=\frac{C+P_1-P_0}{P_0}
+$$
+
+**What every symbol means:** HPR is the return over the holding period; C is coupon cash received; P_0 is the starting bond price; P_1 is the end-of-period ex-coupon sale price, all in the same currency units.
+
+**Substitute numbers and calculate:** Use our 5% annual two-year bond under a FLAT 5% curve. Buy at P_0=100. After one year receive C=5. Its remaining one-year payoff of 105 has ex-coupon value P_1=105/1.05=100, if the one-year yield stays 5%. HPR=(5+100−100)/100=5%.
+
+## Why the financial reasoning works
+
+With a sloping curve, a bond's new shorter maturity may lie at a different curve point even if the quoted maturity curve is held fixed. Its repriced value can change through **roll-down**, independently of coupons. In professional attribution models, carry, roll, curve-shape change and spread change have carefully specified conventions.
+
+## A tiny calculation, not a large framework
+
+~~~python
+p0=100; coupon=5; p1=105/1.05
+print((coupon+p1-p0)/p0) # 0.05
+~~~
+
+The examples are checked, where applicable, in the [small finance calculation lab](../examples/index.qmd).
+
+## When this answer is no longer enough
+
+An 'unchanged yield curve' scenario is different from forwards being realised as implied. It is a scenario, not a forecast. Real profits also depend on financing, accrued interest, transaction costs, reinvestment and credit spreads.
+
+**Textbook basis:** Fabozzi Handbook 8e Ch. 6 (total return) and Part 10 (performance evaluation and return attribution).. The calculations and child-friendly explanations are original.
+
+[← Fixed Income](index.qmd) · [Finance home](../index.qmd)
