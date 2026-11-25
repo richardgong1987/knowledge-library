@@ -1,0 +1,196 @@
+---
+title: "3. VPC and Networking"
+description: "The Lemonade Stand's private network: CIDR blocks, public and private subnets, internet and NAT gateways, route tables, security groups and network ACLs."
+---
+
+## The problem
+
+Customers must reach the Lemonade web servers. The orders database must **never** be reachable from the internet. The web servers still need to download software updates. All of this must work in two availability zones.
+
+We need our own private network with a public part, a private part, and clear rules about who may talk to whom.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="A gated town"}
+A **VPC** is your own gated town. Every house has a number, and all numbers start with `10.0`.
+
+The town has **neighbourhoods** (subnets). Each neighbourhood is in exactly one part of the city (one availability zone). The **town gate** (internet gateway) leads to the outside world. **Street signs** (route tables) tell each neighbourhood where to go: "anything outside the town? Use the gate."
+
+The **public** neighbourhood has a sign to the gate. The **private** neighbourhood has no sign to the gate, so strangers cannot walk in. Its residents still send letters through the **post office** (NAT gateway), which can post letters out and bring the replies back.
+
+Each house also has a **door guard** (security group). The guard remembers who you visited, so the reply is always let back in. Each neighbourhood can have a **checkpoint** (network ACL) that checks everyone in *both* directions against a numbered list and remembers nobody.
+
+Werner Vogels counts the network among the ten big AWS lessons: it is the part every service depends on, so it must be designed, not left to chance ([2016](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html)).
+:::
+
+## The concept, precisely
+
+- A **VPC** (Virtual Private Cloud) is an isolated network in one region, defined by a **CIDR block** such as `10.0.0.0/16`. Every region also has a ready-made **default VPC** (`172.31.0.0/16`), which is fine for experiments.
+- **CIDR** notation `a.b.c.d/p` means "all addresses whose first $p$ bits equal those of `a.b.c.d`". A smaller $p$ means a bigger block.
+- A **subnet** is a slice of the VPC's block that lives in **one AZ**.
+- A **public subnet** has a route to an internet gateway. A **private subnet** does not. Nothing else makes a subnet public.
+- An **internet gateway (IGW)** connects the VPC to the internet in both directions, for resources with public IP addresses.
+- A **route table** is a list of `destination → target` rules attached to subnets. Each one contains an automatic `local` route for the VPC's own block.
+- A **NAT gateway** sits in a public subnet and lets private resources make **outgoing** connections (for updates), while nothing from the internet can start a connection inward.
+- A **security group (SG)** is a **stateful** firewall on each network interface. It has **allow rules only**, and replies to allowed traffic are always allowed back. A rule may name another security group as its source.
+- A **network ACL (NACL)** is a **stateless** firewall on a subnet. It has numbered **allow and deny** rules, checked from the lowest number up, and replies must be allowed explicitly.
+
+The Lemonade network:
+
+```text
+VPC 10.0.0.0/16 (eu-west-2)
+├── public  10.0.1.0/24  (eu-west-2a)  ALB, NAT gateway   route 0.0.0.0/0 → internet gateway
+├── public  10.0.2.0/24  (eu-west-2b)  ALB
+├── private 10.0.11.0/24 (eu-west-2a)  web1, database     route 0.0.0.0/0 → NAT gateway
+└── private 10.0.12.0/24 (eu-west-2b)  web2, (standby)    route 0.0.0.0/0 → NAT gateway
+```
+
+| Command or field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `aws ec2 create-vpc` | creates the network | `/16` to `/28`; use a private range (`10.x`, `172.16–31.x`, `192.168.x`) | `--cidr-block 10.0.0.0/16` |
+| `aws ec2 create-subnet` | creates a slice in one AZ | must fit inside the VPC; must not overlap other subnets | `--cidr-block 10.0.1.0/24 --availability-zone eu-west-2a` |
+| `aws ec2 create-internet-gateway` | creates the gate | one per VPC; attach it afterwards | `create-internet-gateway` |
+| `aws ec2 attach-internet-gateway` | connects the gate to the VPC | does nothing until a route uses it | `--internet-gateway-id igw-... --vpc-id vpc-...` |
+| `aws ec2 create-route-table` | creates a list of routes | one public table, one private table per AZ | `--vpc-id vpc-...` |
+| `aws ec2 create-route` | adds `destination → target` | `0.0.0.0/0` means "everything else" | `--destination-cidr-block 0.0.0.0/0 --gateway-id igw-...` |
+| `aws ec2 associate-route-table` | attaches a table to a subnet | a subnet without one uses the main table | `--subnet-id subnet-...` |
+| `aws ec2 create-nat-gateway` | outbound internet for private subnets | lives in a **public** subnet; one per AZ for resilience | `--subnet-id <public> --allocation-id eipalloc-...` |
+| `aws ec2 create-security-group` | creates a door guard | `--description` is required | `--group-name lemonade-web` |
+| `aws ec2 authorize-security-group-ingress` | adds an inbound allow rule | allow only the ports you serve | `--protocol tcp --port 8080 --source-group sg-alb` |
+| `aws ec2 create-network-acl-entry` | adds a numbered NACL rule | leave gaps (100, 200) to insert rules later | `--rule-number 100 --rule-action allow` |
+| `aws ec2 describe-subnets` | shows subnets and free addresses | `AvailableIpAddressCount` shows what is left | `--filters Name=vpc-id,Values=vpc-...` |
+
+## Worked example: a public subnet for the stand
+
+Create the VPC, one public subnet, the gate and its route:
+
+```bash
+VPC=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query Vpc.VpcId --output text)
+PUB=$(aws ec2 create-subnet --vpc-id "$VPC" --cidr-block 10.0.1.0/24 \
+  --availability-zone eu-west-2a --query Subnet.SubnetId --output text)
+IGW=$(aws ec2 create-internet-gateway --query InternetGateway.InternetGatewayId --output text)
+aws ec2 attach-internet-gateway --internet-gateway-id "$IGW" --vpc-id "$VPC"
+RT=$(aws ec2 create-route-table --vpc-id "$VPC" --query RouteTable.RouteTableId --output text)
+aws ec2 create-route --route-table-id "$RT" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW"
+aws ec2 associate-route-table --route-table-id "$RT" --subnet-id "$PUB"
+aws ec2 describe-route-tables --route-table-ids "$RT" \
+  --query 'RouteTables[].Routes[].[DestinationCidrBlock,GatewayId]' --output text
+```
+
+Output of the last command (LocalStack):
+
+```text
+10.0.0.0/16	local
+0.0.0.0/0	igw-b2f14496bcda0770e
+```
+
+The `local` route was added automatically. The second route makes the subnet public. Now let the web servers' door guard accept the app port from inside the VPC only:
+
+```bash
+SG=$(aws ec2 create-security-group --group-name lemonade-web \
+  --description "Lemonade web servers" --vpc-id "$VPC" --query GroupId --output text)
+aws ec2 authorize-security-group-ingress --group-id "$SG" \
+  --protocol tcp --port 8080 --cidr 10.0.0.0/16
+```
+
+Output (LocalStack, filtered with `--query`):
+
+```text
+tcp	8080	8080	10.0.0.0/16
+```
+
+Clean up in reverse order: `delete-security-group`, `disassociate-route-table`, `delete-route-table`, `detach-internet-gateway`, `delete-internet-gateway`, `delete-subnet`, `delete-vpc`.
+
+## Rules and conventions
+
+- **Plan the addresses once.** Use a `/16` for the VPC and `/24` subnets. Do not overlap with other networks you may connect later, such as your office or another VPC.
+- **One public and one private subnet per AZ**, and at least two AZs.
+- **Only load balancers and NAT gateways live in public subnets.** Servers and databases go in private subnets.
+- **Reference security groups, not addresses.** "Web servers accept 8080 from the ALB's group" stays correct when IPs change.
+- **Security groups are the everyday tool.** Keep NACLs at their default (allow all) unless you need a subnet-wide deny.
+- **Name and tag everything**, for example `Name=lemonade-public-a`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| IGW attached but no `0.0.0.0/0` route | the "public" server cannot be reached | add the route and associate the table with the subnet |
+| Server in a public subnet without a public IP | still unreachable from the internet | use a load balancer, or assign a public IP or Elastic IP |
+| SSH (port 22) open to `0.0.0.0/0` | constant login attempts from bots | use Session Manager, or allow only your own IP `/32` |
+| NACL allows inbound but not the reply ports | connections hang | NACLs are stateless: allow outbound ephemeral ports `1024–65535` |
+| Forgotten NAT gateway in a test account | about \$37 a month for nothing | delete it after the lesson; Corey Quinn has written for years about the [cost of managed NAT](https://www.lastweekinaws.com/blog/the-aws-managed-nat-gateway-is-unpleasant-and-not-recommended/) |
+
+## Mathematical Abstraction
+
+A CIDR block with prefix length $p$ contains
+
+$$
+N = 2^{\,32 - p}, \qquad U = N - 5
+$$
+
+where:
+
+- $N$ is the total number of IPv4 addresses in the block;
+- $p$ is the prefix length, the number after the slash, from 0 to 32;
+- $32 - p$ is how many bits are left to number the hosts;
+- $U$ is the number of addresses you can use in an **AWS subnet**: AWS reserves 5 per subnet (the network address, `.1` for the VPC router, `.2` for DNS, `.3` for future use, and the last address).
+
+Example: the VPC `10.0.0.0/16` has $N = 2^{32-16} = 2^{16} = 65{,}536$ addresses. The subnet `10.0.1.0/24` has $N = 2^{8} = 256$ and $U = 256 - 5 = 251$. LocalStack's `describe-subnets` reported exactly `AvailableIpAddressCount 251` for our new `/24`.
+
+An address belongs to a block when their first $p$ bits are equal. Writing addresses as 32-bit numbers ($a.b.c.d \mapsto a \cdot 2^{24} + b \cdot 2^{16} + c \cdot 2^{8} + d$):
+
+$$
+x \in B/p \iff \left\lfloor \frac{x}{2^{\,32-p}} \right\rfloor = \left\lfloor \frac{B}{2^{\,32-p}} \right\rfloor
+$$
+
+where:
+
+- $x$ is the address being checked, as a number;
+- $B/p$ is the block, with $B$ its first address and $p$ its prefix length;
+- dividing by $2^{32-p}$ and rounding down with $\lfloor\cdot\rfloor$ throws away the last $32 - p$ bits, keeping only the first $p$;
+- $\iff$ reads "exactly when".
+
+Example: is `web1` at `10.0.11.25` inside `10.0.0.0/16`? As numbers, $x = 10 \cdot 16{,}777{,}216 + 0 + 11 \cdot 256 + 25 = 167{,}775{,}001$ and $B = 167{,}772{,}160$. With $2^{16} = 65{,}536$: $\lfloor 167{,}775{,}001 / 65{,}536 \rfloor = \lfloor 2560.04 \rfloor = 2560$ and $\lfloor 167{,}772{,}160 / 65{,}536 \rfloor = 2560$. They are equal, so yes. For `10.1.0.5`, $x = 167{,}837{,}701$ and $\lfloor x / 65{,}536 \rfloor = 2561 \neq 2560$, so no.
+
+When several routes match a destination, the **most specific** (longest prefix) wins:
+
+$$
+r^{\ast}(x) = \operatorname*{arg\,max}_{\,r \in R \;:\; x \in r} \; p(r)
+$$
+
+where:
+
+- $x$ is the destination address of a packet;
+- $R$ is the set of routes in the subnet's route table;
+- "$r \in R : x \in r$" keeps only the routes whose block contains $x$;
+- $p(r)$ is the prefix length of route $r$;
+- $\operatorname{arg\,max}$ returns the route with the largest $p(r)$, not the number itself;
+- $r^{\ast}(x)$ is the route the packet takes.
+
+Example: the public table is $R = \lbrace \texttt{10.0.0.0/16} \to \text{local},\ \texttt{0.0.0.0/0} \to \text{igw} \rbrace$. For $x = $ `10.0.11.25` both routes match, with $p = 16$ and $p = 0$; the larger is 16, so the packet stays **local**. For $x = $ `203.0.113.10` (an internet address) only `0.0.0.0/0` matches, so it goes to the **internet gateway**.
+
+The NAT gateway that gives private subnets their updates is billed by the hour and by the gigabyte:
+
+$$
+C_{\text{NAT}} = r_h \cdot h + r_g \cdot g
+$$
+
+where:
+
+- $C_{\text{NAT}}$ is the monthly cost in dollars;
+- $r_h$ is the hourly rate, \$0.05 per hour in London;
+- $h$ is the hours it exists (730 for a whole month);
+- $r_g$ is the data processing rate, \$0.05 per GB in London;
+- $g$ is the gigabytes that pass through it.
+
+Example: one NAT gateway for a month, with 20 GB of updates: $C_{\text{NAT}} = 0.05 \times 730 + 0.05 \times 20 = 36.50 + 1.00 = \$37.50$. That is more than both `t3.micro` web servers together (\$17.23, lesson 1), which is why test accounts should delete it after use (prices at time of writing, November 2026).
+
+## References
+
+- AWS, [How Amazon VPC works](https://docs.aws.amazon.com/vpc/latest/userguide/how-it-works.html), [Subnet CIDR blocks](https://docs.aws.amazon.com/vpc/latest/userguide/subnet-sizing.html) (the 5 reserved addresses) and [Route priority](https://docs.aws.amazon.com/vpc/latest/userguide/route-tables-priority.html) (longest prefix match)
+- AWS, [Security groups](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-security-groups.html), [Network ACLs](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-network-acls.html) and [NAT gateways](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html)
+- AWS, [Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/)
+- Corey Quinn, ["The AWS Managed NAT Gateway is Unpleasant and Not Recommended"](https://www.lastweekinaws.com/blog/the-aws-managed-nat-gateway-is-unpleasant-and-not-recommended/) (Last Week in AWS)
+- Werner Vogels, ["10 Lessons from 10 Years of Amazon Web Services"](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html), lesson 9
+
+[← Lesson 2: IAM and the AWS CLI](02-iam-and-the-aws-cli.qmd) · [Part 4: AWS](index.qmd) · [Lesson 4: EC2 →](04-ec2.qmd)

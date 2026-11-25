@@ -1,0 +1,173 @@
+---
+title: "4. EC2: Virtual Servers"
+description: "Renting the Lemonade web servers: AMIs, instance types, key pairs, security groups, user data, EBS disks, Elastic IPs, and stop versus terminate."
+---
+
+## The problem
+
+The network from lesson 3 is ready, but it is empty. The Lemonade Stand needs two web servers, `web1` in `eu-west-2a` and `web2` in `eu-west-2b`. Each runs nginx in front of the app on port `8080`. They should set themselves up without anyone logging in, and cost nothing on days we switch them off.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Ordering a computer from a menu"}
+Renting a server on EC2 is like ordering at a café. You choose:
+
+- the **recipe**: what is already on the computer's disk when it starts, like a cake-mix box (the AMI);
+- the **size**: nano, micro, small, medium, large, just like T-shirt sizes (the instance type);
+- a **key** for the door (a key pair), and a **door guard** who decides who may knock (a security group);
+- a **note for the first morning**: "when you wake up, install nginx and put up the menu" (user data).
+
+**Stop** puts the computer to sleep. You stop paying for the computer, but its disk is kept, and that disk still costs a little. **Terminate** gives it back to the café forever.
+
+Werner Vogels' fourth AWS lesson is *automation is key*: people should not have to log in and click things to set up a server ([2016](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html)). The note for the first morning is exactly that kind of automation.
+:::
+
+## The concept, precisely
+
+- An **instance** is a virtual server running on AWS hardware.
+- An **AMI** (Amazon Machine Image) is the starting disk: an operating system plus anything pre-installed. The Lemonade servers use **Amazon Linux 2023**. AWS publishes the newest AMI ID as a public parameter, so you never need to copy IDs by hand.
+- The **instance type** sets the CPU and memory. Its name reads *family, generation, extra letters, dot, size*:
+
+  | Name | Family | Generation | Extra letters | Size |
+  | --- | --- | --- | --- | --- |
+  | `t3.micro` | `t`: burstable general purpose | 3 | none | micro |
+  | `t4g.micro` | `t` | 4 | `g`: AWS Graviton (ARM) | micro |
+  | `m7i.large` | `m`: general purpose | 7 | `i`: Intel | large |
+
+  Other family letters: `c` for compute-heavy work, `r` for lots of memory, `g` for GPUs. **Burstable** (`t`) instances run at a low baseline and can burst higher for short periods, which suits a small web page.
+
+- A **key pair** lets you log in with SSH. The private key is downloaded once, and AWS keeps only the public half. **Session Manager** (part of AWS Systems Manager) lets you open a shell without SSH or open ports.
+- **User data** is a script that cloud-init runs **once, as root, on the first boot**.
+- **EBS** (Elastic Block Store) volumes are network disks. The root volume survives stop and start. By default it is **deleted on terminate**.
+- An **Elastic IP** is a public IPv4 address that stays the same across stop and start. Every public IPv4 address costs \$0.005 per hour.
+- An **instance profile** attaches an IAM role (lesson 2) to the server, so programs on it get temporary credentials instead of stored keys.
+- **Instance states**: `pending → running → stopping → stopped → pending …`; terminate goes `shutting-down → terminated` and cannot be undone.
+
+| Command or option | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `aws ec2 run-instances` | starts new instances | the five essentials below | `run-instances --count 2 ...` |
+| `--image-id` | which AMI | look it up, do not hard-code | `--image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64` |
+| `--instance-type` | size | start small; resize later | `--instance-type t3.micro` |
+| `--subnet-id` | which subnet, and therefore which AZ | private subnet for web servers | `--subnet-id subnet-...` |
+| `--security-group-ids` | which door guards | one or more SG IDs | `--security-group-ids sg-...` |
+| `--user-data` | first-boot script | `file://` reads a local file; 16 KB limit | `--user-data file://user-data.sh` |
+| `--key-name` | SSH key pair | optional if you use Session Manager | `--key-name lemonade-key` |
+| `--iam-instance-profile` | role for programs on the server | never store access keys on a server | `--iam-instance-profile Name=lemonade-web` |
+| `--tag-specifications` | name and tags at launch | always set `Name` and `Project` | `'ResourceType=instance,Tags=[{Key=Name,Value=lemonade-web}]'` |
+| `--metadata-options` | instance metadata settings | require IMDSv2 tokens | `HttpTokens=required` |
+| `aws ec2 describe-instances` | lists instances | filter by tag | `--filters Name=tag:Name,Values=lemonade-web` |
+| `aws ec2 stop-instances` / `start-instances` | sleep / wake | stopped: no compute charge, disk still billed | `--instance-ids i-...` |
+| `aws ec2 terminate-instances` | delete forever | check the ID twice | `--instance-ids i-...` |
+| `aws ec2 create-key-pair` | makes an SSH key | save the private key with `chmod 400` | `--key-name lemonade-key --query KeyMaterial` |
+| `aws ec2 allocate-address` / `associate-address` | Elastic IP | release it when no longer needed | `--instance-id i-... --allocation-id eipalloc-...` |
+
+## Worked example: two web servers that set themselves up
+
+The first-boot note, [`examples/user-data.sh`](examples/user-data.sh):
+
+```bash
+#!/bin/bash
+# Runs once, as root, on the first boot of a Lemonade web server (Amazon Linux 2023).
+dnf install -y nginx
+echo '<h1>Lemonade Stand</h1><p>Classic lemonade: $2.50</p>' > /usr/share/nginx/html/index.html
+systemctl enable --now nginx
+```
+
+Launch two servers with it, then list them:
+
+```bash
+aws ec2 run-instances --count 2 --instance-type t3.micro \
+  --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
+  --subnet-id "$PRIV" --security-group-ids "$SG" --user-data file://user-data.sh \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=lemonade-web}]' \
+  --query 'Instances[].[InstanceId,InstanceType,State.Name,PrivateIpAddress]' --output text
+```
+
+Output (LocalStack; LocalStack takes a plain AMI ID instead of `resolve:ssm:`):
+
+```text
+i-e309deca737f6ef78	t3.micro	pending	10.0.11.4
+i-cf3da684e71a54fd7	t3.micro	pending	10.0.11.5
+```
+
+Both start as `pending` and get private addresses from the subnet `10.0.11.0/24`. A real launch puts `web2` in the second private subnet, `10.0.12.0/24`, so the two servers sit in different AZs. Put them to sleep, then give them back:
+
+```bash
+aws ec2 stop-instances --instance-ids i-e309deca737f6ef78 i-cf3da684e71a54fd7
+aws ec2 terminate-instances --instance-ids i-e309deca737f6ef78 i-cf3da684e71a54fd7
+```
+
+Output (LocalStack, filtered):
+
+```text
+i-e309deca737f6ef78	running	stopping
+i-cf3da684e71a54fd7	running	stopping
+i-e309deca737f6ef78	shutting-down
+i-cf3da684e71a54fd7	shutting-down
+```
+
+## Rules and conventions
+
+- **Servers are cattle, not pets.** Anything you set up by hand will be lost when the server is replaced. Put it in user data, or later in Ansible (Part 1) or Terraform (Part 6).
+- **Look AMIs up by parameter** (`resolve:ssm:...`), because AMI IDs differ per region and change with every update.
+- **Use Session Manager instead of opening port 22.** If you must use SSH, allow only your own IP.
+- **Give servers a role, never access keys.**
+- **Require IMDSv2** (`HttpTokens=required`) so a bug in the web app cannot easily leak the server's credentials.
+- **Stop** what you will need again; **terminate** what you will not. Release unused Elastic IPs.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| User data without `#!/bin/bash` on the first line | nothing gets installed | the shebang tells cloud-init how to run it; check `/var/log/cloud-init-output.log` |
+| Expecting user data to run on every boot | changes made in user data never re-apply | it runs once; build a new instance or use a configuration tool |
+| Lost the private key file | cannot SSH in | AWS cannot recover it; use Session Manager or replace the instance |
+| Data written to the root disk, then terminate | the data is gone | keep data in RDS or S3, or set `DeleteOnTermination=false` on a data volume |
+| Stopped instance "costs nothing" | small charges continue | EBS disks and Elastic IPs are billed while stopped |
+
+## Mathematical Abstraction
+
+Inside one family, each size step **doubles** the price (and here also the memory):
+
+$$
+r_k = r_0 \cdot 2^{k}
+$$
+
+where:
+
+- $k$ counts size steps above the smallest size: nano $= 0$, micro $= 1$, small $= 2$, medium $= 3$, large $= 4$;
+- $r_0$ is the hourly price of the smallest size, in dollars per hour;
+- $r_k$ is the hourly price $k$ steps up.
+
+Example: for `t3` in London, $r_0 = \$0.0059$ (`t3.nano`). Then `t3.large` is $r_4 = 0.0059 \times 2^4 = 0.0059 \times 16 = \$0.0944$ per hour, exactly the published price. Memory follows the same rule, $0.5 \times 2^4 = 8$ GiB. The pattern holds for these sizes. CPU does not always follow it: every size from nano to large has 2 vCPUs. So check the table before relying on it.
+
+What a server costs in a month depends on its state:
+
+$$
+C(\text{state}) =
+\begin{cases}
+r \cdot h + s \cdot g & \text{running} \\
+s \cdot g & \text{stopped} \\
+0 & \text{terminated}
+\end{cases}
+$$
+
+where:
+
+- $C$ is the monthly cost in dollars;
+- $r$ is the hourly instance price and $h$ the hours it runs;
+- $s$ is the disk price in dollars per GB-month (gp3 in London: \$0.0928);
+- $g$ is the disk size in GB;
+- the cases say: running pays for the computer and the disk; stopped pays only for the disk; terminated pays nothing.
+
+Example: `web1` (`t3.micro`, 8 GB gp3 disk) running all month costs $0.0118 \times 730 + 0.0928 \times 8 = 8.614 + 0.742 = \$9.36$. Stopped all month it costs $0.0928 \times 8 = \$0.74$. Terminated, \$0. If it also had a public IPv4 address, add $0.005 \times 730 = \$3.65$ in every state except terminated (prices at time of writing, November 2026).
+
+## References
+
+- AWS, [Amazon EC2 User Guide](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html), [instance type naming conventions](https://docs.aws.amazon.com/ec2/latest/instancetypes/instance-type-names.html) and [instance lifecycle](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-lifecycle.html)
+- AWS, [Run commands when you launch an EC2 instance with user data](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/user-data.html) and [Use public parameters to find AMIs](https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-public-parameters-ami.html)
+- AWS, [Amazon EC2 On-Demand pricing](https://aws.amazon.com/ec2/pricing/on-demand/) and [Amazon EBS pricing](https://aws.amazon.com/ebs/pricing/)
+- Werner Vogels, ["10 Lessons from 10 Years of Amazon Web Services"](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html), lesson 4
+- Andreas Wittig and Michael Wittig, [*Amazon Web Services in Action*, 3rd edition](https://www.manning.com/books/amazon-web-services-in-action-third-edition), the chapter on virtual machines
+
+[← Lesson 3: VPC and networking](03-vpc-and-networking.qmd) · [Part 4: AWS](index.qmd) · [Lesson 5: S3 →](05-s3.qmd)

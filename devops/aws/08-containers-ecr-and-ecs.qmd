@@ -1,0 +1,188 @@
+---
+title: "8. Containers: ECR and ECS"
+description: "Running the Lemonade container on AWS: storing images in ECR, task definitions, services and Fargate on ECS, and how it all maps to k3s."
+---
+
+## The problem
+
+Part 3 builds the image `lemonade-stand:<git-sha>`, and Part 2 ran it on k3s. On AWS we could install Docker on EC2 ourselves, but then we would restart crashed containers, patch servers and spread containers over AZs by hand.
+
+We want a private **shelf for our images**, and a service that **keeps two copies running** without us managing any servers.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Lunchboxes and a school canteen"}
+A container image is a **lunchbox packed at home**. Everything the app needs is inside, so it tastes the same wherever you open it.
+
+**ECR** is the school's labelled **lunchbox shelf**. Each lunchbox has a sticker with its name and a number (the tag).
+
+**ECS** is the **canteen manager**. You hand them a card that says "always keep 2 Lemonade lunchboxes open, each needs a small seat" (the task definition and the service). If one lunchbox falls on the floor, the manager opens a new one. With **Fargate** you do not even bring tables and chairs: the canteen provides the seats and charges per seat-minute.
+
+The lunchbox idea became famous in a five-minute lightning talk. At PyCon in March 2013, Solomon Hykes showed the world a tool called Docker for the first time, in a talk named *The Future of Linux Containers* ([O'Reilly, *What is Docker?*](https://www.oreilly.com/content/what-is-docker/)).
+:::
+
+## The concept, precisely
+
+**Amazon ECR** (Elastic Container Registry) stores container images.
+
+- A **repository** holds the versions of one image, for example `lemonade-stand`.
+- The **image URI** is `<account>.dkr.ecr.<region>.amazonaws.com/<repository>:<tag>`.
+- A **tag** (`3f2a9c1`) is a human label. A **digest** (`sha256:…`) is the exact content. Turn on **tag immutability** so a tag can never be moved to different content.
+- **Lifecycle policies** delete old images automatically. **Scan on push** checks images for known vulnerabilities.
+
+**Amazon ECS** (Elastic Container Service) runs containers.
+
+- A **cluster** is a named group where tasks run.
+- A **task definition** is the recipe, a JSON document with versions called **revisions**. It names the image, CPU, memory, ports, environment, logging and two roles. The **execution role** lets ECS pull the image and write logs. The **task role** is what the app itself may do (lesson 2).
+- A **task** is one running copy of a task definition.
+- A **service** keeps `desiredCount` tasks running, replaces failed ones, registers them in an ALB target group (lesson 6) and rolls out new revisions.
+- **Fargate** runs each task on capacity AWS manages: no EC2 instances to patch. You choose CPU and memory per task from a fixed menu.
+
+**Amazon EKS** runs real Kubernetes with a managed control plane. Your Part 2 manifests would work there almost unchanged. It is the right choice when you want Kubernetes itself. ECS is the simpler AWS-native choice.
+
+| k3s (Part 2) | ECS on Fargate | Role |
+| --- | --- | --- |
+| Pod | Task | one running copy |
+| Pod spec in a Deployment | Task definition (revision) | the recipe |
+| Deployment (`replicas: 2`) | Service (`desiredCount: 2`) | keep N copies, roll out updates |
+| Node | Fargate (invisible) or EC2 container instance | where it runs |
+| Service + Ingress (Traefik) | ALB target group + listener | traffic in |
+| `maxSurge` / `maxUnavailable` | `maximumPercent` / `minimumHealthyPercent` | rolling-update limits |
+| `kubectl apply` | `register-task-definition` + `update-service` | ship a change |
+
+| Command or field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `aws ecr create-repository` | creates the image shelf | one repository per image | `--repository-name lemonade-stand --image-tag-mutability IMMUTABLE` |
+| `aws ecr get-login-password` | password for `docker login` | pipe it into `docker login --password-stdin`, never paste it | see the worked example |
+| `docker push` | uploads an image | tag with the git SHA, not only `latest` | `docker push <registry>/lemonade-stand:3f2a9c1` |
+| `aws ecs create-cluster` | creates a cluster | one per environment | `--cluster-name lemonade` |
+| `aws ecs register-task-definition` | stores a new revision | each change makes revision $n+1$ | `--cli-input-json file://task-def.json` |
+| `requiresCompatibilities` | where it may run | `["FARGATE"]` | `"requiresCompatibilities": ["FARGATE"]` |
+| `networkMode` | how tasks get IPs | Fargate needs `awsvpc` | `"networkMode": "awsvpc"` |
+| `cpu` / `memory` | task size | must be a valid Fargate pair | `"cpu": "256", "memory": "512"` |
+| `portMappings` | the container port | the app port | `[{"containerPort": 8080}]` |
+| `aws ecs create-service` | keeps N tasks running | private subnets, ALB target group of type `ip` | `--desired-count 2 --launch-type FARGATE` |
+| `aws ecs update-service` | rolls out a new revision | watch `rolloutState` | `--task-definition lemonade-web:4` |
+| `aws ecs describe-services` | status of the service | `runningCount` should equal `desiredCount` | `--query 'services[].[runningCount,desiredCount]'` |
+
+## Worked example: two Lemonade tasks on Fargate
+
+Push the image built in Part 3:
+
+```bash
+REGISTRY=123456789012.dkr.ecr.eu-west-2.amazonaws.com
+aws ecr create-repository --repository-name lemonade-stand --image-tag-mutability IMMUTABLE
+aws ecr get-login-password | docker login --username AWS --password-stdin "$REGISTRY"
+docker tag lemonade-stand:3f2a9c1 "$REGISTRY/lemonade-stand:3f2a9c1"
+docker push "$REGISTRY/lemonade-stand:3f2a9c1"
+```
+
+The recipe, `task-def.json` (role ARN shortened):
+
+```json
+{
+  "family": "lemonade-web",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+  "containerDefinitions": [{
+    "name": "web",
+    "image": "123456789012.dkr.ecr.eu-west-2.amazonaws.com/lemonade-stand:3f2a9c1",
+    "portMappings": [{ "containerPort": 8080 }]
+  }]
+}
+```
+
+Register it and keep two copies running:
+
+```bash
+aws ecs register-task-definition --cli-input-json file://task-def.json
+aws ecs create-service --cluster lemonade --service-name lemonade-web \
+  --task-definition lemonade-web --desired-count 2 --launch-type FARGATE \
+  --network-configuration "awsvpcConfiguration={subnets=[$PRIV_A,$PRIV_B],securityGroups=[$SG]}" \
+  --load-balancers "targetGroupArn=$TG_ARN,containerName=web,containerPort=8080"
+aws ecs describe-services --cluster lemonade --services lemonade-web \
+  --query 'services[].[serviceName,runningCount,desiredCount]' --output text
+```
+
+Illustrative output (ECR and ECS are not in LocalStack's free edition):
+
+```text
+lemonade-web	2	2
+```
+
+## Rules and conventions
+
+- **Tag images with the git commit SHA** and make tags immutable. `latest` cannot tell you what is running.
+- **Two roles, two jobs**: the execution role pulls and logs, the task role is the app's own permissions. Keep both minimal.
+- **Tasks in private subnets**, behind the ALB, in at least two AZs.
+- **Send logs to CloudWatch** with the `awslogs` log driver (lesson 10), because a crashed task's local logs disappear with it.
+- **Turn on the deployment circuit breaker** so a broken revision rolls back by itself.
+- **Pick ECS for simple AWS-only apps and EKS when you need Kubernetes**: Part 2's skills transfer directly to EKS.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Invalid CPU/memory pair, such as `256` with `4096` | `register-task-definition` fails | use a pair from the Fargate table |
+| Private subnet without NAT or VPC endpoints | tasks stuck in `PENDING`: cannot pull the image | add a NAT gateway or ECR/S3 VPC endpoints |
+| Target group of type `instance` for Fargate | tasks never become healthy | Fargate needs target type `ip` |
+| No execution role | `CannotPullContainerError` | attach `AmazonECSTaskExecutionRolePolicy` to an execution role |
+| Re-pushing a mutable `latest` tag | "the deploy did nothing" | new SHA tag, new revision, `update-service` |
+
+## Mathematical Abstraction
+
+Fargate bills each task for the CPU and memory it asks for, per hour:
+
+$$
+C = n \cdot h \cdot \left( v \cdot p_v + g \cdot p_g \right)
+$$
+
+where:
+
+- $C$ is the monthly cost in dollars;
+- $n$ is the number of tasks and $h$ the hours they run (730 for a month);
+- $v$ is the vCPUs per task and $p_v$ the price per vCPU-hour (\$0.04656 in London);
+- $g$ is the memory per task in GB and $p_g$ the price per GB-hour (\$0.00511 in London).
+
+Example: two Lemonade tasks of $v = 0.25$ vCPU and $g = 0.5$ GB all month: per task-hour $0.25 \times 0.04656 + 0.5 \times 0.00511 = 0.01164 + 0.002555 = 0.014195$, so $C = 2 \times 730 \times 0.014195 \approx \$20.72$. That is close to two `t3.micro` servers (\$17.23), but there is no operating system to patch (prices at time of writing, November 2026).
+
+Not every size is allowed. The memory must come from a menu that depends on the CPU:
+
+$$
+g \in G(v), \qquad G(0.25) = \lbrace 0.5, 1, 2 \rbrace, \quad G(0.5) = \lbrace 1, 2, 3, 4 \rbrace, \quad G(1) = \lbrace 2, 3, \dots, 8 \rbrace
+$$
+
+where:
+
+- $v$ is the task's vCPUs;
+- $G(v)$ is the set of allowed memory sizes in GB for that CPU;
+- $g \in G(v)$ says the chosen memory must be one of them.
+
+Example: $(v, g) = (0.25, 0.5)$ is valid because $0.5 \in \lbrace 0.5, 1, 2 \rbrace$. $(0.25, 4)$ is rejected because $4 \notin G(0.25)$. To get 4 GB, raise the CPU to $v = 0.5$, where $4 \in G(0.5)$.
+
+During a rolling update, ECS keeps the number of tasks between two limits:
+
+$$
+\left\lceil d \cdot \frac{p_{\min}}{100} \right\rceil \;\le\; \text{tasks} \;\le\; \left\lfloor d \cdot \frac{p_{\max}}{100} \right\rfloor
+$$
+
+where:
+
+- $d$ is the service's desired count;
+- $p_{\min}$ is `minimumHealthyPercent`, rounded **up** (default 100);
+- $p_{\max}$ is `maximumPercent`, rounded **down** (default 200);
+- "tasks" counts the tasks running or starting during the deployment.
+
+Example: with $d = 2$ and the defaults, $\lceil 2 \times 1 \rceil = 2 \le \text{tasks} \le \lfloor 2 \times 2 \rfloor = 4$. ECS starts two new tasks before stopping the old ones, so the stand never drops below 2. With $p_{\min} = 50$ the lower limit is $\lceil 2 \times 0.5 \rceil = 1$, so ECS may stop one old task first. That is the same idea as `maxUnavailable` and `maxSurge` in k3s (Part 2).
+
+## References
+
+- AWS, [Amazon ECR User Guide](https://docs.aws.amazon.com/AmazonECR/latest/userguide/what-is-ecr.html) and [Pushing a Docker image](https://docs.aws.amazon.com/AmazonECR/latest/userguide/docker-push-ecr-image.html)
+- AWS, [Amazon ECS Developer Guide](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/Welcome.html), [Task definition parameters](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html), [Fargate task CPU and memory](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-tasks-services.html) and [DeploymentConfiguration](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DeploymentConfiguration.html)
+- AWS, [AWS Fargate pricing](https://aws.amazon.com/fargate/pricing/) and [What is Amazon EKS?](https://docs.aws.amazon.com/eks/latest/userguide/what-is-eks.html)
+- O'Reilly, ["What is Docker?"](https://www.oreilly.com/content/what-is-docker/), on Solomon Hykes' PyCon 2013 lightning talk
+
+[← Lesson 7: Databases](07-databases-rds-and-dynamodb.qmd) · [Part 4: AWS](index.qmd) · [Lesson 9: Serverless Lambda →](09-serverless-lambda.qmd)

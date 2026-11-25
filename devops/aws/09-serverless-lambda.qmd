@@ -1,0 +1,164 @@
+---
+title: "9. Serverless: Lambda"
+description: "Code that runs only when something happens: Lambda functions, handlers, events, triggers, cold starts, concurrency and per-millisecond pricing for the Lemonade order count."
+---
+
+## The problem
+
+Every evening the owner wants one answer: *how many orders today, and how much money?* The job takes a fraction of a second. Keeping a server running 24 hours a day for it wastes money, and someone still has to patch that server.
+
+We want to hand AWS a small piece of code that runs **only when needed** and costs nothing in between.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="A robot that wakes up when the bell rings"}
+Imagine a little robot asleep in a cupboard. When someone **rings the bell** (an event), it wakes up, does **one job**, gives back the answer and goes back to sleep. You pay only for the seconds it is awake.
+
+The first ring after a long sleep takes a moment longer, because the robot has to wake up and put its shoes on (a **cold start**). If ten people ring at the same time, ten robots wake up (concurrency). Each robot works in its own tiny room, so they never bump into each other.
+
+Those tiny rooms are real. AWS engineers, including Marc Brooker, described them in the paper *Firecracker: Lightweight Virtualization for Serverless Applications* (NSDI 2020). Each Lambda function gets its own very small virtual machine that starts in a fraction of a second ([USENIX](https://www.usenix.org/conference/nsdi20/presentation/agache)).
+:::
+
+## The concept, precisely
+
+- A **function** is your code plus its settings: runtime, memory, timeout, role and environment variables.
+- The **handler** is the entry point, written `file.function`. `count_orders.handler` means "the function `handler` in `count_orders.py`".
+- An **event** is the JSON input, for example a list of orders. The **context** object tells the code how much time is left.
+- The **runtime** is the language environment, for example `python3.13` or `nodejs22.x`.
+- **Memory** runs from 128 MB to 10,240 MB. CPU power grows with memory. The **timeout** can be up to 900 seconds (15 minutes).
+- The **execution role** is the function's IAM role (lesson 2). Its logs go to CloudWatch (lesson 10).
+- **Triggers** start the function: an HTTP request, a new file in S3, a message in a queue, or a schedule.
+- A **function URL** gives one function its own HTTPS address, which is simplest. **API Gateway** adds routes, authentication, throttling and usage plans for real APIs.
+- A **cold start** happens when Lambda must create a new execution environment. Warm environments are reused for later requests.
+- **Concurrency** is the number of requests being handled at the same moment. Each region has an account limit (by default 1,000). **Reserved concurrency** sets aside part of it for one function.
+- **Versions** freeze code and settings. An **alias** (`live`) points to a version, so you can switch back quickly.
+
+| Command or setting | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `aws lambda create-function` | creates the function | needs a zip (or image) and a role | `--function-name count-orders --runtime python3.13` |
+| `--handler` | entry point | `file.function` | `--handler count_orders.handler` |
+| `--zip-file` | the code | `fileb://` for binary files | `--zip-file fileb://count_orders.zip` |
+| `--role` | execution role ARN | minimal permissions plus logging | `--role arn:aws:iam::123456789012:role/lemonade-lambda` |
+| `--memory-size` | memory in MB | 128–10,240; more memory is also more CPU | `--memory-size 128` |
+| `--timeout` | maximum run time in seconds | 1–900; keep it short | `--timeout 10` |
+| `--environment` | settings for the code | not for secrets; use Secrets Manager | `Variables={TABLE=lemonade-orders}` |
+| `aws lambda invoke` | runs it once | `--cli-binary-format raw-in-base64-out` for a JSON payload | `--payload '{"orders":[]}' result.json` |
+| `aws lambda update-function-code` | uploads new code | then publish a version | `--zip-file fileb://count_orders.zip` |
+| `aws lambda create-function-url-config` | gives it an HTTPS address | `--auth-type AWS_IAM` unless it is truly public | `--auth-type NONE` |
+| `aws lambda put-function-concurrency` | reserves concurrency | protects other functions and the database | `--reserved-concurrent-executions 5` |
+| `aws scheduler create-schedule` | runs it on a timetable | AWS cron has 6 fields and a `?` | `--schedule-expression "cron(0 18 * * ? *)"` |
+
+## Worked example: the evening order count
+
+The whole function, [`examples/count_orders.py`](examples/count_orders.py):
+
+```python
+"""Lambda handler: count today's Lemonade orders and add up the money."""
+
+
+def handler(event, context):
+    orders = event.get("orders", [])
+    return {
+        "orders": len(orders),
+        "revenue": round(sum(order["price"] * order["cups"] for order in orders), 2),
+    }
+```
+
+Package it, create it and call it with two orders (2 cups at \$2.50 and 1 cup at \$3.00):
+
+```bash
+python3 -m zipfile -c count_orders.zip count_orders.py
+aws lambda create-function --function-name count-orders --runtime python3.13 \
+  --handler count_orders.handler --zip-file fileb://count_orders.zip \
+  --role arn:aws:iam::000000000000:role/lemonade-lambda
+aws lambda invoke --function-name count-orders --cli-binary-format raw-in-base64-out \
+  --payload '{"orders":[{"price":2.5,"cups":2},{"price":3.0,"cups":1}]}' result.json
+cat result.json
+```
+
+Output of `cat result.json` (LocalStack, which runs the real Python runtime in Docker):
+
+```text
+{"orders": 2, "revenue": 8.0}
+```
+
+Check: $2 \times 2.50 + 1 \times 3.00 = 8.00$. Finally, ring the bell every evening at 18:00 London time:
+
+```bash
+aws scheduler create-schedule --name lemonade-daily-count \
+  --schedule-expression "cron(0 18 * * ? *)" --schedule-expression-timezone Europe/London \
+  --flexible-time-window Mode=OFF \
+  --target '{"Arn":"<function ARN>","RoleArn":"<scheduler role ARN>"}'
+aws scheduler get-schedule --name lemonade-daily-count \
+  --query '[Name,ScheduleExpression,ScheduleExpressionTimezone,State]' --output text
+```
+
+Output of the last command (LocalStack):
+
+```text
+lemonade-daily-count	cron(0 18 * * ? *)	Europe/London	ENABLED
+```
+
+AWS cron reads *minute hour day-of-month month day-of-week year*: minute 0, hour 18, every day of every month. The `?` means "any day of the week", because you may not fix both day fields at once.
+
+## Rules and conventions
+
+- **One function, one job.** `count-orders` counts orders. It does not also send emails.
+- **Keep handlers pure where you can**: logic in plain functions you can test without AWS, as above.
+- **Short timeouts** (seconds, not minutes) and **reserved concurrency** so a flood of events cannot overwhelm the orders database.
+- **Make handlers safe to run twice.** Many triggers deliver an event *at least once*, so the same order may arrive again.
+- **No state between calls.** Anything you need tomorrow goes to S3 or DynamoDB, not to a local file.
+- **Function URL for one simple endpoint, API Gateway for a real API.**
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Handler name does not match the file | `Runtime.ImportModuleError` | `--handler count_orders.handler` for `count_orders.py` |
+| JSON payload sent without the binary-format flag | `Invalid base64` error from the CLI | add `--cli-binary-format raw-in-base64-out` |
+| Timeout left at a few seconds for a slow job | `Task timed out after 3.00 seconds` | measure, then raise `--timeout` |
+| Role without CloudWatch Logs permission | the function runs but no logs appear | attach `AWSLambdaBasicExecutionRole` |
+| Recursive trigger: the function writes to the bucket that triggers it | thousands of invocations and a bill | write to a different bucket or prefix |
+
+## Mathematical Abstraction
+
+Lambda charges per request and per **GB-second** (memory multiplied by run time):
+
+$$
+C = N \cdot p_r + N \cdot t \cdot m \cdot p_d
+$$
+
+where:
+
+- $C$ is the monthly cost in dollars;
+- $N$ is the number of invocations in the month;
+- $p_r$ is the price per request: \$0.20 per million, so \$0.0000002;
+- $t$ is the run time of one call in seconds (billed rounded up to the next millisecond);
+- $m$ is the configured memory in GB, where 128 MB $= 128/1024 = 0.125$ GB;
+- $p_d$ is the price per GB-second: \$0.0000166667 in London for x86.
+
+Example: `count-orders` runs once a day, $N = 30$, for $t = 0.2$ s with $m = 0.125$ GB. Duration costs $30 \times 0.2 \times 0.125 = 0.75$ GB-s, so $0.75 \times 0.0000166667 = \$0.0000125$. Requests cost $30 \times 0.0000002 = \$0.000006$. Together that is about \$0.00002 a month. Even a busy menu API with $N = 300{,}000$ calls of $0.05$ s costs $300{,}000 \times 0.0000002 + 300{,}000 \times 0.05 \times 0.125 \times 0.0000166667 = 0.06 + 0.031 = \$0.09$. Both fit inside the monthly free allowance of 1 million requests and 400,000 GB-seconds (prices at time of writing, November 2026).
+
+How many robots are awake at once? In a steady stream of requests, **Little's law** gives
+
+$$
+c = \lambda \cdot t
+$$
+
+where:
+
+- $c$ is the average concurrency, the number of requests being handled at the same time;
+- $\lambda$ (lambda) is the arrival rate in requests per second;
+- $t$ is the average run time in seconds.
+
+Example: at the lunchtime peak $\lambda = 50$ requests per second and $t = 0.2$ s, so $c = 50 \times 0.2 = 10$, far below the default limit of 1,000. If a slow database makes each call take $t = 2$ s, then $c = 50 \times 2 = 100$. The same traffic now needs ten times as many environments, which is why a slow dependency can suddenly hit the concurrency limit. Little's law holds for long-run averages in a stable system. It does not predict short bursts.
+
+## References
+
+- AWS, [AWS Lambda Developer Guide](https://docs.aws.amazon.com/lambda/latest/dg/welcome.html), [Define a Lambda function handler in Python](https://docs.aws.amazon.com/lambda/latest/dg/python-handler.html), [Lambda quotas](https://docs.aws.amazon.com/lambda/latest/dg/gettingstarted-limits.html) and [Understanding concurrency](https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html)
+- AWS, [Lambda function URLs](https://docs.aws.amazon.com/lambda/latest/dg/urls-configuration.html) and [EventBridge Scheduler schedule types](https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html)
+- AWS, [AWS Lambda pricing](https://aws.amazon.com/lambda/pricing/)
+- Alexandru Agache, Marc Brooker et al., ["Firecracker: Lightweight Virtualization for Serverless Applications"](https://www.usenix.org/conference/nsdi20/presentation/agache) (NSDI 2020)
+- Marc Brooker, ["Timeouts, retries, and backoff with jitter"](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/) (The Amazon Builders' Library), on why retried events must be safe to repeat
+
+[← Lesson 8: Containers](08-containers-ecr-and-ecs.qmd) · [Part 4: AWS](index.qmd) · [Lesson 10: Monitoring and cost →](10-monitoring-and-cost.qmd)

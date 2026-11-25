@@ -1,0 +1,220 @@
+---
+title: "2. IAM and the AWS CLI"
+description: "Who may do what in the Lemonade account: users, groups, roles, JSON policies, least privilege, the evaluation rule, and the AWS command line."
+---
+
+## The problem
+
+Several people and programs touch the Lemonade account: the owner, a friend who edits the menu, the web servers that read files from S3, and the CI/CD pipeline from Part 3 that deploys new versions. If they all share the owner's password, one leaked key can delete everything, and nobody can tell who did what.
+
+Each person and each program needs **its own identity**, allowed to do **only its own job**.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Hotel key cards"}
+In a hotel, every guest gets a **key card**. Your card opens your room and the swimming pool, and only during your stay. It does not open the kitchen. The manager's **master key** opens everything, so it stays locked in the safe.
+
+AWS Identity and Access Management (IAM) is the hotel front desk. It hands out key cards (identities), and each card has a list printed on it (a policy): "opens room 12 and the pool". The door follows two simple rules:
+
+1. If **any** list says "no" for this door, it stays shut.
+2. If **no** list says "yes", it also stays shut.
+
+In 1975 Jerome Saltzer and Michael Schroeder wrote down the rule hotels already follow. Every program and every user should work with the smallest set of permissions needed to do the job, so that a mistake can only do a little damage. They called it **least privilege** ([*The Protection of Information in Computer Systems*](https://web.mit.edu/Saltzer/www/publications/protection/Basic.html)). Werner Vogels lists the same idea among his ten AWS lessons: *build security in from the ground up* ([2016](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html)).
+:::
+
+## The concept, precisely
+
+**Identities** (who is asking):
+
+- The **root user** is the email address that created the account. It can do everything, including closing the account. Protect it with MFA, create no access keys for it, and use it only for the few tasks that require it.
+- An **IAM user** is a long-term identity with a password (for the console) and/or **access keys** (for the CLI). Use one per person or program, never a shared one.
+- An **IAM group** is a set of users. Attach permissions to the group, not to each user.
+- An **IAM role** is an identity with permissions but **no long-term password or keys**. Someone or something *assumes* it and receives **temporary credentials** from AWS STS (Security Token Service). EC2 servers, Lambda functions and GitHub Actions (Part 3, via OIDC) should use roles.
+- **IAM Identity Center** is the recommended way for *people* to sign in. You create users once, they sign in through a portal, and they get short-lived credentials for the accounts and roles they may use (`aws configure sso`). Small personal accounts can start with IAM users. Teams should use Identity Center.
+- **MFA** (multi-factor authentication) asks for a second proof, such as a code from an app or a security key, besides the password.
+
+**Policies** (what is allowed) are JSON documents. An **identity-based policy** is attached to a user, group or role. A **resource-based policy** is attached to a resource, such as an S3 bucket policy (lesson 5), and names a `Principal`.
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `Version` | the policy language version | always `"2012-10-17"`, the current one, not today's date | `"Version": "2012-10-17"` |
+| `Statement` | a list of rules | one or more statements | `"Statement": [ { ... } ]` |
+| `Sid` | a name for one statement | optional; describe the intent | `"Sid": "EditTheMenuOnly"` |
+| `Effect` | allow or deny | exactly `"Allow"` or `"Deny"` | `"Effect": "Allow"` |
+| `Action` | which API calls | `service:Operation`; `*` wildcards allowed but avoid them | `"s3:PutObject"` |
+| `Resource` | which things, by ARN | as narrow as possible | `"arn:aws:s3:::lemonade-menu-7f3a/index.html"` |
+| `Condition` | extra requirements | `{"operator": {"key": "value"}}` | `{"Bool": {"aws:MultiFactorAuthPresent": "true"}}` |
+| `Principal` | who (resource-based policies only) | not used in identity-based policies | `"Principal": "*"` |
+
+Our menu editor needs to read and replace one file and nothing else:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EditTheMenuOnly",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": "arn:aws:s3:::lemonade-menu-7f3a/index.html"
+    }
+  ]
+}
+```
+
+This is [`examples/menu-editor-policy.json`](examples/menu-editor-policy.json).
+
+## The AWS CLI
+
+Every AWS CLI command has the same shape:
+
+```text
+aws <service> <operation> [--parameters] [--global-options]
+aws  s3api     list-buckets                --output table
+```
+
+| Command or option | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `aws configure` | saves access keys, region and output format | keys go to `~/.aws/credentials`, settings to `~/.aws/config` | `aws configure --profile lemonade` |
+| `aws configure sso` | signs in through IAM Identity Center | preferred for people: no long-term keys on disk | `aws configure sso` |
+| `aws configure list` | shows which values are in use and where they came from | run it when something looks wrong | `aws configure list` |
+| `--profile` / `AWS_PROFILE` | picks a named set of settings | one profile per account or role | `export AWS_PROFILE=lemonade` |
+| `--region` / `AWS_REGION` | picks the region | set a default once; override per command | `--region eu-west-2` |
+| `--output` | `json`, `text`, `table`, `yaml` | `text` for scripts, `table` for eyes | `--output text` |
+| `--query` | filters the response (JMESPath) | `[]` flattens lists, `.` picks fields | `--query 'Users[].UserName'` |
+| `aws sts get-caller-identity` | "who am I?" | run it before anything destructive | `aws sts get-caller-identity` |
+| `aws iam create-user` / `create-group` | creates identities | names are case-insensitive and unique in the account | `aws iam create-user --user-name menu-editor` |
+| `aws iam add-user-to-group` | puts a user in a group | grant via groups | `--user-name menu-editor --group-name lemonade-editors` |
+| `aws iam create-policy` | stores a policy | `file://` reads a local file | `--policy-document file://menu-editor-policy.json` |
+| `aws iam attach-group-policy` | gives a group a policy | attach to groups and roles | `--group-name lemonade-editors --policy-arn <arn>` |
+| `aws iam simulate-principal-policy` | tests a decision without doing it | great for checking least privilege | `--action-names s3:DeleteObject` |
+| `aws <service> help` | the built-in manual | every operation has one | `aws iam create-role help` |
+
+## Worked example: a menu editor with one job
+
+Create the user, a group and the policy, then attach the policy to the group:
+
+```bash
+aws iam create-user --user-name menu-editor
+aws iam create-group --group-name lemonade-editors
+aws iam add-user-to-group --user-name menu-editor --group-name lemonade-editors
+POLICY_ARN=$(aws iam create-policy --policy-name lemonade-menu-editor \
+  --policy-document file://menu-editor-policy.json --query Policy.Arn --output text)
+aws iam attach-group-policy --group-name lemonade-editors --policy-arn "$POLICY_ARN"
+aws iam list-groups-for-user --user-name menu-editor --query 'Groups[].GroupName' --output text
+```
+
+Output of the last line (LocalStack; the `create-*` commands also print JSON, skipped here). `$POLICY_ARN` holds `arn:aws:iam::000000000000:policy/lemonade-menu-editor`:
+
+```text
+lemonade-editors
+```
+
+Now ask AWS what the menu editor may do, without doing it:
+
+```bash
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::123456789012:user/menu-editor \
+  --action-names s3:PutObject s3:DeleteObject \
+  --resource-arns arn:aws:s3:::lemonade-menu-7f3a/index.html \
+  --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output text
+```
+
+Illustrative output (LocalStack's free edition does not implement the simulator):
+
+```text
+s3:PutObject	allowed
+s3:DeleteObject	implicitDeny
+```
+
+`implicitDeny` means "no statement said yes". The editor can replace the menu but cannot delete it.
+
+## Rules and conventions
+
+- **Lock the root user away**: turn on MFA, delete any root access keys, and sign in as root only for account-level tasks.
+- **Humans use Identity Center or MFA-protected users; machines use roles.** Long-term access keys are the easiest secret to leak.
+- **Grant through groups and roles**, never by attaching policies to single users.
+- **Start from nothing and add.** Write the narrowest `Action` and `Resource` that work, test them with the simulator, and widen only when something legitimately fails.
+- **Prefer AWS-managed policies only as a starting point.** `AdministratorAccess` and `AmazonS3FullAccess` are convenient and far too wide for a menu editor.
+- **Run `aws sts get-caller-identity`** before any command that deletes things. The most common accident is the right command in the wrong account.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Daily work as root | one stolen password owns everything | create an admin identity with MFA, then stop using root |
+| Access keys committed to git | surprise EC2 servers mining cryptocurrency | delete the key at once, rotate, use roles or `aws configure sso` |
+| `"Action": "*"` to "make it work" | anything can delete anything | find the exact action in the error message and allow only that |
+| Wrong ARN form for S3 | `AccessDenied` although the action looks right | the bucket is `arn:aws:s3:::name`; the objects are `arn:aws:s3:::name/*` |
+| `AWS_REGION` left set in the shell | commands hit the wrong region | `aws configure list` shows where each value comes from |
+
+## Mathematical Abstraction
+
+AWS decides every request with the same rule. Let a request $q$ be a triple of principal, action and resource:
+
+$$
+\operatorname{decision}(q) =
+\begin{cases}
+\text{Deny} & \text{if } \exists\, s \in S_q : e(s) = \text{Deny} \\
+\text{Allow} & \text{else if } \exists\, s \in S_q : e(s) = \text{Allow} \\
+\text{Deny (implicit)} & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $q$ is one request, for example "menu-editor wants `s3:DeleteObject` on `index.html`";
+- $S_q$ is the set of policy statements whose `Action`, `Resource` and `Condition` all match $q$;
+- $s \in S_q$ means "$s$ is one of those matching statements", and $\exists$ reads "there exists";
+- $e(s)$ is the `Effect` of statement $s$, either Allow or Deny;
+- the cases are checked **top to bottom**: an explicit Deny always wins, then an Allow, and otherwise the default is Deny.
+
+Example: the menu editor has one statement, `EditTheMenuOnly`.
+
+1. $q_1$ = `s3:PutObject` on `index.html`. $S_{q_1} = \lbrace \texttt{EditTheMenuOnly} \rbrace$. No Deny, one Allow, so the result is **Allow**.
+2. $q_2$ = `s3:DeleteObject` on `index.html`. No statement mentions `DeleteObject`, so $S_{q_2} = \emptyset$ and the result is **Deny (implicit)**.
+3. Add a second statement, `NoMenuChanges`, that denies `s3:PutObject`. Now $S_{q_1} = \lbrace \texttt{EditTheMenuOnly}, \texttt{NoMenuChanges} \rbrace$. A Deny exists, so the first case fires and the result is **Deny**, even though an Allow also matches.
+
+This is the single-account core of the rule. Real evaluation also checks organisation policies (SCPs), permission boundaries, session policies and resource-based policies, and every one of them can only add more ways to say Deny.
+
+**Least privilege** compares what you granted with what the job needs:
+
+$$
+E = G \setminus N, \qquad \text{least privilege} \iff E = \emptyset
+$$
+
+where:
+
+- $G$ is the set of (action, resource) pairs the policies **grant**;
+- $N$ is the set of (action, resource) pairs the job really **needs**;
+- $G \setminus N$ ("$G$ minus $N$") keeps the pairs in $G$ that are not in $N$;
+- $E$ is the **excess**: permissions that can only cause harm;
+- $\iff$ reads "exactly when"; $\emptyset$ is the empty set.
+
+Example: the bucket holds 3 objects (`index.html`, `logo.png`, `prices.json`), and we look at 3 actions (Get, Put, Delete). The editor needs $N = \lbrace (\text{Get}, \texttt{index.html}), (\text{Put}, \texttt{index.html}) \rbrace$, so $\lvert N \rvert = 2$. Attaching `s3:*` on the bucket grants at least $3 \times 3 = 9$ pairs, so $\lvert E \rvert = 9 - 2 = 7$ extra ways to break things, including deleting the logo. Our policy grants exactly $G = N$, so $E = \emptyset$ and $\lvert E \rvert = 0$.
+
+Finally, the CLI picks each setting (region, profile, credentials) from the **first** place that defines it:
+
+$$
+v = \operatorname{first}\left(v_{\text{flag}},\ v_{\text{env}},\ v_{\text{file}}\right)
+$$
+
+where:
+
+- $v$ is the value the CLI finally uses, for example the region;
+- $v_{\text{flag}}$ comes from a command-line option such as `--region`;
+- $v_{\text{env}}$ comes from an environment variable such as `AWS_REGION`;
+- $v_{\text{file}}$ comes from `~/.aws/config` or `~/.aws/credentials`;
+- $\operatorname{first}(\dots)$ returns the leftmost value that is set and skips missing ones.
+
+Example: `~/.aws/config` says `region = eu-west-2`, but an old shell still has `AWS_REGION=us-east-1`, and you type no `--region`. Then $v = \operatorname{first}(\text{missing}, \texttt{us-east-1}, \texttt{eu-west-2}) = \texttt{us-east-1}$. Your new server appears in Virginia, not London. `aws configure list` shows this immediately.
+
+## References
+
+- AWS, [IAM User Guide](https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html), [Policy evaluation logic](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html) and [IAM JSON policy elements](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_elements.html)
+- AWS, [Security best practices in IAM](https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html) and [What is IAM Identity Center?](https://docs.aws.amazon.com/singlesignon/latest/userguide/what-is.html)
+- AWS CLI, [Configuration and credential file settings](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html), [precedence of settings](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html) and [filtering output with `--query`](https://docs.aws.amazon.com/cli/latest/userguide/cli-usage-filter.html)
+- Jerome H. Saltzer and Michael D. Schroeder, ["The Protection of Information in Computer Systems"](https://web.mit.edu/Saltzer/www/publications/protection/Basic.html), *Proceedings of the IEEE* 63(9), 1975: the least-privilege principle
+- Werner Vogels, ["10 Lessons from 10 Years of Amazon Web Services"](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html), lesson 7
+
+[← Lesson 1: What the cloud is](01-what-the-cloud-is.qmd) · [Part 4: AWS](index.qmd) · [Lesson 3: VPC and networking →](03-vpc-and-networking.qmd)

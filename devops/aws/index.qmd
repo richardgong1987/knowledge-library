@@ -1,0 +1,93 @@
+---
+title: "Part 4: AWS"
+description: "Amazon Web Services for beginners: renting computers, storage, networks and databases for the Lemonade Stand, one simple idea at a time."
+---
+
+Parts 1–3 ran the Lemonade Stand on machines we already had. In this part we **rent** the machines instead. Amazon Web Services (AWS) gives us computers, disks, networks and databases by the hour, in data centres all over the world. We ask for them with one command and give them back when we are done.
+
+Every lesson keeps the same stand, so each new service answers a question the previous lesson raised.
+
+## The Lemonade Stand on AWS
+
+```text
+                         Internet (customers)
+                                  │
+   S3 bucket lemonade-menu-7f3a   │            Region eu-west-2 (London)
+   (static menu page, lesson 5)   │   ┌──────── VPC 10.0.0.0/16 (lesson 3) ────────┐
+                                  ▼   │                                             │
+                     ┌─────────────────────────┐   public subnets                   │
+                     │ Application Load Balancer│   10.0.1.0/24 (AZ a)               │
+                     │ port 80  (lesson 6)      │   10.0.2.0/24 (AZ b)               │
+                     └───────┬─────────┬────────┘                                    │
+                     ┌───────▼──┐   ┌──▼───────┐   private subnets                  │
+                     │  web1    │   │  web2    │   10.0.11.0/24, 10.0.12.0/24       │
+                     │ EC2      │   │ EC2      │   t3.micro, app on :8080 (lesson 4) │
+                     └───────┬──┘   └──┬───────┘                                    │
+                             └────┬────┘                                            │
+                         ┌────────▼────────┐                                        │
+                         │ RDS PostgreSQL  │  orders database (lesson 7)            │
+                         └─────────────────┘                                        │
+                                      └─────────────────────────────────────────────┘
+   ECR + ECS Fargate: the same app as a container (lesson 8)
+   Lambda count-orders: adds up today's orders (lesson 9)
+   CloudWatch alarms and AWS Budgets watch it all (lesson 10)
+```
+
+The names match the earlier parts: `web1` and `web2` serve the menu, the app listens on port `8080` and answers `/health`, and the container image is the `lemonade-stand` image that Part 3 builds.
+
+## Follow along safely
+
+A cloud account is connected to a credit card, so start with these four habits. They cost nothing and prevent nearly every beginner accident.
+
+1. **Use the free plan and credits.** New accounts (since 15 July 2025) choose a *free plan* with up to \$200 of credits, valid for 6 months. A free-plan account is not charged at all; when the credits or the 6 months run out, you must upgrade to a paid plan to keep using it. See the [AWS Free Tier](https://aws.amazon.com/free/).
+2. **Create a budget alarm first**, before anything else (lesson 10 shows the command). The Lemonade budget is \$10 a month.
+3. **Check who you are** before every session:
+
+    ```bash
+    aws sts get-caller-identity
+    ```
+
+4. **Clean up.** Every lesson ends by deleting what it created. Something you forgot to delete keeps costing money every hour.
+
+You can also practise most commands **without an AWS account**. The [lab](examples/README.md) runs them against [LocalStack](https://www.localstack.cloud/), a local AWS emulator in Docker. Outputs marked *LocalStack* in this part came from that lab (its fake account ID is `000000000000`).
+
+## Lessons
+
+1. [What the cloud is](01-what-the-cloud-is.qmd): renting vs owning, regions, availability zones, the shared responsibility model, pay-as-you-go.
+2. [IAM and the AWS CLI](02-iam-and-the-aws-cli.qmd): who may do what, policies, least privilege, and the command line.
+3. [VPC and networking](03-vpc-and-networking.qmd): your private network, CIDR blocks, subnets, routes and firewalls.
+4. [EC2](04-ec2.qmd): virtual servers, AMIs, instance types, user data, disks.
+5. [S3](05-s3.qmd): buckets and objects, durability, a static menu website, presigned links.
+6. [Load balancers and auto scaling](06-load-balancers-and-auto-scaling.qmd): one front door, many helpers, health checks.
+7. [Databases: RDS and DynamoDB](07-databases-rds-and-dynamodb.qmd): a managed PostgreSQL and a key-value table.
+8. [Containers: ECR and ECS](08-containers-ecr-and-ecs.qmd): the Lemonade image on Fargate, compared with k3s.
+9. [Serverless: Lambda](09-serverless-lambda.qmd): code that runs only when called, billed by the millisecond.
+10. [Monitoring and cost](10-monitoring-and-cost.qmd): CloudWatch alarms, budgets, the monthly bill, Well-Architected.
+
+## AWS CLI cheat sheet
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `aws configure` | stores keys, default region and output format | `aws configure --profile lemonade` |
+| `aws sts get-caller-identity` | shows the account and identity you are using | `aws sts get-caller-identity --query Account` |
+| `aws <service> <operation>` | the grammar of every command | `aws ec2 describe-instances` |
+| `--region` | chooses the region for one command | `--region eu-west-2` |
+| `--profile` | chooses a saved set of credentials | `--profile lemonade` |
+| `--output` | `json`, `text`, `table` or `yaml` | `--output table` |
+| `--query` | filters the answer with JMESPath | `--query 'Reservations[].Instances[].InstanceId'` |
+| `aws <service> help` | built-in manual | `aws s3 help` |
+| `aws s3 ls` / `cp` / `sync` | everyday S3 file commands | `aws s3 cp index.html s3://lemonade-menu-7f3a/` |
+| `aws ec2 run-instances` | starts a virtual server | lesson 4 |
+| `aws ec2 terminate-instances` | deletes a virtual server for good | `--instance-ids i-0abc123` |
+
+## Clicking vs typing vs code
+
+You can do everything in this part three ways: in the web console, with the AWS CLI, or as code. This part uses the **CLI**, because a command is short, exact and easy to copy. Clicking is fine for exploring, but it is hard to repeat. [Part 6 (Terraform)](../terraform/index.qmd) writes the same Lemonade setup as code, so it can be rebuilt, reviewed and deleted with one command.
+
+## References
+
+- [AWS documentation](https://docs.aws.amazon.com/) and the [AWS CLI v2 command reference](https://awscli.amazonaws.com/v2/documentation/api/latest/index.html)
+- Andreas Wittig and Michael Wittig, [*Amazon Web Services in Action*, 3rd edition](https://www.manning.com/books/amazon-web-services-in-action-third-edition) (Manning, 2023), a gentle book-length tour of the same services.
+- [The Amazon Builders' Library](https://aws.amazon.com/builders-library/): how Amazon engineers build and run these services.
+
+[← DevOps book](../index.qmd) · [Lesson 1: What the cloud is →](01-what-the-cloud-is.qmd)

@@ -1,0 +1,190 @@
+---
+title: "10. Monitoring and Cost"
+description: "Watching the Lemonade Stand and its bill: CloudWatch metrics, logs and alarms, AWS Budgets, a full monthly cost estimate, and the Well-Architected pillars."
+---
+
+## The problem
+
+The Lemonade Stand now runs on many AWS services. Two questions remain. **Is it healthy right now?** And **what will this month's bill be?** We want to find out from an email, not from an angry customer or a surprise invoice.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="A car dashboard and a pocket-money jar"}
+A car has a **dashboard**. The speedometer shows numbers that change every second (metrics). The trip diary records what happened (logs). A **warning light** turns on only when the engine has been too hot for a while, not for one hot second (an alarm).
+
+You also have a **pocket-money jar** with a note: "Tell me when I am about to spend 80% of this month's money" (a budget).
+
+Werner Vogels' sixth AWS lesson is *know your resource usage*: if you do not measure what you use, you cannot control what it costs ([2016](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html)). The cloud economist Corey Quinn has spent years showing, in his [Last Week in AWS](https://www.lastweekinaws.com/) newsletter, how the surprise in a bill usually hides in small, forgotten line items, such as a NAT gateway in a test account.
+:::
+
+## The concept, precisely
+
+**Amazon CloudWatch** collects numbers and text from your resources.
+
+- A **metric** is a time series of numbers. It is named by a **namespace** (`AWS/EC2`), a **metric name** (`CPUUtilization`) and **dimensions** (`InstanceId=i-...`). EC2 sends basic metrics every 5 minutes, or every minute with detailed monitoring.
+- A **statistic** (`Average`, `Maximum`, `Sum`, `p99`) summarises the values within one **period** (for example 60 seconds).
+- **CloudWatch Logs** stores text: a **log group** per app (`/lemonade/web`) contains **log streams** per source. Set a **retention** period, or logs are kept, and billed, forever.
+- **Logs Insights** queries logs, for example "count errors per 5 minutes".
+- An **alarm** watches one metric. It is in `OK`, `ALARM` or `INSUFFICIENT_DATA` and can send a message to an **SNS topic**, which emails you, or trigger scaling.
+- **AWS Budgets** emails you when actual or **forecasted** cost passes a threshold. **Cost Explorer** shows where the money went. **Cost allocation tags** (`Project=lemonade`) split the bill by project.
+- The **AWS Pricing Calculator** estimates a design before you build it.
+
+| Command or field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `aws cloudwatch list-metrics` | shows available metrics | filter by namespace | `--namespace AWS/EC2` |
+| `aws cloudwatch get-metric-statistics` | reads metric values | choose period and statistic | `--statistics Average --period 300` |
+| `aws cloudwatch put-metric-data` | sends your own metric | for business numbers like orders | `--namespace Lemonade --metric-name Orders --value 1` |
+| `aws cloudwatch put-metric-alarm` | creates or updates an alarm | name it `<app>-<what>-<condition>` | `--alarm-name lemonade-web-cpu-high` |
+| `--period` | seconds per data point, $p$ | 60 or a multiple of 60 for AWS metrics | `--period 60` |
+| `--evaluation-periods` | window of recent periods, $N$ | longer windows ignore short spikes | `--evaluation-periods 5` |
+| `--datapoints-to-alarm` | how many must breach, $M$ | "$M$ out of $N$" | `--datapoints-to-alarm 3` |
+| `--threshold` / `--comparison-operator` | the line not to cross, $\theta$ | a value you would act on | `--threshold 80 --comparison-operator GreaterThanThreshold` |
+| `--alarm-actions` | what to do in `ALARM` | an SNS topic that emails you | `--alarm-actions arn:aws:sns:eu-west-2:123456789012:lemonade-ops` |
+| `aws logs create-log-group` | a home for an app's logs | `/project/component` | `--log-group-name /lemonade/web` |
+| `aws logs put-retention-policy` | deletes old logs automatically | 14–30 days for practice apps | `--retention-in-days 14` |
+| `aws logs tail` | live log viewer | add `--follow` | `aws logs tail /lemonade/web --follow` |
+| `aws budgets create-budget` | monthly spending limit with alerts | create it on day one | see below |
+| `aws ce get-cost-and-usage` | what was spent | group by service or tag | `--granularity MONTHLY --metrics UnblendedCost` |
+
+## Worked example: an alarm, a log group and a budget
+
+Alarm when the web servers' average CPU is above 80% for 3 one-minute periods in a row:
+
+```bash
+aws cloudwatch put-metric-alarm --alarm-name lemonade-web-cpu-high \
+  --namespace AWS/EC2 --metric-name CPUUtilization --statistic Average \
+  --period 60 --evaluation-periods 3 --datapoints-to-alarm 3 \
+  --threshold 80 --comparison-operator GreaterThanThreshold
+aws cloudwatch describe-alarms --alarm-names lemonade-web-cpu-high \
+  --query 'MetricAlarms[].[AlarmName,StateValue,Period,EvaluationPeriods,Threshold]' --output text
+```
+
+Output (LocalStack):
+
+```text
+lemonade-web-cpu-high	INSUFFICIENT_DATA	60	3	80.0
+```
+
+`INSUFFICIENT_DATA` is normal for a new alarm: no data points have arrived yet. Keep the logs for two weeks:
+
+```bash
+aws logs create-log-group --log-group-name /lemonade/web
+aws logs put-retention-policy --log-group-name /lemonade/web --retention-in-days 14
+```
+
+The budget from the [Part 4 safety rules](index.qmd): \$10 a month, with an email when the **forecast** passes 80%:
+
+```bash
+aws budgets create-budget --account-id 123456789012 \
+  --budget '{"BudgetName":"lemonade-monthly","BudgetLimit":{"Amount":"10","Unit":"USD"},"TimeUnit":"MONTHLY","BudgetType":"COST"}' \
+  --notifications-with-subscribers '[{"Notification":{"NotificationType":"FORECASTED","ComparisonOperator":"GREATER_THAN","Threshold":80,"ThresholdType":"PERCENTAGE"},"Subscribers":[{"SubscriptionType":"EMAIL","Address":"owner@example.com"}]}]'
+```
+
+AWS Budgets is not in LocalStack's free edition. On a real account this command prints nothing on success.
+
+## The Well-Architected pillars
+
+The [AWS Well-Architected Framework](https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html) asks six groups of questions about any design. Here is where this part answered each one for the stand:
+
+| Pillar | The question in plain words | Lemonade answer |
+| --- | --- | --- |
+| Operational excellence | Can we change and run it safely? | user data and launch templates; alarms and logs (lessons 4, 6, 10) |
+| Security | Who can do what, and is data protected? | least-privilege IAM, private subnets, no public database (lessons 2, 3, 7) |
+| Reliability | Does it survive failures? | two AZs, health checks, Multi-AZ, backups (lessons 6, 7) |
+| Performance efficiency | Is it the right size and type? | burstable instances, target tracking (lessons 4, 6) |
+| Cost optimisation | Do we pay only for value? | budgets, deleting unused resources, Lambda for tiny jobs (lessons 9, 10) |
+| Sustainability | Do we waste as little as possible? | scale in at night; Graviton (`t4g`) instances use less energy |
+
+## Rules and conventions
+
+- **Budget first, everything else second.** Create the budget before the first server.
+- **Alarm on symptoms customers feel**: errors and slow responses at the load balancer, not only CPU.
+- **"$M$ out of $N$" alarms** ignore one-off spikes; page a human only for problems that last.
+- **Every log group gets a retention period.**
+- **Tag everything** with `Project=lemonade` and activate the tag for cost allocation.
+- **Review the bill monthly** by service and by tag, and delete what nobody can explain.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Alarm with no action | it turns red and nobody knows | add `--alarm-actions` with an SNS email topic and confirm the subscription email |
+| Alarm on one 1-minute data point | emails for every harmless spike | use `--datapoints-to-alarm 3 --evaluation-periods 5` |
+| Log groups without retention | storage cost that grows every month | `put-retention-policy` |
+| Budget alert only on *actual* cost | the email arrives after the money is spent | also alert on the *forecast* |
+| Production design left running in a practice account | about \$100 a month (see below) | delete it after each lesson |
+
+## Mathematical Abstraction
+
+An alarm fires when enough of the recent periods are bad:
+
+$$
+\text{ALARM} \iff \Big\lvert \lbrace\, i \in \lbrace 1, \dots, N \rbrace : x_i > \theta \,\rbrace \Big\rvert \ge M
+$$
+
+where:
+
+- $x_i$ is the metric statistic in the $i$-th most recent period (for example the average CPU in one minute);
+- $\theta$ (theta) is the threshold;
+- $N$ is `--evaluation-periods`, how many recent periods are looked at;
+- $M$ is `--datapoints-to-alarm`, how many of them must breach, with $M \le N$;
+- $\lbrace i : x_i > \theta \rbrace$ is the set of breaching periods and $\lvert \cdot \rvert$ counts them.
+
+Example: with $\theta = 80$, $M = 3$, $N = 5$ and the last five minutes at $x = (85, 70, 90, 95, 60)$, the breaching values are 85, 90 and 95. That makes 3 periods, and $3 \ge 3$, so the alarm is **ALARM**. A single spike $(99, 50, 40, 45, 50)$ gives $1 < 3$, so it stays **OK**. Since at least $M$ periods of length $p$ must pass, the fastest possible alarm takes $M \cdot p = 3 \times 60 = 180$ seconds.
+
+The monthly bill is the sum of every line item:
+
+$$
+C = \sum_{k=1}^{K} r_k \cdot q_k
+$$
+
+where:
+
+- $C$ is the monthly total in dollars;
+- $K$ is the number of line items, and $k$ numbers them;
+- $r_k$ is the unit price of item $k$ (per hour, per GB-month, per alarm…);
+- $q_k$ is how many units of item $k$ were used in the month.
+
+Example: the full Lemonade design running all month in London ($730$ hours, prices at time of writing, November 2026):
+
+| $k$ | Item | $r_k \cdot q_k$ | Cost |
+| --- | --- | --- | --- |
+| 1 | 2 × `t3.micro` (lesson 4) | $0.0118 \times 730 \times 2$ | \$17.23 |
+| 2 | 2 × 8 GB gp3 disks | $0.0928 \times 8 \times 2$ | \$1.48 |
+| 3 | ALB hours + about 0.2 LCU (lesson 6) | $0.02646 \times 730 + 0.0084 \times 0.2 \times 730$ | \$20.54 |
+| 4 | 3 public IPv4 addresses (ALB in 2 AZs, NAT) | $0.005 \times 730 \times 3$ | \$10.95 |
+| 5 | NAT gateway + 20 GB (lesson 3) | $0.05 \times 730 + 0.05 \times 20$ | \$37.50 |
+| 6 | RDS `db.t4g.micro` + 20 GB (lesson 7) | $0.018 \times 730 + 0.133 \times 20$ | \$15.80 |
+| 7 | S3, 1 GB (lesson 5) | $0.024 \times 1$ | \$0.02 |
+| 8 | 3 CloudWatch alarms | $0.10 \times 3$ | \$0.30 |
+|   | **Total** | $\sum_{k=1}^{8}$ | **\$103.82** |
+
+The NAT gateway alone is $37.50 / 103.82 \approx 36\%$ of the bill. Lambda and DynamoDB round to \$0 here, and small amounts of data sent to the internet fit in the free 100 GB a month.
+
+Practice costs scale with hours. Building everything, testing for 2 hours and deleting it costs about $103.82 \times 2 / 730 \approx \$0.28$. That is why the \$10 practice budget is safe, *if* you clean up.
+
+A budget alert compares a forecast with the limit:
+
+$$
+\text{alert} \iff F \ge \alpha \cdot B, \qquad F \approx S \cdot \frac{D}{d}
+$$
+
+where:
+
+- $B$ is the monthly budget in dollars and $\alpha$ the alert fraction (0.8 for 80%);
+- $F$ is the forecast for the whole month;
+- $S$ is the amount spent so far, after $d$ days of a $D$-day month;
+- $S \cdot D / d$ is a simple straight-line forecast. AWS uses its own forecasting model, so treat this as an approximation.
+
+Example: $B = \$10$ and $\alpha = 0.8$, so the alert line is $0.8 \times 10 = \$8$. On day $d = 10$ of a $D = 30$-day month you have spent $S = \$3.10$ because a test server was left running. Then $F \approx 3.10 \times 30 / 10 = \$9.30 \ge \$8$, so the email arrives **on day 10**, twenty days before the invoice would have.
+
+## References
+
+- AWS, [Amazon CloudWatch User Guide](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/WhatIsCloudWatch.html), [Using CloudWatch alarms](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html) and [Working with log groups](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/Working-with-log-groups-and-streams.html)
+- AWS, [Managing your costs with AWS Budgets](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html) and the [AWS Pricing Calculator](https://calculator.aws/)
+- AWS, [AWS Well-Architected Framework](https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html)
+- AWS price lists used for the estimate: the public [AWS Price List API](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/price-changes.html) files for EC2, ELB, VPC, RDS, S3 and CloudWatch in `eu-west-2`, retrieved November 2026
+- Werner Vogels, ["10 Lessons from 10 Years of Amazon Web Services"](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html), lesson 6
+- Corey Quinn, [Last Week in AWS](https://www.lastweekinaws.com/)
+
+[← Lesson 9: Serverless Lambda](09-serverless-lambda.qmd) · [Part 4: AWS](index.qmd) · [Next: Part 5, Google Cloud →](../gcp/index.qmd)

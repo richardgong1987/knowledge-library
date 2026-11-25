@@ -1,0 +1,157 @@
+---
+title: "6. Load Balancers and Auto Scaling"
+description: "One front door for many Lemonade servers: Application Load Balancers, listeners, target groups, health checks, launch templates and Auto Scaling groups."
+---
+
+## The problem
+
+We have two web servers in two AZs, so customers would need to know two addresses. If `web1` crashes, its customers see an error. On a hot Saturday two servers are too few; at 3 a.m. two are too many.
+
+We want **one address** for customers, broken servers **taken out automatically**, and the **number of servers to follow the queue**.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="One window, many helpers"}
+A busy lemonade stand has **one serving window** (the load balancer) and several helpers behind it. The window sends each customer to a helper who is free.
+
+Every 30 seconds the manager asks each helper, "Are you OK?" (a health check on `/health`). A helper who does not answer twice in a row gets no more customers. When they answer again five times in a row, they come back.
+
+The **head of staffing** (the Auto Scaling group) keeps between 2 and 6 helpers. When the queue is long, they call another helper. When it is quiet, they send one home. A **card on the wall** (the launch template) says how every new helper must be dressed and what they must know.
+
+Amazon's David Yanacek explains in the Builders' Library that health checks must be **careful**: a check that also fails when a shared database is slow can send *every* helper home at once and close the whole stand ([*Implementing health checks*](https://aws.amazon.com/builders-library/implementing-health-checks/)).
+:::
+
+## The concept, precisely
+
+- **Elastic Load Balancing** has three types. An **Application Load Balancer (ALB)** understands HTTP and HTTPS and can route by path or host name. A Network Load Balancer handles plain TCP and UDP. A Gateway Load Balancer is for network appliances. The Lemonade Stand uses an ALB.
+- A **listener** waits on a port and protocol (for example HTTP on 80) and forwards requests by its **rules**.
+- A **target group** is a set of **targets** (instances, IP addresses or Lambda functions), the port to send to (`8080`), and a **health check**.
+- An ALB must sit in **at least two subnets in different AZs**. It spreads requests over healthy targets in all of them.
+- A **launch template** stores how to build one server: AMI, instance type, security group, user data, instance profile.
+- An **Auto Scaling group (ASG)** keeps the number of running servers between a **minimum** and a **maximum**, aiming at the **desired** capacity. It replaces unhealthy instances and spreads them over the subnets you give it.
+- A **target tracking** policy changes the desired capacity to keep one metric near a target, for example average CPU at 50%.
+- An **instance refresh** replaces old instances with new ones a few at a time, which is the rolling update you know from k3s (Part 2).
+
+```text
+customers → ALB :80 (public subnets a, b) → listener → target group lemonade-web :8080
+                                                          ├── web1 (healthy)    AZ a
+                                                          └── web2 (healthy)    AZ b
+                                     ASG lemonade-web: min 2, desired 2, max 6, CPU target 50%
+```
+
+| Command or field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `aws elbv2 create-load-balancer` | creates the ALB | two or more public subnets in different AZs | `--name lemonade-alb --subnets subnet-a subnet-b --security-groups sg-alb` |
+| `aws elbv2 create-target-group` | the set of servers and their health check | port of the app, not of the ALB | `--name lemonade-web --protocol HTTP --port 8080 --vpc-id vpc-...` |
+| `--health-check-path` | URL the ALB checks | a cheap endpoint that tests only this server | `--health-check-path /health` |
+| `--health-check-interval-seconds` | time between checks, $i$ | default 30 s for HTTP | `--health-check-interval-seconds 10` |
+| `--unhealthy-threshold-count` | failures in a row before removal, $u$ | default 2 | `--unhealthy-threshold-count 2` |
+| `--healthy-threshold-count` | successes in a row before return, $k$ | default 5 | `--healthy-threshold-count 3` |
+| `--health-check-timeout-seconds` | how long to wait for an answer | default 6 s for HTTP; must be shorter than the interval | `--health-check-timeout-seconds 5` |
+| `aws elbv2 create-listener` | opens a port on the ALB | HTTP 80 for practice, HTTPS 443 with a certificate for real customers | `--protocol HTTP --port 80 --default-actions Type=forward,TargetGroupArn=<arn>` |
+| `aws elbv2 describe-target-health` | shows each target's health | first place to look when the site is down | `--target-group-arn <arn>` |
+| `aws ec2 create-launch-template` | the "how to build a server" card | new versions instead of edits | `--launch-template-name lemonade-web --launch-template-data file://lt.json` |
+| `aws autoscaling create-auto-scaling-group` | keeps $m \le d \le M$ servers | private subnets in two AZs; attach the target group | `--min-size 2 --max-size 6 --desired-capacity 2` |
+| `--health-check-type ELB` | uses the ALB's health check to replace servers | add a grace period for slow starts | `--health-check-grace-period 120` |
+| `aws autoscaling put-scaling-policy` | adds a scaling rule | target tracking is the simplest | `--policy-type TargetTrackingScaling` |
+| `aws autoscaling start-instance-refresh` | rolling replacement after a template change | keep a minimum healthy percentage | `--preferences MinHealthyPercentage=50` |
+
+## Worked example: the front door and the staffing rule
+
+```bash
+aws elbv2 create-target-group --name lemonade-web --protocol HTTP --port 8080 \
+  --vpc-id "$VPC" --health-check-path /health
+aws autoscaling create-auto-scaling-group --auto-scaling-group-name lemonade-web \
+  --launch-template LaunchTemplateName=lemonade-web --min-size 2 --max-size 6 \
+  --desired-capacity 2 --vpc-zone-identifier "$PRIV_A,$PRIV_B" \
+  --target-group-arns "$TG_ARN" --health-check-type ELB --health-check-grace-period 120
+aws autoscaling put-scaling-policy --auto-scaling-group-name lemonade-web \
+  --policy-name cpu-50 --policy-type TargetTrackingScaling \
+  --target-tracking-configuration '{"PredefinedMetricSpecification":{"PredefinedMetricType":"ASGAverageCPUUtilization"},"TargetValue":50}'
+aws elbv2 describe-target-health --target-group-arn "$TG_ARN" \
+  --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State]' --output text
+```
+
+Illustrative output of the last command (ELB and Auto Scaling are not in LocalStack's free edition):
+
+```text
+i-0a1b2c3d4e5f60718	healthy
+i-0f9e8d7c6b5a43210	healthy
+```
+
+Stop nginx on one server and ask again about a minute later. Its state becomes `unhealthy`, the ALB stops sending it customers, and the ASG replaces it.
+
+## Rules and conventions
+
+- **Keep `/health` shallow.** It should check *this* server (is the app answering?), not shared dependencies like the database. Otherwise one slow database marks every server unhealthy at once.
+- **Minimum 2, in 2 AZs.** One server is a single point of failure even with a load balancer.
+- **Servers accept traffic only from the ALB's security group**, never from the internet directly.
+- **Change servers by changing the launch template**, then run an instance refresh. Never fix one server by hand.
+- **Give new servers a grace period** long enough for user data to finish, or the ASG will kill them while they are still installing.
+- **Use HTTPS for real customers**: a free certificate from AWS Certificate Manager on a 443 listener, and redirect 80 → 443.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Target group on port 80, app on 8080 | all targets `unhealthy` | the target group port is the **app** port |
+| Health check path returns 302 or 404 | targets flap or stay unhealthy | point it at `/health`, which returns 200 |
+| Server security group does not allow the ALB | health checks time out | allow port 8080 from the ALB's security group |
+| Grace period shorter than setup time | endless replace-and-launch loop | raise `--health-check-grace-period` |
+| Max size equal to min size | no scaling on busy days | set a real maximum, such as 6 |
+
+## Mathematical Abstraction
+
+Why two AZs? Suppose each AZ is available a fraction $a$ of the time and AZs fail **independently**. The stand is up when at least one AZ is up:
+
+$$
+A = 1 - (1 - a)^{n}
+$$
+
+where:
+
+- $A$ is the availability of the whole stand, between 0 and 1;
+- $a$ is the availability of one AZ;
+- $1 - a$ is the chance one AZ is down, so $(1 - a)^n$ is the chance **all** $n$ are down at once;
+- $n$ is the number of AZs with a healthy server.
+
+Example: take a deliberately pessimistic $a = 0.99$, an illustrative number rather than an AWS figure. One AZ gives $A = 0.99$, which means down $0.01 \times 525{,}600 = 5{,}256$ minutes (about 3.7 days) a year. Two AZs give $A = 1 - 0.01^2 = 0.9999$, down only $0.0001 \times 525{,}600 \approx 53$ minutes a year. This is an **idealised model**. Real failures are not fully independent: a bad deployment or a regional problem can hit both AZs at once.
+
+How fast does the ALB notice? With interval $i$:
+
+$$
+T_{\text{remove}} = i \cdot u, \qquad T_{\text{return}} = i \cdot k
+$$
+
+where:
+
+- $T_{\text{remove}}$ is the worst-case time until a broken target stops receiving customers, in seconds;
+- $T_{\text{return}}$ is the time until a repaired target receives customers again;
+- $i$ is the health-check interval in seconds;
+- $u$ is the unhealthy threshold and $k$ the healthy threshold, both counts of checks in a row.
+
+Example: with the defaults $i = 30$, $u = 2$, $k = 5$: $T_{\text{remove}} = 30 \times 2 = 60$ s and $T_{\text{return}} = 30 \times 5 = 150$ s. With $i = 10$ and $u = 2$ the stand drops a broken server after $20$ s, at the price of three times as many checks.
+
+Target tracking aims at the capacity that would bring the metric back to target, kept between the limits:
+
+$$
+d' = \min\!\Big(M,\ \max\!\Big(m,\ \Big\lceil d \cdot \frac{x}{t} \Big\rceil\Big)\Big)
+$$
+
+where:
+
+- $d$ is the current desired capacity and $d'$ the new one, in servers;
+- $x$ is the current value of the metric (average CPU, in percent) and $t$ is its target;
+- $\lceil \cdot \rceil$ rounds up, because half a server is not possible;
+- $m$ and $M$ are the minimum and maximum sizes, so $m \le d' \le M$ always holds.
+
+Example: on Saturday, $d = 2$ servers run at $x = 90\%$ with target $t = 50\%$. Then $\lceil 2 \times 90 / 50 \rceil = \lceil 3.6 \rceil = 4$, and $\min(6, \max(2, 4)) = 4$ servers. At night, $d = 4$ at $x = 10\%$ gives $\lceil 4 \times 10/50 \rceil = \lceil 0.8 \rceil = 1$, but $\max(2, 1) = 2$ keeps the minimum of two. This proportional rule is a **simplified model**. AWS's real algorithm also waits for new instances to warm up and scales in more cautiously than it scales out.
+
+## References
+
+- AWS, [What is an Application Load Balancer?](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html) and [Health checks for target groups](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/target-group-health-checks.html); default values from the [CreateTargetGroup API reference](https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateTargetGroup.html)
+- AWS, [Amazon EC2 Auto Scaling User Guide](https://docs.aws.amazon.com/autoscaling/ec2/userguide/what-is-amazon-ec2-auto-scaling.html) and [Target tracking scaling policies](https://docs.aws.amazon.com/autoscaling/ec2/userguide/as-scaling-target-tracking.html)
+- David Yanacek, ["Implementing health checks"](https://aws.amazon.com/builders-library/implementing-health-checks/) (The Amazon Builders' Library)
+- Werner Vogels, ["10 Lessons from 10 Years of Amazon Web Services"](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html), lesson 2, *expect the unexpected*
+
+[← Lesson 5: S3](05-s3.qmd) · [Part 4: AWS](index.qmd) · [Lesson 7: Databases →](07-databases-rds-and-dynamodb.qmd)

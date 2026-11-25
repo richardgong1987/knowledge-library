@@ -10,6 +10,7 @@ const read = path => readFileSync(join(root, path), 'utf8');
 const PARTS = {
   ansible: { minimum: 12, lab: ['examples/README.md', 'examples/site.yml', 'examples/roles/lemonade_web/tasks/main.yml'] },
   'ci-cd': { minimum: 9, lab: ['examples/lemonade-stand/server.mjs', 'examples/lemonade-stand/server.test.mjs', 'examples/lemonade-stand/workflows/ci.yml'] },
+  aws: { minimum: 10, lab: ['examples/README.md', 'examples/localstack-demo.sh'] },
   gcp: { minimum: 9, lab: ['examples/README.md', 'examples/deploy-cloud-run.sh'] },
 };
 

@@ -1,0 +1,137 @@
+---
+title: "1. What the Cloud Is"
+description: "Renting computers instead of buying them: regions, availability zones, the shared responsibility model and pay-as-you-go pricing for the Lemonade Stand."
+---
+
+## The problem
+
+The Lemonade Stand needs two web servers and one database server. Buying three computers costs money before a single cup is sold. The computers sit in one cupboard, so a flood or a power cut takes the whole stand down. On a sunny Saturday two web servers are not enough. On a rainy Tuesday in November even one is too many.
+
+We want computers that we can get in a minute, pay for only while we use them, and place in more than one building.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Renting bikes instead of buying them"}
+Imagine you want to ride a bike on Saturdays. You could **buy** a bike: it costs a lot today, it sits in the garage all week, and you must fix the flat tyres yourself. Or you could **rent** one from a bike shop: you pay only for the hours you ride, and the shop fixes the brakes.
+
+AWS is a giant bike-rental shop for computers. It has shops in many **cities** (regions). Each city has several shops in **different neighbourhoods** with their own electricity (availability zones). If the lights go out in one neighbourhood, the other shops keep renting bikes.
+
+In 2006 Jeff Bezos called the boring work of running servers *"undifferentiated heavy lifting"*. Every company has to do it, but doing it well does not make anyone's lemonade taste better ([AWS blog, 2006](https://aws.amazon.com/blogs/aws/we_build_muck_s/)). AWS does the heavy lifting, so you can spend your time on the lemonade.
+
+Amazon's CTO Werner Vogels adds a warning from ten years of running AWS: *expect the unexpected*. Disks, routers and whole buildings will fail at some point ([10 Lessons from 10 Years of AWS](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html)). Renting in two neighbourhoods is how you stay open when one fails.
+:::
+
+## The concept, precisely
+
+**Cloud computing** means renting computing resources (servers, storage, databases, networks) over the internet. You get them on demand and pay for what you use.
+
+- A **region** is a geographic area with several data centres, for example `eu-west-2` (London). Regions are independent: what you create in London stays in London. At the time of writing AWS has 39 regions and 123 availability zones ([AWS Global Infrastructure](https://aws.amazon.com/about-aws/global-infrastructure/)).
+- An **availability zone (AZ)** is one or more data centres inside a region with **separate power, cooling and networking**. AZs in a region are linked by fast private connections. Every region has at least three. London's are `eu-west-2a`, `eu-west-2b` and `eu-west-2c`.
+- An **edge location** is a small site close to customers. CloudFront (the content delivery network) uses edge locations to serve files quickly. You do not run servers there.
+- An **account** holds your resources and receives one bill. It has a 12-digit **account ID**.
+- The **shared responsibility model** splits the security work. AWS secures **the cloud itself**: buildings, hardware and the virtualisation layer. You secure **what you put in the cloud**: your data, who can log in, your firewall rules and the operating system on your servers.
+- **Pay-as-you-go** means no upfront payment. On-Demand prices are per hour or per second. You can commit for one or three years for a discount, or use spare capacity (Spot) that AWS can take back at short notice.
+
+```text
+Region eu-west-2 (London)
+├── AZ eu-west-2a  ── data centre(s), own power and network
+├── AZ eu-west-2b  ── data centre(s), own power and network
+└── AZ eu-west-2c  ── data centre(s), own power and network
+        ▲
+        └─ fast private links between the AZs
+```
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| Region | a separate geographic group of data centres | pick the one closest to your customers; services and prices differ by region | `eu-west-2` |
+| Region code | the name the CLI and APIs use | `area-direction-number` | `us-east-1`, `eu-west-2` |
+| Availability zone | an isolated location inside a region | spread copies over **at least two** AZs | `eu-west-2a` |
+| AZ ID | the same physical AZ for every account | AZ *names* are shuffled per account, IDs are not | `euw2-az2` |
+| Edge location | a cache close to users | used by CloudFront and Route 53, not by your servers | — |
+| Account ID | identifies your account in every ARN | 12 digits; not a secret, but do not post it publicly | `123456789012` |
+| ARN | Amazon Resource Name, a unique ID for any resource | `arn:partition:service:region:account:resource` | `arn:aws:s3:::lemonade-menu-7f3a` |
+| On-Demand | pay per second or hour, stop any time | the default; most expensive per hour | t3.micro at \$0.0118/hour |
+| Savings Plan | discount for a 1- or 3-year spend commitment | only for steady, predictable use | — |
+| Spot | spare capacity at a large discount | can be reclaimed with a 2-minute warning | batch jobs, not the database |
+| Free plan | credits for new accounts | up to \$200, ends after 6 months | — |
+| `aws ec2 describe-regions` | lists regions enabled for you | add `--all-regions` to see opt-in regions too | `--query 'Regions[].RegionName'` |
+| `aws ec2 describe-availability-zones` | lists AZs of the current region | combine with `--region` | `--region eu-west-2` |
+
+## Worked example: where can the stand live?
+
+List the London availability zones:
+
+```bash
+aws ec2 describe-availability-zones --region eu-west-2 \
+  --query 'AvailabilityZones[].[ZoneName,ZoneId,State]' --output text
+```
+
+Output (LocalStack):
+
+```text
+eu-west-2a	euw2-az2	available
+eu-west-2b	euw2-az3	available
+eu-west-2c	euw2-az1	available
+```
+
+The output shows three AZs in one region. Notice that `eu-west-2a` is not `euw2-az1`: names are a per-account label, IDs are the physical location. The Lemonade plan uses `eu-west-2a` for `web1` and `eu-west-2b` for `web2`, so one building can fail without closing the stand.
+
+## Rules and conventions
+
+- **Choose one home region and stay in it.** The Lemonade Stand uses `eu-west-2` everywhere. Set it once with `aws configure` so you do not have to repeat `--region`.
+- **Use at least two AZs** for anything that must stay up: web servers, load balancers, databases.
+- **Never use the root user for daily work** (lesson 2 explains why and what to use instead).
+- **Tag everything** with the project name, for example `Project=lemonade`, so you can find it and see its cost later.
+- **Turn things off.** A stopped or deleted resource stops costing compute money; a forgotten one bills every hour.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Console or CLI set to a different region | "My server has disappeared!" | check the region selector or `aws configure get region` |
+| Everything in one AZ | the whole stand goes down when that AZ has a problem | run two copies in two AZs |
+| Thinking AWS patches your servers | an old, vulnerable operating system on EC2 | you patch EC2; AWS patches managed services such as RDS for you within your maintenance window |
+| Leaving test resources running | a surprise bill at the end of the month | budget alarm first (lesson 10); clean up after every lesson |
+
+## Mathematical Abstraction
+
+The core promise of the cloud is **pay only for the hours you use**. Every hourly service follows the same rule:
+
+$$
+C = r \cdot h
+$$
+
+where:
+
+- $C$ is the cost in US dollars;
+- $r$ is the hourly rate of the resource, in dollars per hour;
+- $h$ is the number of hours the resource runs. AWS uses $730$ hours for one month, because $24 \times 365 / 12 = 730$.
+
+Example: `web1` is a `t3.micro` in London at $r = \$0.0118$ per hour (Linux On-Demand, price at time of writing, November 2026). Running all month gives $C = 0.0118 \times 730 = \$8.614$. Two web servers cost $2 \times 8.614 = \$17.228 \approx \$17.23$ a month.
+
+When is buying cheaper than renting? Ignoring electricity, space and repairs, owning a machine that costs $P$ up front pays off after the **break-even** number of hours:
+
+$$
+h^{\ast} = \frac{P}{r}
+$$
+
+where:
+
+- $h^{\ast}$ is the break-even time in hours: below it renting is cheaper, above it buying is cheaper;
+- $P$ is the purchase price of a comparable small server, in dollars;
+- $r$ is the hourly rental rate, in dollars per hour, as above.
+
+Example: a small \$600 server against a `t3.micro`: $h^{\ast} = 600 / 0.0118 \approx 50{,}847$ hours, and $50{,}847 / 730 \approx 69.7$ months, nearly 6 years of running day and night. The extra Saturday server is needed only 8 hours on 52 Saturdays, so $h = 8 \times 52 = 416$ hours a year. Renting costs $C = 0.0118 \times 416 \approx \$4.91$ a year. That is far below $h^{\ast}$, so renting wins easily.
+
+This is a **simplified model**. Real ownership also pays for power, cooling, networking and people, which makes renting look even better for small, spiky workloads. Large, steady workloads can still be cheaper to own or to reserve.
+
+## References
+
+- AWS, [Regions and Availability Zones](https://docs.aws.amazon.com/global-infrastructure/latest/regions/aws-regions.html) and [AWS Global Infrastructure](https://aws.amazon.com/about-aws/global-infrastructure/)
+- AWS, [Shared Responsibility Model](https://aws.amazon.com/compliance/shared-responsibility-model/)
+- AWS, [Amazon EC2 On-Demand pricing](https://aws.amazon.com/ec2/pricing/on-demand/) and the [AWS Free Tier](https://aws.amazon.com/free/)
+- Jeff Barr, ["We Build Muck, So You Don't Have To"](https://aws.amazon.com/blogs/aws/we_build_muck_s/) (AWS blog, 27 September 2006), on Jeff Bezos' "undifferentiated heavy lifting" keynote
+- Werner Vogels, ["10 Lessons from 10 Years of Amazon Web Services"](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html) (All Things Distributed, March 2016)
+- Andreas Wittig and Michael Wittig, [*Amazon Web Services in Action*, 3rd edition](https://www.manning.com/books/amazon-web-services-in-action-third-edition) (Manning, 2023), chapter 1
+
+[← Part 4: AWS](index.qmd) · [Lesson 2: IAM and the AWS CLI →](02-iam-and-the-aws-cli.qmd)

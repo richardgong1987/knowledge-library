@@ -1,0 +1,213 @@
+---
+title: "5. S3: Storing Files"
+description: "Buckets and objects for the Lemonade menu: keys and prefixes, storage classes, durability, versioning, Block Public Access, bucket policies, a static website and presigned links."
+---
+
+## The problem
+
+The Lemonade menu is one HTML file and a few photos. Running a server just to hand out a file is overkill. We also want to keep last week's menu when someone overwrites it by mistake, keep old photos cheaply, and share a private price list with a supplier for five minutes only.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="A coat check that never loses a coat"}
+At a theatre you hand your coat to the **coat check** and get a ticket with a label. S3 is a giant coat check for files.
+
+- The coat check room is a **bucket**. Its name must be unique in the whole world, like `lemonade-menu-7f3a`.
+- Your coat is an **object**, and its ticket label is the **key**, like `archive/2026-11-menu.html`. The `/` is just part of the label: there are no real folders.
+- The coat check keeps your coat in **several buildings at once**, so it practically never loses one.
+- With **versioning** it keeps every coat you ever hung on the same hook, so a mistake can be undone.
+- A **presigned link** is a ticket you give a friend so they can collect one coat, and it stops working after five minutes.
+
+S3 opened on 14 March 2006, the day AWS counts as its birthday ([Werner Vogels, 2016](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html)). Andy Warfield, an S3 engineer, explains that it runs on *millions* of hard disks. Every change that could affect durability gets its own human "durability review", on top of the statistical model ([*Building and operating a pretty big storage system called S3*](https://www.allthingsdistributed.com/2023/07/building-and-operating-a-pretty-big-storage-system.html), 2023).
+:::
+
+## The concept, precisely
+
+- A **bucket** is a container in **one region**. Its name is 3–63 characters of lowercase letters, numbers, dots and hyphens, unique across all AWS accounts.
+- An **object** is data (up to 5 TB) plus metadata such as `Content-Type`. It is addressed by its **key**. Keys that share a beginning, like `archive/`, share a **prefix**.
+- **Storage classes** trade price against access speed:
+
+  | Class | For | API name |
+  | --- | --- | --- |
+  | Standard | files read often (the menu) | `STANDARD` |
+  | Intelligent-Tiering | unknown access patterns; S3 moves objects for you | `INTELLIGENT_TIERING` |
+  | Standard-IA | read rarely, needed quickly | `STANDARD_IA` |
+  | Glacier Flexible Retrieval | archives; minutes to hours to read back | `GLACIER` |
+  | Glacier Deep Archive | archives read perhaps once a year | `DEEP_ARCHIVE` |
+
+- **Durability** (will the file survive?) is designed for 99.999999999% ("eleven nines") a year. **Availability** (can I read it right now?) is 99.99% for Standard. Those are two different promises.
+- Reads are **strongly consistent**: after a successful write, the next read sees it.
+- **Versioning** keeps every version of every key. A delete adds a *delete marker* instead of destroying data.
+- **Block Public Access** is on by default for new buckets and blocks every public policy. New objects are encrypted at rest by default.
+- A **bucket policy** is a resource-based IAM policy (lesson 2) with a `Principal`.
+- **Static website hosting** serves a bucket over HTTP at `http://<bucket>.s3-website.<region>.amazonaws.com`. For HTTPS and a custom domain, put **CloudFront** in front and keep the bucket private.
+- A **presigned URL** carries a signature and an expiry, so anyone holding it can do exactly one thing for a limited time.
+- **Lifecycle rules** move or delete objects automatically after some days.
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `aws s3 mb` / `rb` | make / remove a bucket | `rb --force` empties it first | `aws s3 mb s3://lemonade-menu-7f3a` |
+| `aws s3 cp` | copy a file up or down | set `--content-type` for web files | `aws s3 cp index.html s3://lemonade-menu-7f3a/` |
+| `aws s3 ls` | list buckets or objects | `--recursive --human-readable --summarize` | `aws s3 ls s3://lemonade-menu-7f3a` |
+| `aws s3 sync` | make a bucket match a folder | `--delete` also removes extra files | `aws s3 sync site/ s3://lemonade-menu-7f3a/` |
+| `aws s3 website` | turn on website hosting | index and error documents | `--index-document index.html` |
+| `aws s3 presign` | create a time-limited link | `--expires-in` in seconds, at most 7 days | `--expires-in 300` |
+| `aws s3api put-public-access-block` | Block Public Access settings | keep all four `true` unless the bucket is a public website | `--public-access-block-configuration BlockPublicPolicy=false,...` |
+| `aws s3api put-bucket-policy` | attach the bucket policy | public read only for public content | `--policy file://menu-bucket-policy.json` |
+| `aws s3api put-bucket-versioning` | turn on versioning | cannot be turned fully off later, only suspended | `--versioning-configuration Status=Enabled` |
+| `aws s3api list-object-versions` | see old versions | restore by copying an old version back | `--prefix index.html` |
+| `aws s3api put-bucket-lifecycle-configuration` | automatic transitions and expiry | filter by prefix or tag | `--lifecycle-configuration file://lifecycle.json` |
+| `aws s3api head-object` | metadata without downloading | check `ContentType` | `--bucket lemonade-menu-7f3a --key index.html` |
+
+`aws s3` holds friendly, file-like commands. `aws s3api` is a one-to-one copy of the S3 API, covering every setting.
+
+## Worked example: the menu as a website
+
+Create the bucket, upload the menu, allow public reads and switch on website hosting:
+
+```bash
+aws s3 mb s3://lemonade-menu-7f3a
+aws s3 cp index.html s3://lemonade-menu-7f3a/index.html --content-type text/html
+aws s3api put-bucket-policy --bucket lemonade-menu-7f3a --policy file://menu-bucket-policy.json
+aws s3 website s3://lemonade-menu-7f3a --index-document index.html
+curl -i http://lemonade-menu-7f3a.s3-website.localhost.localstack.cloud:4566/
+```
+
+On real AWS, first allow a public policy on this one bucket with `put-public-access-block` (set `BlockPublicPolicy` and `RestrictPublicBuckets` to `false`), and use the address `http://lemonade-menu-7f3a.s3-website.eu-west-2.amazonaws.com`. The policy, [`examples/menu-bucket-policy.json`](examples/menu-bucket-policy.json), lets anyone *read* objects and nothing else:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "AnyoneCanReadTheMenu",
+    "Effect": "Allow",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::lemonade-menu-7f3a/*"
+  }]
+}
+```
+
+Output of `curl` (LocalStack, trimmed):
+
+```text
+HTTP/1.1 200 OK
+Content-Type: text/html
+
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Lemonade Stand</title></head>
+```
+
+Turn on versioning, upload the menu again, and look at the versions:
+
+```bash
+aws s3api put-bucket-versioning --bucket lemonade-menu-7f3a --versioning-configuration Status=Enabled
+aws s3 cp index.html s3://lemonade-menu-7f3a/index.html --content-type text/html
+aws s3api list-object-versions --bucket lemonade-menu-7f3a --prefix index.html \
+  --query 'Versions[].[Key,IsLatest,Size]' --output text
+```
+
+Output (LocalStack):
+
+```text
+index.html	True	233
+index.html	False	233
+```
+
+Both versions are kept. The older one can always be copied back. Archive old photos after 30 days with a lifecycle rule:
+
+```json
+{"Rules": [{"ID": "old-photos-to-glacier", "Status": "Enabled",
+  "Filter": {"Prefix": "photos/archive/"},
+  "Transitions": [{"Days": 30, "StorageClass": "GLACIER"}]}]}
+```
+
+By default S3 does not move objects smaller than 128 KB to another class, because the move would cost more than it saves. That is why the rule targets photos, not tiny HTML menus.
+
+Finally, give the supplier a five-minute link:
+
+```bash
+aws s3 presign s3://lemonade-menu-7f3a/index.html --expires-in 300
+```
+
+Output (LocalStack; the host is the lab's LocalStack container, and the signature is shortened):
+
+```text
+http://aws-lab-localstack:4566/lemonade-menu-7f3a/index.html?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=test%2F20261125%2Feu-west-2%2Fs3%2Faws4_request&X-Amz-Date=20261125T142332Z&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature=4d5b5a...
+```
+
+## Rules and conventions
+
+- **Keep buckets private by default.** Make a bucket public only when everything in it is meant for the whole world, like the menu. Better still, use CloudFront.
+- **One bucket per purpose** (`lemonade-menu-…`, `lemonade-backups-…`), with a random suffix for uniqueness.
+- **Turn on versioning** for anything you would be sad to lose, and add a lifecycle rule that expires old versions.
+- **Set `Content-Type`** on web files, or browsers will download the page instead of showing it.
+- **Use presigned URLs** to share private files. Never make a bucket public "for a minute".
+- **Use `aws s3 sync`** to publish a whole folder in one command.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Website endpoint with Block Public Access still on | `403 Forbidden` | adjust Block Public Access for that bucket, or use CloudFront with origin access control |
+| Policy `Resource` is the bucket ARN, not `bucket/*` | `403` on every object | objects are `arn:aws:s3:::lemonade-menu-7f3a/*` |
+| Bucket name already taken | `BucketAlreadyExists` | names are global: add a suffix |
+| Uploading the page without `Content-Type` | the browser downloads `index.html` | `--content-type text/html` |
+| Versioning on, no lifecycle rule | the bill slowly grows with every overwrite | expire noncurrent versions after 30 days |
+
+## Mathematical Abstraction
+
+Durability says how many objects you should expect to lose:
+
+$$
+L = n \cdot (1 - d)
+$$
+
+where:
+
+- $L$ is the expected number of objects lost per year;
+- $n$ is the number of objects stored;
+- $d$ is the designed annual durability, $0.99999999999$, so $1 - d = 10^{-11}$.
+
+Example: AWS's own illustration. With $n = 10{,}000{,}000 = 10^{7}$ objects, $L = 10^{7} \times 10^{-11} = 10^{-4}$ objects a year: on average one object every $1 / 10^{-4} = 10{,}000$ years. The Lemonade bucket with $n = 1{,}000$ objects gives $L = 10^{3} \times 10^{-11} = 10^{-8}$, one object in 100 million years. Hardware is not the real risk; *people* deleting or overwriting files are. That is what versioning protects against. Eleven nines is a design target of a statistical model, not a guarantee in a contract.
+
+With versioning, you pay for **every** version you keep:
+
+$$
+C = r \cdot \sum_{j=1}^{v} s_j
+$$
+
+where:
+
+- $C$ is the monthly storage cost in dollars;
+- $r$ is the price per GB-month (\$0.024 for Standard in London);
+- $v$ is the number of versions kept, and $j$ numbers them;
+- $s_j$ is the size of version $j$ in GB.
+
+Example: a 50 MB promotional video, re-uploaded every day. After 30 days $v = 30$, so $\sum s_j = 30 \times 0.05 = 1.5$ GB (taking 1 GB as 1,000 MB) and $C = 0.024 \times 1.5 = \$0.036$ a month. After a year $v = 365$: $365 \times 0.05 = 18.25$ GB and $C = \$0.44$. A lifecycle rule that deletes versions older than 30 days keeps $v \le 31$, so the cost stays near \$0.04 for good (price at time of writing, November 2026).
+
+A presigned link works only inside its time window:
+
+$$
+\text{valid}(t) \iff t_0 \le t < t_0 + e, \qquad e \le 604{,}800 \text{ s}
+$$
+
+where:
+
+- $t$ is the moment someone uses the link;
+- $t_0$ is the signing time, `X-Amz-Date` in the link;
+- $e$ is the lifetime in seconds, `X-Amz-Expires` in the link;
+- $604{,}800$ s is 7 days, the longest lifetime S3 accepts. Links signed with temporary credentials also stop when those credentials expire.
+
+Example: our link has $t_0 = $ 14:23:32 UTC on 25 November 2026 and $e = 300$ s, so it is valid until $t_0 + 300$ s $=$ 14:28:32 UTC. At 14:28:31 the supplier can download the menu. At 14:28:33 S3 answers `403 Request has expired`.
+
+## References
+
+- AWS, [Amazon S3 User Guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html), [Bucket naming rules](https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html) and [Storage classes](https://aws.amazon.com/s3/storage-classes/)
+- AWS, [Hosting a static website using Amazon S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/WebsiteHosting.html), [Blocking public access](https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html), [Versioning](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html) and [Sharing objects with presigned URLs](https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html)
+- AWS, [Amazon S3 FAQs](https://aws.amazon.com/s3/faqs/) (durability) and [Amazon S3 pricing](https://aws.amazon.com/s3/pricing/)
+- Andy Warfield, ["Building and operating a pretty big storage system called S3"](https://www.allthingsdistributed.com/2023/07/building-and-operating-a-pretty-big-storage-system.html) (All Things Distributed, July 2023)
+- Werner Vogels, ["10 Lessons from 10 Years of Amazon Web Services"](https://www.allthingsdistributed.com/2016/03/10-lessons-from-10-years-of-aws.html) (March 2016)
+
+[← Lesson 4: EC2](04-ec2.qmd) · [Part 4: AWS](index.qmd) · [Lesson 6: Load balancers and auto scaling →](06-load-balancers-and-auto-scaling.qmd)
