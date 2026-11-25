@@ -1,0 +1,230 @@
+---
+title: "1. What Google Cloud Is"
+description: "Organizations, folders, projects, billing accounts, regions and zones: where your things live in Google Cloud and who pays for them."
+---
+
+Before the Lemonade Stand can rent a single computer from Google, you need three answers. **Where** will its things live? **Who** pays for them? **Which city** are they in? This lesson answers all three.
+
+## The problem
+
+The Lemonade Stand runs on two laptops in the back room. When one laptop overheats on a hot day, the menu page disappears and customers walk away. The owner wants to rent Google's computers instead.
+
+The first time they open the Google Cloud console, they meet unfamiliar words: *organization*, *project ID*, *billing account*, *region*, *zone*. Every later lesson creates things inside these containers, so we learn them first.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Think of Google Cloud as a **huge school**.
+
+- The **organization** is the whole school.
+- **Folders** are the wings of the school, such as "Year 5" or "Science wing".
+- A **project** is one **classroom**. Each classroom has its own door key, its own supply cupboard and its own bill for pencils. Whatever you build for the Lemonade Stand goes into the classroom called `lemonade-stand-dev`.
+- **Resources** are the desks, books and computers inside the classroom.
+- The **billing account** is the parent who pays for the pencils. One parent can pay for several classrooms.
+
+The school has buildings in many cities. A **region** is a city, such as London. A **zone** is one separate building in that city, with its own power and cooling. If one building has a power cut, the other buildings in the same city keep working.
+
+Luiz André Barroso and Urs Hölzle, two of the engineers who designed Google's datacenters, wrote a famous book called [*The Datacenter as a Computer*](https://research.google/pubs/the-datacenter-as-a-computer-designing-warehouse-scale-machines/) (first edition 2009). Their big idea: a whole warehouse full of machines behaves like **one giant computer**. When you use Google Cloud, you rent a tiny slice of that giant computer.
+:::
+
+## The idea, precisely
+
+### The resource hierarchy
+
+Everything in Google Cloud sits in a tree:
+
+```text
+Organization  example.com                      (optional: needs Google Workspace or Cloud Identity)
+└── Folder    shop                             (optional: folders can nest up to 10 levels)
+    └── Project  lemonade-stand-dev            (required: every resource belongs to exactly one project)
+        ├── Cloud Run service   lemonade-web
+        ├── Storage bucket      lemonade-stand-dev-menu
+        └── VM                  web1
+```
+
+- An **organization** is the root. It exists only if you have a company domain managed by Google Workspace or Cloud Identity. A personal Gmail account has no organization, so its projects have no parent, and that is fine for learning.
+- A **folder** groups projects, for example by team or by environment (`dev`, `prod`).
+- A **project** is the basic container. APIs, billing, permissions and quotas are all switched on per project.
+- A **resource** is a real thing you create: a VM, a bucket, a database.
+
+Permissions set high in the tree flow **down** to everything below. Lesson 3 uses this.
+
+### A project has three names
+
+| Field | Example | Who chooses it | Unique? | Can change? |
+| --- | --- | --- | --- | --- |
+| Project name | `Lemonade Stand Dev` | you | no | yes |
+| Project ID | `lemonade-stand-dev` | you, at creation | yes, across **all** of Google Cloud | **never** |
+| Project number | `123456789012` | Google | yes | never |
+
+Project ID rules: 6 to 30 characters, made of lowercase letters, digits and hyphens. It must start with a letter and must not end with a hyphen. Once a project is deleted, its ID can never be used again. Commands almost always want the **project ID**.
+
+### Billing accounts
+
+A **billing account** holds a payment method. You **link** a project to it. A project with no billing account can only use free things. A project can link to at most one billing account, but one billing account can pay for many projects.
+
+### Regions and zones
+
+| Term | Example | Meaning |
+| --- | --- | --- |
+| Region | `europe-west2` | a geographic place (London) with several zones |
+| Zone | `europe-west2-a` | one isolated deployment area inside a region: its own power, cooling and network |
+
+Naming convention: a region is `<area>-<direction><number>`, and a zone is the region plus `-` and a letter. `europe-west2` has the zones `europe-west2-a`, `europe-west2-b` and `europe-west2-c`.
+
+### Global, regional and zonal resources
+
+Every resource has a **scope**. The scope tells you which outage can take it down.
+
+| Scope | Lives in | Lemonade examples |
+| --- | --- | --- |
+| Zonal | one zone | a VM (`web1`), a zonal persistent disk |
+| Regional | all zones of one region | a subnet, a Cloud Run service, a high-availability Cloud SQL instance |
+| Global | everywhere | a VPC network, firewall rules, VM images |
+
+The rule "a zonal resource dies with its zone" can be written in one line.
+
+$$
+\operatorname{up}(x, z) \iff Z(x) \setminus \lbrace z \rbrace \neq \emptyset
+$$
+
+where:
+
+- $x$ is one resource, such as the VM `web1`;
+- $z$ is the zone that has an outage;
+- $Z(x)$ is the set of zones the resource runs in;
+- $\setminus$ means "remove", so $Z(x) \setminus \lbrace z \rbrace$ is the set of zones still working for $x$;
+- $\emptyset$ is the empty set, so "$\neq \emptyset$" means "at least one zone is left";
+- $\iff$ means "exactly when";
+- $\operatorname{up}(x, z)$ is true when $x$ keeps working during the outage of $z$.
+
+Example: the zone `europe-west2-a` goes down.
+
+- `web1` is zonal: $Z(\texttt{web1}) = \lbrace a \rbrace$. Then $\lbrace a \rbrace \setminus \lbrace a \rbrace = \emptyset$, so $\operatorname{up}$ is false. The menu VM is down.
+- The Cloud Run service is regional: $Z(\texttt{lemonade-web}) = \lbrace a, b, c \rbrace$. Then $\lbrace a, b, c \rbrace \setminus \lbrace a \rbrace = \lbrace b, c \rbrace \neq \emptyset$, so $\operatorname{up}$ is true. Customers still see the menu.
+
+The model assumes that a regional service moves its work to the healthy zones by itself. Google-managed regional services such as Cloud Run do this. For your own VMs, you must place copies in two zones yourself.
+
+### APIs must be switched on
+
+Each Google Cloud product is an API with a service name, such as `run.googleapis.com`. A new project has most APIs **off**. If you call an API that is off, you get an error that names the service and says it "has not been used in project … or it is disabled". Enable it once per project.
+
+## Command reference
+
+| Command or flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `gcloud projects create` | creates a project | the ID is permanent; choose it carefully | `gcloud projects create lemonade-stand-dev --name="Lemonade Stand Dev"` |
+| `--folder`, `--organization` | puts the new project under a parent | needs an organization | `--folder=345678901234` |
+| `gcloud projects list` | lists projects you can see | add `--format` for scripts | `gcloud projects list --format="value(projectId)"` |
+| `gcloud projects describe` | shows ID, name, number, state | the number is a string | `gcloud projects describe lemonade-stand-dev` |
+| `gcloud projects delete` | shuts a project down | it is fully deleted after 30 days | `gcloud projects delete lemonade-stand-dev` |
+| `gcloud projects undelete` | brings back a shut-down project | only within those 30 days | `gcloud projects undelete lemonade-stand-dev` |
+| `gcloud billing accounts list` | shows billing accounts you can use | IDs look like `XXXXXX-XXXXXX-XXXXXX` | `gcloud billing accounts list` |
+| `gcloud billing projects link` | links a project to a billing account | needed before paid APIs work | `gcloud billing projects link lemonade-stand-dev --billing-account=01A2B3-C4D5E6-F7A8B9` |
+| `gcloud services enable` | turns an API on for the project | enable only what you use | `gcloud services enable run.googleapis.com` |
+| `gcloud services list --enabled` | shows the APIs that are on | `--available` shows all | `gcloud services list --enabled` |
+| `gcloud compute regions list` | lists regions | needs the Compute API enabled | `gcloud compute regions list` |
+| `gcloud compute zones list` | lists zones | filter by region | `gcloud compute zones list --filter="region:europe-west2"` |
+| `gcloud resource-manager folders create` | creates a folder | needs an organization | `gcloud resource-manager folders create --display-name=shop --organization=987654321098` |
+
+## Worked example: a home for the Lemonade Stand
+
+```bash
+gcloud projects create lemonade-stand-dev --name="Lemonade Stand Dev"
+gcloud billing projects link lemonade-stand-dev --billing-account=01A2B3-C4D5E6-F7A8B9
+gcloud services enable compute.googleapis.com --project=lemonade-stand-dev
+gcloud compute zones list --filter="region:europe-west2" --project=lemonade-stand-dev
+```
+
+Illustrative output of the last two commands (no account was used to write this book, but the format matches the real CLI):
+
+```text
+$ gcloud projects describe lemonade-stand-dev
+createTime: '2026-11-25T09:00:00.000Z'
+lifecycleState: ACTIVE
+name: Lemonade Stand Dev
+projectId: lemonade-stand-dev
+projectNumber: '123456789012'
+
+$ gcloud compute zones list --filter="region:europe-west2"
+NAME            REGION        STATUS  NEXT_MAINTENANCE  TURNDOWN_DATE
+europe-west2-c  europe-west2  UP
+europe-west2-b  europe-west2  UP
+europe-west2-a  europe-west2  UP
+```
+
+Read it like this: one project, one ID you chose, one number Google chose, and three London buildings to put things in.
+
+When you are done experimenting, one command removes **everything** in the project:
+
+```bash
+gcloud projects delete lemonade-stand-dev
+```
+
+## Rules and conventions
+
+- One project per environment: `lemonade-stand-dev`, `lemonade-stand-prod`. Deleting a project is the cleanest way to clean up.
+- Put the environment at the end of the project ID, because the ID is permanent and globally unique.
+- Pick one region near your customers and keep it everywhere. This book uses `europe-west2` (London).
+- Treat zones as failure domains. Anything that must survive a zone outage needs two zones or a regional service.
+- Enable only the APIs you use. Each enabled API is something else that can be called in the project.
+- Link a billing account and create a **budget alert** (lesson 9) before creating paid resources.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Using the project **name** where an ID is expected | `The project property is set to the empty string` or `project not found` | use `projectId`, e.g. `lemonade-stand-dev` |
+| Choosing an ID that is already taken | `The project ID you specified is already in use by another project` | add a suffix: `lemonade-stand-dev-7f3` |
+| Forgetting to link billing | `Billing account for project … is not found` when enabling paid APIs | `gcloud billing projects link …` |
+| Calling an API that is off | `… has not been used in project 123456789012 before or it is disabled` | `gcloud services enable <service>` |
+| One VM in one zone for something important | the menu disappears during a zone outage | use a regional service (Cloud Run) or VMs in two zones |
+| Mixing up region and zone flags | `Invalid value for [--zone]: europe-west2` | zones end with a letter: `europe-west2-a` |
+
+## Mathematical Abstraction
+
+The hierarchy is a **tree**, so every resource has exactly one parent, and the chain of parents ends at the top. That chain is the resource's path.
+
+$$
+\operatorname{path}(r) = \big( r,\ \operatorname{parent}(r),\ \operatorname{parent}(\operatorname{parent}(r)),\ \dots \big)
+$$
+
+where:
+
+- $r$ is any resource, folder or project;
+- $\operatorname{parent}(r)$ is the container directly above $r$ (a project's parent is a folder or the organization; a project with no organization has no parent);
+- the list stops when it reaches a node with no parent;
+- $\operatorname{path}(r)$ is the whole chain from $r$ up to the top.
+
+Example: $\operatorname{path}(\texttt{lemonade-web}) = (\texttt{lemonade-web},\ \texttt{lemonade-stand-dev},\ \texttt{shop},\ \texttt{example.com})$. That is 4 nodes: the service, its project, its folder and the organization. Lesson 3 shows that permissions on any of these 4 nodes apply to the service.
+
+Billing is a **function** from projects to billing accounts:
+
+$$
+\beta : P \to B \cup \lbrace \bot \rbrace, \qquad \operatorname{canPay}(p) \iff \beta(p) \neq \bot
+$$
+
+where:
+
+- $P$ is the set of your projects and $B$ is the set of billing accounts;
+- $\beta(p)$ is the billing account linked to project $p$;
+- $\bot$ ("bottom") stands for "no billing account linked";
+- "$\to$" says that each project maps to exactly **one** value, so a project never has two billing accounts;
+- $\operatorname{canPay}(p)$ is true when the project can use paid services.
+
+Example: $\beta(\texttt{lemonade-stand-dev}) = \texttt{01A2B3-C4D5E6-F7A8B9}$, which is not $\bot$, so paid services work. A brand-new project `lemonade-stand-test` that nobody linked has $\beta = \bot$, so `gcloud services enable run.googleapis.com` fails there. Two projects can map to the same account: $\beta(\texttt{lemonade-stand-dev}) = \beta(\texttt{lemonade-stand-prod})$ is allowed.
+
+The zone rule from earlier completes the picture: the tree decides **who** controls a resource, $\beta$ decides **who pays**, and $Z(x)$ decides **which outages** it survives.
+
+## References
+
+- Google Cloud, [Resource hierarchy](https://cloud.google.com/resource-manager/docs/cloud-platform-resource-hierarchy)
+- Google Cloud, [Create and manage projects](https://cloud.google.com/resource-manager/docs/creating-managing-projects)
+- Google Cloud, [Regions and zones](https://cloud.google.com/compute/docs/regions-zones)
+- Google Cloud, [Global, regional and zonal resources](https://cloud.google.com/compute/docs/regions-zones/global-regional-zonal-resources)
+- Google Cloud, [Manage billing for projects](https://cloud.google.com/billing/docs/how-to/modify-project)
+- Luiz André Barroso and Urs Hölzle, [*The Datacenter as a Computer: An Introduction to the Design of Warehouse-Scale Machines*](https://research.google/pubs/the-datacenter-as-a-computer-designing-warehouse-scale-machines/), Morgan & Claypool, 2009. The third edition (Springer, 2019, with Parthasarathy Ranganathan) is [open access](https://link.springer.com/10.1007/978-3-031-01761-2).
+
+---
+
+[Part 5 index](index.qmd) · Next: [2. The gcloud CLI →](02-the-gcloud-cli.qmd)

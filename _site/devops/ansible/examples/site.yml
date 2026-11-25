@@ -1,0 +1,18 @@
+- name: Configure the web servers
+  hosts: web
+  gather_facts: false
+  roles:
+    - lemonade_web
+
+- name: Configure the database server
+  hosts: db
+  gather_facts: false
+  tasks:
+    - name: Create the database folder
+      ansible.builtin.file:
+        path: "{{ lab_root }}/{{ inventory_hostname }}"
+        state: directory
+    - name: Write the database settings
+      ansible.builtin.copy:
+        content: "port = {{ db_port }}\n"
+        dest: "{{ lab_root }}/{{ inventory_hostname }}/db.conf"
