@@ -165,7 +165,7 @@ A step cannot change the YAML, but it can write to special files whose paths Git
 | `GITHUB_OUTPUT` | Sets a step output, read as `steps.<id>.outputs.<name>` | One `name=value` per line; step needs an `id` | `echo "tag=v1.2.0" >> "$GITHUB_OUTPUT"` |
 | `GITHUB_ENV` | Sets an environment variable for **later** steps of the job | Not visible in the same step | `echo "KUBECONFIG=$RUNNER_TEMP/kc" >> "$GITHUB_ENV"` |
 | `GITHUB_PATH` | Adds a folder to `PATH` for later steps | One folder per line | `echo "$HOME/.local/bin" >> "$GITHUB_PATH"` |
-| `GITHUB_STEP_SUMMARY` | Adds Markdown to the run's summary page | Keep it short and useful | `echo "Deployed \`$IMAGE\`" >> "$GITHUB_STEP_SUMMARY"` |
+| `GITHUB_STEP_SUMMARY` | Adds Markdown to the run's summary page | Keep it short and useful | `echo "Deployed $IMAGE" >> "$GITHUB_STEP_SUMMARY"` |
 
 Common read-only variables: `GITHUB_SHA` (commit), `GITHUB_REF` (for example `refs/heads/main`), `GITHUB_REPOSITORY` (`owner/repo`), `GITHUB_WORKSPACE` (checkout folder), `RUNNER_TEMP` (a scratch folder emptied after each job).
 
@@ -265,7 +265,7 @@ echo $?     # 0 means no problems found
 A matrix with keys $A_1, \dots, A_k$ creates one job per combination, the **Cartesian product** of their value lists, minus excluded combinations, plus new combinations from `include`:
 
 $$
-|J| = \prod_{i=1}^{k} |A_i| \; - \; |X| \; + \; |I_{\text{new}}|
+\lvert J \rvert = \prod_{i=1}^{k} \lvert A_i \rvert \; - \; \lvert X \rvert \; + \; \lvert I_{\text{new}} \rvert
 $$
 
 where
@@ -280,7 +280,7 @@ where
 **Example.** `os: [ubuntu-latest, windows-latest]` and `node: [24, 26]`, with `exclude: [{os: windows-latest, node: 24}]` and `include: [{os: macos-latest, node: 26}]`:
 
 $$
-|J| = (2 \times 2) - 1 + 1 = 4 - 1 + 1 = 4 \text{ jobs.}
+\lvert J \rvert = (2 \times 2) - 1 + 1 = 4 - 1 + 1 = 4 \text{ jobs.}
 $$
 
 ### Waves with `max-parallel`

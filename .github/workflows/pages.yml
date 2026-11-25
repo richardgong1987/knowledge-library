@@ -64,6 +64,8 @@ jobs:
         run: python3 finance/check_curriculum.py
       - name: Verify DevOps book lessons
         run: node --test devops/check-book.test.mjs
+      - name: Test the CI/CD example application
+        run: node --test devops/ci-cd/examples/lemonade-stand/
       - name: Run the Ansible lab twice and prove the second run changes nothing
         working-directory: devops/ansible/examples
         run: |

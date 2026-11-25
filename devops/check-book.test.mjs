@@ -9,6 +9,7 @@ const read = path => readFileSync(join(root, path), 'utf8');
 // Each published part: the minimum lesson count (so a deleted lesson is noticed) and the lab files it must ship.
 const PARTS = {
   ansible: { minimum: 12, lab: ['examples/README.md', 'examples/site.yml', 'examples/roles/lemonade_web/tasks/main.yml'] },
+  'ci-cd': { minimum: 9, lab: ['examples/lemonade-stand/server.mjs', 'examples/lemonade-stand/server.test.mjs', 'examples/lemonade-stand/workflows/ci.yml'] },
 };
 
 const LESSON_HEADINGS = [
@@ -33,10 +34,19 @@ function displayFormulas(prose) {
   const parts = prose.split('$$');
   const formulas = [];
   for (let i = 1; i < parts.length - 1; i += 2) {
-    formulas.push({ formula: parts[i].trim(), after: parts.slice(i + 1).join('$$') });
+    formulas.push({
+      formula: parts[i].trim(),
+      before: parts.slice(0, i).join('$$').slice(-1500),
+      after: parts.slice(i + 1).join('$$'),
+    });
   }
   return formulas;
 }
+
+// A display equation that sits inside a worked example (the last marker before it is "Example",
+// not a "where" list) is the numeric substitution itself, not a new formula needing its own symbols.
+const lastMatch = (text, regex) => Math.max(-1, ...[...text.matchAll(regex)].map(match => match.index));
+const isWorkedSubstitution = before => lastMatch(before, /\bexample\b/gi) > lastMatch(before, /\bwhere\b/gi);
 
 test('the book landing page links every part and explains the notation', () => {
   const landing = read('devops/index.qmd');
@@ -60,11 +70,12 @@ for (const [part, { minimum }] of Object.entries(PARTS)) {
       assert.ok(read(partIndex).includes(lesson.split('/').pop()), `Not linked from part index: ${lesson}`);
       assert.ok(text.length > 6000, `Too shallow (${text.length} chars): ${lesson}`);
       for (const heading of LESSON_HEADINGS) assert.ok(text.includes(heading), `${lesson} lacks "${heading}"`);
-      assert.ok(/\| *What it does *\|/.test(text), `No keyword reference table: ${lesson}`);
+      assert.ok(/\| *What it (does|means|measures) *\|/.test(text), `No keyword reference table: ${lesson}`);
 
       const formulas = displayFormulas(stripFencedCode(text));
       assert.ok(formulas.length > 0, `No display formula: ${lesson}`);
-      for (const { formula, after } of formulas) {
+      for (const { formula, before, after } of formulas) {
+        if (isWorkedSubstitution(before)) continue;
         const label = `${lesson}: $$${formula.slice(0, 40)}…`;
         assert.ok(/\bwhere\b/i.test(after.slice(0, 400)), `Symbols not explained right after ${label}`);
         assert.ok(/\bexample\b/i.test(after.slice(0, 2500)), `No numeric example after ${label}`);

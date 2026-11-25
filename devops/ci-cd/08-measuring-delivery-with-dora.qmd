@@ -1,0 +1,183 @@
+---
+title: "Measuring Delivery with DORA"
+description: "The DORA software delivery metrics and error budgets, defined precisely and computed for one month of Lemonade Stand deployments."
+---
+
+## The problem
+
+After two months of CI/CD, the shop owner asks: "Are we actually better now?" Opinions differ. Ana feels faster; Ben worries that more deployments mean more breakages. Without numbers, the team argues in circles.
+
+They need a small set of measurements that show both **speed** (how quickly changes reach customers) and **stability** (how often those changes hurt customers), and a rule for when to slow down.
+
+::: {.callout-tip}
+## Explain it like I'm ten
+
+A **school report card** does not have one grade. It has a few subjects, so you can see what you are good at and what needs work. DORA (DevOps Research and Assessment) made a report card for software teams after surveying tens of thousands of people over many years. Nicole Forsgren, Jez Humble and Gene Kim explain it in the book *Accelerate* (2018).
+
+The surprising finding: teams that are **fast** are usually also **steady**. Like a good bike rider, going at a sensible speed makes you *more* stable, not less. Small, frequent changes are both quicker and safer than big, rare ones.
+
+**Error budget.** Imagine your parents say: "This month you may be late for dinner 40 minutes in total." Being late sometimes is fine, but once the 40 minutes are used up, you must come home early for the rest of the month. Google's *Site Reliability Engineering* book calls this an [error budget](https://sre.google/sre-book/embracing-risk/): a service may fail a little, and when the allowance is spent, the team stops taking risks and fixes reliability first.
+
+**A warning.** The economist Charles Goodhart noticed that numbers stop telling the truth once people are rewarded for them. The anthropologist Marilyn Strathern put it as: "When a measure becomes a target, it ceases to be a good measure." Use these numbers to learn, not to grade people.
+:::
+
+## The metrics, precisely
+
+DORA's current guide lists five software delivery metrics, in two groups. The names below are the ones on [dora.dev](https://dora.dev/guides/dora-metrics-four-keys/); older articles call recovery time "MTTR" or "time to restore service".
+
+| Metric | What it measures | Group | Rule / convention | Lemonade example |
+| --- | --- | --- | --- | --- |
+| **Change lead time** | Time from a commit to that commit running in production | Throughput | Use the median, not the mean | Commit 10:00, live 14:00 → 4 hours |
+| **Deployment frequency** | How often changes are deployed to production | Throughput | Count production deployments per day or week | 12 deployments in 30 days |
+| **Failed deployment recovery time** | Time to recover after a deployment fails and needs immediate action | Throughput | From noticing the failure to users being fine | Rollback finished 12 minutes later |
+| **Change fail rate** | Share of deployments that need immediate intervention (rollback, hotfix) | Instability | Count failed deployments, not all incidents | 2 of 12 → 16.7% |
+| **Deployment rework rate** | Share of deployments that were unplanned, made because of a production incident | Instability | Hotfix deployments count; planned ones do not | 1 hotfix of 12 → 8.3% |
+| **SLO** | Service level objective: the reliability target | Reliability | Agree it with the business | 99.9% of minutes available |
+| **Error budget** | The amount of failure the SLO allows | Reliability | Spend it on change; freeze risky work when it is gone | 43.2 minutes a month |
+
+### Where the data comes from in GitHub
+
+| Data | Where | Example |
+| --- | --- | --- |
+| Commit time | git history | `git log -1 --format=%cI <sha>` |
+| Production deployment time | Environment deployment history | `gh api 'repos/{owner}/{repo}/deployments?environment=production'` |
+| Pipeline runs and results | Actions run history | `gh run list --workflow ci.yml --branch main --json conclusion,createdAt,headSha` |
+| Failures and recoveries | Incident tickets, rollback runs | runs of `deploy.yml` started by hand |
+
+## A worked example: November at the Lemonade Stand
+
+Here are all 12 production deployments in a 30-day month. D5 failed and was rolled back. D9 failed and was fixed by a hotfix, D10, which is an *unplanned* deployment.
+
+| Deployment | Change lead time (hours) | Failed? | Recovery (minutes) | Unplanned? |
+| --- | --- | --- | --- | --- |
+| D1 | 3 | no | — | no |
+| D2 | 5 | no | — | no |
+| D3 | 2 | no | — | no |
+| D4 | 26 | no | — | no |
+| D5 | 4 | **yes**, rolled back | 12 | no |
+| D6 | 6 | no | — | no |
+| D7 | 3 | no | — | no |
+| D8 | 50 | no | — | no |
+| D9 | 2 | **yes**, hotfix D10 | 25 | no |
+| D10 | 1 | no | — | **yes** |
+| D11 | 4 | no | — | no |
+| D12 | 8 | no | — | no |
+
+Computing the five metrics from this table gives:
+
+```text
+deployment frequency: 0.40 per day
+change lead time (median): 4 hours
+change fail rate: 16.7 %
+failed deployment recovery time (median): 18.5 minutes
+deployment rework rate: 8.3 %
+```
+
+The section below derives each number by hand.
+
+**Reading the result.** The team is quick from commit to production (a median of 4 hours) and recovers quickly (under 20 minutes). One deployment in six fails, which is the number to improve. The two failures were a missing price and a broken query string. Both could have been caught by tests, so the team adds two unit tests to the pipeline instead of slowing down deployments.
+
+## Rules and conventions
+
+- Measure the **team's system**, never individuals.
+- Use medians for times; a few slow changes should not hide the typical case.
+- Count only **production** deployments for frequency and failure rate.
+- Agree on what "failed" means before measuring (for example: needed a rollback or hotfix within 24 hours).
+- Look at speed and stability **together**; improving one by wrecking the other is not progress.
+- Set an SLO with the business, and write down what happens when the error budget runs out.
+- Review the numbers monthly and pick one thing to improve.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Using the mean lead time | One stuck change makes the team look slow | Use the median |
+| Counting staging deployments | Frequency looks great, customers see nothing new | Production only |
+| Leaderboards per developer | People split commits and avoid risky but valuable work | Team-level metrics only (Goodhart's law) |
+| Counting every incident as a change failure | A data-centre outage counts against the team's deployments | Only failures caused by a deployment |
+| No error-budget policy | Budget spent, nobody changes behaviour | Write the policy: freeze features, fix reliability |
+| Treating DORA bands as a target | Gaming numbers instead of improving | Compare with your own last month |
+
+## Mathematical Abstraction
+
+Let $\mathcal{D}$ be the set of production deployments in a window of $W$ days, and $\mathcal{F} \subseteq \mathcal{D}$ the failed ones. For a deployment $d$, let $c_d$ be the commit time and $p_d$ the time it went live.
+
+### 1. Deployment frequency
+
+$$
+\text{DF} = \frac{|\mathcal{D}|}{W}
+$$
+
+where $|\mathcal{D}|$ is the number of production deployments, $W$ is the window length in days, and DF is deployments per day.
+
+**Example.** $\text{DF} = \frac{12}{30} = 0.40$ per day, which is $0.40 \times 7 = 2.8$ per week.
+
+### 2. Change lead time
+
+$$
+\text{LT} = \operatorname{median}_{d \in \mathcal{D}} \left( p_d - c_d \right)
+$$
+
+where $p_d - c_d$ is how long deployment $d$'s commit waited before going live (hours), and the median is the middle value after sorting (for an even count, the average of the two middle values).
+
+**Example.** Sorted lead times: $1, 2, 2, 3, 3, \mathbf{4}, \mathbf{4}, 5, 6, 8, 26, 50$. There are 12 values, so the median is the average of the 6th and 7th: $\frac{4 + 4}{2} = 4$ hours. The mean would be $\frac{114}{12} = 9.5$ hours, pulled up by D4 and D8; that is why the median is used.
+
+### 3. Change fail rate
+
+$$
+\text{CFR} = \frac{|\mathcal{F}|}{|\mathcal{D}|}
+$$
+
+where $|\mathcal{F}|$ is the number of deployments that needed immediate intervention.
+
+**Example.** D5 and D9 failed: $\text{CFR} = \frac{2}{12} = 0.167 = 16.7\%$.
+
+### 4. Failed deployment recovery time
+
+$$
+\text{FDRT} = \operatorname{median}_{d \in \mathcal{F}} \left( r_d - f_d \right)
+$$
+
+where $f_d$ is when the failure of deployment $d$ was detected and $r_d$ is when service was restored (minutes).
+
+**Example.** Recovery times $12$ and $25$ minutes; two values, so the median is $\frac{12 + 25}{2} = 18.5$ minutes.
+
+### 5. Deployment rework rate
+
+$$
+\text{DRR} = \frac{|\mathcal{U}|}{|\mathcal{D}|}
+$$
+
+where $\mathcal{U} \subseteq \mathcal{D}$ is the set of unplanned deployments made because of a production incident.
+
+**Example.** Only the hotfix D10: $\text{DRR} = \frac{1}{12} = 0.083 = 8.3\%$.
+
+### 6. Error budget
+
+$$
+B = (1 - S) \cdot T
+$$
+
+where
+
+- $S$ is the SLO as a fraction (for example $0.999$ for 99.9%);
+- $T$ is the length of the window in minutes;
+- $B$ is the error budget: the minutes of failure the SLO allows in that window.
+
+**Example.** $S = 0.999$ over 30 days: $T = 30 \times 24 \times 60 = 43{,}200$ minutes, so
+
+$$
+B = (1 - 0.999) \times 43{,}200 = 0.001 \times 43{,}200 = 43.2 \text{ minutes.}
+$$
+
+November's two failures cost $12 + 25 = 37$ minutes (assuming the stand was fully down while they lasted), so the team spent $\frac{37}{43.2} = 85.6\%$ of the budget and has $43.2 - 37 = 6.2$ minutes left. Their error-budget policy says: above 75% spent, only bug fixes and reliability work ship until the month ends.
+
+## References
+
+- Nicole Forsgren, Jez Humble and Gene Kim, *Accelerate: The Science of Lean Software and DevOps* (IT Revolution, 2018).
+- DORA, [DORA's software delivery performance metrics](https://dora.dev/guides/dora-metrics-four-keys/) and [A history of DORA's software delivery metrics](https://dora.dev/guides/dora-metrics/history/).
+- Betsy Beyer, Chris Jones, Jennifer Petoff and Niall Richard Murphy (eds.), *Site Reliability Engineering* (O'Reilly, 2016), chapter 3, [Embracing Risk](https://sre.google/sre-book/embracing-risk/).
+- Marilyn Strathern, "'Improving ratings': audit in the British University system", *European Review* 5(3), 1997, the source of the common wording of Goodhart's law.
+- GitHub Docs, [REST API endpoints for deployments](https://docs.github.com/en/rest/deployments/deployments).
+
+[← Previous: Deployment Strategies](07-deployment-strategies.qmd) · [Part index](index.qmd) · [Next: The End-to-End Lemonade Pipeline →](09-end-to-end-lemonade-pipeline.qmd)

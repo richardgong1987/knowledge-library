@@ -1,0 +1,235 @@
+---
+title: "Deployment Strategies"
+description: "Recreate, rolling, blue-green, canary, feature flags and dark launches: how to change the running Lemonade Stand without downtime and with a small blast radius."
+---
+
+## The problem
+
+The pipeline can now build a tested image. The last step, *replacing the running version*, is where customers notice mistakes. The Lemonade team's first attempt was "stop everything, start the new version":
+
+- For about a minute the stand showed errors to everyone (downtime).
+- When the new version had a pricing bug, **every** customer saw it at once.
+- Going back meant another full stop-and-start.
+
+A deployment strategy answers two questions: **how do we swap versions without closing the stand**, and **how few customers see a bad version before we notice?**
+
+::: {.callout-tip}
+## Explain it like I'm ten
+
+**Rolling update.** The stand has three cups on the table. You replace them **one at a time**: put down one new cup, take away one old cup, and repeat. Customers can always grab a cup.
+
+**Blue-green.** You have **two tables**, a blue one and a green one. Customers use the blue table. You set up the new recipe on the green table, taste it, and then turn the big arrow sign to point at green. If something tastes wrong, you turn the sign back. Martin Fowler describes this in [Blue Green Deployment](https://martinfowler.com/bliki/BlueGreenDeployment.html) (2010).
+
+**Canary.** Long ago, coal miners carried a canary bird into the mine. If the air went bad, the canary felt it first, and the miners got out in time. A **canary release** gives the new version to a few customers first; if they have trouble, almost everyone is safe. See [Canary Release](https://martinfowler.com/bliki/CanaryRelease.html) on martinfowler.com (Danilo Sato, 2014).
+
+**Feature flag.** An electrician can wire a new lamp today and leave it **switched off**. On Friday, you flick the switch. If the lamp flickers, you flick it off again; no electrician needed. Pete Hodgson's [Feature Toggles (aka Feature Flags)](https://martinfowler.com/articles/feature-toggles.html) explains the kinds of switches teams use.
+
+**Dark launch.** Before Facebook showed its Chat window to anyone in 2008, people's browsers quietly sent pretend chat traffic to the new servers, so the engineers could watch the load with nobody seeing the feature. Then they "turned the lights on". Eugene Letuchy tells the story in [Facebook Chat](https://engineering.fb.com/2008/05/13/web-development/facebook-chat/).
+:::
+
+## The strategies, precisely
+
+| Strategy | What it does | Rule / convention | Lemonade on k3s |
+| --- | --- | --- | --- |
+| **Recreate** | Stop all old pods, then start new ones | Only when two versions must never run together | `strategy: { type: Recreate }` |
+| **Rolling update** | Replace pods a few at a time; old and new run together briefly | The Kubernetes default; needs a readiness probe | `maxSurge: 1`, `maxUnavailable: 0` |
+| **Blue-green** | Run the new version fully beside the old; switch all traffic at once | Needs double capacity during the switch | Two Deployments; flip the Service selector |
+| **Canary** | Send a small share of traffic to the new version, watch, then widen | Decide the metrics and the stop rule in advance | 1 canary pod beside 9 stable pods |
+| **Feature flag** | Ship code switched off; turn behaviour on at runtime | Remove a flag once the feature is fully on | `FLAG_MINT=on` |
+| **Dark launch** | Run the new code path with real traffic but hide the result from users | Watch load and errors before revealing | compute the new price, log it, show the old one |
+| **Rollback** | Return to the previous version | Must be fast and rehearsed | `kubectl rollout undo` |
+| **Roll forward** | Fix the bug and deploy a new version instead of going back | Only if the pipeline is fast | a one-line fix through CI |
+
+### Kubernetes knobs for a rolling update
+
+These belong to the Deployment from [Part 2](../k3s/index.qmd):
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `strategy.type` | `RollingUpdate` (default) or `Recreate` | Rolling for stateless web apps | `type: RollingUpdate` |
+| `maxSurge` | How many pods *above* `replicas` may exist during the update | Number or percentage | `maxSurge: 1` |
+| `maxUnavailable` | How many pods *below* `replicas` may be not ready | `0` for "never lose capacity" | `maxUnavailable: 0` |
+| `readinessProbe` | Pod gets traffic only after this check passes | Without it, "running" counts as "ready" | `httpGet: { path: /health, port: 8080 }` |
+| `minReadySeconds` | A new pod must stay ready this long before it counts | Catches pods that crash after a few seconds | `minReadySeconds: 10` |
+| `progressDeadlineSeconds` | Mark the rollout failed if it makes no progress for this long | Default 600 | `progressDeadlineSeconds: 120` |
+| `revisionHistoryLimit` | How many old ReplicaSets to keep for rollback | Default 10 | `revisionHistoryLimit: 5` |
+| `kubectl rollout status` | Waits until the rollout finishes or fails | The pipeline's deploy gate | `kubectl -n lemonade rollout status deploy/lemonade-web` |
+| `kubectl rollout history` | Lists revisions | Check before undoing | `kubectl -n lemonade rollout history deploy/lemonade-web` |
+| `kubectl rollout undo` | Goes back one revision (or `--to-revision=N`) | The fast rollback | `kubectl -n lemonade rollout undo deploy/lemonade-web` |
+| `kubectl rollout pause` / `resume` | Freeze and continue a rollout | Manual canary checkpoints | `kubectl -n lemonade rollout pause deploy/lemonade-web` |
+
+## Worked examples on the Lemonade Stand
+
+### 1. Rolling update (what the pipeline does)
+
+The lab's [`k8s/deployment.yaml`](examples/lemonade-stand/k8s/deployment.yaml) says "keep 3 pods, add at most 1 extra, never drop below 3 ready":
+
+```yaml
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    spec:
+      containers:
+        - name: web
+          readinessProbe:
+            httpGet: { path: /health, port: 8080 }
+```
+
+When the pipeline applies a new image, k3s starts one new pod (4 pods). Once it passes `/health`, k3s stops one old pod (3 pods), and repeats three times. `kubectl rollout status` waits for the end, and the deploy workflow rolls back if it fails:
+
+```bash
+kubectl -n lemonade rollout status deployment/lemonade-web --timeout=180s \
+  || kubectl -n lemonade rollout undo deployment/lemonade-web
+```
+
+If the new image cannot start at all (a wrong tag, a crash on boot), its pod never becomes ready. Because `maxUnavailable: 0`, all three old pods keep serving the whole time, so customers never notice. The rollout times out and `undo` cleans up.
+
+### 2. Canary with plain Kubernetes
+
+A Service sends traffic to every ready pod whose labels match its selector. Add a second, one-pod Deployment with the same `app: lemonade` label and the new image:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: lemonade-web-canary, namespace: lemonade }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: lemonade, track: canary } }
+  template:
+    metadata: { labels: { app: lemonade, track: canary } }
+    spec:
+      containers:
+        - { name: web, image: "ghcr.io/acme/lemonade-stand@sha256:NEW" }
+```
+
+Scale the stable Deployment to 9 and about 1 request in 10 reaches the canary. (Give the stable Deployment a `track: stable` label in its selector too, as the Kubernetes docs' canary example does, so the two Deployments' selectors never overlap.) Watch its errors for 30 minutes. If they look healthy, roll the new image out to the stable Deployment and delete the canary; if not, delete the canary. Traffic is split per connection, not per user, so this is a rough canary; a service mesh or an ingress with traffic weights gives precise percentages.
+
+### 3. Blue-green by switching the Service selector
+
+Run `lemonade-blue` (old) and `lemonade-green` (new) Deployments side by side, labelled `color: blue` and `color: green`. The Service picks one:
+
+```bash
+kubectl -n lemonade patch service lemonade-web \
+  -p '{"spec":{"selector":{"app":"lemonade","color":"green"}}}'   # switch to green
+kubectl -n lemonade patch service lemonade-web \
+  -p '{"spec":{"selector":{"app":"lemonade","color":"blue"}}}'    # instant rollback
+```
+
+### 4. A feature flag for mint lemonade
+
+Deploy the code on Monday, release the drink on Friday, without a new deployment:
+
+```js
+const flags = { mint: process.env.FLAG_MINT === 'on' };       // read once at start-up
+const menu = flags.mint ? MENU : { classic: MENU.classic, pink: MENU.pink };
+```
+
+Turning the flag on is a configuration change (an environment variable in the Deployment, or a flag service), and turning it off is the fastest rollback there is. Delete the flag and the `if` once mint is permanent; old flags pile up into confusing code.
+
+## Choosing a strategy
+
+| If you need... | Choose | Because |
+| --- | --- | --- |
+| Zero downtime, simple setup | Rolling update | Built into Kubernetes |
+| Instant switch and instant rollback | Blue-green | Old version stays warm |
+| To limit damage from unknown bugs | Canary | Few users see it first |
+| To separate deploying from releasing | Feature flag | Release is a switch, not a deploy |
+| To test load before anyone sees it | Dark launch | Real traffic, hidden result |
+| Old and new can never run together (for example an incompatible database change) | Recreate, or expand-and-contract | Avoids mixed versions |
+
+A database change needs care with every strategy except Recreate, because old and new code run at the same time. Use **expand and contract**: first add the new column (both versions work), then deploy code that uses it, and only later remove the old column.
+
+## Rules and conventions
+
+- Always have a readiness probe; it is what makes rolling and canary updates safe.
+- Decide the rollback before deploying; rehearse it.
+- Deploy by digest so "the previous version" is unambiguous.
+- Keep both versions compatible with the database during a rollout (expand and contract).
+- Define canary success in numbers before you start: error rate, latency, time window.
+- Deploy small changes often; small changes make every strategy safer.
+- Remove feature flags when they are no longer needed.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| No readiness probe | Traffic hits pods that are still starting; errors during every deploy | Add `readinessProbe` on `/health` |
+| `maxUnavailable` too high with few replicas | Capacity drops during a deploy | `maxUnavailable: 0`, `maxSurge: 1` |
+| Canary without a stop rule | Bad canary "looks fine" because nobody watches | Write the threshold down; automate the check |
+| Blue-green with a shared database migration | Rollback to blue fails because the schema changed | Expand and contract |
+| Rolling back to `latest` | Goes "back" to the broken image | Roll back to a revision or digest |
+| Flags that never die | Code full of `if` branches nobody understands | Owner and removal date for every flag |
+
+## Mathematical Abstraction
+
+### 1. Capacity during a rolling update
+
+Let $R$ be the desired number of replicas, $s$ the value of `maxSurge` and $u$ the value of `maxUnavailable`. During the whole update, Kubernetes keeps
+
+$$
+R - u \ \le\ \text{ready pods} \quad\text{and}\quad \text{total pods} \ \le\ R + s
+$$
+
+where
+
+- $R$ is `replicas`, a whole number;
+- $s$ is `maxSurge` and $u$ is `maxUnavailable`, both whole numbers here (percentages are first converted: surge rounds up, unavailable rounds down);
+- "ready pods" are pods passing their readiness probe, which receive traffic;
+- "total pods" counts old and new pods together.
+
+**Example.** The Lemonade Stand: $R = 3$, $s = 1$, $u = 0$. So at least $3 - 0 = 3$ pods serve customers at every moment, and at most $3 + 1 = 4$ pods exist. Each round replaces at most $s + u = 1$ pod, so the update takes about
+
+$$
+\left\lceil \frac{R}{s + u} \right\rceil = \left\lceil \frac{3}{1} \right\rceil = 3 \text{ rounds,}
+$$
+
+where $\lceil x \rceil$ rounds up to a whole number. With $s = 1$, $u = 1$ it would take $\lceil 3/2 \rceil = 2$ rounds but could drop to $3 - 1 = 2$ ready pods.
+
+### 2. Blast radius of a canary
+
+If the new version breaks a fraction $q$ of requests, and it receives a fraction $f$ of traffic for $\Delta t$ hours before someone notices:
+
+$$
+A = N \cdot \Delta t \cdot f \cdot q
+$$
+
+where
+
+- $N$ is the number of customer requests per hour;
+- $\Delta t$ is the time until the problem is detected and traffic is pulled, in hours;
+- $f$ is the share of traffic the new version gets ($0 < f \le 1$; a full release is $f = 1$);
+- $q$ is the share of those requests the bug breaks ($0 \le q \le 1$);
+- $A$ is the expected number of broken customer requests.
+
+**Example.** The stand gets $N = 2000$ orders an hour; a pricing bug breaks every order, $q = 1$; it is noticed after $\Delta t = 0.5$ hours. With a canary of 1 pod out of 10, $f = \frac{1}{10} = 0.1$:
+
+$$
+A = 2000 \times 0.5 \times 0.1 \times 1 = 100 \text{ broken orders,}
+$$
+
+compared with $2000 \times 0.5 \times 1 \times 1 = 1000$ for a full release. The canary cut the damage by $10\times$. Faster detection (smaller $\Delta t$) helps just as much as a smaller $f$.
+
+### 3. The cost of blue-green
+
+During the switch both colours run in full, so the cluster needs
+
+$$
+C_{\text{blue-green}} = 2R \quad\text{versus}\quad C_{\text{rolling}} = R + s
+$$
+
+pods, where $C$ is the peak number of pods. **Example:** with $R = 3$ and $s = 1$, blue-green needs $2 \times 3 = 6$ pods at the peak, rolling needs $3 + 1 = 4$. Blue-green buys an instant rollback with 2 extra pods.
+
+## References
+
+- Martin Fowler, [Blue Green Deployment](https://martinfowler.com/bliki/BlueGreenDeployment.html) (2010).
+- Danilo Sato, [Canary Release](https://martinfowler.com/bliki/CanaryRelease.html) (martinfowler.com, 2014).
+- Pete Hodgson, [Feature Toggles (aka Feature Flags)](https://martinfowler.com/articles/feature-toggles.html) (martinfowler.com).
+- Eugene Letuchy, [Facebook Chat](https://engineering.fb.com/2008/05/13/web-development/facebook-chat/) (Facebook Engineering, 2008).
+- Google, *The Site Reliability Workbook*, [Canarying Releases](https://sre.google/workbook/canarying-releases/).
+- Kubernetes Docs, [Deployments: rolling update](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#rolling-update-deployment) and [kubectl rollout](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/).
+
+[← Previous: Secrets, Environments and Approvals](06-secrets-environments-and-approvals.qmd) · [Part index](index.qmd) · [Next: Measuring Delivery with DORA →](08-measuring-delivery-with-dora.qmd)

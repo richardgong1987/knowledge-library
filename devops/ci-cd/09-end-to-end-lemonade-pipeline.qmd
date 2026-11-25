@@ -1,0 +1,243 @@
+---
+title: "The End-to-End Lemonade Pipeline"
+description: "The whole book in one pipeline: test, build the image once, deploy it to a k3s staging cluster, wait for approval, roll it out to production, plus a walk through this website's own workflow."
+---
+
+## The problem
+
+Each earlier lesson built one piece. Now the Lemonade team wants the whole journey to happen without anyone typing a deploy command:
+
+1. A pull request runs the tests.
+2. A merge to `main` builds **one** image and pushes it to GHCR.
+3. That exact image rolls out to the **staging** k3s cluster.
+4. A reviewer approves.
+5. The **same** image rolls out to the **production** k3s cluster, pod by pod, and rolls back by itself if it does not become healthy.
+
+This lesson connects the two workflow files in the lab, shows what must be set up once by hand (and where Ansible from Part 1 does it), and then reads this website's real pipeline line by line.
+
+::: {.callout-tip}
+## Explain it like I'm ten
+
+Think of a **relay race**. The first runner tests the recipe, the second bottles it, the third gives it to the practice table, and the last one carries it to the real party. The important rule of a relay is that **the same baton** goes all the way round. If a runner drops the baton and grabs a different one, the race does not count. In our pipeline, the baton is the image digest: `sha256:...` built once and handed from job to job.
+
+When John Allspaw and Paul Hammond explained how Flickr deployed more than ten times a day in their [2009 talk](https://paulhammond.org/2009/06/velocity/10deploys.pdf), "one-step build and deploy" was the first tool on their list: the whole relay starts with one push of a button, or here, with one merge.
+:::
+
+## The pipeline, piece by piece
+
+```{mermaid}
+flowchart LR
+  PR[Pull request] --> T1[test]
+  M[Merge to main] --> T2[test] --> I[image: build and push once]
+  I -->|digest| S[staging: deploy.yml]
+  S --> A{Reviewer approves production?}
+  A -->|yes| P[production: deploy.yml]
+  P -->|rollout fails| U[kubectl rollout undo]
+```
+
+| Job | File | Runs when | What it does | Lesson |
+| --- | --- | --- | --- | --- |
+| `test` | `ci.yml` | Every push and pull request | `npm test` on Node 26 | [4](04-automated-testing-in-the-pipeline.qmd) |
+| `image` | `ci.yml` | Push to `main`, after `test` | Build once, push `:<sha>`, output `repo@sha256:...` | [5](05-artifacts-caching-and-versioning.qmd) |
+| `staging` | `ci.yml` → `deploy.yml` | After `image` | Apply manifests with the digest, wait for the rollout | [7](07-deployment-strategies.qmd) |
+| `production` | `ci.yml` → `deploy.yml` | After `staging` and an approval | The same, against the production cluster | [6](06-secrets-environments-and-approvals.qmd) |
+| manual deploy | `deploy.yml` | "Run workflow" button | Redeploy or roll back to any earlier digest | [3](03-github-actions-syntax.qmd) |
+
+### Step 1: the handover from build to deploy
+
+The end of [`ci.yml`](examples/lemonade-stand/workflows/ci.yml) calls the reusable deploy workflow twice, passing the digest from the `image` job:
+
+```yaml
+staging:
+  needs: image
+  uses: ./.github/workflows/deploy.yml
+  with: { environment: staging, image: "${{ needs.image.outputs.ref }}" }
+  secrets: inherit
+
+production:
+  needs: [image, staging]
+  uses: ./.github/workflows/deploy.yml
+  with: { environment: production, image: "${{ needs.image.outputs.ref }}" }
+  secrets: inherit
+```
+
+Both calls receive the same `needs.image.outputs.ref`, so staging and production cannot drift apart. `production` needs `staging`, so a failed staging rollout stops the release.
+
+### Step 2: the deploy itself
+
+The core of [`deploy.yml`](examples/lemonade-stand/workflows/deploy.yml), after the kubeconfig is written:
+
+```yaml
+- name: Apply and wait for the rolling update
+  env:
+    IMAGE: ${{ inputs.image }}
+  run: |
+    sed "s|__IMAGE__|$IMAGE|g" k8s/deployment.yaml | kubectl apply -f -
+    kubectl -n lemonade rollout status deployment/lemonade-web --timeout=180s
+- name: Roll back
+  if: failure()
+  run: kubectl -n lemonade rollout undo deployment/lemonade-web
+```
+
+`sed` puts the digest into the manifest from [Part 2](../k3s/index.qmd), `kubectl apply` hands it to k3s, and `rollout status` waits until all three pods are new and ready. The readiness probe on `/health` is the smoke test: a pod that cannot answer never receives traffic. If the rollout does not finish in 180 seconds, the job fails and `if: failure()` runs `rollout undo`.
+
+The job also carries `environment: ${{ inputs.environment }}` and `concurrency: deploy-${{ inputs.environment }}`, so the production job waits for its reviewer and two deploys to one cluster never overlap.
+
+## One-time setup
+
+| What | Where | How | Who |
+| --- | --- | --- | --- |
+| k3s on the staging and production hosts | Servers `web1`, `web2` | The playbook from [Part 1](../ansible/index.qmd) | Ansible |
+| A reachable API address | `/etc/rancher/k3s/config.yaml` on each host | Add `tls-san: k3s.lemonade.example.com` so the certificate matches | Ansible template |
+| Kubeconfig for CI | Copy `/etc/rancher/k3s/k3s.yaml`, change `server:` to the public address | Store it base64-encoded as the environment secret `KUBECONFIG_B64` ([Lesson 6](06-secrets-environments-and-approvals.qmd)) | You, once per cluster |
+| Environments | **Settings → Environments** | `staging`; `production` with required reviewers and only `main` | You |
+| Image access | GHCR package settings | Make the package public, or add an `imagePullSecret` to the Deployment | You |
+| Workflow files | `.github/workflows/` | Copy `ci.yml` and `deploy.yml` there | You |
+
+Two honest warnings:
+
+- **Network.** GitHub-hosted runners are on the internet, so the k3s API (port 6443) must be reachable from there. Many teams do not want that. Two common answers: a **self-hosted runner** inside the shop's network (`runs-on: [self-hosted, lemonade]`), or a **pull-based** tool such as Argo CD or Flux that runs inside the cluster and pulls the new image reference from git.
+- **Privilege.** `k3s.yaml` is a cluster-admin key. The lab uses it for simplicity. In production, an admin creates the `lemonade` namespace once, and CI gets a ServiceAccount bound to the built-in `edit` role in that namespace only (then the Namespace object is removed from the manifest, because CI may no longer create namespaces).
+
+## What was verified for this lesson
+
+```text
+$ node --test                       # in examples/lemonade-stand
+ℹ tests 4
+ℹ pass 4
+ℹ fail 0
+
+$ docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:latest -no-color
+$ echo $?                           # actionlint 1.7.12 on ci.yml and deploy.yml
+0
+
+$ docker build -t lemonade-stand:ci . && docker run -d -p 8080:8080 lemonade-stand:ci
+$ curl localhost:8080/health
+{"status":"ok","version":"dev"}
+```
+
+The k3s manifest was checked as valid YAML with the placeholder substituted. A live run against GitHub and two real clusters needs your own repository, environments and secrets; the README in the lab lists those steps.
+
+## A second real pipeline: this website
+
+This book is published by [`.github/workflows/pages.yml`](https://github.com/richardgong1987/knowledge-library/blob/main/.github/workflows/pages.yml). It is a good contrast: a static site instead of a container, GitHub Pages instead of k3s. Its skeleton:
+
+```yaml
+name: Publish Knowledge Library
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:   # checkout, setup-node, many test steps, quarto render, upload-pages-artifact
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
+```
+
+| Line | What it does | Lesson idea |
+| --- | --- | --- |
+| `name: Publish Knowledge Library` | Name in the Actions tab | [3](03-github-actions-syntax.qmd) |
+| `on: push: branches: [main]` | Every merge to `main` publishes the site | Continuous deployment ([1](01-what-ci-and-cd-mean.qmd)) |
+| `workflow_dispatch:` | A "Run workflow" button for re-publishing by hand | Manual trigger |
+| `permissions: contents: read` | The token may read the code | Least privilege ([6](06-secrets-environments-and-approvals.qmd)) |
+| `pages: write` | The token may publish to GitHub Pages | Only what publishing needs |
+| `id-token: write` | The job may request an OIDC token; `deploy-pages` uses it to prove who is deploying | OIDC instead of a stored key |
+| `concurrency: group: pages` | Only one publish at a time | Serialised deploys |
+| `cancel-in-progress: true` | A newer push cancels an older run | Fine for a static site: the newer run publishes everything anyway |
+| `build: runs-on: ubuntu-latest` | A fresh runner for the build | Disposable runners ([2](02-pipeline-building-blocks.qmd)) |
+| `actions/checkout@v7`, `actions/setup-node@v7` | Get the code and Node 26 | Pinned major versions |
+| The `node --test ...`, `python3 ...`, `cargo test ...` steps | Test every lab and check every section's lessons before rendering | Fail fast: tests before the slow render ([4](04-automated-testing-in-the-pipeline.qmd)) |
+| `quarto render` | Builds the HTML into `_site/` | The build step |
+| `actions/upload-pages-artifact@v5` with `path: _site` | Stores the built site as an artifact | Build once ([5](05-artifacts-caching-and-versioning.qmd)) |
+| `deploy: needs: build` | Publishing waits for a green build | Gates in order |
+| `environment: name: github-pages` | Deploys through a named environment, with history in the repo's sidebar | Environments ([6](06-secrets-environments-and-approvals.qmd)) |
+| `url: ${{ steps.deployment.outputs.page_url }}` | Shows the live link on the run page | Step outputs ([3](03-github-actions-syntax.qmd)) |
+| `actions/deploy-pages@v5` | Publishes **the artifact the build uploaded**, not a rebuild | Build once, deploy that |
+
+Two improvements a reviewer could suggest, as exercises: move `pages: write` and `id-token: write` from the top level into the `deploy` job, because `build` needs neither (least privilege); and add `timeout-minutes` to both jobs.
+
+## Rules and conventions
+
+- One pipeline from commit to production; no side doors.
+- Build the image once and pass the digest; every environment runs the same bytes.
+- Staging must succeed before production can start (`needs`).
+- Production waits for a human (environment reviewers) until the team trusts the pipeline enough for continuous deployment.
+- Every deploy waits for health (`rollout status` plus a readiness probe) and rolls back automatically on failure.
+- Keep a manual path (`workflow_dispatch`) to redeploy any earlier digest.
+- Give CI the least access that works: namespaced credentials, environment-scoped secrets, read-only tokens by default.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Kubeconfig still says `server: https://127.0.0.1:6443` | `connection refused` from the runner | Use the host's public name and add it to `tls-san` |
+| Certificate does not include the new name | `x509: certificate is valid for 127.0.0.1, not k3s.lemonade.example.com` | Add `tls-san` and restart k3s |
+| Private GHCR package, no pull secret | Pods stuck in `ImagePullBackOff`, rollout times out | Public package or `imagePullSecrets` |
+| Manifest still contains `__IMAGE__` | `InvalidImageName` | Make sure `sed` ran on the file that is applied |
+| Deploy jobs without `concurrency` | Two rollouts fight; `rollout status` reports the wrong one | `concurrency: deploy-<environment>` |
+| Rolling back by re-running an old workflow that rebuilds | A "rollback" that is really a new build | Redeploy the old **digest** with `deploy.yml` |
+
+## Mathematical Abstraction
+
+### 1. One baton for every environment
+
+Let $E$ be the set of environments and $d$ the digest the `image` job produced for commit $c$. The pipeline guarantees
+
+$$
+\forall e \in E:\ \operatorname{digest}_e(c) = d
+$$
+
+where
+
+- $E = \lbrace \text{staging}, \text{production} \rbrace$ for the Lemonade Stand;
+- $\operatorname{digest}_e(c)$ is the digest that environment $e$ runs for commit $c$;
+- $\forall e \in E$ reads "for every environment $e$".
+
+**Example.** Commit `3f2c1ab` produces $d = \texttt{sha256:7aaa...}$. Staging runs $\texttt{sha256:7aaa...}$ and production runs $\texttt{sha256:7aaa...}$, so the property holds for both elements of $E$. If production rebuilt the image, it could get $\texttt{sha256:9b10...}$ and the property would be false: production would run bytes that staging never tested.
+
+### 2. Where the lead time goes
+
+The change lead time from [Lesson 8](08-measuring-delivery-with-dora.qmd) splits into machine time and waiting time:
+
+$$
+L = \sum_{i=1}^{k} t_i + w
+$$
+
+where
+
+- $k$ is the number of jobs on the path from merge to production;
+- $t_i$ is the duration of job $i$ in minutes;
+- $w$ is the time spent waiting for the reviewer, in minutes;
+- $L$ is the time from merge to production, in minutes (code review before the merge adds to the full lead time, but is left out here).
+
+**Example.** `test` 1 minute, `image` 2 minutes, `staging` 2 minutes, `production` 2 minutes, so $k = 4$ and $\sum t_i = 1 + 2 + 2 + 2 = 7$ minutes. The reviewer approves after $w = 23$ minutes. Then
+
+$$
+L = 7 + 23 = 30 \text{ minutes,}
+$$
+
+and $\frac{23}{30} \approx 77\%$ of it is waiting for a person. Making the jobs twice as fast would save only 3.5 minutes; a faster approval habit, or trusting the pipeline enough to drop the approval (continuous deployment), saves far more. Measuring where time goes stops a team from optimising the wrong part.
+
+## References
+
+- John Allspaw and Paul Hammond, [10+ Deploys per Day](https://paulhammond.org/2009/06/velocity/10deploys.pdf), Velocity 2009.
+- Jez Humble and David Farley, *Continuous Delivery* (2010), chapter 5, "Anatomy of the Deployment Pipeline".
+- GitHub Docs, [Reuse workflows](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows) and [Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
+- GitHub Docs, [Using custom workflows with GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
+- K3s Docs, [Cluster access](https://docs.k3s.io/cluster-access) and [Configuration options](https://docs.k3s.io/installation/configuration).
+- Kubernetes Docs, [kubectl rollout](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_rollout/).
+
+[← Previous: Measuring Delivery with DORA](08-measuring-delivery-with-dora.qmd) · [Part index](index.qmd) · [DevOps book](../index.qmd)
