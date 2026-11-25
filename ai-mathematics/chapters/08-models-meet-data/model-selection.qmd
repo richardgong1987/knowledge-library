@@ -1,0 +1,33 @@
+---
+title: "Model Selection"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §8.6."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 8, §8.6. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+A predictor with many features may fit training orders perfectly yet be brittle. Model selection weighs generalisation performance, complexity and measurement cost.
+
+## Formal relationship
+
+$$
+\hat m=\arg\min_{m\in\mathcal M}\operatorname{CVRisk}(m)
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+Compare a model using only distance against a model using distance, item count and dozens of polynomial features. Fit each on training folds and evaluate it on held-out folds. Choose the one with better validation performance, then assess the selected model on untouched test data.
+
+## Interpretation and limitations
+
+The same test set must not be repeatedly used to tune models without biasing the estimate. Cross-validation splits must respect temporal order when future delivery demand is the target.
+
+## Explain it yourself
+
+Why is random shuffling potentially misleading if the training data are last month's orders and the goal is predicting next month?
+
+[← Chapter 8: When Models Meet Data](index.qmd) · [Previous](directed-graphical-models.qmd) · [Runnable lab](../../examples/README.md)
+

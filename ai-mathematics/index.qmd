@@ -1,14 +1,141 @@
 ---
 title: "AI & Mathematics"
+subtitle: "From mathematical foundations to machine learning"
+description: "A complete original 68-topic study course based on the topic structure of Mathematics for Machine Learning."
 ---
 
-Mathematical foundations and artificial intelligence, taught through concrete examples.
+Our learning path is organised using the mathematical topics covered in **Marc Peter Deisenroth, A. Aldo Faisal and Cheng Soon Ong's *Mathematics for Machine Learning*** (Cambridge University Press, 2020).
 
-## Topics
+It now contains **11 full chapter guides and 68 individual lessons**, as well as an introduction, four subject gateways, original numerical examples and a runnable **single-file Python lab**. Everything is written in English, and formulas come with assumptions, worked calculations and interpretation—not just names of concepts.
 
-- [Linear Algebra](linear-algebra.qmd) — Vectors, matrices, projections, eigenvalues, and applications.
-- [Calculus](calculus.qmd) — Limits, derivatives, gradients, integration, and optimisation.
-- [Probability & Statistics](probability.qmd) — Random variables, distributions, Bayes' rule, and inference.
-- [Machine Learning](machine-learning.qmd) — Loss functions, optimisation, generalisation, and model evaluation.
+::: {.callout-note}
+## Source and copyright
 
-Each topic will grow into a collection of worked examples, conceptual explanations, and interactive experiments.
+The uploaded PDF is a 2024 draft of a book published in 2020. The book's text, diagrams, exercises and examples are **not republished** here. This website is an independent educational treatment of generally known mathematical concepts, using the book as a reading map and citing [the publisher-linked book website](https://mml-book.com/).
+:::
+
+## One dataset throughout
+
+Imagine a small delivery service. Each invented order has a route distance in kilometres, a number of items and an observed fulfilment time in minutes.
+
+| Order | Distance (km) | Items | Time (min) |
+|---|---:|---:|---:|
+| 1 | 1 | 1 | 7 |
+| 2 | 2 | 2 | 12 |
+| 3 | 3 | 1 | 11 |
+| 4 | 4 | 3 | 18 |
+| 5 | 5 | 2 | 17 |
+| 6 | 6 | 3 | 22 |
+
+The same table becomes a **matrix** in linear algebra, a collection of **vectors** in geometry, a set of **observations** in probability, and training data in regression. With no time labels, we can study PCA and Gaussian mixtures; with late/on-time labels, we can study SVMs.
+
+For an order with features $\boldsymbol x=(d,n)^\top$:
+
+$$
+\hat t=\beta_0+\beta_1d+\beta_2n,\qquad
+\hat{\boldsymbol\beta}=\arg\min_{\boldsymbol\beta}
+\sum_{i=1}^{6}(t_i-\hat t_i)^2.
+$$
+
+The parameters are learned from observed data. They do not prove a causal law, and this tiny dataset is not suitable for real operational decisions.
+
+## Part I — Mathematical Foundations
+
+### [Chapter 2. Linear Algebra](chapters/02-linear-algebra/index.qmd)
+
+Represent order features and linear constraints as matrices and vector spaces.
+
+[Systems of Linear Equations](chapters/02-linear-algebra/systems-of-linear-equations.qmd) · [Matrices](chapters/02-linear-algebra/matrices.qmd) · [Solving Systems of Linear Equations](chapters/02-linear-algebra/solving-linear-systems.qmd) · [Vector Spaces](chapters/02-linear-algebra/vector-spaces.qmd) · [Linear Independence](chapters/02-linear-algebra/linear-independence.qmd) · [Basis and Rank](chapters/02-linear-algebra/basis-and-rank.qmd) · [Linear Mappings](chapters/02-linear-algebra/linear-mappings.qmd) · [Affine Spaces](chapters/02-linear-algebra/affine-spaces.qmd)
+
+### [Chapter 3. Analytic Geometry](chapters/03-analytic-geometry/index.qmd)
+
+Measure similarity, distance, angles and projections of orders represented as vectors.
+
+[Norms](chapters/03-analytic-geometry/norms.qmd) · [Inner Products](chapters/03-analytic-geometry/inner-products.qmd) · [Lengths and Distances](chapters/03-analytic-geometry/lengths-and-distances.qmd) · [Angles and Orthogonality](chapters/03-analytic-geometry/angles-and-orthogonality.qmd) · [Orthonormal Basis](chapters/03-analytic-geometry/orthonormal-basis.qmd) · [Orthogonal Complement](chapters/03-analytic-geometry/orthogonal-complement.qmd) · [Inner Product of Functions](chapters/03-analytic-geometry/inner-product-of-functions.qmd) · [Orthogonal Projections](chapters/03-analytic-geometry/orthogonal-projections.qmd) · [Rotations](chapters/03-analytic-geometry/rotations.qmd)
+
+### [Chapter 4. Matrix Decompositions](chapters/04-matrix-decompositions/index.qmd)
+
+Understand how factorisations reveal independent directions and simplify computation.
+
+[Determinant and Trace](chapters/04-matrix-decompositions/determinant-and-trace.qmd) · [Eigenvalues and Eigenvectors](chapters/04-matrix-decompositions/eigenvalues-and-eigenvectors.qmd) · [Cholesky Decomposition](chapters/04-matrix-decompositions/cholesky-decomposition.qmd) · [Eigendecomposition and Diagonalization](chapters/04-matrix-decompositions/eigendecomposition.qmd) · [Singular Value Decomposition](chapters/04-matrix-decompositions/singular-value-decomposition.qmd) · [Matrix Approximation](chapters/04-matrix-decompositions/matrix-approximation.qmd) · [Matrix Phylogeny](chapters/04-matrix-decompositions/matrix-phylogeny.qmd)
+
+### [Chapter 5. Vector Calculus](chapters/05-vector-calculus/index.qmd)
+
+Compute how model predictions and losses change when parameters change.
+
+[Differentiation of Univariate Functions](chapters/05-vector-calculus/univariate-differentiation.qmd) · [Partial Differentiation and Gradients](chapters/05-vector-calculus/partial-derivatives-and-gradients.qmd) · [Gradients of Vector-Valued Functions](chapters/05-vector-calculus/vector-valued-gradients.qmd) · [Gradients of Matrices](chapters/05-vector-calculus/matrix-gradients.qmd) · [Useful Identities for Computing Gradients](chapters/05-vector-calculus/gradient-identities.qmd) · [Backpropagation and Automatic Differentiation](chapters/05-vector-calculus/backpropagation-and-autodiff.qmd) · [Higher-Order Derivatives](chapters/05-vector-calculus/higher-order-derivatives.qmd) · [Linearization and Multivariate Taylor Series](chapters/05-vector-calculus/taylor-series.qmd)
+
+### [Chapter 6. Probability and Distributions](chapters/06-probability-and-distributions/index.qmd)
+
+Represent noisy observations, uncertainty and conditional beliefs about deliveries.
+
+[Construction of a Probability Space](chapters/06-probability-and-distributions/probability-spaces.qmd) · [Discrete and Continuous Probabilities](chapters/06-probability-and-distributions/discrete-and-continuous.qmd) · [Sum Rule, Product Rule, and Bayes’ Theorem](chapters/06-probability-and-distributions/bayes-rules.qmd) · [Summary Statistics and Independence](chapters/06-probability-and-distributions/statistics-and-independence.qmd) · [Gaussian Distribution](chapters/06-probability-and-distributions/gaussian-distribution.qmd) · [Conjugacy and the Exponential Family](chapters/06-probability-and-distributions/conjugacy-and-exponential-family.qmd) · [Change of Variables/Inverse Transform](chapters/06-probability-and-distributions/change-of-variables.qmd)
+
+### [Chapter 7. Continuous Optimization](chapters/07-continuous-optimization/index.qmd)
+
+Select model parameters that minimise prediction error subject to useful constraints.
+
+[Optimization Using Gradient Descent](chapters/07-continuous-optimization/gradient-descent.qmd) · [Constrained Optimization and Lagrange Multipliers](chapters/07-continuous-optimization/lagrange-multipliers.qmd) · [Convex Optimization](chapters/07-continuous-optimization/convex-optimization.qmd)
+
+
+## Part II — Central Machine Learning Problems
+
+[Introduction: Data, Models and Learning](chapters/01-introduction/index.qmd) explains the conceptual vocabulary and alternative reading paths.
+
+### [Chapter 8. When Models Meet Data](chapters/08-models-meet-data/index.qmd)
+
+Connect features, hypotheses, generalisation, risk, estimation and model choice.
+
+[Data, Models, and Learning](chapters/08-models-meet-data/data-models-and-learning.qmd) · [Empirical Risk Minimization](chapters/08-models-meet-data/empirical-risk-minimization.qmd) · [Parameter Estimation](chapters/08-models-meet-data/parameter-estimation.qmd) · [Probabilistic Modeling and Inference](chapters/08-models-meet-data/probabilistic-inference.qmd) · [Directed Graphical Models](chapters/08-models-meet-data/directed-graphical-models.qmd) · [Model Selection](chapters/08-models-meet-data/model-selection.qmd)
+
+### [Chapter 9. Linear Regression](chapters/09-linear-regression/index.qmd)
+
+Fit an interpretable delivery-time predictor using least squares and Bayesian reasoning.
+
+[Problem Formulation](chapters/09-linear-regression/problem-formulation.qmd) · [Parameter Estimation](chapters/09-linear-regression/parameter-estimation.qmd) · [Bayesian Linear Regression](chapters/09-linear-regression/bayesian-linear-regression.qmd) · [Maximum Likelihood as Orthogonal Projection](chapters/09-linear-regression/maximum-likelihood-projection.qmd)
+
+### [Chapter 10. Principal Component Analysis](chapters/10-principal-component-analysis/index.qmd)
+
+Compress correlated features without labels, while quantifying information loss.
+
+[Problem Setting](chapters/10-principal-component-analysis/problem-setting.qmd) · [Maximum Variance Perspective](chapters/10-principal-component-analysis/maximum-variance.qmd) · [Projection Perspective](chapters/10-principal-component-analysis/projection-perspective.qmd) · [Eigenvector Computation and Low-Rank Approximations](chapters/10-principal-component-analysis/eigenvector-and-low-rank.qmd) · [PCA in High Dimensions](chapters/10-principal-component-analysis/pca-in-high-dimensions.qmd) · [Key Steps of PCA in Practice](chapters/10-principal-component-analysis/pca-practice.qmd) · [Latent Variable Perspective](chapters/10-principal-component-analysis/latent-variable-perspective.qmd)
+
+### [Chapter 11. Gaussian Mixture Models](chapters/11-gaussian-mixture-models/index.qmd)
+
+Describe delivery-time clusters with a latent probabilistic mixture.
+
+[Gaussian Mixture Model](chapters/11-gaussian-mixture-models/gaussian-mixture-model.qmd) · [Parameter Learning via Maximum Likelihood](chapters/11-gaussian-mixture-models/mixture-maximum-likelihood.qmd) · [EM Algorithm](chapters/11-gaussian-mixture-models/expectation-maximization.qmd) · [Latent-Variable Perspective](chapters/11-gaussian-mixture-models/latent-variable-perspective.qmd)
+
+### [Chapter 12. Support Vector Machines](chapters/12-support-vector-machines/index.qmd)
+
+Classify deliveries as late or on time using separating margins and kernels.
+
+[Separating Hyperplanes](chapters/12-support-vector-machines/separating-hyperplanes.qmd) · [Primal Support Vector Machine](chapters/12-support-vector-machines/primal-svm.qmd) · [Dual Support Vector Machine](chapters/12-support-vector-machines/dual-svm.qmd) · [Kernels](chapters/12-support-vector-machines/kernels.qmd) · [Numerical Solution](chapters/12-support-vector-machines/numerical-solution.qmd)
+
+
+## Read by concept
+
+The four original category entry points remain available:
+
+- [Linear Algebra](linear-algebra.qmd) — Vectors, matrices, linear maps and projection.
+- [Calculus](calculus.qmd) — Derivatives, gradients, Jacobians and backpropagation.
+- [Probability & Statistics](probability.qmd) — Events, distributions, inference and uncertainty.
+- [Machine Learning](machine-learning.qmd) — Connect regression, PCA, GMM and SVM.
+
+Also see the [interactive gradient-descent experiment](interactives/gradient-descent.qmd) and [interactive PCA projection](interactives/pca-projection.qmd).
+
+## Run all the demonstrations
+
+The [original Python lab](examples/README.md) uses **Python 3.11+ with no third-party dependencies**:
+
+~~~bash
+python3 ai-mathematics/examples/delivery_ml_lab.py all
+~~~
+
+Individual modes are `linear`, `geometry`, `calculus`, `probability`, `optimisation`, `regression`, `pca`, `gmm`, and `svm`. A minimal test suite checks the mathematical computations.
+
+## How to learn actively
+
+For each lesson: (1) state its practical problem; (2) define every symbol and assumption; (3) derive the relationship; (4) substitute actual numbers; (5) explain what would invalidate the model; and (6) connect the mathematics to one executable experiment.
+
+A technically useful lesson is one you can **derive and explain**, not just recite.

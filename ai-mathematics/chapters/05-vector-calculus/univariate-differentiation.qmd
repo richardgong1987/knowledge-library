@@ -1,0 +1,33 @@
+---
+title: "Differentiation of Univariate Functions"
+description: "An original worked mathematical lesson corresponding to MML §5.1."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 5, §5.1. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+Suppose a model predicts delivery minutes y-hat=theta d for distance d. A derivative describes how a scalar loss changes when one parameter changes.
+
+## Derive the structure
+
+$$
+L(\theta)=(\theta d-y)^2,\qquad \frac{dL}{d\theta}=2d(\theta d-y)
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+For d=2 km and observed y=7 minutes, at theta=3 the prediction is 6 and the loss is 1. The derivative is 2(2)(6-7)=-4. Increasing theta slightly should reduce the loss locally.
+
+## Interpretation and limitations
+
+A derivative is a local rate of change, not a guarantee of a global optimum. Differentiability matters: absolute error has a corner where the residual becomes zero.
+
+## Challenge
+
+At what theta does the single-observation squared loss reach zero?
+
+[← Vector Calculus](index.qmd) · [Next](./partial-derivatives-and-gradients.qmd) · [Python demonstrations](../../examples/README.md)
+

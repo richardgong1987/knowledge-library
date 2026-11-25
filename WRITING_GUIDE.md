@@ -57,3 +57,12 @@ description: "A concise statement of the problem addressed."
 ### Required closing section
 
 Use `## Mathematical Abstraction`, include a display formula or formal relation when justified, and explain the symbols and assumptions immediately below it.
+
+## AI & Mathematics curriculum writing standards
+
+- Keep chapter sequencing and source-section citations traceable to *Mathematics for Machine Learning* (Deisenroth, Faisal and Ong, 2020), without copying the book's prose, illustrations, examples or exercises.
+- Use the original six-order delivery dataset across foundational and applied lessons, extending it only where necessary.
+- Every lesson needs a **real problem**, mathematically stated relationship, **worked calculation**, interpretation, assumptions or failure cases, and a question that can be solved without memorising a definition.
+- Distinguish an **exact theorem** from a fitted estimate or simplified pedagogical model; label illustrative algorithms that do not implement full numerical optimisation.
+- Prefer Python standard-library examples that run with a single file; do not silently require optional packages or incompatible library versions.
+- Do not copy book PDFs into this public repository. Link to https://mml-book.com/ for authorised reading.

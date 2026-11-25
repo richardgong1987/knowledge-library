@@ -1,0 +1,48 @@
+---
+title: "Linear Regression"
+description: "A complete original learning unit based on the mathematical topics in MML Chapter 9."
+---
+
+::: {.callout-tip}
+## One coherent example
+
+We use six invented shop orders with **distance (km)**, **number of items**, and **fulfilment time (minutes)**. Start the [single-file Python example](../../examples/README.md); this chapter corresponds to `python3 delivery_ml_lab.py regression`.
+:::
+
+## The motivating problem
+
+**How do we fit a simple interpretable time predictor?**
+
+Linear regression formalises labels and features, uses least squares to estimate coefficients, derives uncertainty under probabilistic assumptions, and reveals its geometry through orthogonal projection. The same fitted function can be obtained by optimisation and by Gaussian maximum likelihood under specified noise assumptions.
+
+## Central mathematical relationship
+
+$$
+\hat\beta=(X^\top X)^{-1}X^\top y\quad\text{when }X\text{ has full column rank}
+$$
+
+The equation captures the chapter's principal relationship. Definitions and assumptions are developed in the lessons below; an equation is useful only when the domain and meaning of its symbols are explicit.
+
+## First worked result
+
+The independent lab obtains beta≈(2.588,1.824,2.765), corresponding to an intercept, distance slope and item-count slope. A new 7-km, two-item order is predicted to take about 20.88 minutes.
+
+## Lessons (all written)
+
+1. [**Problem Formulation**](problem-formulation.qmd) — Chapter 9, §9.1
+2. [**Parameter Estimation**](parameter-estimation.qmd) — Chapter 9, §9.2
+3. [**Bayesian Linear Regression**](bayesian-linear-regression.qmd) — Chapter 9, §9.3
+4. [**Maximum Likelihood as Orthogonal Projection**](maximum-likelihood-projection.qmd) — Chapter 9, §9.4
+
+## What to pay attention to
+
+Normal equations amplify conditioning problems. Real numerical software should use stable least-squares methods, and the coefficients are associations rather than automatically causal effects.
+
+Read the lessons in sequence, reproduce a calculation by hand, then run the related Python demonstration and explain which mathematical claim the output illustrates. A numerical observation is never, by itself, proof of a theorem.
+
+## Reference and originality
+
+The learning map follows the topic coverage of **Deisenroth, Faisal and Ong (2020), *Mathematics for Machine Learning*, Chapter 9**, available from [mml-book.com](https://mml-book.com/). All prose, examples and code in this knowledge library are independently written. The book PDF, its figures, exercises and text are not redistributed.
+
+[← AI & Mathematics home](../../index.qmd) · [One-file lab](../../examples/README.md)
+

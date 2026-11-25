@@ -1,0 +1,33 @@
+---
+title: "Discrete and Continuous Probabilities"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §6.2."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 6, §6.2. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+The number of packages is discrete, but fulfilment time can be modelled as a continuous variable. The distinction affects how probabilities are computed.
+
+## Formal relationship
+
+$$
+P(X=x)=p(x),\qquad P(a\leq T\leq b)=\int_a^b f_T(t)\,dt
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+If X is the item count sampled from our six records, its empirical probabilities are P(X=1)=2/6, P(X=2)=2/6, P(X=3)=2/6. A continuous delivery-time model assigns probability zero to any single exact time, while an interval receives positive probability.
+
+## Interpretation and limitations
+
+A probability density may exceed one at a point; it is the integral that must form a probability. Discrete histograms approximate but do not automatically define a smooth density.
+
+## Explain it yourself
+
+If T is uniform between 5 and 25 minutes, compute P(10≤T≤15).
+
+[← Chapter 6: Probability and Distributions](index.qmd) · [Previous](probability-spaces.qmd) · [Next](bayes-rules.qmd) · [Runnable lab](../../examples/README.md)
+

@@ -1,0 +1,33 @@
+---
+title: "Orthogonal Projections"
+description: "Original mathematical tutorial grounded in MML Chapter 3, Section 3.8."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), §3.8. This is an original lesson using our delivery-operations example—not reproduced textbook content.
+
+## Why the concept matters
+
+When a high-dimensional observation must be compressed, we project it into a smaller subspace. The closest point in an orthogonal projection minimises Euclidean reconstruction error.
+
+## Define the mathematical relationship
+
+$$
+\operatorname{proj}_{\boldsymbol u}(\boldsymbol x)=\frac{\boldsymbol u^\top\boldsymbol x}{\boldsymbol u^\top\boldsymbol u}\boldsymbol u
+$$
+
+The displayed relationship is the main object to analyse. Specify the relevant dimensions, quantities and assumptions before using it. It should be read as a mathematical statement, not merely a programming shorthand.
+
+## Work through an original example
+
+Project x=(3,1) onto u=(1,1): the coefficient is (3+1)/(1+1)=2, yielding (2,2). The residual (1,-1) is orthogonal to u; its dot product with (1,1) is zero.
+
+## What follows, and what does not
+
+Projection connects least-squares regression and PCA. If Q has orthonormal columns, the projection into its span is QQ^T x.
+
+## Test your reasoning
+
+Project (2,3) onto the x-axis, then compute the squared reconstruction error.
+
+[← Analytic Geometry chapter](index.qmd) · [Previous: Inner Product of Functions](inner-product-of-functions.qmd) · [Next: Rotations](rotations.qmd) · [Runnable Python lab](../../examples/README.md)
+

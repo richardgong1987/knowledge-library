@@ -28,6 +28,12 @@ jobs:
         run: node --test system-design/microservices/examples/shop-lab.test.mjs
       - name: Verify LeetCode algorithm taxonomy
         run: node --test algorithms/check-catalog.test.mjs
+      - name: Test AI mathematics examples
+        run: python3 -m unittest discover -s ai-mathematics/examples -p 'test_*.py'
+      - name: Verify AI mathematics curriculum
+        run: python3 ai-mathematics/check_curriculum.py
+      - name: Exercise every AI lab demonstration
+        run: python3 ai-mathematics/examples/delivery_ml_lab.py all > /dev/null
       - name: Install Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:

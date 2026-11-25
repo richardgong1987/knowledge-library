@@ -1,0 +1,33 @@
+---
+title: "Numerical Solution"
+description: "Original mathematical explanation and worked example informed by MML §12.5."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), Chapter 12 §12.5. All examples are newly authored.
+
+## Motivation
+
+The primal or dual mathematical optimum needs an algorithm and termination criterion. Real solvers manage constraints, floating-point precision and datasets much larger than our six observations.
+
+## Derivation and notation
+
+$$
+\ell_{\rm hinge}(y,f)=\max(0,1-yf),\qquad J(\boldsymbol w,b)=\tfrac12\|\boldsymbol w\|^2+C\sum_i\ell_{\rm hinge}(y_i,f(\boldsymbol x_i))
+$$
+
+Read this model together with the distributional, geometric or optimisation assumptions. An equation without its domain of validity is not a complete explanation.
+
+## Apply it to our running example
+
+For label +1 and decision score f=0.6, the hinge loss is 0.4. For the same label and f=1.2, it is zero. A soft-margin solver trades off coefficient norm against these classification-margin violations.
+
+## Constraints and interpretation
+
+The lab deliberately demonstrates one valid separating boundary but does not claim to solve the SVM optimisation. Production solvers (coordinate descent, SMO and others) need scaling, regularisation selection and convergence diagnostics.
+
+## Your turn
+
+Why can an observation classified correctly with score +0.2 still contribute positive hinge loss?
+
+[← Support Vector Machines](index.qmd) · [Previous](kernels.qmd) · [Single-file Python lab](../../examples/README.md)
+

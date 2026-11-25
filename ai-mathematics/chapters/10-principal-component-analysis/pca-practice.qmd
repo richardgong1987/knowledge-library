@@ -1,0 +1,33 @@
+---
+title: "Key Steps of PCA in Practice"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §10.6."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §10.6. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+PCA is a reproducible pipeline, not just an eigenvalue calculation. How we split data, scale features and assess retained variance can determine whether the result is trustworthy.
+
+## Formulate the problem mathematically
+
+$$
+\mathrm{ExplainedVarianceRatio}(k)=\frac{\sum_{j=1}^{k}\lambda_j}{\sum_{j=1}^{D}\lambda_j}
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+With eigenvalues 4 and 1, the first principal component retains 4/(4+1)=80% of sample variance. In the delivery example, fit centering and scaling parameters on training orders, then apply exactly those parameters to later orders.
+
+## Why the mathematics matters
+
+Data leakage occurs if a transformation is fit using test-set information. Large explained variance is not proof of strong performance on a downstream task.
+
+## Explain or calculate
+
+What fraction of variance do two components retain when the eigenvalues are 5,3,2?
+
+[← Principal Component Analysis](index.qmd) · [Previous](pca-in-high-dimensions.qmd) · [Next](latent-variable-perspective.qmd) · [Python lab](../../examples/README.md)
+

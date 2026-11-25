@@ -1,0 +1,33 @@
+---
+title: "EM Algorithm"
+description: "Original mathematical explanation and worked example informed by MML §11.3."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), Chapter 11 §11.3. All examples are newly authored.
+
+## Motivation
+
+We can alternate between estimating each order's soft component assignment and refitting each Gaussian from those fractional memberships. This is the expectation-maximisation (EM) strategy.
+
+## Derivation and notation
+
+$$
+\gamma_{ik}=\frac{\pi_k\mathcal N(t_i\mid\mu_k,\sigma_k^2)}{\sum_j\pi_j\mathcal N(t_i\mid\mu_j,\sigma_j^2)},\quad\mu_k^{new}=\frac{\sum_i\gamma_{ik}t_i}{\sum_i\gamma_{ik}}
+$$
+
+Read this model together with the distributional, geometric or optimisation assumptions. An equation without its domain of validity is not a complete explanation.
+
+## Apply it to our running example
+
+For two equally weighted Gaussians with equal variance, a time much closer to 10 than 20 receives responsibility near one for the first component. The M-step calculates each new mean as a weighted average over all six times; the lab runs 30 such iterations.
+
+## Constraints and interpretation
+
+With exact E/M updates under standard regularity conditions, EM does not decrease the observed-data likelihood, but it is not guaranteed to find the global optimum. Very small component weights and variance collapse need safeguards.
+
+## Your turn
+
+If responsibilities for three observations are (1,0,0) for component A, what mean does its M-step return?
+
+[← Gaussian Mixture Models](index.qmd) · [Previous](mixture-maximum-likelihood.qmd) · [Next](latent-variable-perspective.qmd) · [Single-file Python lab](../../examples/README.md)
+

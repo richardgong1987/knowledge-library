@@ -1,0 +1,33 @@
+---
+title: "Directed Graphical Models"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §8.5."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 8, §8.5. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+A probabilistic dependency graph separates a system's factorisation assumptions from the physical dependency graph of microservices. A directed edge encodes a conditional relation in a model.
+
+## Formal relationship
+
+$$
+p(D,N,T)=p(D)p(N\mid D)p(T\mid D,N)
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+Let D be route distance, N item count, T fulfilment time. In this illustrative DAG, distance influences the item-count distribution and both condition the time. Multiplying the conditional factors reconstructs a joint model that can be sampled or queried.
+
+## Interpretation and limitations
+
+Graphical arrows are not automatically causal; the factorisation alone does not prove that intervening on D would change T in a particular way. Missing edges encode conditional independence assumptions.
+
+## Explain it yourself
+
+If distance and item count are assumed independent, how would the joint factorisation change?
+
+[← Chapter 8: When Models Meet Data](index.qmd) · [Previous](probabilistic-inference.qmd) · [Next](model-selection.qmd) · [Runnable lab](../../examples/README.md)
+

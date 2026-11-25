@@ -1,0 +1,33 @@
+---
+title: "Solving Systems of Linear Equations"
+description: "Original mathematical tutorial grounded in MML Chapter 2, Section 2.3."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), §2.3. This is an original lesson using our delivery-operations example—not reproduced textbook content.
+
+## Why the concept matters
+
+For small planning systems, elimination is a systematic method. The same operations appear in numerical solvers and in normal equations for regression, but naive elimination can become unstable when a pivot is close to zero.
+
+## Define the mathematical relationship
+
+$$
+[A\mid b]\ \xrightarrow{\text{row operations}}\ [I\mid x]
+$$
+
+The displayed relationship is the main object to analyse. Specify the relevant dimensions, quantities and assumptions before using it. It should be read as a mathematical statement, not merely a programming shorthand.
+
+## Work through an original example
+
+For u+2v=7 and 2u+v=8, subtract twice the first row from the second to obtain -3v=-6. Thus v=2, then u=3. Swapping rows when a pivot is nearly zero is partial pivoting.
+
+## What follows, and what does not
+
+Row operations preserve the solution set. A zero pivot can indicate singularity or a poor pivot choice. For serious least-squares problems, QR or SVD is usually numerically preferable to forming X^T X.
+
+## Test your reasoning
+
+What happens if the second equation is exactly twice the first, including its right-hand side?
+
+[← Linear Algebra chapter](index.qmd) · [Previous: Matrices](matrices.qmd) · [Next: Vector Spaces](vector-spaces.qmd) · [Runnable Python lab](../../examples/README.md)
+

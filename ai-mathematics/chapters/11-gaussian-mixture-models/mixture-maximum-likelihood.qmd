@@ -1,0 +1,33 @@
+---
+title: "Parameter Learning via Maximum Likelihood"
+description: "Original mathematical explanation and worked example informed by MML §11.2."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), Chapter 11 §11.2. All examples are newly authored.
+
+## Motivation
+
+A mixture's parameters can be fitted by maximising the likelihood of all observed times. The unknown component membership makes the optimisation nonconvex and introduces local optima.
+
+## Derivation and notation
+
+$$
+\ell(\boldsymbol\theta)=\sum_{i=1}^{N}\log\left(\sum_{k=1}^{K}\pi_k\mathcal N(t_i\mid\mu_k,\sigma_k^2)\right)
+$$
+
+Read this model together with the distributional, geometric or optimisation assumptions. An equation without its domain of validity is not a complete explanation.
+
+## Apply it to our running example
+
+For time 12 minutes, evaluate both Gaussian component densities, multiply by their weights, add the results and only then take the logarithm. Replacing log(sum) by sum(log) would incorrectly treat each observation as belonging fully to every component.
+
+## Constraints and interpretation
+
+Without restrictions, Gaussian-mixture maximum likelihood can be degenerate: a component variance collapses around one observation, driving likelihood upward. Practical implementations regularise variances and use multiple initialisations.
+
+## Your turn
+
+Why is computing log(sum(exp(a),exp(b))) numerically different from simply adding a and b?
+
+[← Gaussian Mixture Models](index.qmd) · [Previous](gaussian-mixture-model.qmd) · [Next](expectation-maximization.qmd) · [Single-file Python lab](../../examples/README.md)
+

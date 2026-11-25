@@ -1,0 +1,33 @@
+---
+title: "Bayesian Linear Regression"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §9.3."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §9.3. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+Six delivery observations are too few to pretend model coefficients are known exactly. Bayesian regression represents uncertainty over beta and produces predictive uncertainty for a future order.
+
+## Formulate the problem mathematically
+
+$$
+p(\beta\mid\boldsymbol y,X)\propto p(\boldsymbol y\mid X,\beta)p(\beta),\quad p(y_*\mid x_*,\mathcal D)=\int p(y_*\mid x_*,\beta)p(\beta\mid\mathcal D)\,d\beta
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+Assume independent Gaussian observation noise with variance sigma² and a Gaussian prior beta~N(m0,S0). The posterior precision is S0^-1 + X^T X/sigma². A strongly regularising prior suppresses extreme slope estimates when features are weakly identified.
+
+## Why the mathematics matters
+
+The posterior predictive variance combines uncertainty in the learned coefficients with observation noise. A narrower prior is not evidence of more data; it encodes a stronger assumption.
+
+## Explain or calculate
+
+Which part of the predictive distribution would remain uncertain even if beta were known exactly?
+
+[← Linear Regression](index.qmd) · [Previous](parameter-estimation.qmd) · [Next](maximum-likelihood-projection.qmd) · [Python lab](../../examples/README.md)
+

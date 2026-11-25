@@ -1,0 +1,33 @@
+---
+title: "Matrix Phylogeny"
+description: "An original worked mathematical lesson corresponding to MML §4.7."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 4, §4.7. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+Different matrix classes form a hierarchy: being square, symmetric, positive definite or orthogonal determines which decomposition or inverse is available. The book uses 'phylogeny' as a taxonomy of these relationships.
+
+## Derive the structure
+
+$$
+\mathrm{SPD}_n\subset\mathrm{Sym}_n\subset\mathbb R^{n\times n},\qquad A\in\mathrm{SPD}_n\Longrightarrow A=LL^\top
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+A=diag(2,3) is symmetric, positive definite, invertible and diagonalizable. B=[[1,2],[0,1]] is square and invertible but nonsymmetric and not diagonalizable over R: these branches are not equivalent.
+
+## Interpretation and limitations
+
+The inclusion graph is a taxonomy, not a biological evolution process. An arbitrary rectangular real matrix has an SVD but no ordinary square-matrix determinant. Some properties overlap without forming one simple chain.
+
+## Challenge
+
+Is every orthogonal matrix symmetric? Try a 90-degree rotation matrix as a counterexample.
+
+[← Matrix Decompositions](index.qmd) · [Previous](./matrix-approximation.qmd) · [Python demonstrations](../../examples/README.md)
+

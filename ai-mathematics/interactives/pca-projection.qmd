@@ -1,0 +1,98 @@
+---
+title: "Interactive PCA Projection"
+description: "Rotate a one-dimensional projection and measure variance captured and reconstruction error."
+---
+
+## One dataset, many projection directions
+
+Take six invented orders, using only distance $d$ and number of items $n$. Their mean is $\boldsymbol\mu=(3.5,2)^\top$. After centring, consider a unit direction
+
+$$
+\boldsymbol w(\phi)=\begin{bmatrix}\cos\phi\\\sin\phi\end{bmatrix}.
+$$
+
+The one-dimensional score and reconstruction are
+
+$$
+z_i=\boldsymbol w^\top(\boldsymbol x_i-\boldsymbol\mu),
+\qquad
+\tilde{\boldsymbol x}_i=\boldsymbol\mu+z_i\boldsymbol w.
+$$
+
+The projected sample variance is $\boldsymbol w^\top S\boldsymbol w$, and total squared reconstruction error is
+
+$$
+E(\phi)=\sum_i\|\boldsymbol x_i-\tilde{\boldsymbol x}_i\|_2^2.
+$$
+
+For centred data and orthogonal projection, maximising variance **minimises** this error. Try rotating the direction and observe both quantities together.
+
+## Rotate the candidate axis
+
+~~~{ojs}
+viewof directionDegrees = Inputs.range([0, 180], {
+  label: "Projection angle (degrees)",
+  value: 20,
+  step: 5
+})
+~~~
+
+~~~{ojs}
+orders = [
+  {distance: 1, items: 1}, {distance: 2, items: 2},
+  {distance: 3, items: 1}, {distance: 4, items: 3},
+  {distance: 5, items: 2}, {distance: 6, items: 3}
+]
+axis = {x: Math.cos(directionDegrees * Math.PI / 180),
+        y: Math.sin(directionDegrees * Math.PI / 180)}
+points = orders.map(({distance, items}) => {
+  const x = distance - 3.5;
+  const y = items - 2;
+  const score = x*axis.x + y*axis.y;
+  return {x, y, px: score*axis.x, py: score*axis.y, score};
+})
+Plot.plot({
+  width: 660,
+  height: 420,
+  x: {label: "Centred distance (km)", domain: [-3.2,3.2]},
+  y: {label: "Centred item count", domain: [-3.2,3.2]},
+  marks: [
+    Plot.ruleX([0], {stroke: "gray"}),
+    Plot.ruleY([0], {stroke: "gray"}),
+    Plot.line([
+      {x: -3*axis.x, y: -3*axis.y},
+      {x: 3*axis.x, y: 3*axis.y}
+    ], {x: "x", y: "y", strokeWidth: 2, stroke: "steelblue"}),
+    Plot.dot(points, {x: "x", y: "y", fill: "orange", r: 5}),
+    Plot.dot(points, {x: "px", y: "py", fill: "steelblue", r: 4})
+  ]
+})
+~~~
+
+### Projected sample variance
+
+~~~{ojs}
+variance = points.reduce((a, p) => a+p.score*p.score, 0)/(points.length-1)
+~~~
+
+### Total squared reconstruction error
+
+~~~{ojs}
+error = points.reduce((a, p) => a+(p.x-p.px)**2+(p.y-p.py)**2, 0)
+~~~
+
+The orange points are centred observations. The blue points are their projections onto the chosen axis.
+
+## Explain the mathematics
+
+The covariance matrix for this small dataset is
+
+$$
+S=\begin{bmatrix}3.5&1.2\\1.2&0.8\end{bmatrix}.
+$$
+
+For a unit direction, projected variance is $\boldsymbol w^\top S\boldsymbol w$. The best direction is an eigenvector corresponding to the largest eigenvalue of $S$, subject to the assumptions of classical PCA.
+
+**Limitations:** the two features have different units. In a real dataset, standardising features might change which direction is considered most important. PCA finds variation, not necessarily predictors of fulfilment time.
+
+[← PCA](../chapters/10-principal-component-analysis/index.qmd) · [Matrix Decompositions](../chapters/04-matrix-decompositions/index.qmd) · [Single-file Python lab](../examples/README.md)

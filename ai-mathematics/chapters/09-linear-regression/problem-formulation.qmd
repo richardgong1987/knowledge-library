@@ -1,0 +1,33 @@
+---
+title: "Problem Formulation"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §9.1."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §9.1. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+We want to predict minutes required for a new order using distance d and item count n. The first design decision is the feature vector and loss function—not the optimiser.
+
+## Formulate the problem mathematically
+
+$$
+\hat y_i=\beta_0+\beta_1d_i+\beta_2n_i,\qquad L(\boldsymbol\beta)=\sum_{i=1}^{N}(y_i-\hat y_i)^2
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+The six invented orders have feature rows (1,d_i,n_i) and times (7,12,11,18,17,22). For beta=(3,2,2), the first order predicts seven minutes exactly; the second predicts eleven versus observed twelve, contributing one unit of squared error.
+
+## Why the mathematics matters
+
+The columns form X∈R^{6×3}, beta∈R³ and y∈R⁶. The linearity is in coefficients, even if engineered input features later contain squares or interactions. Prediction is not a causal claim about what changing distance would do.
+
+## Explain or calculate
+
+Write X for the first three orders and compute the three predictions under beta=(3,2,2).
+
+[← Linear Regression](index.qmd) · [Next](parameter-estimation.qmd) · [Python lab](../../examples/README.md)
+

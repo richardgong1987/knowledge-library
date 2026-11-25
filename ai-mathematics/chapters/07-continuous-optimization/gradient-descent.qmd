@@ -1,0 +1,33 @@
+---
+title: "Optimization Using Gradient Descent"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §7.1."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 7, §7.1. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+The delivery-time model has an error function depending on three parameters. Instead of testing every parameter combination, gradient descent changes parameters in the direction of decreasing local loss.
+
+## Formal relationship
+
+$$
+\boldsymbol\beta_{t+1}=\boldsymbol\beta_t-\eta\nabla L(\boldsymbol\beta_t)
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+For the one-dimensional loss L(theta)=(theta-3)^2 at theta0=0, the derivative is -6. With learning rate eta=0.1, theta1=0.6, and loss drops from 9 to 5.76. Repeating moves toward theta=3.
+
+## Interpretation and limitations
+
+A positive step size is required, but too large a step can diverge or oscillate. The global convergence claim depends on smoothness/convexity and the learning-rate schedule.
+
+## Explain it yourself
+
+Starting at theta=0 with eta=0.5, where does one update land for this quadratic loss?
+
+[← Chapter 7: Continuous Optimization](index.qmd) · [Next](lagrange-multipliers.qmd) · [Runnable lab](../../examples/README.md)
+

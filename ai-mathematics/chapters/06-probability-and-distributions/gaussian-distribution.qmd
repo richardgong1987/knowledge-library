@@ -1,0 +1,33 @@
+---
+title: "Gaussian Distribution"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §6.5."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 6, §6.5. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+Measurement noise is often represented with a Gaussian model because it has simple parameters and supports analytic calculation. It is a model assumption, not a universal fact about delivery times.
+
+## Formal relationship
+
+$$
+p(t\mid\mu,\sigma^2)=\frac1{\sqrt{2\pi\sigma^2}}\exp\left(-\frac{(t-\mu)^2}{2\sigma^2}\right)
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+If predicted time is 15 minutes and standard deviation is 2 minutes, an observation of 17 is one standard deviation above the mean: z=(17-15)/2=1. Under this model, an interval around 15 has calculable probability.
+
+## Interpretation and limitations
+
+A Gaussian assigns some probability to negative delivery times. For strongly skewed nonnegative data, a transformed Gaussian, lognormal or other positive-support model may be more appropriate.
+
+## Explain it yourself
+
+For μ=15 and σ=2, what is the standardised score of 11 minutes?
+
+[← Chapter 6: Probability and Distributions](index.qmd) · [Previous](statistics-and-independence.qmd) · [Next](conjugacy-and-exponential-family.qmd) · [Runnable lab](../../examples/README.md)
+

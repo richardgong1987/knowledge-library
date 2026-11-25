@@ -1,32 +1,46 @@
 ---
 title: "Probability & Statistics"
-description: "Random variables, distributions, Bayes' rule, and inference."
+description: "From probability spaces and distributions to Bayes' rule, Gaussian likelihoods and uncertainty."
 ---
 
-Random variables, distributions, Bayes' rule, and inference.
+## Why the same order can take different amounts of time
 
-::: {.callout-note}
-## Chapter status
+Distance and item count alone cannot describe every delivery. Waiting, staffing, traffic and unobserved processing stages introduce uncertainty. Rather than claiming each input has one deterministic fulfilment time, we can model a conditional distribution.
 
-This is a chapter outline. Detailed lessons and interactive examples will be added progressively.
-:::
+$$
+p(t\mid d,n,\theta).
+$$
 
-## The problem
+The symbol means a distribution of possible times $t$ conditional on distance $d$, item count $n$ and model parameters $\theta$. The distribution is **not** a statement that all deliveries follow a Gaussian law.
 
-What real-world need motivates this topic?
+## Events and Bayes' rule
 
-## A running example
+In our invented six-order dataset, three recorded times are at least 16 minutes. If a row is selected uniformly at random, the empirical event probability is $3/6=0.5$.
 
-Start with one concrete scenario and keep it throughout the explanation.
+If $L$ denotes 'late' and $D$ denotes 'distance at least 4 km', Bayes' rule states
 
-## Step-by-step reasoning
+$$
+P(L\mid D)=\frac{P(D\mid L)P(L)}{P(D)},\qquad P(D)>0.
+$$
 
-Explain what changes, why it changes, and what can be inferred.
+In this particular artificial dataset, all long-distance observations are late. It would be a serious mistake to infer that a new long-distance order is **certain** to be late. The sample is tiny and purposely constructed.
 
-## Implementation or mathematical model
+## From a likelihood to a posterior
 
-Add code, equations, diagrams, or an interactive experiment here.
+A Gaussian noise model might assume
 
-## Related concepts
+$$
+T\mid\mu,\sigma^2\sim\mathcal N(\mu,\sigma^2),
+\qquad
+p(\theta\mid\mathcal D)\propto p(\mathcal D\mid\theta)p(\theta).
+$$
 
-Link to prerequisite and follow-up lessons as the library grows.
+Likelihood quantifies consistency with observations; a prior represents information assumed before seeing the data; the posterior updates those assumptions.
+
+Learn these concepts in [Probability and Distributions](chapters/06-probability-and-distributions/index.qmd), then use them in [Bayesian Linear Regression](chapters/09-linear-regression/bayesian-linear-regression.qmd) and [Gaussian Mixture Models](chapters/11-gaussian-mixture-models/index.qmd).
+
+~~~bash
+python3 ai-mathematics/examples/delivery_ml_lab.py probability
+~~~
+
+A mathematical probability is meaningful only after its sample space, event definition and model assumptions are made explicit.

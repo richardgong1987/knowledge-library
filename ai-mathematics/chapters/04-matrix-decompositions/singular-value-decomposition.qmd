@@ -1,0 +1,33 @@
+---
+title: "Singular Value Decomposition"
+description: "An original worked mathematical lesson corresponding to MML §4.5."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 4, §4.5. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+A delivery-feature matrix is rectangular; eigenvalue decomposition alone is not the right universal factorisation. Singular value decomposition separates input directions, scales, and output directions.
+
+## Derive the structure
+
+$$
+A=U\Sigma V^\top,\qquad \sigma_1\geq\sigma_2\geq0
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+Let A=[[3,0],[0,1]]. One SVD uses U=V=I and Sigma=diag(3,1). A unit circle in input space becomes an ellipse with principal semiaxes three and one.
+
+## Interpretation and limitations
+
+An SVD exists for every real matrix, including rectangular and rank-deficient matrices. Nonzero singular values are square roots of eigenvalues of A^T A. It helps with least squares, condition numbers and PCA.
+
+## Challenge
+
+If Sigma has singular values 5 and 0, what is the matrix rank and what information has been lost?
+
+[← Matrix Decompositions](index.qmd) · [Previous](./eigendecomposition.qmd) · [Next](./matrix-approximation.qmd) · [Python demonstrations](../../examples/README.md)
+

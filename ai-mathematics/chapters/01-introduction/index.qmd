@@ -1,0 +1,55 @@
+---
+title: "Mathematics for Machine Learning: Introduction"
+description: "Why vectors, models, and parameter learning belong in one conceptual framework."
+---
+
+## The question
+
+A prediction system for an online shop has recorded six orders. For each one, we know the **delivery distance** $d$, **item count** $n$ and **fulfilment time** $t$. Our goal is to make predictions for orders not yet observed.
+
+We need three distinct ideas:
+
+1. **Data:** observations $\mathcal D=\{(\boldsymbol x_i,t_i)\}$, where $\boldsymbol x_i=(d_i,n_i)^\top$.
+2. **Model:** a family of functions $f_{\theta}(\boldsymbol x)$ that produces a predicted time.
+3. **Learning:** an algorithm that selects parameters $\theta$ by assessing observations against a defined objective.
+
+The separation matters because even a perfectly implemented optimisation algorithm cannot repair a misleading dataset or an unsuitable model family.
+
+## One small equation linking the ideas
+
+$$
+\hat\theta=\arg\min_{\theta}\frac1N\sum_{i=1}^N
+\bigl(f_{\theta}(\boldsymbol x_i)-t_i\bigr)^2.
+$$
+
+The sum uses **training data** to select parameters. We still need a validation/test design to check whether the model predicts future orders reliably. The formula is an example of empirical risk minimisation, not a claim that all machine learning is squared-error regression.
+
+## Two complementary learning routes
+
+**Bottom-up:** study linear algebra and geometry, then calculus, probability and optimisation, before studying regression, PCA, mixtures and classification. This route is useful when unfamiliar symbols are the main obstacle.
+
+**Top-down:** start with a real prediction problem, ask why a particular algorithm needs an eigenvector or a gradient, then follow the links back to the mathematical prerequisites. This route provides immediate motivation.
+
+The book *Mathematics for Machine Learning* describes both reading styles and divides its material into **Mathematical Foundations** and **Central Machine Learning Problems**. Our knowledge library keeps that relationship but uses an independent running example and original content.
+
+## Symbol conventions
+
+| Notation | Meaning |
+|---|---|
+| $a, b, t$ | Scalars |
+| $\boldsymbol x\in\mathbb R^D$ | A feature vector with $D$ coordinates |
+| $X\in\mathbb R^{N\times D}$ | $N$ observations with $D$ features |
+| $\theta$ | Model parameters |
+| $\nabla f$ | Gradient |
+| $\mathbb E[X]$ | Expected value of a random variable |
+| $\arg\min f$ | Inputs that minimise $f$ |
+
+Use the [Python lab](../../examples/README.md) with all its modes to observe how a single dataset connects these concepts. (The first command below is run from repository root.)
+
+~~~bash
+python3 ai-mathematics/examples/delivery_ml_lab.py all
+~~~
+
+**Reading:** Deisenroth, Faisal and Ong, *Mathematics for Machine Learning* (2020), Chapter 1. This is an original explanation and does not reproduce the book.
+
+[← AI & Mathematics home](../../index.qmd)

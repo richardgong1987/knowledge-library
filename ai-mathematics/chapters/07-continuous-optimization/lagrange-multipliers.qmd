@@ -1,0 +1,33 @@
+---
+title: "Constrained Optimization and Lagrange Multipliers"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §7.2."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 7, §7.2. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+Operations planning may minimise an objective under a resource budget. Rather than eliminating constraints, the Lagrangian introduces multipliers that measure the constraint's local value.
+
+## Formal relationship
+
+$$
+\mathcal L(\boldsymbol x,\lambda)=f(\boldsymbol x)+\lambda g(\boldsymbol x),\qquad \nabla_{\boldsymbol x}\mathcal L=0,\quad g(\boldsymbol x)=0
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+Minimise d²+n² subject to d+n=4. Use L=d²+n²+lambda(d+n-4). Stationarity gives 2d+lambda=0 and 2n+lambda=0, hence d=n. The constraint gives d=n=2.
+
+## Interpretation and limitations
+
+Stationarity gives candidates; constraint qualification and convexity/second-order conditions matter for classifying them. Inequality constraints lead to KKT complementary slackness rather than this equality-only formula.
+
+## Explain it yourself
+
+Solve the same problem with constraint d+n=6. Interpret why the optimum balances the two variables.
+
+[← Chapter 7: Continuous Optimization](index.qmd) · [Previous](gradient-descent.qmd) · [Next](convex-optimization.qmd) · [Runnable lab](../../examples/README.md)
+

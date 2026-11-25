@@ -1,0 +1,33 @@
+---
+title: "Higher-Order Derivatives"
+description: "An original worked mathematical lesson corresponding to MML §5.7."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 5, §5.7. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+The second derivative describes local curvature. In several dimensions, a Hessian matrix determines whether the loss behaves like a bowl, saddle or ridge near a point.
+
+## Derive the structure
+
+$$
+H_{ij}=\frac{\partial^2 L}{\partial\theta_i\partial\theta_j},\qquad \nabla^2(\theta-3)^2=2
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+For L(theta)=(theta-3)^2, the first derivative vanishes at theta=3 and the second derivative is positive 2, confirming a strict local minimum. With L(theta)=-(theta-3)^2, the same stationary point has negative curvature and is a maximum.
+
+## Interpretation and limitations
+
+A positive-definite Hessian at a stationary point gives a strict local minimum under smoothness assumptions. A semidefinite Hessian alone may be inconclusive; nonlinear models can have saddles.
+
+## Challenge
+
+Classify the stationary point of L(theta)=theta^4 using its first and second derivatives.
+
+[← Vector Calculus](index.qmd) · [Previous](./backpropagation-and-autodiff.qmd) · [Next](./taylor-series.qmd) · [Python demonstrations](../../examples/README.md)
+

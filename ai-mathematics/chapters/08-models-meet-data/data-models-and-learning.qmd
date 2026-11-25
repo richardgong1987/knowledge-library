@@ -1,0 +1,33 @@
+---
+title: "Data, Models, and Learning"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §8.1."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 8, §8.1. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+A dataset is not a model, and model evaluation is not training. The central learning task selects parameters using past observations so that predictions work on new observations.
+
+## Formal relationship
+
+$$
+\mathcal D=\{(\boldsymbol x_i,y_i)\}_{i=1}^{n},\qquad \hat y=f_{\boldsymbol\theta}(\boldsymbol x)
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+For each shop order, x=(distance, item count) and y=fulfilment time. A linear candidate is fβ(x)=β0+β1 distance+β2 items. The six observed rows determine a dataset, not necessarily a representative sample of future demand.
+
+## Interpretation and limitations
+
+Generalisation is an out-of-sample property. A model can memorise training data yet predict poorly on a changed distribution, different delivery region or holiday workload.
+
+## Explain it yourself
+
+Identify the features, prediction target, model parameters and one possible source of dataset shift.
+
+[← Chapter 8: When Models Meet Data](index.qmd) · [Next](empirical-risk-minimization.qmd) · [Runnable lab](../../examples/README.md)
+

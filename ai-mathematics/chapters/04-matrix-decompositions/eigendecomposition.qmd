@@ -1,0 +1,33 @@
+---
+title: "Eigendecomposition and Diagonalization"
+description: "An original worked mathematical lesson corresponding to MML §4.4."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 4, §4.4. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+When a matrix has enough independent eigenvectors it can be expressed in a basis where the transformation is diagonal. That simplifies repeated transformations and powers.
+
+## Derive the structure
+
+$$
+A=P\Lambda P^{-1},\qquad A^k=P\Lambda^kP^{-1}
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+For A=diag(2,3), P=I and Lambda=A. Thus A^3=diag(8,27). A symmetric matrix admits an orthogonal eigenbasis, making P^-1=P^T and improving interpretability.
+
+## Interpretation and limitations
+
+Not every matrix is diagonalizable: a 2-by-2 Jordan block [[1,1],[0,1]] has too few independent eigenvectors. Do not confuse invertibility with diagonalizability.
+
+## Challenge
+
+What eigenvalues does A^2 have when A is diagonalizable with eigenvalues 2 and 3?
+
+[← Matrix Decompositions](index.qmd) · [Previous](./cholesky-decomposition.qmd) · [Next](./singular-value-decomposition.qmd) · [Python demonstrations](../../examples/README.md)
+

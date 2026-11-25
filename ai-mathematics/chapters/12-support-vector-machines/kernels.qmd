@@ -1,0 +1,33 @@
+---
+title: "Kernels"
+description: "Original mathematical explanation and worked example informed by MML §12.4."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), Chapter 12 §12.4. All examples are newly authored.
+
+## Motivation
+
+A linear boundary in raw coordinates may be too restrictive. A kernel computes dot products in a feature space without always constructing its coordinates explicitly.
+
+## Derivation and notation
+
+$$
+k(\boldsymbol x,\boldsymbol z)=\langle\phi(\boldsymbol x),\phi(\boldsymbol z)\rangle,\quad k_{\rm RBF}(\boldsymbol x,\boldsymbol z)=\exp(-\gamma\|\boldsymbol x-\boldsymbol z\|_2^2)
+$$
+
+Read this model together with the distributional, geometric or optimisation assumptions. An equation without its domain of validity is not a complete explanation.
+
+## Apply it to our running example
+
+For x=(1,1), z=(2,1), squared Euclidean distance is one. With gamma=0.5 the RBF kernel is exp(-0.5)≈0.6065; for identical vectors the value is 1. The kernel thus measures similarity in the chosen feature geometry.
+
+## Constraints and interpretation
+
+A valid SVM kernel must produce positive-semidefinite Gram matrices under appropriate conditions. Large gamma may overfit, while small gamma may oversmooth; tuning should use validation data.
+
+## Your turn
+
+What RBF kernel value do you obtain when two feature vectors are identical, regardless of gamma>0?
+
+[← Support Vector Machines](index.qmd) · [Previous](dual-svm.qmd) · [Next](numerical-solution.qmd) · [Single-file Python lab](../../examples/README.md)
+

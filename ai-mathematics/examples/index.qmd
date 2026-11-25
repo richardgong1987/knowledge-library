@@ -1,0 +1,46 @@
+---
+title: "One-file Mathematical Learning Lab"
+description: "Run the same invented delivery-data example across all mathematical and ML chapters."
+---
+
+## One dataset, multiple models
+
+This lab deliberately keeps the **six original orders** constant while the mathematical questions change. Distance and item count form a matrix; fulfilment time is used as a regression label, a one-dimensional mixture observation, or a late/on-time classification label. PCA uses the two input features without looking at their times.
+
+The code is **independently authored** and requires only Python 3.11+ with the standard library. It does not reproduce the uploaded textbook's code or exercises.
+
+## Run it
+
+~~~bash
+python3 ai-mathematics/examples/delivery_ml_lab.py all
+~~~
+
+Run just one experiment:
+
+~~~bash
+python3 ai-mathematics/examples/delivery_ml_lab.py linear
+python3 ai-mathematics/examples/delivery_ml_lab.py geometry
+python3 ai-mathematics/examples/delivery_ml_lab.py calculus
+python3 ai-mathematics/examples/delivery_ml_lab.py probability
+python3 ai-mathematics/examples/delivery_ml_lab.py optimisation
+python3 ai-mathematics/examples/delivery_ml_lab.py regression
+python3 ai-mathematics/examples/delivery_ml_lab.py pca
+python3 ai-mathematics/examples/delivery_ml_lab.py gmm
+python3 ai-mathematics/examples/delivery_ml_lab.py svm
+~~~
+
+[Download the original Python source](delivery_ml_lab.py) or [view the source in GitHub](https://github.com/richardgong1987/knowledge-library/blob/main/ai-mathematics/examples/delivery_ml_lab.py).
+
+## Test the mathematics
+
+~~~bash
+python3 -m unittest discover -s ai-mathematics/examples -p 'test_*.py'
+~~~
+
+Tests cover Gaussian elimination, consistency of gradient descent with the analytic regression solution, PCA unit-vector invariants, GMM mixture parameters and the SVM geometric-margin calculation.
+
+## What the code does not claim
+
+The SVM mode **demonstrates a valid separating hyperplane but does not train an SVM optimiser**. The GMM uses one-dimensional Gaussian components with variance safeguards, which is suitable for teaching EM but not arbitrary production data. Least squares uses normal equations for transparency; production software should use more stable methods when needed.
+
+[← AI & Mathematics](../index.qmd) · [Regression](../chapters/09-linear-regression/index.qmd) · [PCA](../chapters/10-principal-component-analysis/index.qmd)

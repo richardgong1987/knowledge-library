@@ -9,7 +9,7 @@ An English-language technical knowledge website powered by [Quarto](https://quar
 - **System Design:** fundamentals, distributed systems, and data consistency
 - **DevOps:** Ansible, Kubernetes, CI/CD pipelines
 - **Finance:** fixed income, bond pricing, duration, and future financial topics
-- **AI & Mathematics:** linear algebra, calculus, probability, machine learning
+- **AI & Mathematics:** 11 original mathematical chapter guides, 68 worked topic lessons aligned with *Mathematics for Machine Learning*, a dependency-free Python lab, and interactive experiments
 
 ## Edit and preview locally
 

@@ -1,32 +1,45 @@
 ---
-title: "Calculus"
-description: "Limits, derivatives, gradients, integration, and optimisation."
+title: "Calculus and Optimisation"
+description: "Derive gradients, Jacobians, backpropagation and optimisation rather than memorising formulas."
 ---
 
-Limits, derivatives, gradients, integration, and optimisation.
+## The same predictor, now with learnable parameters
 
-::: {.callout-note}
-## Chapter status
+Suppose the prediction for each order is $\hat y_i=\beta_0+\beta_1d_i+\beta_2n_i$. We would like the parameters to minimise average squared prediction error:
 
-This is a chapter outline. Detailed lessons and interactive examples will be added progressively.
-:::
+$$
+L(\boldsymbol\beta)=\frac1N\sum_{i=1}^{N}(\hat y_i-y_i)^2.
+$$
 
-## The problem
+Taking a derivative of one term tells us the sensitivity to a parameter. Collecting sensitivities gives a **gradient**:
 
-What real-world need motivates this topic?
+$$
+\nabla L(\boldsymbol\beta)=\frac2N X^\top(X\boldsymbol\beta-\boldsymbol y).
+$$
 
-## A running example
+The gradient's three entries describe how the loss changes if we independently perturb the intercept, distance coefficient or item-count coefficient.
 
-Start with one concrete scenario and keep it throughout the explanation.
+## From derivative to an algorithm
 
-## Step-by-step reasoning
+For the simpler scalar example $L(\theta)=(\theta-3)^2$, derivative is $2(\theta-3)$. Starting at $\theta_0=0$ and taking a step of size $\eta=0.1$:
 
-Explain what changes, why it changes, and what can be inferred.
+$$
+\theta_1=\theta_0-0.1\,L'(\theta_0)=0-0.1(-6)=0.6.
+$$
 
-## Implementation or mathematical model
+The loss decreases from 9 to 5.76. This is **one local step**, not an unconditional promise of convergence. The learning rate, curvature and function's shape all matter.
 
-Add code, equations, diagrams, or an interactive experiment here.
+For a composition $h=g\circ f$, the chain rule computes derivatives in stages. Neural-network **backpropagation** is a systematic reverse traversal of such a computation graph.
 
-## Related concepts
+## Learning path
 
-Link to prerequisite and follow-up lessons as the library grows.
+Read [Vector Calculus](chapters/05-vector-calculus/index.qmd) first, including Jacobians and automatic differentiation, and then [Continuous Optimization](chapters/07-continuous-optimization/index.qmd) for gradient descent, constrained optimisation and convexity.
+
+Try the [interactive gradient-descent experiment](interactives/gradient-descent.qmd) before moving on to the [regression loss](chapters/09-linear-regression/parameter-estimation.qmd).
+
+~~~bash
+python3 ai-mathematics/examples/delivery_ml_lab.py calculus
+python3 ai-mathematics/examples/delivery_ml_lab.py optimisation
+~~~
+
+**Important distinction:** the gradient is a local mathematical property, while choosing parameters with gradient descent is an algorithm. An analytical least-squares formula is another route to the same convex quadratic optimum when its assumptions hold.

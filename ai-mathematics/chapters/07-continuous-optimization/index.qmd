@@ -1,0 +1,47 @@
+---
+title: "Continuous Optimization"
+description: "A complete original learning unit based on the mathematical topics in MML Chapter 7."
+---
+
+::: {.callout-tip}
+## One coherent example
+
+We use six invented shop orders with **distance (km)**, **number of items**, and **fulfilment time (minutes)**. Start the [single-file Python example](../../examples/README.md); this chapter corresponds to `python3 delivery_ml_lab.py optimisation`.
+:::
+
+## The motivating problem
+
+**How can we select parameters without searching an infinite number of possibilities?**
+
+Gradient descent uses local sensitivity to improve a loss; Lagrange multipliers model equality constraints; convexity provides conditions under which local optima are globally meaningful. Optimisation connects the foundations to parameter fitting.
+
+## Central mathematical relationship
+
+$$
+\beta_{t+1}=\beta_t-\eta\nabla L(\beta_t)
+$$
+
+The equation captures the chapter's principal relationship. Definitions and assumptions are developed in the lessons below; an equation is useful only when the domain and meaning of its symbols are explicit.
+
+## First worked result
+
+For L(theta)=(theta-3)^2 at theta=0, a step with eta=0.1 moves to theta=0.6 and reduces the loss from 9 to 5.76. The step size and curvature jointly determine whether this trend continues.
+
+## Lessons (all written)
+
+1. [**Optimization Using Gradient Descent**](gradient-descent.qmd) — Chapter 7, §7.1
+2. [**Constrained Optimization and Lagrange Multipliers**](lagrange-multipliers.qmd) — Chapter 7, §7.2
+3. [**Convex Optimization**](convex-optimization.qmd) — Chapter 7, §7.3
+
+## What to pay attention to
+
+A feasible stationary point may not be a minimum without further conditions. Too large a learning rate can cause divergence.
+
+Read the lessons in sequence, reproduce a calculation by hand, then run the related Python demonstration and explain which mathematical claim the output illustrates. A numerical observation is never, by itself, proof of a theorem.
+
+## Reference and originality
+
+The learning map follows the topic coverage of **Deisenroth, Faisal and Ong (2020), *Mathematics for Machine Learning*, Chapter 7**, available from [mml-book.com](https://mml-book.com/). All prose, examples and code in this knowledge library are independently written. The book PDF, its figures, exercises and text are not redistributed.
+
+[← AI & Mathematics home](../../index.qmd) · [One-file lab](../../examples/README.md)
+

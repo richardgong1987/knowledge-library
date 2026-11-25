@@ -1,0 +1,33 @@
+---
+title: "Eigenvector Computation and Low-Rank Approximations"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §10.4."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §10.4. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+A compact matrix approximation can be formed using the leading singular directions. PCA thus connects covariance eigenvectors with the truncated SVD of centered data.
+
+## Formulate the problem mathematically
+
+$$
+X_c=U\Sigma V^\top,\quad (X_c)_k=U_k\Sigma_kV_k^\top,\quad S=\frac{V\Sigma^2V^\top}{N-1}
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+For centered matrix diag(3,1), retaining only its first singular direction gives rank-one matrix diag(3,0), leaving squared Frobenius error 1. The first right singular vector is also the leading eigenvector of X_c^T X_c.
+
+## Why the mathematics matters
+
+Singular values quantify retained energy. Sign flips of principal vectors are arbitrary: v and -v represent the same one-dimensional subspace.
+
+## Explain or calculate
+
+If singular values are 5 and 2, how much squared energy is retained after keeping only the first component?
+
+[← Principal Component Analysis](index.qmd) · [Previous](projection-perspective.qmd) · [Next](pca-in-high-dimensions.qmd) · [Python lab](../../examples/README.md)
+

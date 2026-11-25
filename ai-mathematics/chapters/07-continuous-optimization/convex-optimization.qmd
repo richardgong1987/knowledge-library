@@ -1,0 +1,33 @@
+---
+title: "Convex Optimization"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §7.3."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 7, §7.3. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+Quadratic regression losses have a useful property: local minima are global minima. Convexity is the mathematical reason some optimisation procedures are predictable.
+
+## Formal relationship
+
+$$
+f(\alpha x+(1-\alpha)y)\leq\alpha f(x)+(1-\alpha)f(y),\qquad 0\leq\alpha\leq1
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+The loss f(theta)=(theta-3)^2 is convex because f''(theta)=2>0. Its only stationary point theta=3 is the global minimum. In multiple dimensions, X^T X is positive semidefinite, making squared-error regression convex.
+
+## Interpretation and limitations
+
+Convex does not automatically mean strictly convex: if X has dependent columns, several coefficient vectors may achieve the same minimum. Nonconvex neural networks do not inherit a global-optimum promise.
+
+## Explain it yourself
+
+Is -theta² convex or concave? Use its second derivative to justify the answer.
+
+[← Chapter 7: Continuous Optimization](index.qmd) · [Previous](lagrange-multipliers.qmd) · [Runnable lab](../../examples/README.md)
+

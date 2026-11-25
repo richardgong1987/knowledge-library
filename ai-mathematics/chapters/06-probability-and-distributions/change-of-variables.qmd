@@ -1,0 +1,33 @@
+---
+title: "Change of Variables/Inverse Transform"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §6.7."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 6, §6.7. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+A model might use log fulfilment time instead of raw minutes. Transformations change a density through their Jacobian; simply relabelling the horizontal axis would be wrong.
+
+## Formal relationship
+
+$$
+Y=g(X),\quad p_Y(y)=p_X(g^{-1}(y))\left|\frac{d}{dy}g^{-1}(y)\right|
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+If X is uniform on [0,1] and Y=2X, then the inverse is x=y/2 and its derivative is 1/2. Thus pY(y)=1/2 for 0≤y≤2, which integrates to one.
+
+## Interpretation and limitations
+
+The one-dimensional formula assumes the transformation is differentiable and one-to-one on the relevant domain; non-injective transforms require summing over inverse branches.
+
+## Explain it yourself
+
+If Y=X^2 and X is uniform on [0,1], derive its density on (0,1].
+
+[← Chapter 6: Probability and Distributions](index.qmd) · [Previous](conjugacy-and-exponential-family.qmd) · [Runnable lab](../../examples/README.md)
+

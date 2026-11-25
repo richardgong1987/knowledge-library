@@ -1,0 +1,48 @@
+---
+title: "Gaussian Mixture Models"
+description: "A complete original learning unit based on the mathematical topics in MML Chapter 11."
+---
+
+::: {.callout-tip}
+## One coherent example
+
+We use six invented shop orders with **distance (km)**, **number of items**, and **fulfilment time (minutes)**. Start the [single-file Python example](../../examples/README.md); this chapter corresponds to `python3 delivery_ml_lab.py gmm`.
+:::
+
+## The motivating problem
+
+**How do we discover clusters without assigning labels in advance?**
+
+A mixture model combines multiple Gaussian components. Each observation has a probability of belonging to each component; EM alternates soft assignment and weighted parameter refitting. This is likelihood-based density estimation, not necessarily a discovery of literal business categories.
+
+## Central mathematical relationship
+
+$$
+p(t)=\sum_{k=1}^{K}\pi_k\,\mathcal N(t\mid\mu_k,\sigma_k^2)
+$$
+
+The equation captures the chapter's principal relationship. Definitions and assumptions are developed in the lessons below; an equation is useful only when the domain and meaning of its symbols are explicit.
+
+## First worked result
+
+Start with component means near 10 and 20 minutes. An observation at 9 receives high responsibility for the short-time component; the M-step shifts means according to all orders' weighted memberships.
+
+## Lessons (all written)
+
+1. [**Gaussian Mixture Model**](gaussian-mixture-model.qmd) — Chapter 11, §11.1
+2. [**Parameter Learning via Maximum Likelihood**](mixture-maximum-likelihood.qmd) — Chapter 11, §11.2
+3. [**EM Algorithm**](expectation-maximization.qmd) — Chapter 11, §11.3
+4. [**Latent-Variable Perspective**](latent-variable-perspective.qmd) — Chapter 11, §11.4
+
+## What to pay attention to
+
+EM may converge to a local solution. Gaussian mixtures also have variance-collapse pathologies; constrain variances and consider multiple initialisations.
+
+Read the lessons in sequence, reproduce a calculation by hand, then run the related Python demonstration and explain which mathematical claim the output illustrates. A numerical observation is never, by itself, proof of a theorem.
+
+## Reference and originality
+
+The learning map follows the topic coverage of **Deisenroth, Faisal and Ong (2020), *Mathematics for Machine Learning*, Chapter 11**, available from [mml-book.com](https://mml-book.com/). All prose, examples and code in this knowledge library are independently written. The book PDF, its figures, exercises and text are not redistributed.
+
+[← AI & Mathematics home](../../index.qmd) · [One-file lab](../../examples/README.md)
+

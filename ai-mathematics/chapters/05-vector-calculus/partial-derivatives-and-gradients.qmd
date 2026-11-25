@@ -1,0 +1,33 @@
+---
+title: "Partial Differentiation and Gradients"
+description: "An original worked mathematical lesson corresponding to MML §5.2."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 5, §5.2. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+A real predictor uses an intercept, distance and item count. The gradient collects how the loss changes when each parameter moves independently.
+
+## Derive the structure
+
+$$
+\nabla_{\boldsymbol\beta}L=\begin{bmatrix}\partial L/\partial\beta_0\\\partial L/\partial\beta_1\\\partial L/\partial\beta_2\end{bmatrix}
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+For one order with features x=(1,2,1), y=9, and beta=(3,2,1), prediction is 8. The squared loss gradient is 2(8-9)(1,2,1)=(-2,-4,-2). The negative gradient points toward local improvement.
+
+## Interpretation and limitations
+
+The gradient is a vector in parameter space, not input-feature space. Its components depend on feature scales; standardisation can improve optimisation conditioning.
+
+## Challenge
+
+Which coordinate of the gradient has the largest magnitude in the example, and why?
+
+[← Vector Calculus](index.qmd) · [Previous](./univariate-differentiation.qmd) · [Next](./vector-valued-gradients.qmd) · [Python demonstrations](../../examples/README.md)
+

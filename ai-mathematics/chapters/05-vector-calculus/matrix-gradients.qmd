@@ -1,0 +1,33 @@
+---
+title: "Gradients of Matrices"
+description: "An original worked mathematical lesson corresponding to MML §5.4."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 5, §5.4. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+Learning models often optimise a whole matrix of weights. Matrix derivatives organise many scalar derivatives while respecting the shapes of tensors.
+
+## Derive the structure
+
+$$
+L(W)=\tfrac12\|XW-Y\|_F^2,\qquad \nabla_WL=X^\top(XW-Y)
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+Take X=I_2, W=diag(2,3), and Y=diag(1,1). The residual is diag(1,2), so the gradient is diag(1,2). One small gradient step reduces both excess diagonal weights.
+
+## Interpretation and limitations
+
+This expression assumes ordinary Euclidean/Frobenius geometry with compatible dimensions. Matrix calculus conventions vary; verify dimensions before trusting a memorised identity.
+
+## Challenge
+
+If X is n-by-d and W is d-by-k, what is the gradient's shape?
+
+[← Vector Calculus](index.qmd) · [Previous](./vector-valued-gradients.qmd) · [Next](./gradient-identities.qmd) · [Python demonstrations](../../examples/README.md)
+

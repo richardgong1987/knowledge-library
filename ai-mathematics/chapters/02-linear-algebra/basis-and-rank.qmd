@@ -1,0 +1,33 @@
+---
+title: "Basis and Rank"
+description: "Original mathematical tutorial grounded in MML Chapter 2, Section 2.6."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), §2.6. This is an original lesson using our delivery-operations example—not reproduced textbook content.
+
+## Why the concept matters
+
+The rank tells us how many independent directions our feature matrix actually contains. A basis is a minimal set of vectors that spans the relevant space.
+
+## Define the mathematical relationship
+
+$$
+\operatorname{rank}(A)=\dim\bigl(\operatorname{im}(A)\bigr)\leq\min(m,n)
+$$
+
+The displayed relationship is the main object to analyse. Specify the relevant dimensions, quantities and assumptions before using it. It should be read as a mathematical statement, not merely a programming shorthand.
+
+## Work through an original example
+
+Columns (1,0), (0,1), and (1,1) span R^2 but only two are independent. Thus the rank of the 2-by-3 matrix formed by these columns is two. The third column adds no new direction.
+
+## What follows, and what does not
+
+In regression, insufficient column rank prevents a unique ordinary least-squares coefficient vector unless additional constraints or regularisation are introduced.
+
+## Test your reasoning
+
+If a third feature is distance+items, how does it affect rank when both original features are already present?
+
+[← Linear Algebra chapter](index.qmd) · [Previous: Linear Independence](linear-independence.qmd) · [Next: Linear Mappings](linear-mappings.qmd) · [Runnable Python lab](../../examples/README.md)
+

@@ -1,0 +1,50 @@
+---
+title: "When Models Meet Data"
+description: "A complete original learning unit based on the mathematical topics in MML Chapter 8."
+---
+
+::: {.callout-tip}
+## One coherent example
+
+We use six invented shop orders with **distance (km)**, **number of items**, and **fulfilment time (minutes)**. Start the [single-file Python example](../../examples/README.md); this chapter corresponds to `python3 delivery_ml_lab.py regression`.
+:::
+
+## The motivating problem
+
+**What does it mean to learn a model from a finite dataset?**
+
+The dataset provides observations, the model maps features to predictions, and the objective evaluates performance. Empirical risk minimisation, likelihood, priors, graphical models and validation offer different but connected ways to reason about fit and generalisation.
+
+## Central mathematical relationship
+
+$$
+\hat\theta=\arg\min_\theta\frac1N\sum_{i=1}^{N}\ell(f_\theta(x_i),y_i)
+$$
+
+The equation captures the chapter's principal relationship. Definitions and assumptions are developed in the lessons below; an equation is useful only when the domain and meaning of its symbols are explicit.
+
+## First worked result
+
+A predicted fulfilment time of 11 minutes for a 12-minute order has squared error 1; predicting 9 minutes has squared error 9. The learning rule aggregates such errors across training observations, while validation checks performance on unseen records.
+
+## Lessons (all written)
+
+1. [**Data, Models, and Learning**](data-models-and-learning.qmd) — Chapter 8, §8.1
+2. [**Empirical Risk Minimization**](empirical-risk-minimization.qmd) — Chapter 8, §8.2
+3. [**Parameter Estimation**](parameter-estimation.qmd) — Chapter 8, §8.3
+4. [**Probabilistic Modeling and Inference**](probabilistic-inference.qmd) — Chapter 8, §8.4
+5. [**Directed Graphical Models**](directed-graphical-models.qmd) — Chapter 8, §8.5
+6. [**Model Selection**](model-selection.qmd) — Chapter 8, §8.6
+
+## What to pay attention to
+
+Lower training loss is not the same as a better deployed model. Feature leakage, data shift and repeated test-set tuning can make evaluation overoptimistic.
+
+Read the lessons in sequence, reproduce a calculation by hand, then run the related Python demonstration and explain which mathematical claim the output illustrates. A numerical observation is never, by itself, proof of a theorem.
+
+## Reference and originality
+
+The learning map follows the topic coverage of **Deisenroth, Faisal and Ong (2020), *Mathematics for Machine Learning*, Chapter 8**, available from [mml-book.com](https://mml-book.com/). All prose, examples and code in this knowledge library are independently written. The book PDF, its figures, exercises and text are not redistributed.
+
+[← AI & Mathematics home](../../index.qmd) · [One-file lab](../../examples/README.md)
+

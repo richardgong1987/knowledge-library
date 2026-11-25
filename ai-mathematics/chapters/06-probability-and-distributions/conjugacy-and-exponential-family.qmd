@@ -1,0 +1,33 @@
+---
+title: "Conjugacy and the Exponential Family"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §6.6."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 6, §6.6. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+Bayesian estimation combines a likelihood with a prior. In special families, their algebraic forms combine neatly, giving a posterior in the same family.
+
+## Formal relationship
+
+$$
+\mu\sim\mathcal N(\mu_0,\tau_0^2),\quad y_i\mid\mu\sim\mathcal N(\mu,\sigma^2),\quad \tau_n^{-2}=\tau_0^{-2}+n\sigma^{-2}
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+Suppose μ has prior mean 15 and variance 4, and one observed time is 17 with known observation variance 4. Posterior precision is 1/4+1/4=1/2, so posterior variance is 2; posterior mean is the precision-weighted average (15+17)/2=16.
+
+## Interpretation and limitations
+
+This is normal–normal conjugacy with known observation variance. The exponential family includes many distributions, but not every prior is conjugate to every likelihood.
+
+## Explain it yourself
+
+How does the posterior variance change when a second independent observation with the same variance is added?
+
+[← Chapter 6: Probability and Distributions](index.qmd) · [Previous](gaussian-distribution.qmd) · [Next](change-of-variables.qmd) · [Runnable lab](../../examples/README.md)
+

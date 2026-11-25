@@ -1,0 +1,33 @@
+---
+title: "Latent Variable Perspective"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §10.7."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §10.7. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+PCA can also be interpreted as a model in which low-dimensional hidden coordinates generate observed high-dimensional data. The probabilistic perspective makes noise and uncertainty explicit.
+
+## Formulate the problem mathematically
+
+$$
+\boldsymbol z\sim\mathcal N(0,I),\quad\boldsymbol x=W\boldsymbol z+\boldsymbol\mu+\boldsymbol\varepsilon,\quad\boldsymbol\varepsilon\sim\mathcal N(0,\sigma^2I)
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+Think of an order as having an unobserved 'size/complexity' factor z that affects both route distance and item count. The matrix W maps this factor into the two measured coordinates, while epsilon represents unexplained variation.
+
+## Why the mathematics matters
+
+This is a simplified probabilistic PCA-style generative model; its noise assumptions are stronger than classical deterministic PCA. A latent variable is a model construct, not automatically a discovered physical cause.
+
+## Explain or calculate
+
+What happens to the covariance of x when the isotropic noise variance sigma² increases?
+
+[← Principal Component Analysis](index.qmd) · [Previous](pca-practice.qmd) · [Python lab](../../examples/README.md)
+

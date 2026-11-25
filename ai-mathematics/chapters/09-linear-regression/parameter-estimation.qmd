@@ -1,0 +1,33 @@
+---
+title: "Parameter Estimation"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §9.2."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §9.2. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+Ordinary least squares chooses parameters that minimise the squared residual vector. It can be derived analytically from the gradient or solved with a numerically stable factorisation.
+
+## Formulate the problem mathematically
+
+$$
+\nabla_\beta L=2X^\top(X\boldsymbol\beta-\boldsymbol y)=0\quad\Rightarrow\quad X^\top X\boldsymbol\beta=X^\top\boldsymbol y
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+The self-contained Python lab builds the 6-by-3 design matrix and solves the normal equations for the invented observations. The fitted coefficients are approximately (2.588,1.824,2.765); a seven-kilometre, two-item order is predicted to take roughly 20.88 minutes.
+
+## Why the mathematics matters
+
+Unique coefficients require full column rank. Computing (X^T X)^-1 explicitly is unnecessary and often unstable; QR/SVD is preferable in real datasets, especially with strongly correlated features.
+
+## Explain or calculate
+
+Why is a constant column needed for the intercept? What breaks if the distance and item-count columns are identical?
+
+[← Linear Regression](index.qmd) · [Previous](problem-formulation.qmd) · [Next](bayesian-linear-regression.qmd) · [Python lab](../../examples/README.md)
+

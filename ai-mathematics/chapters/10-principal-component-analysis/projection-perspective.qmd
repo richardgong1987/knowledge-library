@@ -1,0 +1,33 @@
+---
+title: "Projection Perspective"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §10.3."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §10.3. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+The same PCA direction can be derived by minimising reconstruction error. This makes the compression cost explicit in the original feature space.
+
+## Formulate the problem mathematically
+
+$$
+\min_{W^\top W=I_k}\sum_{i=1}^N\|\boldsymbol x_i-\boldsymbol\mu-WW^\top(\boldsymbol x_i-\boldsymbol\mu)\|_2^2
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+Project x=(3,1) onto the unit diagonal direction w=(1,1)/sqrt(2). The score is 4/sqrt(2), and reconstruction is (2,2). The residual is (1,-1) and squared reconstruction error equals 2.
+
+## Why the mathematics matters
+
+For centered Euclidean data, maximising projected variance and minimising reconstruction error choose the same principal subspace. This equality relies on orthogonal projections and a consistent metric.
+
+## Explain or calculate
+
+Why is reconstruction along a unit direction WW^T x rather than simply W^T x?
+
+[← Principal Component Analysis](index.qmd) · [Previous](maximum-variance.qmd) · [Next](eigenvector-and-low-rank.qmd) · [Python lab](../../examples/README.md)
+

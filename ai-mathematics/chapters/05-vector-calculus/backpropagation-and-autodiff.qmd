@@ -1,0 +1,33 @@
+---
+title: "Backpropagation and Automatic Differentiation"
+description: "An original worked mathematical lesson corresponding to MML §5.6."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 5, §5.6. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+Deep models compose many transformations. Backpropagation applies the chain rule backward through this computation graph without symbolically expanding the entire composition.
+
+## Derive the structure
+
+$$
+\frac{\partial L}{\partial a}=\frac{\partial L}{\partial b}\frac{\partial b}{\partial a}
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+Suppose a=2, b=3a=6 and L=(b-9)^2=9. First dL/db=2(b-9)=-6; then db/da=3, so dL/da=-18. Only local derivatives were needed.
+
+## Interpretation and limitations
+
+Reverse-mode automatic differentiation efficiently computes gradients of scalar loss with many parameters. It is not numerical finite differencing, and it requires a specified graph of differentiable operations.
+
+## Challenge
+
+For b=a^2 and L=(b-4)^2, derive dL/da at a=1 with the chain rule.
+
+[← Vector Calculus](index.qmd) · [Previous](./gradient-identities.qmd) · [Next](./higher-order-derivatives.qmd) · [Python demonstrations](../../examples/README.md)
+

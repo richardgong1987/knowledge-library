@@ -1,0 +1,33 @@
+---
+title: "Dual Support Vector Machine"
+description: "Original mathematical explanation and worked example informed by MML §12.3."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), Chapter 12 §12.3. All examples are newly authored.
+
+## Motivation
+
+The SVM can be solved through Lagrange multipliers. In the dual representation, the final weight vector is a combination of training observations, and only certain observations carry nonzero multipliers.
+
+## Derivation and notation
+
+$$
+\max_{\alpha_i\geq0}\sum_i\alpha_i-\tfrac12\sum_{i,j}\alpha_i\alpha_jy_iy_j\boldsymbol x_i^\top\boldsymbol x_j,\quad\sum_i\alpha_iy_i=0
+$$
+
+Read this model together with the distributional, geometric or optimisation assumptions. An equation without its domain of validity is not a complete explanation.
+
+## Apply it to our running example
+
+A training observation far from the separating boundary often receives zero alpha; those on or within the margin can become support vectors. In our toy dataset, examples near distances three and four determine the closest separation and matter more than distant points.
+
+## Constraints and interpretation
+
+The formula is the hard-margin linear SVM dual; the soft-margin dual also enforces 0≤alpha_i≤C. Karush–Kuhn–Tucker conditions connect the primal and dual optima under the appropriate convex assumptions.
+
+## Your turn
+
+Explain why the dual objective depends on pairwise dot products rather than on an explicit coordinate for every feature.
+
+[← Support Vector Machines](index.qmd) · [Previous](primal-svm.qmd) · [Next](kernels.qmd) · [Single-file Python lab](../../examples/README.md)
+

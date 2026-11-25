@@ -1,0 +1,33 @@
+---
+title: "Latent-Variable Perspective"
+description: "Original mathematical explanation and worked example informed by MML §11.4."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), Chapter 11 §11.4. All examples are newly authored.
+
+## Motivation
+
+The mixture becomes clearer if we introduce an unobserved category Z indicating which component generated an order time. We integrate Z out because we never directly observe it.
+
+## Derivation and notation
+
+$$
+Z\sim\mathrm{Categorical}(\boldsymbol\pi),\quad T\mid Z=k\sim\mathcal N(\mu_k,\sigma_k^2),\quad p(t)=\sum_k p(t,Z=k)
+$$
+
+Read this model together with the distributional, geometric or optimisation assumptions. An equation without its domain of validity is not a complete explanation.
+
+## Apply it to our running example
+
+A synthetic order first samples a regime Z, then samples a time from that regime's Gaussian. Observing only T=18 does not reveal Z with certainty; Bayes' rule yields a posterior distribution over possible regimes.
+
+## Constraints and interpretation
+
+Soft assignments differ from hard clustering. Hidden components are statistical devices; causally identifying a real 'local vs long' operating regime requires separate domain evidence.
+
+## Your turn
+
+If both components have identical means and variances, can an observed time reveal which component generated it?
+
+[← Gaussian Mixture Models](index.qmd) · [Previous](expectation-maximization.qmd) · [Single-file Python lab](../../examples/README.md)
+

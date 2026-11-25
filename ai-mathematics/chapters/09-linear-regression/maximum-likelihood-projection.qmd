@@ -1,0 +1,33 @@
+---
+title: "Maximum Likelihood as Orthogonal Projection"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §9.4."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §9.4. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+Least squares also has a geometric interpretation. The fitted prediction vector is the orthogonal projection of the observed times onto the column space of X.
+
+## Formulate the problem mathematically
+
+$$
+\hat{\boldsymbol y}=P_X\boldsymbol y,\qquad P_X=X(X^\top X)^{-1}X^\top,\qquad X^\top(\boldsymbol y-\hat{\boldsymbol y})=0
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+For a tiny one-feature model whose column space is span((1,1)), take y=(3,1). The projection is (2,2) and the residual is (1,-1), perpendicular to (1,1). Gaussian errors with common variance make the same projection solve maximum likelihood.
+
+## Why the mathematics matters
+
+The displayed projector assumes full column rank; a Moore–Penrose pseudoinverse handles rank deficiency. Orthogonality of training residuals does not imply accurate extrapolation on new orders.
+
+## Explain or calculate
+
+Show directly that (1,-1) is orthogonal to (2,2). Why does this imply the projection cannot be improved within the span?
+
+[← Linear Regression](index.qmd) · [Previous](bayesian-linear-regression.qmd) · [Python lab](../../examples/README.md)
+

@@ -1,0 +1,33 @@
+---
+title: "Gaussian Mixture Model"
+description: "Original mathematical explanation and worked example informed by MML §11.1."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), Chapter 11 §11.1. All examples are newly authored.
+
+## Motivation
+
+Delivery times may contain different operational regimes: short local orders and longer routes. A single Gaussian can miss two clusters. A mixture combines component densities without requiring known group labels.
+
+## Derivation and notation
+
+$$
+p(t)=\sum_{k=1}^K\pi_k\,\mathcal N(t\mid\mu_k,\sigma_k^2),\quad \pi_k\geq0,\quad\sum_{k=1}^K\pi_k=1
+$$
+
+Read this model together with the distributional, geometric or optimisation assumptions. An equation without its domain of validity is not a complete explanation.
+
+## Apply it to our running example
+
+Start with two components, one centred at 10 minutes and one at 20, each with variance 16 and weight 0.5. For a 9-minute order, the low-time Gaussian has much greater density than the high-time Gaussian, so its posterior membership probability is larger.
+
+## Constraints and interpretation
+
+Components are probability distributions, not necessarily real customer segments. Switching the numeric labels of components leaves the mixture density unchanged (label switching).
+
+## Your turn
+
+Why must the mixture weights sum to one? What distribution results if K=1 and pi1=1?
+
+[← Gaussian Mixture Models](index.qmd) · [Next](mixture-maximum-likelihood.qmd) · [Single-file Python lab](../../examples/README.md)
+

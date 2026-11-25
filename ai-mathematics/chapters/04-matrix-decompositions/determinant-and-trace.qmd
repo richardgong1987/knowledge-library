@@ -1,0 +1,33 @@
+---
+title: "Determinant and Trace"
+description: "An original worked mathematical lesson corresponding to MML §4.1."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 4, §4.1. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+The determinant answers whether a square transformation collapses a dimension. The trace summarises the diagonal, and under eigendecomposition equals the sum of eigenvalues.
+
+## Derive the structure
+
+$$
+\det\begin{bmatrix}a&b\\c&d\end{bmatrix}=ad-bc,\qquad\operatorname{tr}(A)=\sum_{i=1}^n A_{ii}
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+The mapping A=[[2,0],[0,3]] doubles one coordinate and triples the other. Its determinant is 6, so areas are scaled by a factor of six; trace=5. For A=[[1,1],[2,2]], determinant=0: it collapses the plane onto a line and has no inverse.
+
+## Interpretation and limitations
+
+Only square matrices have a determinant and trace in the usual sense. Do not use a determinant to solve large numerical systems; decomposition-based solvers are generally more stable.
+
+## Challenge
+
+Find determinant and trace of [[1,2],[3,4]]. What does the determinant's negative sign tell you?
+
+[← Matrix Decompositions](index.qmd) · [Next](./eigenvalues-and-eigenvectors.qmd) · [Python demonstrations](../../examples/README.md)
+

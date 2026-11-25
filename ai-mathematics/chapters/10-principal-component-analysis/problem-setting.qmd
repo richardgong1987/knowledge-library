@@ -1,0 +1,33 @@
+---
+title: "Problem Setting"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §10.1."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §10.1. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+Suppose order features are correlated. We want to replace two coordinates—distance and item count—with one number while retaining as much useful geometric structure as possible. Unlike regression, PCA does not use delivery time as a label.
+
+## Formulate the problem mathematically
+
+$$
+X_c=X-\mathbf1\boldsymbol\mu^\top,\qquad \boldsymbol z_i=W^\top(\boldsymbol x_i-\boldsymbol\mu),\quad W^\top W=I_k
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+For six orders, the mean distance is 3.5 km and mean item count is 2. Center order (1,1) to (-2.5,-1). A one-dimensional encoder chooses a unit vector w and records z=w^T x_centered.
+
+## Why the mathematics matters
+
+PCA depends on scales: kilometres and number of items have different units. Standardising may be necessary when a small-scale but important feature would otherwise be ignored.
+
+## Explain or calculate
+
+Why should the mean be subtracted before computing the principal direction of raw observations?
+
+[← Principal Component Analysis](index.qmd) · [Next](maximum-variance.qmd) · [Python lab](../../examples/README.md)
+

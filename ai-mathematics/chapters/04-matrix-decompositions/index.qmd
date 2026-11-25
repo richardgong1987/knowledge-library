@@ -1,0 +1,51 @@
+---
+title: "Matrix Decompositions"
+description: "A complete original learning unit based on the mathematical topics in MML Chapter 4."
+---
+
+::: {.callout-tip}
+## One coherent example
+
+We use six invented shop orders with **distance (km)**, **number of items**, and **fulfilment time (minutes)**. Start the [single-file Python example](../../examples/README.md); this chapter corresponds to `python3 delivery_ml_lab.py pca`.
+:::
+
+## The motivating problem
+
+**How do we reveal independent directions inside a matrix?**
+
+Decompositions turn a difficult transformation into simpler factors. Eigenvectors reveal invariant directions when available; SVD works for arbitrary rectangular matrices; Cholesky applies to symmetric positive-definite systems. Rank approximation formalises which information is retained.
+
+## Central mathematical relationship
+
+$$
+A=U\Sigma V^\top,\qquad A_k=\sum_{j=1}^{k}\sigma_j u_j v_j^\top
+$$
+
+The equation captures the chapter's principal relationship. Definitions and assumptions are developed in the lessons below; an equation is useful only when the domain and meaning of its symbols are explicit.
+
+## First worked result
+
+For A=diag(3,1), keeping the largest singular component retains diag(3,0) and incurs squared Frobenius reconstruction error 1. We trade one direction of information for a simpler representation.
+
+## Lessons (all written)
+
+1. [**Determinant and Trace**](determinant-and-trace.qmd) — Chapter 4, §4.1
+2. [**Eigenvalues and Eigenvectors**](eigenvalues-and-eigenvectors.qmd) — Chapter 4, §4.2
+3. [**Cholesky Decomposition**](cholesky-decomposition.qmd) — Chapter 4, §4.3
+4. [**Eigendecomposition and Diagonalization**](eigendecomposition.qmd) — Chapter 4, §4.4
+5. [**Singular Value Decomposition**](singular-value-decomposition.qmd) — Chapter 4, §4.5
+6. [**Matrix Approximation**](matrix-approximation.qmd) — Chapter 4, §4.6
+7. [**Matrix Phylogeny**](matrix-phylogeny.qmd) — Chapter 4, §4.7
+
+## What to pay attention to
+
+An invertible matrix need not be diagonalizable; a matrix may be symmetric without being positive definite. Match the factorisation to the hypotheses.
+
+Read the lessons in sequence, reproduce a calculation by hand, then run the related Python demonstration and explain which mathematical claim the output illustrates. A numerical observation is never, by itself, proof of a theorem.
+
+## Reference and originality
+
+The learning map follows the topic coverage of **Deisenroth, Faisal and Ong (2020), *Mathematics for Machine Learning*, Chapter 4**, available from [mml-book.com](https://mml-book.com/). All prose, examples and code in this knowledge library are independently written. The book PDF, its figures, exercises and text are not redistributed.
+
+[← AI & Mathematics home](../../index.qmd) · [One-file lab](../../examples/README.md)
+

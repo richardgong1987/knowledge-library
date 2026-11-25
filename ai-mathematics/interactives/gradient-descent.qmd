@@ -1,0 +1,88 @@
+---
+title: "Interactive Gradient Descent"
+description: "Change the learning rate and initial parameter to see convergence, oscillation or divergence."
+---
+
+## Start with a scalar loss
+
+The six-order regression model contains three parameters, but the essential update mechanism can first be understood using **one** parameter:
+
+$$
+L(\theta)=(\theta-3)^2,\qquad
+\frac{dL}{d\theta}=2(\theta-3).
+$$
+
+A gradient step with learning rate $\eta$ is
+
+$$
+\theta_{k+1}=\theta_k-2\eta(\theta_k-3).
+$$
+
+Subtract three from both sides:
+
+$$
+\theta_{k+1}-3=(1-2\eta)(\theta_k-3).
+$$
+
+By induction, the entire trajectory is
+
+$$
+\boxed{\theta_k=3+(1-2\eta)^k(\theta_0-3).}
+$$
+
+The explicit formula provides a rigorous answer. The iterates converge to three whenever $|1-2\eta|<1$, equivalently **$0<\eta<1$**. At $\eta=1$, the sign oscillates without shrinking (unless already at the optimum); for $\eta>1$ the error magnitude increases.
+
+## Change the experiment
+
+~~~{ojs}
+viewof initialTheta = Inputs.range([-3, 8], {
+  label: "Initial parameter θ₀",
+  value: 0,
+  step: 0.25
+})
+~~~
+
+~~~{ojs}
+viewof eta = Inputs.range([0, 1.3], {
+  label: "Learning rate η",
+  value: 0.15,
+  step: 0.025
+})
+~~~
+
+~~~{ojs}
+trajectory = Array.from({length: 16}, (_, iteration) => {
+  const theta = 3 + Math.pow(1 - 2 * eta, iteration) * (initialTheta - 3);
+  return {iteration, theta, loss: (theta-3)**2};
+})
+Plot.plot({
+  width: 720,
+  height: 350,
+  x: {label: "Gradient step"},
+  y: {label: "Squared loss", type: "linear"},
+  marks: [
+    Plot.ruleY([0], {stroke: "gray"}),
+    Plot.line(trajectory, {x: "iteration", y: "loss", stroke: "steelblue", strokeWidth: 3}),
+    Plot.dot(trajectory, {x: "iteration", y: "loss", r: 3})
+  ]
+})
+~~~
+
+~~~{ojs}
+trajectory[15].theta
+~~~
+
+~~~{ojs}
+trajectory[15].loss
+~~~
+
+## What to test
+
+- At $\eta=0.15$, the loss shrinks towards zero.
+- At $\eta=0.5$, the parameter reaches the optimum in one step.
+- At $\eta=0.9$, updates alternate around the optimum while shrinking.
+- At $\eta=1.1$, the distance from the optimum grows.
+
+**Limitations:** this convergence interval is exact only for the displayed scalar quadratic with curvature two. In multivariate regression, allowed step sizes depend on the Hessian's eigenvalues; a universal 'best' learning rate does not exist.
+
+[← Vector Calculus](../chapters/05-vector-calculus/index.qmd) · [Continuous Optimization](../chapters/07-continuous-optimization/index.qmd) · [Python lab](../examples/README.md)

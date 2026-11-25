@@ -1,0 +1,33 @@
+---
+title: "Separating Hyperplanes"
+description: "Original mathematical explanation and worked example informed by MML §12.1."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), Chapter 12 §12.1. All examples are newly authored.
+
+## Motivation
+
+Suppose orders are labelled late if their observed time is at least 16 minutes. We want a decision boundary dividing feature space into late and on-time regions.
+
+## Derivation and notation
+
+$$
+f(\boldsymbol x)=\boldsymbol w^\top\boldsymbol x+b,\quad\hat y=\operatorname{sign}(f(\boldsymbol x)),\quad \boldsymbol w^\top\boldsymbol x+b=0
+$$
+
+Read this model together with the distributional, geometric or optimisation assumptions. An equation without its domain of validity is not a complete explanation.
+
+## Apply it to our running example
+
+In this six-order teaching dataset, distance≥4 km happens to separate labels. A candidate boundary is 2d-7=0, corresponding to d=3.5 km. Distances 1,2,3 predict -1 and distances 4,5,6 predict +1.
+
+## Constraints and interpretation
+
+The perfect separation is a property of our tiny constructed dataset. It is not evidence that distance universally determines delay. A hyperplane is affine; its normal vector w sets the orientation.
+
+## Your turn
+
+Calculate the decision score for a 3-km and 4-km order under f(d,n)=2d-7.
+
+[← Support Vector Machines](index.qmd) · [Next](primal-svm.qmd) · [Single-file Python lab](../../examples/README.md)
+

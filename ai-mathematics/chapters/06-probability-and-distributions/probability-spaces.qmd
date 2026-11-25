@@ -1,0 +1,33 @@
+---
+title: "Construction of a Probability Space"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §6.1."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 6, §6.1. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+A delivery's actual fulfilment time can be uncertain even when distance and item count are known. Probability begins by stating the universe of possible outcomes and which events we wish to measure.
+
+## Formal relationship
+
+$$
+(\Omega,\mathcal F,P),\quad P(\Omega)=1,\quad P(A)\geq0
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+Imagine one randomly selected order from our six-record teaching dataset. Let Omega be its six row IDs, each equally likely. The event A='time at least 16 minutes' contains three IDs, so P(A)=3/6=0.5. That empirical experiment is not a claim about all future orders.
+
+## Interpretation and limitations
+
+A sigma-algebra specifies measurable events; a probability measure assigns them consistently. When outcomes are real-valued times, the model typically uses a continuous sample space instead of six equally likely records.
+
+## Explain it yourself
+
+Define an event B for orders with more than one item. Compute its empirical probability from the dataset.
+
+[← Chapter 6: Probability and Distributions](index.qmd) · [Next](discrete-and-continuous.qmd) · [Runnable lab](../../examples/README.md)
+

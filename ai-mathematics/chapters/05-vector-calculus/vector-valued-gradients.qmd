@@ -1,0 +1,33 @@
+---
+title: "Gradients of Vector-Valued Functions"
+description: "An original worked mathematical lesson corresponding to MML §5.3."
+---
+
+**Reference:** *Mathematics for Machine Learning*, Chapter 5, §5.3. The teaching example and explanation here are original.
+
+## Why we need this concept
+
+A batch model maps three parameters to six predictions, not to one scalar. Its derivative is therefore a Jacobian matrix.
+
+## Derive the structure
+
+$$
+f:\mathbb R^{3}\to\mathbb R^{6},\qquad J_f(\boldsymbol\beta)=\frac{\partial f}{\partial\boldsymbol\beta}=X
+$$
+
+Check the shapes and conditions in this statement before applying it. The formula encodes the exact relationship to reason about, rather than replacing a derivation with a library call.
+
+## Worked example
+
+For f(beta)=X beta, changing beta by delta changes every prediction by X delta. The first two rows of X are (1,1,1) and (1,2,2); the first two output changes are respectively delta0+delta1+delta2 and delta0+2delta1+2delta2.
+
+## Interpretation and limitations
+
+A Jacobian propagates local changes from inputs to outputs. The gradient of a scalar-valued function can be viewed as a vector or as a row Jacobian depending on convention; state your orientation.
+
+## Challenge
+
+What dimensions must the Jacobian have for a map R^3 to R^6?
+
+[← Vector Calculus](index.qmd) · [Previous](./partial-derivatives-and-gradients.qmd) · [Next](./matrix-gradients.qmd) · [Python demonstrations](../../examples/README.md)
+

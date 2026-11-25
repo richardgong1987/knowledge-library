@@ -1,0 +1,33 @@
+---
+title: "Primal Support Vector Machine"
+description: "Original mathematical explanation and worked example informed by MML §12.2."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), Chapter 12 §12.2. All examples are newly authored.
+
+## Motivation
+
+Many hyperplanes can separate six easy observations. The maximum-margin principle selects a boundary that leaves the largest geometric separation from the closest training points.
+
+## Derivation and notation
+
+$$
+\min_{\boldsymbol w,b}\tfrac12\|\boldsymbol w\|_2^2\quad\text{subject to }y_i(\boldsymbol w^\top\boldsymbol x_i+b)\geq1
+$$
+
+Read this model together with the distributional, geometric or optimisation assumptions. An equation without its domain of validity is not a complete explanation.
+
+## Apply it to our running example
+
+For features (distance,items), choose w=(2,0), b=-7. The nearest on-time example at d=3 has y=-1 and score -1, giving functional margin 1. The nearest late example at d=4 has y=+1 and score +1. Since ||w||=2, their geometric distance to the boundary is 1/2 km.
+
+## Constraints and interpretation
+
+This hard-margin optimisation requires linear separability. Soft-margin SVM adds slacks and a penalty C for violations; feature scaling matters for the Euclidean geometry of the margin.
+
+## Your turn
+
+Why can we not simply scale both w and b by ten and claim to have improved the geometric margin?
+
+[← Support Vector Machines](index.qmd) · [Previous](separating-hyperplanes.qmd) · [Next](dual-svm.qmd) · [Single-file Python lab](../../examples/README.md)
+

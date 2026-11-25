@@ -1,0 +1,49 @@
+---
+title: "Support Vector Machines"
+description: "A complete original learning unit based on the mathematical topics in MML Chapter 12."
+---
+
+::: {.callout-tip}
+## One coherent example
+
+We use six invented shop orders with **distance (km)**, **number of items**, and **fulfilment time (minutes)**. Start the [single-file Python example](../../examples/README.md); this chapter corresponds to `python3 delivery_ml_lab.py svm`.
+:::
+
+## The motivating problem
+
+**How do we classify an order as late using a reliable boundary?**
+
+A separating hyperplane gives a linear decision rule; the maximum-margin principle prefers a robust boundary. Primal and dual formulations expose complementary optimisation views, and kernels extend the model to nonlinear feature representations.
+
+## Central mathematical relationship
+
+$$
+\min_{w,b}\tfrac12\|w\|_2^2\quad\text{s.t. }y_i(w^\top x_i+b)\geq1
+$$
+
+The equation captures the chapter's principal relationship. Definitions and assumptions are developed in the lessons below; an equation is useful only when the domain and meaning of its symbols are explicit.
+
+## First worked result
+
+Our deliberately separable six-order toy labels admit f(d,n)=2d-7. The nearest points lie at distances 3 and 4, with geometric margin 0.5 km under the chosen scaling.
+
+## Lessons (all written)
+
+1. [**Separating Hyperplanes**](separating-hyperplanes.qmd) — Chapter 12, §12.1
+2. [**Primal Support Vector Machine**](primal-svm.qmd) — Chapter 12, §12.2
+3. [**Dual Support Vector Machine**](dual-svm.qmd) — Chapter 12, §12.3
+4. [**Kernels**](kernels.qmd) — Chapter 12, §12.4
+5. [**Numerical Solution**](numerical-solution.qmd) — Chapter 12, §12.5
+
+## What to pay attention to
+
+The demonstration shows a valid separator, not a full training optimiser. Real SVMs use regularisation, careful feature scaling, validation and numerical convergence checks.
+
+Read the lessons in sequence, reproduce a calculation by hand, then run the related Python demonstration and explain which mathematical claim the output illustrates. A numerical observation is never, by itself, proof of a theorem.
+
+## Reference and originality
+
+The learning map follows the topic coverage of **Deisenroth, Faisal and Ong (2020), *Mathematics for Machine Learning*, Chapter 12**, available from [mml-book.com](https://mml-book.com/). All prose, examples and code in this knowledge library are independently written. The book PDF, its figures, exercises and text are not redistributed.
+
+[← AI & Mathematics home](../../index.qmd) · [One-file lab](../../examples/README.md)
+

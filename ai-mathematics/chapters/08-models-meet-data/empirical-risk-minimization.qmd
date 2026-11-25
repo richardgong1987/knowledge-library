@@ -1,0 +1,33 @@
+---
+title: "Empirical Risk Minimization"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §8.2."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 8, §8.2. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+To choose parameters, define a loss measuring bad predictions and minimise average loss on observed training records. The optimisation objective is explicit and reproducible.
+
+## Formal relationship
+
+$$
+\hat{\boldsymbol\theta}=\arg\min_{\boldsymbol\theta}\frac1n\sum_{i=1}^n\ell(f_{\boldsymbol\theta}(\boldsymbol x_i),y_i)
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+Two candidate predictions for observed y=12 are 11 and 9. Squared errors are (11-12)^2=1 and (9-12)^2=9. ERM prefers the first on that record; the full objective aggregates all training records.
+
+## Interpretation and limitations
+
+Empirical risk approximates expected population risk only under sampling assumptions. Regularisation adds an explicit penalty to control complexity: Ltrain(theta)+lambda Omega(theta).
+
+## Explain it yourself
+
+Why can a perfectly fitted high-degree polynomial generalise worse than a less flexible model?
+
+[← Chapter 8: When Models Meet Data](index.qmd) · [Previous](data-models-and-learning.qmd) · [Next](parameter-estimation.qmd) · [Runnable lab](../../examples/README.md)
+

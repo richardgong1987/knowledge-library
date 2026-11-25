@@ -1,0 +1,33 @@
+---
+title: "Sum Rule, Product Rule, and Bayes’ Theorem"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §6.3."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 6, §6.3. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+An observer can update a belief after learning an order has a certain feature. Bayes' rule relates a prior, likelihood and posterior, while product and sum rules organise joint events.
+
+## Formal relationship
+
+$$
+P(A\mid B)=\frac{P(B\mid A)P(A)}{P(B)},\qquad P(B)>0
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+Let A be 'delivery is late' (time ≥16) and B be 'distance ≥4 km'. In our invented six-row data, P(A)=1/2, P(B|A)=1 and P(B)=1/2, so P(A|B)=1. The result is a small-sample empirical association, not a universal causal rule.
+
+## Interpretation and limitations
+
+Conditional probability does not imply causality. Priors and sample selection matter; estimating P(A|B) from six rows can be unstable.
+
+## Explain it yourself
+
+Use the table to compute P(distance≥4 | time<16). Which conditional direction are you evaluating?
+
+[← Chapter 6: Probability and Distributions](index.qmd) · [Previous](discrete-and-continuous.qmd) · [Next](statistics-and-independence.qmd) · [Runnable lab](../../examples/README.md)
+

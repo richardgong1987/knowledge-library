@@ -1,0 +1,51 @@
+---
+title: "Principal Component Analysis"
+description: "A complete original learning unit based on the mathematical topics in MML Chapter 10."
+---
+
+::: {.callout-tip}
+## One coherent example
+
+We use six invented shop orders with **distance (km)**, **number of items**, and **fulfilment time (minutes)**. Start the [single-file Python example](../../examples/README.md); this chapter corresponds to `python3 delivery_ml_lab.py pca`.
+:::
+
+## The motivating problem
+
+**How can we compress features without knowing a label?**
+
+PCA chooses orthogonal directions that retain variance, and equivalently minimise reconstruction error. Eigendecomposition, SVD and low-rank approximation are different views of the same geometric operation for centred Euclidean data.
+
+## Central mathematical relationship
+
+$$
+\max_{\|w\|_2=1} w^\top Sw=\lambda_{\max}(S)
+$$
+
+The equation captures the chapter's principal relationship. Definitions and assumptions are developed in the lessons below; an equation is useful only when the domain and meaning of its symbols are explicit.
+
+## First worked result
+
+The two order features have sample covariance approximately [[3.5,1.2],[1.2,0.8]]. The dominant eigenvector gives a one-number representation emphasising a direction mostly aligned with distance.
+
+## Lessons (all written)
+
+1. [**Problem Setting**](problem-setting.qmd) — Chapter 10, §10.1
+2. [**Maximum Variance Perspective**](maximum-variance.qmd) — Chapter 10, §10.2
+3. [**Projection Perspective**](projection-perspective.qmd) — Chapter 10, §10.3
+4. [**Eigenvector Computation and Low-Rank Approximations**](eigenvector-and-low-rank.qmd) — Chapter 10, §10.4
+5. [**PCA in High Dimensions**](pca-in-high-dimensions.qmd) — Chapter 10, §10.5
+6. [**Key Steps of PCA in Practice**](pca-practice.qmd) — Chapter 10, §10.6
+7. [**Latent Variable Perspective**](latent-variable-perspective.qmd) — Chapter 10, §10.7
+
+## What to pay attention to
+
+Retaining variance is not identical to retaining label relevance. Scale on training data only and evaluate the effect on the downstream task.
+
+Read the lessons in sequence, reproduce a calculation by hand, then run the related Python demonstration and explain which mathematical claim the output illustrates. A numerical observation is never, by itself, proof of a theorem.
+
+## Reference and originality
+
+The learning map follows the topic coverage of **Deisenroth, Faisal and Ong (2020), *Mathematics for Machine Learning*, Chapter 10**, available from [mml-book.com](https://mml-book.com/). All prose, examples and code in this knowledge library are independently written. The book PDF, its figures, exercises and text are not redistributed.
+
+[← AI & Mathematics home](../../index.qmd) · [One-file lab](../../examples/README.md)
+

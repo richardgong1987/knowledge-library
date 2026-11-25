@@ -1,0 +1,33 @@
+---
+title: "Matrices"
+description: "Original mathematical tutorial grounded in MML Chapter 2, Section 2.2."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), §2.2. This is an original lesson using our delivery-operations example—not reproduced textbook content.
+
+## Why the concept matters
+
+We have six orders, each represented by distance and item count. Instead of fitting a separate expression for every order, arrange the features in rows of one matrix. Matrix multiplication then evaluates one candidate model for every order.
+
+## Define the mathematical relationship
+
+$$
+X=\begin{bmatrix}1&1&1\\1&2&2\\1&3&1\\\vdots&\vdots&\vdots\\1&6&3\end{bmatrix}\in\mathbb R^{6\times3},\quad \hat{\boldsymbol y}=X\boldsymbol\beta
+$$
+
+The displayed relationship is the main object to analyse. Specify the relevant dimensions, quantities and assumptions before using it. It should be read as a mathematical statement, not merely a programming shorthand.
+
+## Work through an original example
+
+With beta=(3,2,2)^T, the first row predicts 3+2(1)+2(1)=7 minutes; the second predicts 3+2(2)+2(2)=11 minutes. The observed second time is 12, giving residual 1 minute.
+
+## What follows, and what does not
+
+Rows represent observations and columns represent features, including an intercept column of ones. The dimensions must agree: multiplying a 6-by-3 matrix by a 3-vector yields a 6-vector.
+
+## Test your reasoning
+
+What shape does X^T X have? Why can X beta not multiply a 6-element beta?
+
+[← Linear Algebra chapter](index.qmd) · [Previous: Systems of Linear Equations](systems-of-linear-equations.qmd) · [Next: Solving Systems of Linear Equations](solving-linear-systems.qmd) · [Runnable Python lab](../../examples/README.md)
+

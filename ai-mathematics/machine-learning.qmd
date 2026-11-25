@@ -1,32 +1,60 @@
 ---
 title: "Machine Learning"
-description: "Loss functions, optimisation, generalisation, and model evaluation."
+description: "A unified, mathematics-first guide to regression, dimensionality reduction, density estimation and classification."
 ---
 
-Loss functions, optimisation, generalisation, and model evaluation.
+## Four different questions about one dataset
 
-::: {.callout-note}
-## Chapter status
+A machine-learning dataset does not force one type of model. We choose a formulation according to the decision we need to make.
 
-This is a chapter outline. Detailed lessons and interactive examples will be added progressively.
-:::
+**Regression:** Given distance $d$ and item count $n$, estimate fulfilment time $t$.
 
-## The problem
+$$
+\hat t=\beta_0+\beta_1d+\beta_2n.
+$$
 
-What real-world need motivates this topic?
+**Dimensionality reduction:** Without using fulfilment-time labels, turn two measured features into a compact representation while preserving as much variation as possible.
 
-## A running example
+$$
+z=\boldsymbol w^\top(\boldsymbol x-\boldsymbol\mu),\qquad\|\boldsymbol w\|_2=1.
+$$
 
-Start with one concrete scenario and keep it throughout the explanation.
+**Density estimation:** Model the observed distribution of times, potentially with two different operating regimes.
 
-## Step-by-step reasoning
+$$
+p(t)=\sum_{k=1}^{K}\pi_k\mathcal N(t\mid\mu_k,\sigma_k^2).
+$$
 
-Explain what changes, why it changes, and what can be inferred.
+**Classification:** Decide whether a delivery is late or on time, based on a defined threshold and feature representation.
 
-## Implementation or mathematical model
+$$
+\hat y=\operatorname{sign}(\boldsymbol w^\top\boldsymbol x+b).
+$$
 
-Add code, equations, diagrams, or an interactive experiment here.
+These are distinct learning problems. PCA and GMM do not need time or classification labels; regression and SVM do.
 
-## Related concepts
+## The bridge: objectives and assumptions
 
-Link to prerequisite and follow-up lessons as the library grows.
+A model includes a hypothesis class, a loss or likelihood and a fitting algorithm. For squared-error regression we might use gradient descent or solve least squares directly; for GMM we might use expectation-maximisation; for SVM we solve a constrained margin optimisation.
+
+The same procedure can overfit if evaluated only on training data. Split data by the anticipated deployment setting, prevent leakage and measure generalisation.
+
+## Study sequence
+
+Start with [When Models Meet Data](chapters/08-models-meet-data/index.qmd) and then explore the four application chapters:
+
+1. [Linear Regression](chapters/09-linear-regression/index.qmd).
+2. [Principal Component Analysis](chapters/10-principal-component-analysis/index.qmd).
+3. [Gaussian Mixture Models](chapters/11-gaussian-mixture-models/index.qmd).
+4. [Support Vector Machines](chapters/12-support-vector-machines/index.qmd).
+
+## Verify with the same Python file
+
+~~~bash
+python3 ai-mathematics/examples/delivery_ml_lab.py regression
+python3 ai-mathematics/examples/delivery_ml_lab.py pca
+python3 ai-mathematics/examples/delivery_ml_lab.py gmm
+python3 ai-mathematics/examples/delivery_ml_lab.py svm
+~~~
+
+The SVM demo illustrates a valid boundary but does not train a maximum-margin classifier; the GMM example illustrates EM on one-dimensional times, not a production clustering system. Read each chapter's limitations before extrapolating its results.

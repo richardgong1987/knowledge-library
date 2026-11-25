@@ -1,0 +1,52 @@
+---
+title: "Vector Calculus"
+description: "A complete original learning unit based on the mathematical topics in MML Chapter 5."
+---
+
+::: {.callout-tip}
+## One coherent example
+
+We use six invented shop orders with **distance (km)**, **number of items**, and **fulfilment time (minutes)**. Start the [single-file Python example](../../examples/README.md); this chapter corresponds to `python3 delivery_ml_lab.py calculus`.
+:::
+
+## The motivating problem
+
+**What changes in a model when its parameters change?**
+
+Derivatives and gradients are local sensitivity measures. Jacobians handle vector-valued functions; the chain rule leads to backpropagation; Hessians and Taylor expansions describe curvature. Learning these relationships explains optimisation beyond calling an API.
+
+## Central mathematical relationship
+
+$$
+L(\beta)=\frac1N\|X\beta-y\|_2^2,\qquad \nabla L(\beta)=\frac2N X^\top(X\beta-y)
+$$
+
+The equation captures the chapter's principal relationship. Definitions and assumptions are developed in the lessons below; an equation is useful only when the domain and meaning of its symbols are explicit.
+
+## First worked result
+
+If one order has feature row (1,2,1), measured time 9, and current beta=(3,2,1), then prediction is 8 and the gradient of squared loss is (-2,-4,-2). This gives a concrete local update direction.
+
+## Lessons (all written)
+
+1. [**Differentiation of Univariate Functions**](univariate-differentiation.qmd) — Chapter 5, §5.1
+2. [**Partial Differentiation and Gradients**](partial-derivatives-and-gradients.qmd) — Chapter 5, §5.2
+3. [**Gradients of Vector-Valued Functions**](vector-valued-gradients.qmd) — Chapter 5, §5.3
+4. [**Gradients of Matrices**](matrix-gradients.qmd) — Chapter 5, §5.4
+5. [**Useful Identities for Computing Gradients**](gradient-identities.qmd) — Chapter 5, §5.5
+6. [**Backpropagation and Automatic Differentiation**](backpropagation-and-autodiff.qmd) — Chapter 5, §5.6
+7. [**Higher-Order Derivatives**](higher-order-derivatives.qmd) — Chapter 5, §5.7
+8. [**Linearization and Multivariate Taylor Series**](taylor-series.qmd) — Chapter 5, §5.8
+
+## What to pay attention to
+
+A gradient gives a local direction but not a guaranteed global minimum on nonconvex losses. Every derivative rule needs domain and differentiability assumptions.
+
+Read the lessons in sequence, reproduce a calculation by hand, then run the related Python demonstration and explain which mathematical claim the output illustrates. A numerical observation is never, by itself, proof of a theorem.
+
+## Reference and originality
+
+The learning map follows the topic coverage of **Deisenroth, Faisal and Ong (2020), *Mathematics for Machine Learning*, Chapter 5**, available from [mml-book.com](https://mml-book.com/). All prose, examples and code in this knowledge library are independently written. The book PDF, its figures, exercises and text are not redistributed.
+
+[← AI & Mathematics home](../../index.qmd) · [One-file lab](../../examples/README.md)
+

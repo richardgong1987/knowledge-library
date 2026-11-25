@@ -1,0 +1,33 @@
+---
+title: "Rotations"
+description: "Original mathematical tutorial grounded in MML Chapter 3, Section 3.9."
+---
+
+**Reading map:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning* (2020), §3.9. This is an original lesson using our delivery-operations example—not reproduced textbook content.
+
+## Why the concept matters
+
+A coordinate transformation can rotate a feature plane without changing Euclidean lengths or angles. This helps interpret PCA axes as new directions rather than new physical observations.
+
+## Define the mathematical relationship
+
+$$
+R(\theta)=\begin{bmatrix}\cos\theta&-\sin\theta\\\sin\theta&\cos\theta\end{bmatrix},\qquad R^\top R=I
+$$
+
+The displayed relationship is the main object to analyse. Specify the relevant dimensions, quantities and assumptions before using it. It should be read as a mathematical statement, not merely a programming shorthand.
+
+## Work through an original example
+
+For a 90-degree counter-clockwise rotation, R(1,0)=(0,1). The input and output both have length one, confirming that the rotation preserves Euclidean norm.
+
+## What follows, and what does not
+
+A proper rotation has determinant +1; reflection is also orthogonal but has determinant -1. Matrix orthogonality alone therefore does not imply a proper rotation.
+
+## Test your reasoning
+
+Rotate (1,1) by 90 degrees and verify that its norm is preserved.
+
+[← Analytic Geometry chapter](index.qmd) · [Previous: Orthogonal Projections](orthogonal-projections.qmd) · [Runnable Python lab](../../examples/README.md)
+

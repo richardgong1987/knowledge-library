@@ -1,0 +1,33 @@
+---
+title: "Probabilistic Modeling and Inference"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §8.4."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 8, §8.4. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+Sometimes we need a distribution over delivery-time predictions instead of one number. Probabilistic inference combines observations, a model and parameter uncertainty.
+
+## Formal relationship
+
+$$
+p(\theta\mid\mathcal D)=\frac{p(\mathcal D\mid\theta)p(\theta)}{p(\mathcal D)},\qquad p(y_*\mid x_*,\mathcal D)=\int p(y_*\mid x_*,\theta)p(\theta\mid\mathcal D)\,d\theta
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+If there are only two plausible service regimes, short and long, a predictive distribution can average each regime's prediction weighted by the updated probability of that regime. The point forecast alone discards that uncertainty.
+
+## Interpretation and limitations
+
+Predictive uncertainty may combine observation noise and parameter uncertainty. Exact integrals can be intractable; approximation and simulation require error checks.
+
+## Explain it yourself
+
+What extra information does a 90% prediction interval provide compared with an estimated mean time?
+
+[← Chapter 8: When Models Meet Data](index.qmd) · [Previous](parameter-estimation.qmd) · [Next](directed-graphical-models.qmd) · [Runnable lab](../../examples/README.md)
+

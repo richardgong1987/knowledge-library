@@ -1,32 +1,53 @@
 ---
 title: "Linear Algebra"
-description: "Vectors, matrices, projections, eigenvalues, and applications."
+description: "Vectors, linear constraints, matrices, bases, rank and projections applied to one dataset."
 ---
 
-Vectors, matrices, projections, eigenvalues, and applications.
+## Why machine learning needs linear algebra
 
-::: {.callout-note}
-## Chapter status
+Our six invented delivery orders contain two measured features. The model stores them as a matrix and uses one parameter vector for all rows. This turns many individual arithmetic expressions into one linear-algebra operation.
 
-This is a chapter outline. Detailed lessons and interactive examples will be added progressively.
-:::
+$$
+X=\begin{bmatrix}
+1&1&1\\
+1&2&2\\
+1&3&1\\
+1&4&3\\
+1&5&2\\
+1&6&3
+\end{bmatrix},\quad
+\boldsymbol\beta=
+\begin{bmatrix}\beta_0\\\beta_1\\\beta_2\end{bmatrix},\quad
+\hat{\boldsymbol y}=X\boldsymbol\beta.
+$$
 
-## The problem
+The first column is the intercept, the second is distance and the third is the number of items. The shape contract is $X\in\mathbb R^{6\times3}$ and $\beta\in\mathbb R^3$. **It is mathematically invalid to multiply incompatible shapes.**
 
-What real-world need motivates this topic?
+## Three mathematical questions
 
-## A running example
+**Existence:** Does a system $A\boldsymbol x=\boldsymbol b$ have any exact solution? If not, least squares estimates a useful approximate answer.
 
-Start with one concrete scenario and keep it throughout the explanation.
+**Identifiability:** Are columns of $X$ linearly independent? If we add a column equal to distance+items, it is redundant and the parameter vector may cease to be unique.
 
-## Step-by-step reasoning
+**Geometry:** What part of observed $\boldsymbol y$ can the model represent? Orthogonal projection separates fitted predictions from residuals:
 
-Explain what changes, why it changes, and what can be inferred.
+$$
+X^\top(\boldsymbol y-X\hat\beta)=0.
+$$
 
-## Implementation or mathematical model
+This says the residual is orthogonal to each feature column at a least-squares optimum. It is a deeper explanation of regression than 'fit a straight line'.
 
-Add code, equations, diagrams, or an interactive experiment here.
+## Recommended chapters
 
-## Related concepts
+Follow [Chapter 2: Linear Algebra](chapters/02-linear-algebra/index.qmd), then [Chapter 3: Analytic Geometry](chapters/03-analytic-geometry/index.qmd) and [Chapter 4: Matrix Decompositions](chapters/04-matrix-decompositions/index.qmd).
 
-Link to prerequisite and follow-up lessons as the library grows.
+### Calculate for yourself
+
+Take $\beta=(3,2,2)^\top$. The prediction for the first order is 7 minutes, and the second is 11 minutes versus an observed 12. Compute the remaining predictions and total squared error before checking them with Python.
+
+~~~bash
+python3 ai-mathematics/examples/delivery_ml_lab.py linear
+python3 ai-mathematics/examples/delivery_ml_lab.py geometry
+~~~
+
+**Further connections:** [PCA](chapters/10-principal-component-analysis/index.qmd) is an application of eigendecomposition and orthogonal projection. [Regression](chapters/09-linear-regression/index.qmd) uses rank, projection and numerical solution.

@@ -1,0 +1,33 @@
+---
+title: "Parameter Estimation"
+description: "Original mathematical explanation and worked example, cross-referenced to MML §8.3."
+---
+
+**Reference:** *Mathematics for Machine Learning* (2020), Chapter 8, §8.3. This tutorial uses independent wording, derivations and order data.
+
+## The question we need to answer
+
+The same delivery model can be fitted by minimising prediction error or by maximising a probability model for observations. Different assumptions may lead to the same numerical estimator.
+
+## Formal relationship
+
+$$
+\hat{\theta}_{\rm MLE}=\arg\max_\theta p(\mathcal D\mid\theta),\quad\hat{\theta}_{\rm MAP}=\arg\max_\theta p(\mathcal D\mid\theta)p(\theta)
+$$
+
+The notation makes the assumptions and dependencies explicit. Check that the variables, sets and dimensions match the running example before drawing a conclusion.
+
+## Derive the answer from the example
+
+Suppose y1=12 and y2=14 are independent Gaussian observations with known variance. Maximising their likelihood over a common mean gives μ-hat=(12+14)/2=13. Adding a normal prior pulls the MAP estimate toward the prior mean.
+
+## Interpretation and limitations
+
+MLE and MAP select point estimates, whereas full Bayesian inference carries parameter uncertainty forward. Both require a meaningful likelihood, and a prior expresses additional assumptions.
+
+## Explain it yourself
+
+When does MAP coincide with MLE? Describe the role of a constant prior on the parameter domain.
+
+[← Chapter 8: When Models Meet Data](index.qmd) · [Previous](empirical-risk-minimization.qmd) · [Next](probabilistic-inference.qmd) · [Runnable lab](../../examples/README.md)
+

@@ -1,0 +1,33 @@
+---
+title: "Maximum Variance Perspective"
+description: "Original mathematical teaching with a worked delivery-operations example; MML §10.2."
+---
+
+**Study reference:** Deisenroth, Faisal & Ong, *Mathematics for Machine Learning*, §10.2. The examples, reasoning and notation explanations are written independently.
+
+## Start from a problem
+
+If we can retain only one linear coordinate of a centered dataset, a useful choice is the direction along which data vary most. The variance objective leads to an eigenvalue problem.
+
+## Formulate the problem mathematically
+
+$$
+\max_{\|\boldsymbol w\|_2=1}\boldsymbol w^\top S\boldsymbol w,\qquad S=\frac1{N-1}X_c^\top X_c
+$$
+
+This relation identifies the required structure. Interpret the symbols using the stated model rather than memorising the formula without its assumptions.
+
+## Derive a worked result
+
+Our delivery-feature covariance is approximately [[3.5,1.2],[1.2,0.8]]. A unit direction aligned mostly with distance captures more variance than the item-count axis alone. The maximum achievable projected sample variance is the largest eigenvalue of S.
+
+## Why the mathematics matters
+
+Maximising variance is not automatically maximising predictive usefulness for delivery time. An unsupervised principal direction can discard a low-variance feature crucial to a label.
+
+## Explain or calculate
+
+What variance would the projection onto the distance axis retain? Which covariance diagonal entry tells you?
+
+[← Principal Component Analysis](index.qmd) · [Previous](problem-setting.qmd) · [Next](projection-perspective.qmd) · [Python lab](../../examples/README.md)
+
