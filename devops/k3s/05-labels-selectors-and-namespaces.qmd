@@ -1,0 +1,236 @@
+---
+title: "5. Labels, Selectors and Namespaces"
+description: "Name tags for objects, the two kinds of selectors, annotations, recommended labels, namespaces, and the naming rules every object must follow."
+---
+
+## The problem
+
+After a few lessons the `lemonade` namespace holds web pods, a test pod, a sidecar pod and soon jobs and databases. We need to:
+
+1. **Find groups of objects**: "all web pods", "all pink-lemonade pods", "everything except the tests".
+2. Let other objects **pick their pods**. A Service must know which pods to send customers to, and a Deployment which pods it owns.
+3. **Keep the Lemonade Stand apart** from a future Cookie Stand on the same cluster, so names do not clash and one team cannot delete the other's pods by accident.
+
+Labels and selectors solve the first two. Namespaces solve the third.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Name tags and rooms
+
+When Phippy comes aboard Captain Kube's ship in *The Illustrated Children's Guide to Kubernetes*, the captain gives her a **name tag**. The book explains that Kubernetes uses labels as "nametags" to identify things, and that they are open-ended: you can write whatever helps, such as a role or how stable something is.
+
+A **selector** is the teacher calling out: "Everyone wearing a *yellow* sticker, line up!" Nobody needs to know your real name. If you are wearing the sticker, you come.
+
+Later Phippy wants a little privacy, and Captain Kube gives her a **namespace**: a room of her own on the ship. Things inside the room work together easily, and they are kept a bit apart from the rest of the ship. Two rooms can each have a pupil called "Sam" without any confusion.
+:::
+
+## The concept, precisely
+
+- **Labels** are `key: value` pairs in `metadata.labels`. Kubernetes uses them to *select* objects. They identify things: app, tier, flavor, environment.
+- **Annotations** are `key: value` pairs in `metadata.annotations`. They are **never used for selection**. They hold notes and tool settings: a change cause, a Git commit, a Traefik option. Values can be long; the total size of all annotations on one object must stay under 256 KiB.
+- **Selectors** come in two kinds:
+    - **Equality-based:** `app=lemonade`, `flavor!=pink`. Several conditions joined by commas must **all** hold.
+    - **Set-based:** `flavor in (classic,pink)`, `flavor notin (mint)`, `flavor` (the key exists), `!flavor` (the key is missing).
+
+    In YAML, `matchLabels` is the equality form. `matchExpressions` is the set form, with the operators `In`, `NotIn`, `Exists` and `DoesNotExist`. Services only support `matchLabels`-style selectors. Deployments, ReplicaSets, Jobs and DaemonSets support both.
+- **Recommended labels:** Kubernetes suggests a shared set so tools can understand your objects:
+    - `app.kubernetes.io/name`: the app (`lemonade`)
+    - `app.kubernetes.io/instance`: this installation (`lemonade-prod`)
+    - `app.kubernetes.io/version`: the version (`1.30.5`)
+    - `app.kubernetes.io/component`: the part of the app (`web`)
+    - `app.kubernetes.io/part-of`: the bigger system (`snack-shop`)
+    - `app.kubernetes.io/managed-by`: the tool that manages it (`helm`)
+
+    Helm charts set these for you. This book uses the short `app: lemonade` to keep examples small.
+- **Namespaces** divide one cluster into named groups. Most objects (pods, Services, Deployments, ConfigMaps) are **namespaced**: their name must be unique only inside their namespace. Some are **cluster-scoped**: Nodes, Namespaces, PersistentVolumes, StorageClasses, IngressClasses. Every cluster starts with four namespaces:
+    - `default`: used when you do not choose one;
+    - `kube-system`: k3s's own components, such as Traefik and CoreDNS;
+    - `kube-public`: readable by everyone;
+    - `kube-node-lease`: node heartbeats.
+- **Namespaces are not walls.** By default, pods in different namespaces can still talk to each other over the network. Namespaces separate *names*, *permissions* (RBAC) and *quotas*. Network isolation needs NetworkPolicies, which k3s enforces with its built-in policy controller.
+
+## Every rule and command for this topic
+
+### Naming and syntax rules
+
+| Thing | Rule / convention | Valid example | Invalid example |
+| --- | --- | --- | --- |
+| Most object names (DNS subdomain) | ≤ 253 chars; lowercase letters, digits, `-` and `.`; start and end with a letter or digit | `lemonade-web` | `Lemonade_Web` |
+| Namespace, Service names (DNS label) | ≤ 63 chars; lowercase letters, digits, `-`; start with a letter, end with a letter or digit | `lemonade` | `lemonade.shop` |
+| Label key | Optional prefix (a DNS subdomain ≤ 253) + `/` + name ≤ 63 (letters, digits, `-`, `_`, `.`) | `app.kubernetes.io/name` | `-app` |
+| Label value | ≤ 63 chars; may be empty; letters, digits, `-`, `_`, `.`; start and end alphanumeric | `classic` | `pink lemonade` (contains a space) |
+| Prefix `kubernetes.io/`, `k8s.io/` | Reserved for Kubernetes itself | `kubernetes.io/service-name` (set by the system) | your own `kubernetes.io/team` |
+| Annotation key | Same format as a label key | `kubernetes.io/change-cause` | – |
+
+### Commands and flags
+
+| Command or flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `kubectl label` | Add or change a label | `--overwrite` to change an existing value | `kubectl label pod lemonade-pod flavor=mint -n lemonade` |
+| `kubectl label … key-` | Remove a label | A trailing `-` means remove | `kubectl label pod lemonade-pod flavor- -n lemonade` |
+| `kubectl annotate` | Add or change an annotation | Same `-` and `--overwrite` rules | `kubectl annotate deploy/lemonade-web owner=sam -n lemonade` |
+| `-l key=value` | Equality selector | Commas mean AND | `kubectl get pods -l app=lemonade,flavor=pink` |
+| `-l 'key!=value'` | Inequality | **Also matches objects that lack the key** | `kubectl get pods -l 'flavor!=pink'` |
+| `-l 'key in (a,b)'` | Set membership | Quote it for the shell | `kubectl get pods -l 'flavor in (classic,pink)'` |
+| `-l 'key notin (a)'` | Not in a set | Also matches objects that lack the key | `kubectl get pods -l 'flavor notin (mint)'` |
+| `-l key` / `-l '!key'` | The key exists / is missing | | `kubectl get pods -l '!flavor'` |
+| `--show-labels` / `-L key` | Show all labels / one label as a column | | `kubectl get pods -L flavor` |
+| `kubectl create namespace` | Make a namespace | Or `apply` a Namespace manifest | `kubectl create namespace cookies` |
+| `kubectl config set-context --current --namespace=` | Change your default namespace | Saves typing `-n` | `kubectl config set-context --current --namespace=lemonade` |
+| `kubectl api-resources --namespaced=false` | List cluster-scoped kinds | | `kubectl api-resources --namespaced=false` |
+| `kubectl delete namespace` | Delete a namespace **and everything in it** | Double-check the name first | `kubectl delete namespace cookies` |
+
+The two selector styles in YAML:
+
+```yaml
+selector:
+  matchLabels:
+    app: lemonade
+  matchExpressions:
+    - { key: flavor, operator: In, values: [classic, pink] }
+```
+
+## Worked example
+
+Give two pods a `flavor` label. We also gave the stand-alone `lemonade-pod` from lesson 4 the labels `app=lemonade` and `flavor=mint`:
+
+```bash
+kubectl label pod lemonade-web-bffff7f7b-hwg94 -n lemonade flavor=pink
+kubectl label pod lemonade-pod -n lemonade app=lemonade flavor=mint
+kubectl get pods -n lemonade -L app,flavor
+```
+
+```text
+NAME                           READY   STATUS    APP        FLAVOR
+lemonade-pod                   1/1     Running   lemonade   mint
+lemonade-web-bffff7f7b-hwg94   1/1     Running   lemonade   pink
+lemonade-web-bffff7f7b-lwvx4   1/1     Running   lemonade
+lemonade-web-bffff7f7b-ttfs2   1/1     Running   lemonade
+till-with-sidecar              2/2     Running
+```
+
+Now ask different questions:
+
+```bash
+kubectl get pods -n lemonade -l 'app=lemonade,flavor!=pink'
+```
+
+```text
+NAME                           READY   STATUS
+lemonade-pod                   1/1     Running
+lemonade-web-bffff7f7b-lwvx4   1/1     Running     ← has no flavor at all, and still matches
+lemonade-web-bffff7f7b-ttfs2   1/1     Running
+```
+
+```bash
+kubectl get pods -n lemonade -l 'flavor in (classic,pink)'
+kubectl get pods -n lemonade -l '!flavor'
+```
+
+```text
+NAME                           READY   STATUS
+lemonade-web-bffff7f7b-hwg94   1/1     Running
+
+NAME                           READY   STATUS
+lemonade-web-bffff7f7b-lwvx4   1/1     Running
+lemonade-web-bffff7f7b-ttfs2   1/1     Running
+till-with-sidecar              2/2     Running
+```
+
+Notice the trap: `flavor!=pink` matched pods that have **no** flavor label at all. Use `flavor,flavor!=pink` (key exists AND is not pink) if you mean "flavoured, but not pink".
+
+**Labels have power.** Giving `lemonade-pod` the label `app=lemonade` means the `lemonade-web` Service ([lesson 7](07-services-and-dns.qmd)) would now send customers to it too, because the Service selects only on `app=lemonade`. The Deployment's ReplicaSet does **not** adopt it, though. The ReplicaSet's selector also requires `pod-template-hash=bffff7f7b`, which the bare pod does not have. Remove the label again:
+
+```bash
+kubectl label pod lemonade-pod -n lemonade app- flavor-
+```
+
+Namespaces and cluster-scoped kinds:
+
+```bash
+kubectl get namespaces
+kubectl api-resources --namespaced=false | head -5
+```
+
+```text
+NAME              STATUS   AGE
+default           Active   16m
+kube-node-lease   Active   16m
+kube-public       Active   16m
+kube-system       Active   16m
+lemonade          Active   14m
+
+NAME                SHORTNAMES   APIVERSION   NAMESPACED   KIND
+componentstatuses   cs           v1           false        ComponentStatus
+namespaces          ns           v1           false        Namespace
+nodes               no           v1           false        Node
+persistentvolumes   pv           v1           false        PersistentVolume
+```
+
+## Rules and conventions
+
+- Put a small, stable set of **identifying** labels on everything: at least `app`. On larger systems use the `app.kubernetes.io/*` set.
+- Labels are for selecting; annotations are for notes. If no selector will ever use it, make it an annotation.
+- Keep selectors in Deployments and Services minimal. Never select on something that changes per release, such as a version.
+- One namespace per app or per team per environment (`lemonade`, `lemonade-staging`). Put access rules (RBAC) and `ResourceQuota` objects on namespaces.
+- Write `metadata.namespace` in every manifest of namespaced objects.
+- Use the DNS label rules (lowercase, `-`, at most 63 characters) for **all** names. They are valid everywhere.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Using `!=` or `notin` and expecting "has the key" | Unlabelled objects appear in the result | Add the bare key: `-l 'flavor,flavor!=pink'` |
+| Giving an unrelated pod the Service's label | Customers sometimes reach the wrong app | Use distinct labels per app; check `kubectl get endpointslices` |
+| Spaces or capitals in a label value | `Invalid value … must be no more than 63 characters` or similar | Use `pink-lemonade` |
+| Deleting a namespace to "clean one thing" | Everything in it is gone | Delete specific objects, or use `-l` |
+| Expecting a namespace to block network traffic | Pods in other namespaces can still connect | Add a NetworkPolicy |
+| Creating a PersistentVolume "in" a namespace | `namespace` is ignored | PersistentVolumes are cluster-scoped; PVCs are namespaced |
+
+## Mathematical Abstraction
+
+A selector is a **condition on a pod's label set**. For an equality-only selector, a pod matches when its labels contain every pair the selector asks for:
+
+$$
+\operatorname{match}(\sigma) = \lbrace p \in P \mid \sigma \subseteq L(p) \rbrace
+$$
+
+where
+
+- $P$ is the set of pods in the namespace.
+- $L(p)$ is the set of `key=value` pairs on pod $p$.
+- $\sigma$ is the set of pairs in the selector, for example $\lbrace \texttt{app=lemonade} \rbrace$.
+- $\subseteq$ means "every element of the left set is also in the right set".
+
+**Example:** with $\sigma = \lbrace \texttt{app=lemonade} \rbrace$ and the pods above:
+
+- `hwg94` has $\lbrace \texttt{app=lemonade}, \texttt{flavor=pink}, \dots \rbrace$, which contains $\sigma$: it matches.
+- `lwvx4` and `ttfs2` have $\lbrace \texttt{app=lemonade}, \dots \rbrace$: they match.
+- `till-with-sidecar` has $\varnothing$ (no labels): no match.
+- `lemonade-pod` (while it had the label) matched too.
+
+So $|\operatorname{match}(\sigma)| = 4$, and $\sigma \cup \lbrace \texttt{flavor=pink} \rbrace$ narrows the result to 1 pod. Adding conditions can only shrink the result, never grow it, because a bigger $\sigma$ is harder to contain.
+
+Set-based conditions test one key at a time. Write $v_p(k)$ for the value of key $k$ on pod $p$, or $\bot$ ("missing") if the pod has no such key:
+
+$$
+\begin{aligned}
+k \;\texttt{in}\; V &:\quad v_p(k) \in V \\
+k \;\texttt{notin}\; V &:\quad v_p(k) \notin V \quad (\text{true when } v_p(k) = \bot) \\
+k \;\texttt{!=}\; x &:\quad v_p(k) \neq x \quad (\text{true when } v_p(k) = \bot)
+\end{aligned}
+$$
+
+where $V$ is a set of allowed values and $x$ a single value.
+
+**Example:** for `lwvx4`, $v(\texttt{flavor}) = \bot$. Then $\texttt{flavor in (classic,pink)}$ is false, because $\bot \notin \lbrace \text{classic}, \text{pink} \rbrace$. But $\texttt{flavor != pink}$ is true, because $\bot \neq \text{pink}$. That is exactly why `lwvx4` appeared in the `!=` query and not in the `in` query.
+
+## References
+
+- Kubernetes, "Labels and Selectors": <https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/>.
+- Kubernetes, "Annotations": <https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/>, and "Recommended Labels": <https://kubernetes.io/docs/concepts/overview/working-with-objects/common-labels/>.
+- Kubernetes, "Namespaces": <https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/>, and "Object Names and IDs": <https://kubernetes.io/docs/concepts/overview/working-with-objects/names/>.
+- Butcher, Beougher and Chu, *The Illustrated Children's Guide to Kubernetes*: <https://www.cncf.io/phippy/the-childrens-illustrated-guide-to-kubernetes/>.
+
+[← Previous: Pods](04-pods.qmd) · [Part index](index.qmd) · [Next: Deployments and Rolling Updates →](06-deployments-and-rolling-updates.qmd)

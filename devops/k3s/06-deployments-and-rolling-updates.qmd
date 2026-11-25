@@ -1,0 +1,321 @@
+---
+title: "6. Deployments and Rolling Updates"
+description: "ReplicaSets and Deployments, the reconciliation loop, scaling, rolling updates with maxSurge and maxUnavailable, rollout history and undo."
+---
+
+## The problem
+
+A single pod ([lesson 4](04-pods.qmd)) is fragile. If it is deleted, or its node dies, nothing brings it back. The Lemonade Stand needs:
+
+1. **Always three copies** of the web pod, even after crashes.
+2. **Upgrades without closing**: move from NGINX 1.30.5 to 1.30.6 while customers are still ordering.
+3. **A quick way back** when an upgrade is broken.
+
+A **Deployment** gives us all three.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Meerkats, iguanas and a thermostat
+
+In *Phippy Goes to the Zoo* (Matt Butcher and Karen Chu, illustrated by Bailey Beougher), Phippy shows her niece Zee a row of **meerkats** at a window. Whenever one tumbles off the ledge, another one hops up in its place, so the row always has the same number. Those are **ReplicaSets**: they keep a fixed number of identical pods.
+
+Next come **iguanas** with a giant slingshot. They try to land exactly three iguanas on an island in a pond. When one misses and splashes into the water, they simply launch another until three have made it. Those are **Deployments**. A Deployment uses ReplicaSets underneath, and adds the clever part: replacing the group with a new version, a few at a time.
+
+The engine inside is a **thermostat**. You set "21 °C", and it keeps measuring and switching the heater on or off. You never say "heat for 10 minutes". Google's engineers Burns, Grant, Oppenheimer, Brewer and Wilkes describe this in *Borg, Omega, and Kubernetes* (2016). They call it a *reconciliation controller loop*: it compares a **desired state** (how many pods should match a label selector) with the **observed state** (how many it can find) and takes action to bring the two together. If the controller crashes, it simply starts the comparison again.
+:::
+
+## The concept, precisely
+
+- **ReplicaSet:** keeps exactly `replicas` pods that match its **selector** running. It creates pods from its **pod template**. You rarely create one yourself.
+- **Deployment:** owns ReplicaSets. Each change to the pod template (a new image, a new environment variable) creates a **new ReplicaSet**. The Deployment then shifts pods from the old ReplicaSet to the new one according to its **strategy**. Old ReplicaSets are kept, scaled to 0, as **revisions** you can roll back to.
+- **pod-template-hash:** a label that the Deployment adds to each ReplicaSet and its pods, so the old and new generations never select each other's pods.
+- **Strategy `RollingUpdate`** (the default): replace pods gradually, within two limits:
+    - `maxSurge`: how many pods may exist **above** `replicas` during the update.
+    - `maxUnavailable`: how many pods may be **missing** (not ready) during the update.
+- **Strategy `Recreate`:** delete all old pods first, then start the new ones. There is downtime, but two versions never run side by side. Use it only when two versions must not run together.
+
+```text
+Deployment lemonade-web
+ ├── ReplicaSet lemonade-web-bffff7f7b   (nginx 1.30.5)  replicas: 0   ← old revision
+ └── ReplicaSet lemonade-web-848fbbb64c  (nginx 1.30.6)  replicas: 3   ← current
+        ├── pod lemonade-web-848fbbb64c-7lrs9
+        ├── pod …
+```
+
+## Every field and command for this topic
+
+### Deployment fields
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `spec.replicas` | Desired number of pods | Default 1 | `replicas: 3` |
+| `spec.selector.matchLabels` | Which pods belong to it | **Cannot be changed** after creation; must match the template's labels | `matchLabels: {app: lemonade}` |
+| `spec.template` | The pod to create (metadata + spec) | Any change here starts a rollout | `template: {metadata: {labels: {app: lemonade}}, spec: …}` |
+| `spec.strategy.type` | `RollingUpdate` or `Recreate` | Default `RollingUpdate` | `type: Recreate` |
+| `spec.strategy.rollingUpdate.maxSurge` | Extra pods allowed during an update | Number or %; default 25%; a % is rounded **up** | `maxSurge: 1` |
+| `spec.strategy.rollingUpdate.maxUnavailable` | Missing pods allowed during an update | Number or %; default 25%; a % is rounded **down**; not 0 if `maxSurge` is 0 | `maxUnavailable: 0` |
+| `spec.minReadySeconds` | A new pod must stay ready this long to count as available | Default 0; catches pods that crash right after starting | `minReadySeconds: 10` |
+| `spec.revisionHistoryLimit` | How many old ReplicaSets to keep | Default 10 | `revisionHistoryLimit: 5` |
+| `spec.progressDeadlineSeconds` | Mark the rollout as failed after this long without progress | Default 600 | `progressDeadlineSeconds: 120` |
+| `spec.paused` | Stop acting on template changes | Set by `kubectl rollout pause` | `paused: true` |
+
+### Commands
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `kubectl rollout status` | Wait until the rollout finishes or fails | Use it in CI after `apply` | `kubectl rollout status deploy/lemonade-web -n lemonade` |
+| `kubectl rollout history` | List revisions | Shows `kubernetes.io/change-cause` | `kubectl rollout history deploy/lemonade-web -n lemonade` |
+| `kubectl rollout undo` | Go back to the previous revision | `--to-revision=N` for an older one | `kubectl rollout undo deploy/lemonade-web -n lemonade` |
+| `kubectl rollout pause` / `resume` | Batch several edits into one rollout | Remember to resume | `kubectl rollout pause deploy/lemonade-web -n lemonade` |
+| `kubectl rollout restart` | Replace all pods with the same template | For example, to pick up a changed ConfigMap | `kubectl rollout restart deploy/lemonade-web -n lemonade` |
+| `kubectl set image` | Change a container's image | Imperative; update the file too | `kubectl set image deploy/lemonade-web web=nginxinc/nginx-unprivileged:1.30.6-alpine -n lemonade` |
+| `kubectl scale` | Change replicas | Does not create a new revision | `kubectl scale deploy/lemonade-web --replicas=5 -n lemonade` |
+| `kubectl annotate … change-cause` | Note why a revision exists | Shown by `rollout history` | `kubectl annotate deploy/lemonade-web kubernetes.io/change-cause="nginx 1.30.6" -n lemonade` |
+
+## Worked example
+
+The Deployment ([`06-deployment.yaml`](examples/06-deployment.yaml)) asks for three NGINX pods, each showing the menu ConfigMap:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lemonade-web
+  namespace: lemonade
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: lemonade
+  template:
+    metadata:
+      labels:
+        app: lemonade
+    spec:
+      containers:
+        - name: web
+          image: nginxinc/nginx-unprivileged:1.30.5-alpine
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: menu
+              mountPath: /usr/share/nginx/html
+      volumes:
+        - name: menu
+          configMap:
+            name: lemonade-menu
+```
+
+The menu itself is explained in [lesson 9](09-configmaps-and-secrets.qmd). Apply both:
+
+```bash
+kubectl apply -f 09-configmap.yaml -f 06-deployment.yaml
+kubectl rollout status deploy/lemonade-web -n lemonade
+kubectl get rs,pods -n lemonade -l app=lemonade
+```
+
+```text
+deployment "lemonade-web" successfully rolled out
+NAME                                     DESIRED   CURRENT   READY
+replicaset.apps/lemonade-web-bffff7f7b   3         3         3
+
+NAME                               READY   STATUS    RESTARTS
+pod/lemonade-web-bffff7f7b-4h9vf   1/1     Running   0
+pod/lemonade-web-bffff7f7b-bt5zs   1/1     Running   0
+pod/lemonade-web-bffff7f7b-kvnn7   1/1     Running   0
+```
+
+### Self-healing
+
+Delete one pod and look again. The meerkat hops up:
+
+```bash
+kubectl delete pod lemonade-web-bffff7f7b-4h9vf -n lemonade
+kubectl get pods -n lemonade -l app=lemonade
+```
+
+```text
+NAME                           READY   STATUS    AGE
+lemonade-web-bffff7f7b-bt5zs   1/1     Running   7m40s
+lemonade-web-bffff7f7b-kvnn7   1/1     Running   7m40s
+lemonade-web-bffff7f7b-plxn5   1/1     Running   7m39s
+```
+
+We deleted `4h9vf` about one second after the Deployment started, and looked again a few minutes later. There are still three pods. `plxn5` is new, and one second younger than its siblings, because the ReplicaSet created it the moment the old one was gone.
+
+### Scaling
+
+```bash
+kubectl scale deploy/lemonade-web -n lemonade --replicas=5
+kubectl get deploy lemonade-web -n lemonade
+```
+
+```text
+NAME           READY   UP-TO-DATE   AVAILABLE
+lemonade-web   5/5     5            5
+```
+
+Scaling back to 3 removes two pods. Scaling does not create a new revision, because the pod template did not change.
+
+### A good rolling update
+
+```bash
+kubectl set image deploy/lemonade-web -n lemonade web=nginxinc/nginx-unprivileged:1.30.6-alpine
+kubectl annotate deploy/lemonade-web -n lemonade kubernetes.io/change-cause="nginx 1.30.6"
+kubectl rollout status deploy/lemonade-web -n lemonade
+kubectl get rs -n lemonade -l app=lemonade
+```
+
+```text
+Waiting for deployment "lemonade-web" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "lemonade-web" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "lemonade-web" rollout to finish: 1 old replicas are pending termination...
+deployment "lemonade-web" successfully rolled out
+NAME                      DESIRED   CURRENT   READY
+lemonade-web-848fbbb64c   3         3         3       ← 1.30.6
+lemonade-web-bffff7f7b    0         0         0       ← 1.30.5, kept for rollback
+```
+
+### A broken update, and the undo
+
+Now someone types a version that does not exist:
+
+```bash
+kubectl set image deploy/lemonade-web -n lemonade web=nginxinc/nginx-unprivileged:1.30.99-alpine
+kubectl rollout status deploy/lemonade-web -n lemonade --timeout=45s
+kubectl get pods,deploy -n lemonade -l app=lemonade
+```
+
+```text
+error: timed out waiting for the condition
+NAME                            READY   STATUS         RESTARTS
+lemonade-web-79cf8988fc-dqq9t   0/1     ErrImagePull   0        ← the one new pod
+lemonade-web-848fbbb64c-7lrs9   1/1     Running        0
+lemonade-web-848fbbb64c-9vjwb   1/1     Running        0
+lemonade-web-848fbbb64c-qbswk   1/1     Running        0
+
+NAME           READY   UP-TO-DATE   AVAILABLE
+lemonade-web   3/3     1            3
+```
+
+The stand **stayed open**. The rolling update created one extra pod (the surge). That pod never became ready, so no old pod was removed. All three 1.30.6 pods kept serving. The Mathematical Abstraction section below explains why it stopped at exactly one extra pod.
+
+```bash
+kubectl rollout history deploy/lemonade-web -n lemonade
+kubectl rollout undo deploy/lemonade-web -n lemonade
+kubectl rollout history deploy/lemonade-web -n lemonade
+```
+
+```text
+REVISION  CHANGE-CAUSE
+1         <none>
+2         nginx 1.30.6
+3         typo 1.30.99
+
+Warning: resource deployments/lemonade-web was previously managed with 'kubectl apply'. Rolling back
+will not update the kubectl.kubernetes.io/last-applied-configuration annotation …
+deployment.apps/lemonade-web rolled back
+
+REVISION  CHANGE-CAUSE
+1         <none>
+3         typo 1.30.99
+4         nginx 1.30.6
+```
+
+Two things to notice:
+
+- Undo did not "go back to revision 2". It **copied** revision 2's template into a new revision 4, and revision 2 disappeared from the list.
+- kubectl warns you: the Deployment was created with `apply`, but undo changed it behind the file's back. In a team, the cleaner undo is to revert the change in Git and `kubectl apply` the file again. Use `rollout undo` in an emergency, then fix the file.
+
+## Rules and conventions
+
+- Always run pods through a Deployment (or another controller), never as bare pods, so they come back after failures.
+- Keep the selector small and stable (`app: lemonade`). You cannot change it later without recreating the Deployment.
+- Trigger rollouts by changing the **manifest in Git** (the image tag) and applying it. Record why with `kubernetes.io/change-cause`, or rely on Git history.
+- Follow every `apply` in CI with `kubectl rollout status --timeout=…`, so a broken release fails the pipeline.
+- Use readiness probes ([lesson 11](11-health-resources-and-scheduling.qmd)). Without them, "ready" only means "the process started", and a rolling update can replace good pods with broken ones.
+- For a small number of replicas, set `maxUnavailable: 0` and `maxSurge: 1`. Capacity then never drops during an update.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Template labels do not match the selector | `selector does not match template labels` | Use the same labels in `selector.matchLabels` and `template.metadata.labels` |
+| Changing the selector of an existing Deployment | `field is immutable` | Delete and recreate it, or create a new Deployment |
+| Reusing the same image tag for new code | `apply` says `unchanged`, and old code keeps running | Use a new tag per build (CI/CD part), or `kubectl rollout restart` |
+| `maxSurge: 0` and `maxUnavailable: 0` | The API rejects it | At least one of them must be above 0 |
+| Waiting forever on a broken rollout | Pipeline hangs | `rollout status --timeout`, and lower `progressDeadlineSeconds` |
+| Only using `rollout undo` | The Git file still has the bad version, and the next `apply` breaks it again | Revert in Git and apply |
+
+## Mathematical Abstraction
+
+### The reconciliation loop
+
+Each pass of the ReplicaSet controller computes
+
+$$
+\Delta = r - a, \qquad
+\text{action} =
+\begin{cases}
+\text{create } \Delta \text{ pods} & \text{if } \Delta > 0 \\
+\text{delete } |\Delta| \text{ pods} & \text{if } \Delta < 0 \\
+\text{do nothing} & \text{if } \Delta = 0
+\end{cases}
+$$
+
+where
+
+- $r$ is the desired replica count, `spec.replicas`, a whole number $\ge 0$.
+- $a$ is the number of matching, non-terminating pods the controller observes right now.
+- $\Delta$ is the gap it must close.
+
+**Example:** after we deleted one pod, $r = 3$ and $a = 2$, so $\Delta = 3 - 2 = 1$ and the controller created one pod (`plxn5`, one second later). After `scale --replicas=5`: $\Delta = 5 - 3 = 2$, so two pods were created. After scaling back: $\Delta = 3 - 5 = -2$, so two pods were deleted.
+
+### The rolling-update window
+
+During an update the Deployment must respect
+
+$$
+s = \lceil r \cdot \sigma \rceil, \qquad u = \lfloor r \cdot \mu \rfloor, \qquad
+N_{\text{total}} \le r + s, \qquad N_{\text{available}} \ge r - u
+$$
+
+where
+
+- $r$ is `spec.replicas`.
+- $\sigma$ is `maxSurge` as a fraction (25% means $\sigma = 0.25$). $\lceil x \rceil$ means round **up**.
+- $\mu$ is `maxUnavailable` as a fraction. $\lfloor x \rfloor$ means round **down**.
+- $s$ is the number of extra pods allowed, and $u$ the number of missing pods allowed.
+- $N_{\text{total}}$ is the number of pods that exist (old plus new). $N_{\text{available}}$ is the number that are ready to serve.
+
+If you write whole numbers instead of percentages (`maxSurge: 1`), then $s$ and $u$ are those numbers directly.
+
+**Example with our Deployment:** $r = 3$ and the defaults $\sigma = \mu = 0.25$.
+
+$$
+s = \lceil 3 \times 0.25 \rceil = \lceil 0.75 \rceil = 1, \qquad u = \lfloor 3 \times 0.25 \rfloor = \lfloor 0.75 \rfloor = 0
+$$
+
+So $N_{\text{total}} \le 3 + 1 = 4$ and $N_{\text{available}} \ge 3 - 0 = 3$. That is exactly what the broken update showed: 4 pods in total (3 old Running plus 1 new `ErrImagePull`), `AVAILABLE 3`, and the rollout stuck. It could not add a fifth pod ($s$ was used up), and it could not remove an old pod (that would make $N_{\text{available}} = 2 < 3$).
+
+**A bigger example:** with $r = 10$ we get $s = \lceil 2.5 \rceil = 3$ and $u = \lfloor 2.5 \rfloor = 2$. So at most 13 pods exist and at least 8 serve during the update. The rounding directions are deliberately cautious: never fewer available pods than you asked for, while still making progress.
+
+### Revision numbers
+
+$$
+v_{\text{new}} = \max(V) + 1
+$$
+
+where $V$ is the set of revision numbers that currently exist, and $v_{\text{new}}$ is the number given to the next rollout, including a rollback.
+
+**Example:** before the undo, $V = \lbrace 1, 2, 3 \rbrace$. Rolling back to revision 2 created $v_{\text{new}} = 3 + 1 = 4$ with revision 2's template, and removed 2. So the history showed $\lbrace 1, 3, 4 \rbrace$.
+
+## References
+
+- Kubernetes, "Deployments": <https://kubernetes.io/docs/concepts/workloads/controllers/deployment/>, and "ReplicaSet": <https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/>.
+- Kubernetes, "Controllers": <https://kubernetes.io/docs/concepts/architecture/controller/>.
+- Brendan Burns, Brian Grant, David Oppenheimer, Eric Brewer and John Wilkes, "Borg, Omega, and Kubernetes", *ACM Queue* 14(1), 2016: <https://queue.acm.org/detail.cfm?id=2898444>, also at <https://research.google/pubs/pub44843/>.
+- Matt Butcher and Karen Chu, *Phippy Goes to the Zoo* (CNCF, CC-BY): <https://www.cncf.io/phippy/phippy-goes-to-the-zoo-book/>.
+
+[← Previous: Labels, Selectors and Namespaces](05-labels-selectors-and-namespaces.qmd) · [Part index](index.qmd) · [Next: Services and DNS →](07-services-and-dns.qmd)

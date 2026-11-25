@@ -54,7 +54,7 @@ curl -sfL https://get.k3s.io | sh -
 sudo k3s kubectl get nodes
 ```
 
-**On macOS or Windows**, run k3s inside Docker. We used this exact command to check every example in this part. It used k3s `v1.37.2+k3s1`, the stable channel in November 2026:
+**On macOS or Windows**, run k3s inside Docker. Every example in this part was checked this way on k3s `v1.37.2+k3s1`, the stable channel in November 2026:
 
 ```bash
 docker run -d --name k3s-lab --hostname k3s-lab --privileged \
@@ -69,7 +69,7 @@ kubectl get nodes
 - `-p 8081:80` publishes Traefik's port 80 as `localhost:8081`.
 - `-p 30080:30080` publishes the NodePort used in [lesson 7](07-services-and-dns.qmd).
 - Docker tags cannot contain `+`, so the version `v1.37.2+k3s1` becomes the tag `v1.37.2-k3s1`. The `latest` tag is not maintained.
-- Give Docker at least 1 GB of **free** memory. On a laptop where other containers were already using most of Docker's memory, k3s became unresponsive until we freed memory.
+- Give Docker at least 1 GB of **free** memory. On our test laptop, other containers already used most of Docker's 8 GB, and the API server kept stalling. We added three memory-saving options there: `-e GOMEMLIMIT=350MiB` (a smaller Go heap), `--tmpfs /var/lib/rancher/k3s/server/db` (keeps the SQLite file in RAM, so it is lost when the container stops), and `--disable=metrics-server` after `server`. A machine with spare memory needs none of them.
 - Remove the lab with `docker rm -f k3s-lab`.
 
 Other easy options: [k3d](https://k3d.io/) (`k3d cluster create lemonade`), [Rancher Desktop](https://rancherdesktop.io/), which runs k3s for you, or a [Multipass](https://canonical.com/multipass) Ubuntu VM with the install script.

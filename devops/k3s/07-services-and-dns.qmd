@@ -1,0 +1,223 @@
+---
+title: "7. Services and DNS"
+description: "Give pods that come and go one stable name and address: ClusterIP, NodePort, LoadBalancer with k3s ServiceLB, headless Services, EndpointSlices and cluster DNS."
+---
+
+## The problem
+
+The three lemonade pods have addresses like `10.42.0.21`, `10.42.0.22` and `10.42.0.23`. Each rolling update ([lesson 6](06-deployments-and-rolling-updates.qmd)) replaces them with new pods and **new** IPs. If the cash register had to remember pod IPs, it would break after every release.
+
+We need:
+
+1. **One stable address and name** inside the cluster that always reaches whichever lemonade pods are ready.
+2. **Load spreading** across those pods.
+3. A way for **customers outside** the cluster to get in.
+
+A **Service** does all three.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A tunnel and a phone number
+
+In *The Illustrated Children's Guide to Kubernetes*, Phippy has made many clones of herself, and they come and go. Captain Kube opens a **tunnel** between Phippy's group and the rest of the ship. "Even when your clones come and go, this tunnel will stay here," he says, "so you can discover other pods, and they can discover you!" That tunnel is a **Service**.
+
+Or think of the shop's phone number. Customers call **one** number, "Lemonade Stand". Whoever is working today answers. Staff change shifts, and each person has their own mobile number (the pod IP), but the shop number (the Service) stays the same. The **phone book** that turns the name "lemonade-web" into that number is **CoreDNS**.
+
+To reach the shop from the street:
+
+- **NodePort** is a numbered side door, such as door 30080, in *every* building of the cluster.
+- **LoadBalancer** is the big front gate. In k3s, a helper called **ServiceLB** opens that gate on the nodes themselves, so you do not need a cloud provider.
+:::
+
+## The concept, precisely
+
+- A **Service** has a **selector** (for example `app: lemonade`). Every ready pod whose labels match becomes an **endpoint**. The endpoints are stored in **EndpointSlice** objects, which the control plane updates as pods come and go.
+- **ClusterIP** (the default type): a virtual IP from the service range (`10.43.0.0/16` in k3s) that works only inside the cluster. kube-proxy, built into k3s, programs the node's packet rules so that traffic to `ClusterIP:port` reaches one of the endpoints on `targetPort`.
+- **NodePort**: a ClusterIP **plus** the same port opened on every node, from the range 30000–32767.
+- **LoadBalancer**: a NodePort **plus** an external address. Upstream Kubernetes needs a cloud or a tool such as MetalLB for this, otherwise the address stays `<pending>`. **k3s ServiceLB** creates a small `svclb-…` pod on each node, which uses a host port to forward traffic, and reports the node's IP as the external address. Traefik itself is exposed this way.
+- **Headless** (`clusterIP: None`): no virtual IP. DNS returns the **pod IPs** directly. StatefulSets use this ([lesson 12](12-jobs-cronjobs-daemonsets-statefulsets.qmd)).
+- **ExternalName**: a DNS alias to a name outside the cluster, such as a managed database. It has no proxying at all.
+- **DNS**: CoreDNS answers for `<service>.<namespace>.svc.cluster.local`. Inside the same namespace the short name `lemonade-web` is enough. From another namespace use `lemonade-web.lemonade`.
+
+```text
+              Service lemonade-web  10.43.86.108:80
+                 selector app=lemonade
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
+ 10.42.0.21:8080  10.42.0.22:8080  10.42.0.23:8080     (EndpointSlice)
+```
+
+## Every field for this topic
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `spec.type` | `ClusterIP`, `NodePort`, `LoadBalancer` or `ExternalName` | Default `ClusterIP` | `type: NodePort` |
+| `spec.selector` | Labels of the pods to send traffic to | Equality-based only; no selector means you manage endpoints yourself | `selector: {app: lemonade}` |
+| `spec.ports[].port` | The port clients use on the Service | Any number; often 80 | `port: 80` |
+| `spec.ports[].targetPort` | The port on the pod | A number or a named `containerPort`; defaults to `port` | `targetPort: 8080` |
+| `spec.ports[].nodePort` | The port on every node (NodePort/LoadBalancer) | 30000–32767; omit it to get a random free one | `nodePort: 30080` |
+| `spec.ports[].name` | Port name | Required when there are several ports | `name: http` |
+| `spec.ports[].protocol` | `TCP`, `UDP` or `SCTP` | Default `TCP` | `protocol: UDP` |
+| `spec.clusterIP` | Fixed virtual IP, or `None` for headless | Usually leave it empty | `clusterIP: None` |
+| `spec.externalName` | DNS name for `ExternalName` | | `externalName: db.example.com` |
+| `spec.sessionAffinity` | Keep one client on one pod | `None` (default) or `ClientIP` | `sessionAffinity: ClientIP` |
+| `spec.externalTrafficPolicy` | `Cluster` or `Local` for outside traffic | `Local` keeps the client's source IP | `externalTrafficPolicy: Local` |
+
+Commands:
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `kubectl get svc` | List Services with ClusterIP and ports | `kubectl get svc -n lemonade` |
+| `kubectl get endpointslices` | See which pod IPs are behind a Service | `kubectl get endpointslices -n lemonade -l kubernetes.io/service-name=lemonade-web` |
+| `kubectl expose` | Create a Service for a Deployment, imperatively | `kubectl expose deploy/lemonade-web --port=80 --target-port=8080 -n lemonade` |
+| `kubectl port-forward svc/…` | Tunnel to a Service from your laptop | `kubectl port-forward svc/lemonade-web 8080:80 -n lemonade` |
+| `kubectl run … --rm -i` | Throw-away pod to test DNS or HTTP | `kubectl run t --image=busybox:1.37.0 --rm -i --restart=Never -- wget -qO- http://lemonade-web` |
+
+## Worked example
+
+The ClusterIP Service ([`07-service.yaml`](examples/07-service.yaml)) and a NodePort Service ([`07-service-nodeport.yaml`](examples/07-service-nodeport.yaml)) differ only in `type` and `nodePort`:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: lemonade-web
+  namespace: lemonade
+spec:
+  selector:
+    app: lemonade
+  ports:
+    - port: 80
+      targetPort: 8080
+```
+
+```yaml
+spec:
+  type: NodePort
+  selector:
+    app: lemonade
+  ports:
+    - port: 80
+      targetPort: 8080
+      nodePort: 30080
+```
+
+```bash
+kubectl apply -f 07-service.yaml -f 07-service-nodeport.yaml
+kubectl get svc -n lemonade
+kubectl get endpointslices -n lemonade -l kubernetes.io/service-name=lemonade-web
+```
+
+```text
+NAME                    TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)
+lemonade-web            ClusterIP   10.43.86.108   <none>        80/TCP
+lemonade-web-nodeport   NodePort    10.43.115.30   <none>        80:30080/TCP
+
+NAME                 ADDRESSTYPE   PORTS   ENDPOINTS
+lemonade-web-db6kn   IPv4          8080    10.42.0.21,10.42.0.23,10.42.0.22
+```
+
+The EndpointSlice lists exactly the three web pods on port 8080. Now call the Service **by name** from a throw-away pod in the same namespace:
+
+```bash
+kubectl run dns-test -n lemonade --image=busybox:1.37.0 --restart=Never --rm -i -- \
+  wget -qO- http://lemonade-web
+```
+
+```text
+<h1>Lemonade Stand</h1>
+<p>Classic lemonade: 2.00</p>
+```
+
+From outside, through the NodePort. The Docker lab publishes node port 30080 as `localhost:30080`:
+
+```bash
+curl -s http://localhost:30080/
+```
+
+```text
+<h1>Lemonade Stand</h1>
+<p>Classic lemonade: 2.00</p>
+<p>Pink lemonade: 2.50</p>
+```
+
+And a `LoadBalancer` Service in k3s. Traefik is one, and ServiceLB gave it the node's IP as its external address:
+
+```bash
+kubectl get svc traefik -n kube-system
+```
+
+```text
+NAME      TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)
+traefik   LoadBalancer   10.43.174.216   172.17.0.3    80:30940/TCP,443:30664/TCP
+```
+
+On a cloud cluster without a load-balancer controller, `EXTERNAL-IP` would stay `<pending>`. In k3s it works out of the box.
+
+## Rules and conventions
+
+- Name the Service after the app (`lemonade-web`). The name becomes its DNS name.
+- Call other apps by Service name, never by pod IP. Use the short name inside a namespace, and `name.namespace` across namespaces.
+- Keep `port` stable for clients (80), and map it to whatever the container uses with `targetPort` (8080).
+- Use ClusterIP for internal traffic, Ingress ([lesson 8](08-ingress-with-traefik.qmd)) for HTTP from outside, and NodePort or LoadBalancer for non-HTTP traffic such as TCP games or MQTT.
+- Let Kubernetes pick `nodePort` unless a firewall rule needs a fixed number.
+- Only **ready** pods receive traffic. Readiness probes ([lesson 11](11-health-resources-and-scheduling.qmd)) are what make a Service safe during rollouts.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Selector does not match the pod labels | EndpointSlice is empty, so connections are refused or time out | Compare `kubectl get pods --show-labels` with the Service's `selector` |
+| `targetPort` is the Service port instead of the container port | Connection refused | `targetPort: 8080` (what the container listens on) |
+| Calling `lemonade-web` from another namespace | DNS name not found | Use `lemonade-web.lemonade` |
+| `nodePort: 8080` | The API rejects it: not in the valid range | Use 30000–32767 |
+| Two LoadBalancer Services on the same port in k3s | The second one's `svclb` pods stay `Pending` | ServiceLB uses host ports; pick another port or another node pool |
+| Pinging a ClusterIP | No reply, although HTTP works | A ClusterIP is virtual and only forwards the declared ports; test with HTTP, not ping |
+
+## Mathematical Abstraction
+
+### Who is behind the Service
+
+$$
+E = \lbrace (\operatorname{ip}(p), t) \mid p \in P,\; \sigma \subseteq L(p),\; \operatorname{ready}(p) \rbrace
+$$
+
+where
+
+- $P$ is the set of pods in the Service's namespace.
+- $L(p)$ is the set of labels of pod $p$, written as key=value pairs.
+- $\sigma$ is the Service's selector, also a set of key=value pairs. $\sigma \subseteq L(p)$ means "the pod has every label the selector asks for".
+- $\operatorname{ready}(p)$ is true when the pod passes its readiness checks.
+- $t$ is the `targetPort`, and $E$ is the resulting set of endpoints (IP, port).
+
+**Example:** $\sigma = \lbrace \texttt{app=lemonade} \rbrace$. The three web pods have $L = \lbrace \texttt{app=lemonade}, \texttt{pod-template-hash=bffff7f7b} \rbrace$, which contains $\sigma$, and they are ready. So $E = \lbrace (10.42.0.21, 8080), (10.42.0.22, 8080), (10.42.0.23, 8080) \rbrace$, exactly the EndpointSlice shown above. The bare `lemonade-pod` from lesson 4 has no labels, so $\sigma \not\subseteq \varnothing$ and it receives no traffic.
+
+### How load spreads
+
+In its default mode, kube-proxy picks an endpoint at random for each new connection. With $n$ ready endpoints, each one is chosen with probability $1/n$, so on average
+
+$$
+R_{\text{pod}} = \frac{R}{n}
+$$
+
+where $R$ is the number of new connections per second arriving at the Service, $n = |E|$ is the number of ready endpoints, and $R_{\text{pod}}$ is the expected number of connections per second for each pod.
+
+**Example:** a school trip opens the menu $R = 90$ times per second, and $n = 3$, so each pod gets $90 / 3 = 30$ per second on average. If one pod fails its readiness check, $n$ becomes 2 and each remaining pod gets $90 / 2 = 45$. This is why you size replicas for $n - 1$ pods, so the stand survives losing one. Note that this spreads **connections**, not requests: one browser that keeps a connection open stays on one pod.
+
+### How many NodePorts exist
+
+$$
+N = 32767 - 30000 + 1 = 2768
+$$
+
+where $N$ is the number of different NodePort values available in the default range. The $+1$ is there because both ends of the range are allowed. Each NodePort Service port uses one of them on **every** node, so a cluster can have at most 2768 NodePort ports in total. That is plenty for a lemonade stand, and a reason to put HTTP apps behind one Ingress instead.
+
+## References
+
+- Kubernetes, "Service": <https://kubernetes.io/docs/concepts/services-networking/service/>, and "EndpointSlices": <https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/>.
+- Kubernetes, "DNS for Services and Pods": <https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/>.
+- k3s, "Networking Services" (CoreDNS, ServiceLB): <https://docs.k3s.io/networking/networking-services>.
+- Butcher, Beougher and Chu, *The Illustrated Children's Guide to Kubernetes*: <https://www.cncf.io/phippy/the-childrens-illustrated-guide-to-kubernetes/>.
+
+[← Previous: Deployments and Rolling Updates](06-deployments-and-rolling-updates.qmd) · [Part index](index.qmd) · [Next: Ingress with Traefik →](08-ingress-with-traefik.qmd)

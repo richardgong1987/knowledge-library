@@ -1,0 +1,257 @@
+---
+title: "3. kubectl and Manifests"
+description: "How kubectl finds a cluster, the grammar of every common command and flag, the four parts of a manifest, and declarative versus imperative work."
+---
+
+## The problem
+
+We have a cluster. Now we must tell it, "please run the Lemonade Stand". Two questions:
+
+1. **How do we talk to the cluster?** With the command-line tool `kubectl`, which sends requests to the API server.
+2. **How do we write down what we want**, so a teammate can review it, Git can store it, and running it twice does no harm? With a **manifest**: a YAML file that describes an object.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Ordering at a restaurant
+
+You could shout at the kitchen: "make a lemonade… no wait, two… with ice!" That is **imperative**: a list of commands, and it is easy to lose track. Or you can fill in an **order slip**: "Table 4: two lemonades, with ice." That is **declarative**. The slip says *what you want*, not *how to make it*. The kitchen can read it again at any time to check it got the order right.
+
+A manifest is an order slip with four boxes:
+
+- **`apiVersion` + `kind`**: which form you are filling in ("drinks order, version 1").
+- **`metadata`**: the name tag on the slip ("Table 4").
+- **`spec`**: what you want ("two lemonades").
+- **`status`**: the kitchen writes this box, never you ("one lemonade is ready").
+
+`kubectl` is the waiter who carries your slip to the front office (the API server). Your **kubeconfig** file is the waiter's notebook. It says which restaurant to go to and which membership card to show at the door.
+:::
+
+## The concept, precisely
+
+**kubeconfig.** A YAML file (by default `~/.kube/config`, or whatever `KUBECONFIG` points to) with three lists:
+
+- **clusters**: API server URLs and their certificates.
+- **users**: credentials.
+- **contexts**: pairs of one cluster and one user, plus an optional default namespace.
+
+The *current context* decides where `kubectl` sends requests. k3s writes an admin kubeconfig to `/etc/rancher/k3s/k3s.yaml`.
+
+**Command grammar.**
+
+```text
+kubectl <verb> <resource-type> [<name>] [flags]
+kubectl get    pods            lemonade-pod  -n lemonade -o wide
+```
+
+Resource types have a singular name, a plural name and short names: `pod`, `pods` and `po` all mean the same type. `kubectl api-resources` lists them all.
+
+**Manifest anatomy.**
+
+```yaml
+apiVersion: v1          # API group/version: v1, apps/v1, batch/v1, networking.k8s.io/v1 …
+kind: Pod               # object type
+metadata:
+  name: lemonade-pod    # unique per kind within a namespace
+  namespace: lemonade
+spec:                   # desired state, written by you
+  containers:
+    - name: web
+      image: nginxinc/nginx-unprivileged:1.30.5-alpine
+# status: …             # observed state, written by the cluster
+```
+
+**Imperative vs declarative.**
+
+- `kubectl create`, `run`, `scale` and `set image` are **imperative**: "do this action now".
+- `kubectl apply -f file.yaml` is **declarative**: "make the cluster look like this file". You can run `apply` any number of times. If nothing changed, it reports `unchanged`. Teams keep manifests in Git and `apply` them, often from CI/CD.
+
+## Every command and flag for this topic
+
+### Commands
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `get` | List objects in a table | Add `-o wide` for more columns | `kubectl get pods -n lemonade` |
+| `describe` | Show details and recent **events** | First stop when something is stuck | `kubectl describe pod lemonade-pod -n lemonade` |
+| `apply` | Create or update from a manifest | The normal way to change a cluster | `kubectl apply -f 04-pod.yaml` |
+| `create` | Create an object; fails if it exists | Good for one-off objects | `kubectl create namespace test` |
+| `delete` | Delete objects | By file, by name, or by label | `kubectl delete -f 04-pod.yaml` |
+| `edit` | Open the live object in an editor | Quick fixes only; the file in Git is now out of date | `kubectl edit deploy/lemonade-web -n lemonade` |
+| `logs` | Print container output | `-f` follows, `--previous` shows the last crashed run | `kubectl logs lemonade-pod -n lemonade --tail=20` |
+| `exec` | Run a command inside a container | `--` separates kubectl's flags from the command | `kubectl exec -it lemonade-pod -n lemonade -- sh` |
+| `port-forward` | Tunnel a local port to a pod or Service | For debugging, not for customers | `kubectl port-forward pod/lemonade-pod 8080:8080 -n lemonade` |
+| `explain` | Documentation of any field | Works offline against your cluster's API | `kubectl explain pod.spec.containers.image` |
+| `diff` | Show what `apply` would change | Run before `apply` in reviews | `kubectl diff -f 06-deployment.yaml` |
+| `rollout` | Status, history and undo of updates | Deployments, DaemonSets, StatefulSets | `kubectl rollout status deploy/lemonade-web -n lemonade` |
+| `scale` | Change replicas | Imperative; update the file too | `kubectl scale deploy/lemonade-web --replicas=5 -n lemonade` |
+| `top` | CPU and memory use | Needs metrics-server (bundled in k3s) | `kubectl top pods -n lemonade` |
+| `events` | Recent events | Same as `get events`, nicer output | `kubectl events -n lemonade` |
+| `label` | Add, change or remove labels | `key-` removes a label | `kubectl label pod lemonade-pod flavor=pink -n lemonade` |
+| `annotate` | Add notes that are not used for selection | `--overwrite` to change one | `kubectl annotate deploy/lemonade-web owner=sam -n lemonade` |
+| `cp` | Copy files to or from a container | Needs `tar` in the image | `kubectl cp lemonade/order-logger:/data/orders.log ./orders.log` |
+| `wait` | Block until a condition is true | Useful in scripts and CI | `kubectl wait --for=condition=Ready pod/lemonade-pod -n lemonade` |
+| `config` | Read or switch kubeconfig contexts | `use-context`, `get-contexts`, `set-context` | `kubectl config get-contexts` |
+| `api-resources` | List all resource types and short names | Shows which types are namespaced | `kubectl api-resources --namespaced=false` |
+
+### Flags
+
+| Flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `-n`, `--namespace` | Work in one namespace | Default is the context's namespace, usually `default` | `-n lemonade` |
+| `-A`, `--all-namespaces` | List across all namespaces | For `get` only | `kubectl get pods -A` |
+| `-l`, `--selector` | Filter by labels | See [lesson 5](05-labels-selectors-and-namespaces.qmd) | `-l app=lemonade` |
+| `-o wide` | Extra columns (IP, node) | | `kubectl get pods -o wide` |
+| `-o yaml` / `-o json` | Full object, including `status` | Good for learning field names | `kubectl get pod lemonade-pod -o yaml` |
+| `-o jsonpath=` | Pick single fields | Path starts at the object root | `-o jsonpath='{.status.podIP}'` |
+| `-o name` | Print only `kind/name` | Handy in shell loops | `kubectl get pods -o name` |
+| `-f` | File, folder or URL of manifests | Can repeat; `-` means standard input | `-f 00-namespace.yaml -f 04-pod.yaml` |
+| `-R` | Recurse into folders with `-f` | | `kubectl apply -R -f examples/` |
+| `-k` | Apply a Kustomize folder | Needs a `kustomization.yaml` | `kubectl apply -k overlays/prod` |
+| `--dry-run=client` | Build the object locally, send nothing | With `-o yaml` it prints a starter manifest | `kubectl create cm demo --from-literal=a=1 --dry-run=client -o yaml` |
+| `--dry-run=server` | Let the API server validate, save nothing | Catches errors that `client` cannot see | `kubectl apply --dry-run=server -f pod.yaml` |
+| `-w`, `--watch` | Keep printing changes | Stop with Ctrl-C | `kubectl get pods -w` |
+| `--context` | Use another context for one command | Safer than switching globally | `--context staging` |
+| `--sort-by` | Sort by a field | | `--sort-by=.lastTimestamp` |
+| `--field-selector` | Filter by some built-in fields | | `--field-selector status.phase=Running` |
+
+## Worked example
+
+Create the namespace twice to see declarative behaviour:
+
+```bash
+kubectl apply -f 00-namespace.yaml
+kubectl apply -f 00-namespace.yaml
+```
+
+```text
+namespace/lemonade created
+namespace/lemonade unchanged
+```
+
+Let `kubectl` write a starter manifest for you, without touching the cluster:
+
+```bash
+kubectl create configmap demo --from-literal=price=2.00 -n lemonade --dry-run=client -o yaml
+```
+
+```text
+apiVersion: v1
+data:
+  price: "2.00"
+kind: ConfigMap
+metadata:
+  name: demo
+  namespace: lemonade
+```
+
+Run the pod from [lesson 4](04-pods.qmd) and read single fields with JSONPath:
+
+```bash
+kubectl apply -f 04-pod.yaml
+kubectl get pod lemonade-pod -n lemonade -o jsonpath='{.status.phase} {.status.podIP}'
+```
+
+```text
+pod/lemonade-pod created
+Running 10.42.0.9
+```
+
+Ask the cluster itself what a field means:
+
+```bash
+kubectl explain pod.spec.containers.imagePullPolicy
+```
+
+```text
+FIELD: imagePullPolicy <string>
+ENUM:
+    Always
+    IfNotPresent
+    Never
+DESCRIPTION:
+    Image pull policy. One of Always, Never, IfNotPresent. Defaults to Always if
+    :latest tag is specified, or IfNotPresent otherwise. Cannot be updated.
+```
+
+Preview a change before applying it. Here we bump the image version:
+
+```bash
+sed 's/1.30.5-alpine/1.30.6-alpine/' 04-pod.yaml | kubectl diff -f -
+```
+
+```text
+-  - image: nginxinc/nginx-unprivileged:1.30.5-alpine
++  - image: nginxinc/nginx-unprivileged:1.30.6-alpine
+```
+
+Let the server catch a mistake that a YAML check would miss. Here, an invalid name:
+
+```bash
+kubectl apply --dry-run=server -f bad-pod.yaml     # metadata.name: Lemonade_Pod
+```
+
+```text
+The Pod "Lemonade_Pod" is invalid: metadata.name: Invalid value: "Lemonade_Pod":
+a lowercase RFC 1123 subdomain must consist of lower case alphanumeric characters, '-' or '.'
+```
+
+## Rules and conventions
+
+- Keep manifests in Git and change the cluster with `kubectl apply`. Treat `edit` and `scale` as emergency tools, and copy the change back into the file afterwards.
+- One file per object, or one file per small group of objects joined with `---`. Name the file after what it holds.
+- Always set `metadata.namespace` in the file, or always pass `-n`. Do not rely on whichever namespace the current context happens to have.
+- Run `kubectl diff` before `apply` on shared clusters. Run `--dry-run=server` in CI to catch invalid fields early.
+- Learn field names with `kubectl explain` and `kubectl get … -o yaml`. Do not guess.
+- Use `--context` in scripts so a script never touches the wrong cluster.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Forgetting `-n lemonade` | `No resources found in default namespace.` | Pass `-n`, or set it once with `kubectl config set-context --current --namespace=lemonade` |
+| Tabs in YAML | `error converting YAML to JSON` | Indent with spaces only |
+| Wrong `apiVersion` for a kind | `no matches for kind "Deployment" in version "v1"` | Check with `kubectl api-resources` (Deployments are `apps/v1`) |
+| Writing a `status:` section | It is ignored or rejected | Only write `spec`; the cluster owns `status` |
+| `create` in a script that runs twice | `AlreadyExists` error | Use `apply` |
+| Forgetting `--` before the command in `exec` | kubectl tries to parse the command's flags | `kubectl exec pod -- ls -l` |
+
+## Mathematical Abstraction
+
+`kubectl apply` is **idempotent**: applying the same manifest a second time changes nothing.
+
+$$
+\operatorname{apply}\bigl(\operatorname{apply}(S, m), m\bigr) = \operatorname{apply}(S, m)
+$$
+
+where
+
+- $S$ is the state of the cluster: the set of all objects stored in the datastore.
+- $m$ is a manifest: a set of desired objects, each identified by its kind, namespace and name.
+- $\operatorname{apply}(S, m)$ is the new cluster state after applying $m$ to $S$. Objects in $m$ are created or updated to match; objects not in $m$ are left alone.
+
+**Example:** start with a cluster that has no `lemonade` namespace, $S_0 = \lbrace \text{kube-system}, \text{default} \rbrace$, and take $m = \lbrace \text{Namespace lemonade} \rbrace$.
+
+- The first apply gives $S_1 = \operatorname{apply}(S_0, m) = \lbrace \text{kube-system}, \text{default}, \text{lemonade} \rbrace$. kubectl prints `created`.
+- The second apply gives $\operatorname{apply}(S_1, m) = S_1$, because "lemonade" is already there. kubectl prints `unchanged`.
+
+A shell script that runs `kubectl create namespace lemonade` twice fails the second time. `create` is not idempotent.
+
+Each object is identified by a key, and two objects in the cluster can never share one:
+
+$$
+\operatorname{key}(o) = (g, k, n, x)
+$$
+
+where $g$ is the API group (`""` for core, `apps`, …), $k$ the kind, $n$ the namespace (empty for cluster-wide kinds such as Namespace or Node), and $x$ the name.
+
+**Example:** `("", Pod, lemonade, lemonade-pod)` and `(apps, Deployment, lemonade, lemonade-web)` are different keys. You may also have a ConfigMap and a Service both called `lemonade-web`, because their $k$ differs. A second Pod called `lemonade-pod` in namespace `lemonade` would have the same key as the first. `apply` would update the existing pod, and `create` would fail with `AlreadyExists`.
+
+## References
+
+- Kubernetes, "Command line tool (kubectl)": <https://kubernetes.io/docs/reference/kubectl/>, and the kubectl Quick Reference: <https://kubernetes.io/docs/reference/kubectl/quick-reference/>.
+- Kubernetes, "Objects In Kubernetes": <https://kubernetes.io/docs/concepts/overview/working-with-objects/>, and "Declarative Management of Kubernetes Objects Using Configuration Files": <https://kubernetes.io/docs/tasks/manage-kubernetes-objects/declarative-config/>.
+- Kubernetes, "Organizing Cluster Access Using kubeconfig Files": <https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/>.
+- k3s, "Cluster Access": <https://docs.k3s.io/cluster-access>.
+
+[← Previous: k3s Architecture and Installation](02-k3s-architecture-and-install.qmd) · [Part index](index.qmd) · [Next: Pods →](04-pods.qmd)

@@ -1,0 +1,379 @@
+---
+title: "11. Health, Resources and Scheduling"
+description: "Liveness, readiness and startup probes; CPU and memory requests and limits; QoS classes; how the scheduler places pods; node selectors, affinity and taints; and autoscaling with metrics-server."
+---
+
+## The problem
+
+Three things can still go wrong with the Lemonade Stand:
+
+1. **A frozen pod.** NGINX hangs but the process does not exit. Kubernetes thinks everything is fine and keeps sending customers to it.
+2. **A greedy pod.** One pod uses all the memory on a node and starves its neighbours. Or the cluster accepts more pods than it can really run.
+3. **Placement and demand.** Some pods must run only on certain machines, and on a hot day three pods are not enough.
+
+**Probes** answer the first problem, **requests and limits** the second, and the **scheduler** and the **HorizontalPodAutoscaler** the third.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Tetris and the school nurse
+
+Kelsey Hightower, one of the best-known Kubernetes teachers, once explained scheduling at the Container World conference by playing **Tetris** on stage, as reported by Superuser in 2017. In the first game the blocks just fall wherever they happen to drop, "fully automated" but with no idea of the space they leave behind. Gaps pile up: wasted CPU and memory. In the second game a good player looks at each block's **shape** and drops it where it fits best. The Kubernetes **scheduler** is that good player. A pod's **requests** are its shape ("I need 50 millicores and 32 MiB"), and each node is a column with a certain amount of space.
+
+**Probes** are the school nurse doing rounds:
+
+- **Readiness**: "Are you ready to serve customers?" If not, you sit out for a while, but you stay in school.
+- **Liveness**: "Are you even awake?" If you fail several times in a row, you are sent home and a fresh copy of you comes in (the container is restarted).
+- **Startup**: "This pupil is slow in the morning; do not check them until they have properly arrived."
+
+**Taints** are "Staff only" signs on a door. Only pods carrying the matching pass, a **toleration**, may go in.
+:::
+
+## The concept, precisely
+
+### Probes
+
+The kubelet runs each probe on every container that defines it. A probe can be:
+
+- `httpGet`: success means an HTTP status from 200 to 399;
+- `tcpSocket`: success means a connection opens;
+- `exec`: success means the command exits with 0;
+- `grpc`: the standard gRPC health check.
+
+| Probe | When it fails `failureThreshold` times in a row | Typical use |
+| --- | --- | --- |
+| `readinessProbe` | The pod is removed from Service endpoints. **No restart.** | "Do not send me traffic yet" (warming up, overloaded, dependency down) |
+| `livenessProbe` | The container is **restarted** | Recover from deadlocks and hangs |
+| `startupProbe` | The container is restarted; liveness and readiness wait until startup succeeds | Slow-starting apps, without making liveness slow forever |
+
+Readiness also guards rolling updates ([lesson 6](06-deployments-and-rolling-updates.qmd)). A new pod counts as available only once it is ready.
+
+### Requests and limits
+
+- A **request** is what the scheduler *reserves* for a container. Pods are placed only where the requests fit.
+- A **limit** is the most a container may *use*:
+    - going over the **CPU** limit means the container is **throttled** (slowed down);
+    - going over the **memory** limit means it is **OOM-killed** (`OOMKilled`) and restarted.
+- Units:
+    - CPU in cores or **millicores**: `1` = `1000m`, `50m` = 0.05 of a core;
+    - memory in bytes with suffixes: `64Mi` = $64 \times 2^{20}$ bytes ([lesson 10](10-storage.qmd) explains `Mi` versus `M`).
+- **QoS classes** follow from these settings and decide who is evicted first when a node runs out of memory:
+    - **BestEffort**: no requests or limits at all. Evicted first.
+    - **Burstable**: some requests or limits, but not equal for every resource. Evicted next.
+    - **Guaranteed**: every container has CPU *and* memory limits equal to its requests. Evicted last.
+
+### The scheduler
+
+For each new pod, the scheduler works in two steps:
+
+1. **Filter**: drop every node where the pod cannot run, for example because its requests do not fit, it has no toleration for a taint, or it does not match the pod's `nodeSelector`.
+2. **Score**: rank the remaining nodes (spread, fit, affinity), then bind the pod to the best one.
+
+If no node passes the filter, the pod stays `Pending` with a `FailedScheduling` event that says why.
+
+- **`nodeSelector`**: run only on nodes with these labels.
+- **Node affinity**: a richer version, with required and preferred rules.
+- **Pod affinity / anti-affinity**: run near, or away from, other pods. For example, "do not put two lemonade pods on the same node".
+- **Taints and tolerations**: a node taint `key=value:Effect` repels pods that lack a matching toleration. The effects are:
+    - `NoSchedule`: never place new pods here;
+    - `PreferNoSchedule`: avoid if possible;
+    - `NoExecute`: also evict running pods.
+
+### Autoscaling
+
+A **HorizontalPodAutoscaler (HPA)** changes a Deployment's `replicas` based on metrics such as average CPU use relative to the request. **k3s difference:** k3s ships **metrics-server**, so `kubectl top` and CPU-based HPAs work on a fresh cluster. Upstream Kubernetes needs it installed separately.
+
+## Every field and command for this topic
+
+### Probe fields (defaults in brackets)
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `httpGet.path` / `.port` | URL to check | Use a cheap endpoint | `httpGet: {path: /, port: 8080}` |
+| `tcpSocket.port` | Port to connect to | For non-HTTP apps | `tcpSocket: {port: 5432}` |
+| `exec.command` | Command to run | Exit 0 means healthy | `exec: {command: ["cat", "/tmp/ready"]}` |
+| `initialDelaySeconds` | Wait before the first probe [0] | Prefer a `startupProbe` for slow apps | `initialDelaySeconds: 5` |
+| `periodSeconds` | Time between probes [10] | | `periodSeconds: 5` |
+| `timeoutSeconds` | Time to wait for an answer [1] | | `timeoutSeconds: 2` |
+| `failureThreshold` | Failures in a row before acting [3] | | `failureThreshold: 3` |
+| `successThreshold` | Successes in a row to count as healthy again [1] | Must be 1 for liveness and startup | `successThreshold: 1` |
+
+### Resource and placement fields
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `resources.requests.cpu` / `.memory` | Reserved amount used by the scheduler | Set it on every container | `requests: {cpu: 50m, memory: 32Mi}` |
+| `resources.limits.cpu` / `.memory` | Hard maximum | Memory limit ≥ normal peak use | `limits: {cpu: 200m, memory: 64Mi}` |
+| `spec.nodeSelector` | Required node labels | Simple, exact match | `nodeSelector: {zone: kitchen}` |
+| `spec.affinity.nodeAffinity` | Required or preferred node rules | `requiredDuringSchedulingIgnoredDuringExecution` | `matchExpressions: [{key: zone, operator: In, values: [kitchen]}]` |
+| `spec.affinity.podAntiAffinity` | Keep pods apart | `topologyKey: kubernetes.io/hostname` means "different nodes" | `podAntiAffinity: {preferredDuringScheduling…: …}` |
+| `spec.tolerations` | Allow scheduling onto tainted nodes | Must match the taint's key, value and effect | `tolerations: [{key: snack, value: cookies, effect: NoSchedule}]` |
+| `spec.topologySpreadConstraints` | Spread pods evenly across zones or nodes | `maxSkew: 1` | `topologyKey: kubernetes.io/hostname` |
+
+### HPA fields
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `scaleTargetRef` | What to scale | A Deployment or StatefulSet | `{apiVersion: apps/v1, kind: Deployment, name: lemonade-web}` |
+| `minReplicas` / `maxReplicas` | Bounds | `minReplicas` ≥ 1 | `minReplicas: 3`, `maxReplicas: 10` |
+| `metrics[].resource.target.averageUtilization` | Target percentage **of the request** | Needs `resources.requests` set | `averageUtilization: 70` |
+| `behavior` | Scale-up and scale-down speed, stabilisation windows | Default scale-down window: 300 s | `behavior: {scaleDown: {stabilizationWindowSeconds: 60}}` |
+
+### Commands
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `kubectl describe node` | Capacity, allocatable and allocated requests | `kubectl describe node k3s-lab` |
+| `kubectl top nodes` / `pods` | Live CPU and memory use (metrics-server) | `kubectl top pods -n lemonade` |
+| `kubectl taint nodes` | Add a taint; a trailing `-` removes it | `kubectl taint nodes k3s-lab snack=cookies:NoSchedule` |
+| `kubectl label nodes` | Label a node for `nodeSelector` | `kubectl label nodes k3s-lab zone=kitchen` |
+| `kubectl get hpa` | Current and target metric, replica count | `kubectl get hpa -n lemonade` |
+| `kubectl autoscale` | Create an HPA imperatively | `kubectl autoscale deploy/lemonade-web --min=3 --max=10 --cpu-percent=70 -n lemonade` |
+| `kubectl cordon` / `drain` / `uncordon` | Stop scheduling on a node, evict its pods, allow again | `kubectl drain k3s-lab --ignore-daemonsets` |
+
+## Worked example
+
+[`11-deployment-healthy.yaml`](examples/11-deployment-healthy.yaml) is lesson 6's Deployment with these lines added to the container:
+
+```yaml
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+          readinessProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: 8080 }
+            periodSeconds: 10
+            failureThreshold: 3
+```
+
+```bash
+kubectl apply -f 11-deployment-healthy.yaml
+kubectl describe pod <one-lemonade-web-pod> -n lemonade
+kubectl get pod <one-lemonade-web-pod> -n lemonade -o jsonpath='{.status.qosClass}'
+```
+
+```text
+    Limits:     cpu: 200m   memory: 64Mi
+    Requests:   cpu: 50m    memory: 32Mi
+    Liveness:   http-get http://:8080/ delay=0s timeout=1s period=10s successThreshold=1 failureThreshold=3
+    Readiness:  http-get http://:8080/ delay=0s timeout=1s period=5s successThreshold=1 failureThreshold=3
+  Warning  Unhealthy  kubelet  Readiness probe failed: Get "http://10.42.0.30:8080/": dial tcp 10.42.0.30:8080: connect: connection refused
+Burstable
+```
+
+The `Unhealthy` warning is the readiness probe doing its job. NGINX had not opened port 8080 yet, so the pod was kept out of the Service until a later probe succeeded. The QoS class is `Burstable`, because the limits are higher than the requests.
+
+### What the node has, and what is reserved
+
+```bash
+kubectl describe node k3s-lab
+```
+
+```text
+Allocatable:
+  cpu:     16
+  memory:  8123676Ki
+Allocated resources:
+  Resource   Requests     Limits
+  cpu        250m (1%)    600m (3%)
+  memory     166Mi (2%)   362Mi (4%)
+```
+
+The 250m of CPU requests are CoreDNS's 100m plus our three web pods at 50m each. The scheduler only looks at these **requests**, not at live use.
+
+### A pod that does not fit
+
+A pod that requests 100 whole CPUs ([see the Mathematical Abstraction below](#mathematical-abstraction)):
+
+```yaml
+      resources:
+        requests:
+          cpu: "100"
+```
+
+```bash
+kubectl get pod greedy -n lemonade
+kubectl get events -n lemonade --field-selector involvedObject.name=greedy
+```
+
+```text
+NAME     READY   STATUS    RESTARTS   AGE
+greedy   0/1     Pending   0          8s
+Warning  FailedScheduling  pod/greedy  0/1 nodes are available: 1 Insufficient cpu.
+preemption: 0/1 nodes are available: 1 Preemption is not helpful for scheduling.
+```
+
+### A taint
+
+```bash
+kubectl taint nodes k3s-lab snack=cookies:NoSchedule
+kubectl run taint-test -n lemonade --image=busybox:1.37.0 -- sleep 3600
+kubectl get pod taint-test -n lemonade
+kubectl taint nodes k3s-lab snack=cookies:NoSchedule-       # remove it
+kubectl get pod taint-test -n lemonade
+```
+
+```text
+node/k3s-lab tainted
+taint-test   0/1     Pending   0          9s
+Warning  FailedScheduling  0/1 nodes are available: 1 node(s) had untolerated taint(s).
+node/k3s-lab untainted
+taint-test   1/1     Running   0          19s
+```
+
+The same pod with this toleration would have been scheduled despite the sign:
+
+```yaml
+  tolerations:
+    - { key: snack, value: cookies, effect: NoSchedule }
+```
+
+### Autoscaling
+
+[`11-hpa.yaml`](examples/11-hpa.yaml) keeps between 3 and 10 web pods, aiming at 70% of the CPU request:
+
+```yaml
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: lemonade-web }
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 70 }
+```
+
+Our lab cluster was started with `--disable=metrics-server` to save memory. That shows what happens when the HPA has no metrics:
+
+```bash
+kubectl apply -f 11-hpa.yaml
+kubectl get hpa -n lemonade
+kubectl describe hpa lemonade-web -n lemonade      # events
+```
+
+```text
+NAME           REFERENCE                 TARGETS              MINPODS   MAXPODS   REPLICAS
+lemonade-web   Deployment/lemonade-web   cpu: <unknown>/70%   3         10        3
+Warning  FailedGetResourceMetric  horizontal-pod-autoscaler  failed to get cpu utilization: unable to get
+metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find
+the requested resource (get pods.metrics.k8s.io)
+```
+
+The HPA keeps the current replica count and waits. We then started a second lab cluster **with** k3s's metrics-server, the default, and applied the same files:
+
+```bash
+kubectl top pods -n lemonade
+kubectl get hpa -n lemonade
+```
+
+```text
+NAME                            CPU(cores)   MEMORY(bytes)
+lemonade-web-66587fd89c-9jkvk   1m           12Mi
+lemonade-web-66587fd89c-gdtc4   1m           12Mi
+lemonade-web-66587fd89c-hwwv7   1m           12Mi
+
+NAME           REFERENCE                 TARGETS       MINPODS   MAXPODS   REPLICAS
+lemonade-web   Deployment/lemonade-web   cpu: 2%/70%   3         10        3
+```
+
+Each idle pod uses 1m of its 50m request, which is $1/50 = 2\%$. The Mathematical Abstraction section below shows why the HPA still keeps 3 replicas.
+
+## Rules and conventions
+
+- Give every long-running container a **readiness** probe. Add a **liveness** probe only if the app can hang without exiting, and make it check the process itself, not its dependencies, or one database outage restarts everything.
+- Use a `startupProbe` for slow starters instead of a large `initialDelaySeconds` on liveness.
+- Set CPU and memory **requests** on every container. Without them the scheduler is playing Tetris blindfolded, and the HPA cannot compute utilisation.
+- Set a **memory limit** close to the real peak. Be careful with CPU limits: throttling can make latency spiky, and many teams set CPU requests only.
+- Use labels plus `nodeSelector` or affinity to choose nodes, and taints to keep ordinary pods *off* special nodes.
+- Keep `minReplicas` ≥ 2 for anything customer-facing, so one pod can fail while the HPA reacts.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Liveness probe that checks the database | All pods restart together when the database blips | Check only the app; put dependency checks in readiness |
+| Liveness probe too strict for a slow start | `CrashLoopBackOff` with `Liveness probe failed` | Add a `startupProbe`, or raise `failureThreshold` |
+| No requests | Pods pile onto one node; HPA shows `<unknown>` | Set `resources.requests` |
+| Memory limit below real use | `OOMKilled`, then restarts | Raise the limit; measure with `kubectl top` |
+| Requests larger than any node | `Pending`, `Insufficient cpu` or `Insufficient memory` | Lower the requests, or add a bigger node |
+| Taint without a matching toleration | `Pending`, `untolerated taint` | Add a toleration, or remove the taint |
+| HPA while metrics-server is disabled | `TARGETS <unknown>/70%`, `FailedGetResourceMetric` | Keep k3s's metrics-server enabled |
+
+## Mathematical Abstraction
+
+### How fast a failure is noticed
+
+A probe acts after `failureThreshold` failures in a row, spaced `periodSeconds` apart. The worst case, from the moment the app breaks until Kubernetes acts, is about
+
+$$
+t_{\text{detect}} \le T \cdot F + \tau
+$$
+
+where
+
+- $T$ is `periodSeconds`, the time between probes, in seconds.
+- $F$ is `failureThreshold`, the number of failures in a row needed.
+- $\tau$ is `timeoutSeconds`, how long the last probe may wait for an answer.
+- $t_{\text{detect}}$ is the time until the pod is marked unready (readiness) or restarted (liveness).
+
+**Example:** the readiness probe has $T = 5$, $F = 3$, $\tau = 1$, so $t \le 5 \times 3 + 1 = 16$ s before customers stop being sent to a frozen pod. The liveness probe has $T = 10$, $F = 3$, $\tau = 1$, so $t \le 10 \times 3 + 1 = 31$ s before it is restarted. Readiness is deliberately quicker: stopping traffic is cheap, a restart is not.
+
+### CPU units
+
+$$
+c_{\text{cores}} = \frac{c_{\text{milli}}}{1000}
+$$
+
+where $c_{\text{milli}}$ is a CPU amount in millicores (the `m` suffix), and $c_{\text{cores}}$ is the same amount in whole cores.
+
+**Example:** a request of `50m` is $50 / 1000 = 0.05$ cores, one twentieth of one core. The limit `200m` is $0.2$ cores. Three web pods request $3 \times 0.05 = 0.15$ cores in total.
+
+### Does a pod fit on a node?
+
+The scheduler's resource filter keeps node $n$ only if
+
+$$
+\sum_{q \in Q_n} r_q + r_{\text{new}} \le A_n
+$$
+
+where
+
+- $Q_n$ is the set of pods already on node $n$.
+- $r_q$ is the request of pod $q$ for one resource (CPU or memory). Each resource is checked separately.
+- $r_{\text{new}}$ is the new pod's request for the same resource.
+- $A_n$ is the node's **allocatable** amount of that resource.
+
+**Example (CPU):** the lab node has $A = 16$ cores $= 16{,}000$m, and $\sum r_q = 250$m is already requested. Another web pod: $250 + 50 = 300 \le 16{,}000$, so it fits. The greedy pod: $250 + 100{,}000 = 100{,}250 > 16{,}000$, so it does not fit. That is exactly the `Insufficient cpu` event.
+
+**Example (memory):** $A = 8{,}123{,}676$ Ki, and $166$ Mi $= 166 \times 1024 = 169{,}984$ Ki is requested. The node could accept about $\lfloor (8{,}123{,}676 - 169{,}984) / (32 \times 1024) \rfloor = \lfloor 7{,}953{,}692 / 32{,}768 \rfloor = 242$ more web pods by memory requests. Requests are a **promise**, not a measurement. Live use can be lower or higher.
+
+### How the HPA chooses a replica count
+
+$$
+d = \left\lceil c \cdot \frac{m}{g} \right\rceil, \qquad \text{scale only if } \left| \frac{m}{g} - 1 \right| > 0.1
+$$
+
+where
+
+- $c$ is the current number of replicas.
+- $m$ is the current metric: average CPU use as a percentage of the request, across the pods.
+- $g$ is the target, `averageUtilization`.
+- $d$ is the desired number of replicas, which is then clamped between `minReplicas` and `maxReplicas`.
+- $0.1$ is the default tolerance. Changes within ±10% of the target are ignored, so the HPA does not flap.
+
+**Example (measured):** the idle stand above had $c = 3$, $m = 2\%$ and $g = 70\%$. The ratio is $2 / 70 \approx 0.029$, and $|0.029 - 1| = 0.971 > 0.1$, so the HPA computes $d = \lceil 3 \times 0.029 \rceil = \lceil 0.086 \rceil = 1$. That is below `minReplicas`, so it is clamped up to 3, exactly the `REPLICAS 3` shown.
+
+**Example:** a hot afternoon. $c = 3$, $m = 140\%$ (each pod uses 70m of its 50m request) and $g = 70\%$. The ratio is $140 / 70 = 2$, and $|2 - 1| = 1 > 0.1$, so it scales: $d = \lceil 3 \times 2 \rceil = 6$ pods. On a cool morning, $m = 75\%$ gives a ratio of $75 / 70 \approx 1.07$, and $|1.07 - 1| = 0.07 \le 0.1$, so it stays at 3. On a very hot day, $m = 300\%$ gives $d = \lceil 3 \times 300/70 \rceil = \lceil 12.86 \rceil = 13$, which is clamped to `maxReplicas` = 10.
+
+## References
+
+- Kubernetes, "Liveness, Readiness, and Startup Probes": <https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/>, and the task "Configure Liveness, Readiness and Startup Probes": <https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/>.
+- Kubernetes, "Resource Management for Pods and Containers": <https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/>, and "Pod Quality of Service Classes": <https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/>.
+- Kubernetes, "Kubernetes Scheduler": <https://kubernetes.io/docs/concepts/scheduling-eviction/kube-scheduler/>, "Assigning Pods to Nodes": <https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/>, and "Taints and Tolerations": <https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/>.
+- Kubernetes, "Horizontal Pod Autoscaling": <https://kubernetes.io/docs/concepts/workloads/autoscaling/horizontal-pod-autoscale/>.
+- Nicole Martinelli, "Containers are here to stay – until they're not" (Superuser, 10 March 2017), reporting Kelsey Hightower's Tetris demonstration at Container World: <https://superuser.openinfra.org/articles/containers-kuberbetes-google/>.
+
+[← Previous: Storage](10-storage.qmd) · [Part index](index.qmd) · [Next: Jobs, CronJobs, DaemonSets and StatefulSets →](12-jobs-cronjobs-daemonsets-statefulsets.qmd)

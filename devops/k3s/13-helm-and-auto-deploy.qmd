@@ -1,0 +1,313 @@
+---
+title: "13. Helm and Auto-Deploy"
+description: "Package manifests as Helm charts with values; install, upgrade and roll back releases; and let k3s install charts and manifests by itself with the HelmChart resource and the auto-deploy folder."
+---
+
+## The problem
+
+By now the Lemonade Stand is a folder of YAML files. Three new wishes appear:
+
+1. **Staging and production differ only a little**: two replicas in staging, five in production, another image tag. Copying every file per environment invites mistakes.
+2. **Installing someone else's software**, such as a monitoring tool or a database, should be one command, not forty files.
+3. **The cluster should set itself up.** When a new k3s server starts, it should install the things it always needs without anyone typing commands.
+
+**Helm** solves the first two. The k3s **Helm controller** and **auto-deploy folder** solve the third.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A recipe card with blanks
+
+A **Helm chart** is a recipe card with blanks: "Make ___ cups of lemonade with ___ spoons of sugar." The **values** fill in the blanks: `cups: 3`, `sugar: 2`. You can use the same card for a small party and a big one, with different values.
+
+When you actually make a batch, that batch is a **release**. Helm writes each batch in its notebook as **revision 1, 2, 3…**. If today's batch tastes bad, you say "make it the way we did in revision 1" (a **rollback**).
+
+A **chart repository** is the library where people share recipe cards.
+
+Fun fact: Helm was born at a company called Deis in 2015. One of its co-creators is **Matt Butcher**, the same person who wrote *The Illustrated Children's Guide to Kubernetes* with Phippy the giraffe.
+
+The k3s **auto-deploy folder** is a letterbox in the school office. Drop a note in the box, and the office does what it says, every morning, even after the holidays. A **HelmChart** note in that box says: "please cook this recipe with these values."
+:::
+
+## The concept, precisely
+
+- **Chart:** a folder with
+    - `Chart.yaml` (name, version, appVersion);
+    - `values.yaml` (the default values);
+    - `templates/` (manifests with Go-template placeholders such as `{{ .Values.replicas }}` and `{{ .Release.Name }}`).
+- **Values:** the settings that fill the templates. Later sources override earlier ones: the chart's `values.yaml`, then files passed with `-f`, then `--set`.
+- **Release:** one installation of a chart, under a name, in a namespace. Helm stores each **revision** as a Secret in that namespace. That is how `history` and `rollback` work.
+- **Repository:** an HTTP index of charts (`helm repo add`, or `--repo URL`), or an OCI registry (`oci://ghcr.io/...`).
+- **Helm 4** is the current major version (the lab used v4.3.2). Its everyday commands are the same as Helm 3. One renamed flag: `--atomic` is now `--rollback-on-failure`.
+
+**k3s difference: the Helm controller.** k3s runs a controller that watches **`HelmChart`** objects (`helm.cattle.io/v1`). For each one it runs a short-lived Job called `helm-install-<name>`, which runs `helm install` or `helm upgrade` inside the cluster. Deleting the object uninstalls the chart. Traefik itself is installed this way.
+
+**`HelmChartConfig`** objects add values to a chart that k3s installs, for example to customise Traefik ([lesson 8](08-ingress-with-traefik.qmd)). Its name and namespace must match the HelmChart.
+
+**k3s difference: the auto-deploy folder.** Any manifest file placed in `/var/lib/rancher/k3s/server/manifests/` on a server is applied automatically, like `kubectl apply`, at start-up and whenever the file changes. Each file becomes an **AddOn** object in `kube-system`. Three things to know:
+
+- Deleting the file does **not** delete what it created.
+- A `.skip` file next to it (`traefik.yaml.skip`) makes k3s ignore that manifest.
+- k3s does not copy these files between servers. With several servers, keep them identical yourself.
+
+## Every command and field for this topic
+
+### Helm commands
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `helm create` | Generate a starter chart | Delete what you do not need | `helm create lemonade` |
+| `helm lint` | Check a chart for problems | Run it in CI | `helm lint ./13-lemonade-chart` |
+| `helm template` | Render the manifests locally, install nothing | Review what would be applied | `helm template lemonade ./13-lemonade-chart --set replicas=3` |
+| `helm install` | Create a release | `--create-namespace` creates the namespace | `helm install lemonade ./13-lemonade-chart -n lemonade-helm --create-namespace` |
+| `helm upgrade` | New revision with a new chart or new values | `--install` creates it if missing (good for CI) | `helm upgrade --install lemonade ./13-lemonade-chart -n lemonade-helm --set replicas=3` |
+| `helm rollback` | Go back to an earlier revision | Creates a **new** revision | `helm rollback lemonade 1 -n lemonade-helm` |
+| `helm history` | List revisions | | `helm history lemonade -n lemonade-helm` |
+| `helm list` | List releases | `-A` for all namespaces | `helm list -n lemonade-helm` |
+| `helm get values` | Values a release was installed with | `--all` includes the defaults | `helm get values lemonade -n lemonade-helm` |
+| `helm uninstall` | Remove a release | | `helm uninstall lemonade -n lemonade-helm` |
+| `helm show values` | Default values of a chart | Read before overriding | `helm show values --repo https://stefanprodan.github.io/podinfo podinfo` |
+| `helm repo add` / `update` | Register or refresh a repository | Or pass `--repo` per command | `helm repo add podinfo https://stefanprodan.github.io/podinfo` |
+
+| Flag | What it does | Example |
+| --- | --- | --- |
+| `--set key=value` | Override one value | `--set replicas=3` |
+| `-f file.yaml` | Override many values from a file | `-f values-prod.yaml` |
+| `-n` / `--create-namespace` | Target namespace, and create it if missing | `-n lemonade-helm --create-namespace` |
+| `--version` | Pin the chart version | `--version 6.17.0` |
+| `--wait` / `--timeout` | Wait until the resources are ready | `--wait --timeout 5m` |
+| `--rollback-on-failure` | Roll back automatically if the upgrade fails (Helm 4) | `--rollback-on-failure` |
+| `--dry-run` | Simulate an install or upgrade | `--dry-run=server` |
+
+### HelmChart fields (k3s)
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `metadata.namespace` | Where the HelmChart object lives | Usually `kube-system` | `namespace: kube-system` |
+| `spec.repo` | Chart repository URL | | `repo: https://stefanprodan.github.io/podinfo` |
+| `spec.chart` | Chart name, or a URL to a `.tgz` | | `chart: podinfo` |
+| `spec.version` | Chart version | Pin it | `version: 6.17.0` |
+| `spec.targetNamespace` | Where the chart's resources go | Default `default` | `targetNamespace: lemonade` |
+| `spec.createNamespace` | Create the target namespace | Default `false` | `createNamespace: true` |
+| `spec.valuesContent` | Values as an inline YAML block | Like a `-f` file | see the worked example below |
+| `spec.set` | Simple value overrides | Wins over `valuesContent` | `set: {replicaCount: "2"}` |
+| `spec.timeout` / `spec.failurePolicy` | Helm timeout; `reinstall` (default) or `abort` on failure | | `failurePolicy: abort` |
+
+## Worked example
+
+### A tiny chart
+
+[`13-lemonade-chart/`](examples/13-lemonade-chart/) has three files. The template uses two placeholders from the release and the values:
+
+```yaml
+# Chart.yaml
+apiVersion: v2
+name: lemonade
+version: 0.1.0
+appVersion: "1.30.5"
+```
+
+```yaml
+# values.yaml
+replicas: 2
+image: nginxinc/nginx-unprivileged:1.30.5-alpine
+```
+
+```yaml
+# templates/deployment.yaml (excerpt)
+metadata:
+  name: {{ .Release.Name }}-web
+spec:
+  replicas: {{ .Values.replicas }}
+  # …
+        - name: web
+          image: {{ .Values.image }}
+```
+
+Render it without a cluster:
+
+```bash
+helm lint ./13-lemonade-chart
+helm template lemonade ./13-lemonade-chart --set replicas=3 | grep -E 'name: lemonade-web|replicas'
+```
+
+```text
+1 chart(s) linted, 0 chart(s) failed
+  name: lemonade-web
+  replicas: 3
+```
+
+### Install, upgrade, roll back
+
+```bash
+helm install lemonade ./13-lemonade-chart -n lemonade-helm --create-namespace --wait
+helm upgrade lemonade ./13-lemonade-chart -n lemonade-helm --set replicas=3 --wait
+kubectl get deploy -n lemonade-helm
+helm get values lemonade -n lemonade-helm
+```
+
+```text
+STATUS: deployed
+REVISION: 1
+Release "lemonade" has been upgraded. Happy Helming!
+REVISION: 2
+NAME           READY   UP-TO-DATE   AVAILABLE
+lemonade-web   3/3     3            3
+USER-SUPPLIED VALUES:
+replicas: 3
+```
+
+```bash
+helm rollback lemonade 1 -n lemonade-helm --wait
+helm history lemonade -n lemonade-helm
+kubectl get deploy -n lemonade-helm
+```
+
+```text
+Rollback was a success! Happy Helming!
+REVISION   STATUS       CHART            DESCRIPTION
+1          superseded   lemonade-0.1.0   Install complete
+2          superseded   lemonade-0.1.0   Upgrade complete
+3          deployed     lemonade-0.1.0   Rollback to 1
+NAME           READY   UP-TO-DATE   AVAILABLE
+lemonade-web   2/2     2            2
+```
+
+Like `kubectl rollout undo` in [lesson 6](06-deployments-and-rolling-updates.qmd), a rollback creates a **new** revision (3) that copies an old one (1). Replicas went back to the chart's default of 2.
+
+### Let k3s install a chart: the HelmChart resource
+
+[`13-helmchart.yaml`](examples/13-helmchart.yaml) asks k3s to install the public `podinfo` demo chart (by Stefan Prodan) into the `lemonade` namespace:
+
+```yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: podinfo
+  namespace: kube-system
+spec:
+  repo: https://stefanprodan.github.io/podinfo
+  chart: podinfo
+  version: 6.17.0
+  targetNamespace: lemonade
+  valuesContent: |-
+    replicaCount: 1
+```
+
+```bash
+kubectl apply -f 13-helmchart.yaml
+kubectl get helmchart podinfo -n kube-system
+kubectl get job helm-install-podinfo -n kube-system
+kubectl get pods -n lemonade -l app.kubernetes.io/name=podinfo
+helm list -n lemonade
+```
+
+```text
+helmchart.helm.cattle.io/podinfo created
+NAME      REPO                                     CHART     VERSION   TARGETNAMESPACE   FAILED
+podinfo   https://stefanprodan.github.io/podinfo   podinfo   6.17.0    lemonade          False
+
+NAME                   STATUS     COMPLETIONS   DURATION
+helm-install-podinfo   Complete   1/1           10s
+
+NAME                      READY   STATUS              RESTARTS   AGE
+podinfo-c6497595d-dsmkf   0/1     ContainerCreating   0          3s
+
+NAME      NAMESPACE   REVISION   STATUS     CHART            APP VERSION
+podinfo   lemonade    1          deployed   podinfo-6.17.0   6.17.0
+```
+
+We never ran `helm install`. The Helm controller started the Job `helm-install-podinfo`, which ran Helm inside the cluster in 10 seconds, and the podinfo pod started right after. The last command shows that it is an ordinary Helm release, which the `helm` CLI can see too. To change the values, edit the HelmChart and apply it again. To uninstall, delete the HelmChart.
+
+### The auto-deploy folder
+
+Copy any manifest into the server's manifests folder. Here it is a tiny ConfigMap with the opening hours ([`13-opening-hours.yaml`](examples/13-opening-hours.yaml)):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opening-hours
+  namespace: lemonade
+data:
+  hours: "10:00-18:00"
+```
+
+```bash
+docker cp 13-opening-hours.yaml k3s-lab:/var/lib/rancher/k3s/server/manifests/opening-hours.yaml
+# on a Linux server: sudo cp 13-opening-hours.yaml /var/lib/rancher/k3s/server/manifests/opening-hours.yaml
+kubectl get addon opening-hours -n kube-system
+kubectl get configmap opening-hours -n lemonade -o jsonpath='{.data.hours}'
+```
+
+```text
+NAME            SOURCE                                                     CHECKSUM
+opening-hours   /var/lib/rancher/k3s/server/manifests/opening-hours.yaml   28db14dd18a3…
+10:00-18:00
+```
+
+The file became an AddOn called `opening-hours` (named after the file), and k3s applied the ConfigMap within seconds, without `kubectl apply`. The checksum lets k3s notice when the file changes, and it applies the file again on the next change and on every restart.
+
+Combine the two ideas, a `HelmChart` file in the manifests folder, and a brand-new k3s server installs your charts on its first boot. The [Ansible part](../ansible/index.qmd) shows how to place such files on many servers at once.
+
+## Rules and conventions
+
+- Use plain manifests while an app is small. Move to a chart when you really need the same app with different values in several places.
+- Pin chart versions (`--version`, `spec.version`) exactly as you pin image tags.
+- Keep per-environment values in files (`values-staging.yaml`, `values-prod.yaml`) in Git. Use `--set` only for one-off values such as an image tag from CI.
+- In CI, run `helm lint` and `helm template`, then `helm upgrade --install --wait --rollback-on-failure`.
+- Do not manage the same release with both the `helm` CLI and a k3s `HelmChart` object. Pick one owner.
+- Never edit k3s's own packaged manifests. Add your own files, and use `HelmChartConfig` to change packaged charts.
+- Remember that removing a file from the auto-deploy folder does not uninstall anything. Delete the objects (or the HelmChart) explicitly.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `--set replicas=3` on install, forgotten on upgrade | Upgrade resets replicas to the default | Keep values in a file, or use `--reuse-values` carefully |
+| Installing a release twice | `cannot re-use a name that is still in use` | `helm upgrade --install` |
+| Wrong value name (`replica` instead of `replicas`) | Nothing changes, and Helm gives no error | Check with `helm template` and `helm show values` |
+| Underscore in an auto-deploy file name | `AddOn … is invalid: metadata.name` | File names become object names: use lowercase and `-` |
+| HelmChart object in the wrong namespace | Nothing gets installed | Put it in `kube-system` (or where the Helm controller watches) and set `targetNamespace` |
+| Different manifests on different servers | Objects flip between versions | Keep the auto-deploy folders identical on all servers |
+
+## Mathematical Abstraction
+
+### Which value wins
+
+A value is looked up in an ordered list of sources, and the **last** source that defines it wins:
+
+$$
+v(k) = s_j(k), \qquad j = \max \lbrace i \mid k \in \operatorname{dom}(s_i) \rbrace
+$$
+
+where
+
+- $k$ is a value key, such as `replicas`.
+- $s_1, s_2, \dots, s_m$ are the value sources in increasing precedence. For the `helm` CLI: $s_1$ is the chart's `values.yaml`, then the `-f` files in the order given, then `--set`.
+- $\operatorname{dom}(s_i)$ is the set of keys that source $s_i$ defines, and $s_i(k)$ is its value for $k$.
+- $j$ is the index of the highest-precedence source that defines $k$, and $v(k)$ is the value that ends up in the templates.
+
+**Example:** the chart says `replicas: 2` ($s_1$), `values-prod.yaml` says `replicas: 4` ($s_2$), and the command adds `--set replicas=5` ($s_3$). All three define `replicas`, so $j = \max \lbrace 1, 2, 3 \rbrace = 3$ and $v = 5$. Drop the `--set`, and $j = 2$, so $v = 4$. The key `image` is defined only in $s_1$, so $j = 1$ and the default image is used. In our upgrade, `--set replicas=3` gave $v = 3$. The rollback restored revision 1's values, where only $s_1$ applied, so $v = 2$.
+
+k3s's HelmChart uses the same rule with its own documented order: chart defaults, then `HelmChart.spec.valuesContent`, then `valuesSecrets`, then `HelmChartConfig.spec.valuesContent`, then its `valuesSecrets`, and finally `HelmChart.spec.set`, which wins.
+
+### Release revisions
+
+$$
+r_{\text{new}} = \max(R) + 1
+$$
+
+where $R$ is the set of revision numbers stored for the release, and $r_{\text{new}}$ is the number given to the next install, upgrade or rollback.
+
+**Example:** after the upgrade, $R = \lbrace 1, 2 \rbrace$, so `helm rollback lemonade 1` created $r_{\text{new}} = 2 + 1 = 3$, with revision 1's contents. Unlike `kubectl rollout undo`, Helm keeps the copied revision (1) in its history and marks it `superseded`.
+
+## References
+
+- Helm documentation: "Using Helm": <https://helm.sh/docs/intro/using_helm/>, and "Charts": <https://helm.sh/docs/topics/charts/>.
+- Helm project history: "Helm 3 Preview: A History of Helm": <https://helm.sh/blog/helm-3-preview-pt1/>, and "Helm Turns 10": <https://helm.sh/blog/helm-turns-ten/>.
+- k3s, "Helm" (HelmChart and HelmChartConfig fields, value order): <https://docs.k3s.io/add-ons/helm>, and the Helm controller: <https://github.com/k3s-io/helm-controller>.
+- k3s, "Managing Packaged Components" (auto-deploying manifests, AddOns, `.skip` files): <https://docs.k3s.io/installation/packaged-components>.
+- Stefan Prodan, podinfo demo app and chart: <https://github.com/stefanprodan/podinfo>.
+
+[← Previous: Jobs, CronJobs, DaemonSets and StatefulSets](12-jobs-cronjobs-daemonsets-statefulsets.qmd) · [Part index](index.qmd)

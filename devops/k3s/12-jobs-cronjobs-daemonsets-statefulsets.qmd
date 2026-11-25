@@ -1,0 +1,343 @@
+---
+title: "12. Jobs, CronJobs, DaemonSets and StatefulSets"
+description: "The other workload controllers: run-to-completion Jobs, scheduled CronJobs, one-pod-per-node DaemonSets, and StatefulSets with stable names and their own volumes."
+---
+
+## The problem
+
+A Deployment keeps identical web pods running forever. The Lemonade Stand has four jobs that do not fit that shape:
+
+1. **Squeeze six batches of lemons**, two at a time, then stop. Work that *finishes*.
+2. **Print the sales report every day at 18:00.** Work on a *timetable*.
+3. **Check the fridge thermometer on every machine.** *One pod per node*, including nodes added later.
+4. **Keep a ledger** where copy 0 and copy 1 each keep their *own* book under a *stable name*, even after restarts.
+
+Kubernetes has one controller for each: **Job**, **CronJob**, **DaemonSet** and **StatefulSet**.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## More animals at the zoo
+
+*Phippy Goes to the Zoo* has an animal for almost every one of these:
+
+- **Raccoons are CronJobs.** They lie asleep in their enclosure. Every now and then one jumps up, sweeps the whole place with a broom, and goes back to sleep. Zee wants to take one home to clean her room.
+- **Vultures are DaemonSets.** Stone pillars rise from a hill, and one vulture sits on top of *every* pillar. When a bird flies away, another takes its place. Phippy jokes that if you built a new pillar, a bird would land on it before you could say "cube cuddle". New node, new pod.
+
+And two more pictures:
+
+- A **Job** is a chore list on the fridge: "Squeeze 6 batches. Two children may squeeze at the same time." When all 6 are ticked off, the chore is done. Nobody squeezes forever.
+- A **StatefulSet** is a row of numbered desks. Child number 0 always sits at desk 0, with notebook 0. If child 0 goes home sick, the *new* child 0 sits at desk 0 and finds the same notebook, with yesterday's notes still in it.
+:::
+
+## The concept, precisely
+
+- **Job:** creates pods until a number of them have **succeeded** (`completions`), running at most `parallelism` at once. Failed pods are retried, with an increasing delay, up to `backoffLimit` (default 6). The pod template must use `restartPolicy: Never` or `OnFailure`.
+- **CronJob:** creates a Job according to a cron `schedule`. `concurrencyPolicy` decides what happens if the previous run is still busy. Without `timeZone`, the schedule is read in the controller manager's local time zone.
+- **DaemonSet:** runs exactly one copy of a pod on every node that matches, now and in the future. Use it for node agents: log collectors, monitoring, network helpers. **k3s difference:** ServiceLB is itself built from DaemonSets (the `svclb-…` pods in [lesson 7](07-services-and-dns.qmd)).
+- **StatefulSet:** like a Deployment, but each pod has a **stable identity**:
+    - a fixed name `<name>-0`, `<name>-1`, …;
+    - a fixed DNS name `<pod>.<service>.<namespace>.svc.cluster.local`, through a **headless Service**;
+    - its **own PVC**, created from `volumeClaimTemplates` and named `<template>-<pod>`. The PVC is kept when the pod is replaced.
+
+  By default, pods start in order (0, then 1, …) and stop in reverse order (`podManagementPolicy: OrderedReady`).
+
+## Every field and command for this topic
+
+### Job
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `spec.completions` | Successful pods needed | Default 1 | `completions: 6` |
+| `spec.parallelism` | Pods running at the same time | Default 1 | `parallelism: 2` |
+| `spec.backoffLimit` | Retries before the Job fails | Default 6 | `backoffLimit: 3` |
+| `spec.activeDeadlineSeconds` | Time limit for the whole Job | Wins over `backoffLimit` | `activeDeadlineSeconds: 600` |
+| `spec.ttlSecondsAfterFinished` | Delete the finished Job (and its pods) after this delay | Keeps the namespace tidy | `ttlSecondsAfterFinished: 3600` |
+| `spec.completionMode` | `NonIndexed` or `Indexed` (each pod gets an index 0..n−1) | Indexed for "one piece of work per index" | `completionMode: Indexed` |
+| `template.spec.restartPolicy` | `Never` (new pod per retry) or `OnFailure` (restart in place) | `Always` is not allowed | `restartPolicy: Never` |
+
+### CronJob
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `spec.schedule` | When to run: `minute hour day-of-month month day-of-week` | Standard cron syntax; `*/15` means every 15 | `schedule: "0 18 * * *"` |
+| `spec.timeZone` | IANA time zone for the schedule | Set it explicitly | `timeZone: Europe/London` |
+| `spec.concurrencyPolicy` | `Allow` (default), `Forbid` (skip if still running), `Replace` (stop the old run) | Reports usually want `Forbid` | `concurrencyPolicy: Forbid` |
+| `spec.startingDeadlineSeconds` | How late a missed run may still start | | `startingDeadlineSeconds: 300` |
+| `spec.suspend` | Pause the schedule | | `suspend: true` |
+| `spec.successfulJobsHistoryLimit` / `failedJobsHistoryLimit` | How many finished Jobs to keep | Defaults 3 and 1 | `successfulJobsHistoryLimit: 5` |
+| `spec.jobTemplate` | The Job to create | Same fields as a Job's `spec` | `jobTemplate: {spec: {template: …}}` |
+
+### DaemonSet and StatefulSet
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `daemonset.spec.selector` / `template` | Which pod runs on each node | Like a Deployment, but there is no `replicas` | `selector: {matchLabels: {app: node-thermometer}}` |
+| `daemonset.spec.template.spec.nodeSelector` / `tolerations` | Limit to some nodes, or include tainted ones | Control-plane nodes are often tainted | `tolerations: [{operator: Exists}]` |
+| `statefulset.spec.serviceName` | Headless Service that gives pods DNS names | Create that Service with `clusterIP: None` | `serviceName: ledger` |
+| `statefulset.spec.replicas` | Number of numbered pods | Pods are named `<name>-0` … `<name>-(n−1)` | `replicas: 2` |
+| `statefulset.spec.volumeClaimTemplates` | One PVC per pod | PVC name: `<template>-<pod>` | `volumeClaimTemplates: [{metadata: {name: books}, …}]` |
+| `statefulset.spec.podManagementPolicy` | `OrderedReady` (default) or `Parallel` | `Parallel` when order does not matter | `podManagementPolicy: Parallel` |
+| `statefulset.spec.persistentVolumeClaimRetentionPolicy` | Delete or keep PVCs when scaling down or deleting | Default: keep (`Retain`) | `whenDeleted: Delete` |
+
+### Commands
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `kubectl get jobs` | Completions and duration | `kubectl get jobs -n lemonade` |
+| `kubectl wait --for=condition=Complete` | Block until a Job succeeds | `kubectl wait --for=condition=Complete job/squeeze-lemons -n lemonade` |
+| `kubectl logs job/<name>` | Logs of one of the Job's pods | `kubectl logs job/squeeze-lemons -n lemonade` |
+| `kubectl create job --from=cronjob/` | Run a CronJob now, by hand | `kubectl create job manual-report --from=cronjob/daily-sales-report -n lemonade` |
+| `kubectl get cronjobs` | Schedule, time zone, last run | `kubectl get cronjobs -n lemonade` |
+| `kubectl rollout status ds/` / `sts/` | Wait for a DaemonSet or StatefulSet update | `kubectl rollout status sts/ledger -n lemonade` |
+| `kubectl scale sts/` | Add or remove numbered pods (from the highest number) | `kubectl scale sts/ledger --replicas=3 -n lemonade` |
+
+## Worked example
+
+### A Job: 6 batches, 2 at a time
+
+[`12-job.yaml`](examples/12-job.yaml):
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: squeeze-lemons
+  namespace: lemonade
+spec:
+  completions: 6
+  parallelism: 2
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: squeeze
+          image: busybox:1.37.0
+          command: ["sh", "-c", "echo squeezing a batch; sleep 5"]
+```
+
+```bash
+kubectl apply -f 12-job.yaml
+kubectl wait -n lemonade --for=condition=Complete job/squeeze-lemons
+kubectl get job squeeze-lemons -n lemonade
+kubectl get pods -n lemonade -l job-name=squeeze-lemons
+```
+
+```text
+job.batch/squeeze-lemons condition met
+NAME             STATUS     COMPLETIONS   DURATION
+squeeze-lemons   Complete   6/6           24s
+
+NAME                   READY   STATUS      AGE
+squeeze-lemons-ffc6w   0/1     Completed   24s    ← wave 1
+squeeze-lemons-zsw9l   0/1     Completed   24s
+squeeze-lemons-546td   0/1     Completed   16s    ← wave 2
+squeeze-lemons-bmg86   0/1     Completed   16s
+squeeze-lemons-g7crc   0/1     Completed   8s     ← wave 3
+squeeze-lemons-mdvrl   0/1     Completed   8s
+```
+
+The pod ages show three waves of two pods, about 8 seconds apart. The Mathematical Abstraction section below explains the 24 s.
+
+### A CronJob, and running it by hand
+
+[`12-cronjob.yaml`](examples/12-cronjob.yaml) runs at 18:00 London time and never overlaps itself:
+
+```yaml
+spec:
+  schedule: "0 18 * * *"
+  timeZone: Europe/London
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: report
+              image: busybox:1.37.0
+              command: ["sh", "-c", "echo sales report for $(date +%F)"]
+```
+
+```bash
+kubectl apply -f 12-cronjob.yaml
+kubectl get cronjob -n lemonade
+kubectl create job manual-report --from=cronjob/daily-sales-report -n lemonade
+kubectl logs -n lemonade job/manual-report
+```
+
+```text
+NAME                 SCHEDULE     TIMEZONE        SUSPEND   ACTIVE   LAST SCHEDULE
+daily-sales-report   0 18 * * *   Europe/London   False     0        <none>
+job.batch/manual-report created
+sales report for 2026-11-25
+```
+
+Testing a CronJob by creating a Job from it is the normal way to check it, without waiting until 18:00.
+
+### A DaemonSet
+
+[`12-daemonset.yaml`](examples/12-daemonset.yaml) puts one "thermometer" pod on each node. It learns its node's name from the downward API (`fieldRef: spec.nodeName`):
+
+```bash
+kubectl apply -f 12-daemonset.yaml
+kubectl get ds -n lemonade
+kubectl logs -n lemonade ds/node-thermometer --tail=1
+```
+
+```text
+NAME               DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR
+node-thermometer   1         1         1       1            1           <none>
+checking k3s-lab
+```
+
+`DESIRED 1`, because the lab has one node. Join an agent ([lesson 2](02-k3s-architecture-and-install.qmd)) and `DESIRED` becomes 2 without any change to the manifest.
+
+### A StatefulSet with its own books
+
+[`12-statefulset.yaml`](examples/12-statefulset.yaml) contains a headless Service and two ledger pods, each with its own 100 Mi volume:
+
+```yaml
+spec:
+  serviceName: ledger
+  replicas: 2
+  # … pod template writes "I am $HOSTNAME" into /books/owner.txt …
+  volumeClaimTemplates:
+    - metadata:
+        name: books
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 100Mi
+```
+
+```bash
+kubectl apply -f 12-statefulset.yaml
+kubectl get pods,pvc -n lemonade -l app=ledger
+kubectl get pvc -n lemonade
+kubectl exec ledger-0 -n lemonade -- cat /books/owner.txt
+```
+
+```text
+NAME           READY   STATUS    AGE
+pod/ledger-0   1/1     Running   8s
+pod/ledger-1   1/1     Running   5s       ← started after ledger-0 (OrderedReady)
+
+NAME              STATUS   VOLUME                                     CAPACITY
+books-ledger-0    Bound    pvc-c2e4e722-b2a2-4851-ac6f-d31990832b0d   100Mi
+books-ledger-1    Bound    pvc-376e9fa5-88a7-40f3-afdc-c3217bbb4c0a   100Mi
+I am ledger-0
+```
+
+Now delete `ledger-0` and look again:
+
+```bash
+kubectl delete pod ledger-0 -n lemonade
+kubectl get pods -n lemonade -l app=ledger
+kubectl exec ledger-0 -n lemonade -- cat /books/owner.txt
+kubectl run dns-sts -n lemonade --image=busybox:1.37.0 --restart=Never --rm -i -- \
+  nslookup ledger-0.ledger.lemonade.svc.cluster.local
+```
+
+```text
+NAME       READY   STATUS    RESTARTS   AGE
+ledger-0   1/1     Running   0          5s      ← a new pod, with the same name
+ledger-1   1/1     Running   0          41s
+I am ledger-0
+I am ledger-0                                    ← the old line is still there
+Name:	ledger-0.ledger.lemonade.svc.cluster.local
+Address: 10.42.0.46
+```
+
+The replacement pod got the **same name**, the **same volume** (so the file now has two lines) and the **same DNS name**. Its IP address may differ, which is why clients use the DNS name. A Deployment pod would have come back with a random name and an empty `emptyDir`.
+
+## Rules and conventions
+
+- Use a **Job** for anything that must finish (migrations, imports, batch work). Make each pod's work **idempotent**: a retry may repeat work that half-succeeded.
+- Always set `backoffLimit` and `activeDeadlineSeconds`, so a broken Job stops instead of retrying for hours. Set `ttlSecondsAfterFinished` so finished Jobs are cleaned up.
+- For **CronJobs**, always set `timeZone` and `concurrencyPolicy` (usually `Forbid`). Test them with `kubectl create job --from=cronjob/…`.
+- Use a **DaemonSet** only for node-level agents. Ordinary apps use Deployments.
+- Use a **StatefulSet** when each replica needs its own identity or data (databases, queues). A StatefulSet does not make an app replicated by itself: the app must know how to work as primary and replica.
+- Back up StatefulSet volumes. With k3s's local-path, each PVC lives on one node.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `restartPolicy: Always` in a Job | The API rejects the Job | Use `Never` or `OnFailure` |
+| Cron schedule written in local time without `timeZone` | Runs at the "wrong" hour | Set `timeZone` |
+| Long CronJob runs that overlap | Two reports at once, double work | `concurrencyPolicy: Forbid` |
+| StatefulSet without its headless Service | Pods have no stable DNS names | Create a Service with `clusterIP: None` and set `serviceName` |
+| Expecting PVCs to vanish with the StatefulSet | Old data is still there after redeploying | That is the default (`Retain`); delete the PVCs on purpose, or set the retention policy |
+| A DaemonSet that skips the server node | `DESIRED` is lower than the number of nodes | Add tolerations for the node's taints |
+
+## Mathematical Abstraction
+
+### How long the Job takes
+
+With $C$ completions, $P$ in parallel, and each pod working for $t$ seconds plus a start-and-stop overhead of $o$ seconds:
+
+$$
+T_{\text{job}} \approx \left\lceil \frac{C}{P} \right\rceil \cdot (t + o)
+$$
+
+where
+
+- $C$ is `completions` and $P$ is `parallelism`, both whole numbers $\ge 1$.
+- $\lceil C/P \rceil$ is the number of **waves**, rounded up because a half-full wave still takes a full wave's time.
+- $t$ is the work time of one pod (our `sleep 5`), and $o$ is the time to create, start and clean up a pod. Both are in seconds.
+- $T_{\text{job}}$ is the expected wall-clock time of the Job.
+
+**Example:** $C = 6$, $P = 2$, so $\lceil 6/2 \rceil = 3$ waves. With $t = 5$ s and no overhead we would expect $3 \times 5 = 15$ s. We measured 24 s, with waves 8 s apart, so $t + o = 8$ and $o = 3$ s per wave on this busy laptop: $3 \times (5 + 3) = 24$ s, as measured. With $P = 3$ the same work needs $\lceil 6/3 \rceil = 2$ waves, about $2 \times 8 = 16$ s. With $P = 4$ it still needs $\lceil 6/4 \rceil = \lceil 1.5 \rceil = 2$ waves: the extra parallel slot is wasted in the second wave.
+
+### Retry delays for failed Job pods
+
+The Job controller recreates failed pods after a growing delay, 10 s, 20 s, 40 s and so on, capped at ten minutes:
+
+$$
+d_k = \min\bigl(10 \cdot 2^{\,k-1},\; 600\bigr)
+$$
+
+where $k = 1, 2, \dots$ counts the failures so far, and $d_k$ is the delay in seconds before the next attempt.
+
+**Example:** with `backoffLimit: 3`, a pod that always fails is retried after $d_1 = 10$, $d_2 = 20$ and $d_3 = 40$ s. Then the Job is marked `Failed`. That is about $10 + 20 + 40 = 70$ s of waiting, plus the run times. With the default `backoffLimit: 6`, the waits are $10 + 20 + 40 + 80 + 160 + 320 = 630$ s, over ten minutes, which is why setting a smaller limit matters.
+
+### How often a CronJob runs
+
+A cron schedule is five sets, one per field. The job runs at every combination:
+
+$$
+N_{\text{week}} = |M| \cdot |H| \cdot |W| \qquad (\text{when day-of-month and month are } *)
+$$
+
+where
+
+- $M$ is the set of minutes (0–59), $H$ the set of hours (0–23), and $W$ the set of weekdays (0–6, with 0 = Sunday) allowed by the schedule.
+- $|X|$ is the number of elements in a set.
+- $N_{\text{week}}$ is the number of runs per week.
+
+**Example:**
+
+- `0 18 * * *` gives $M = \lbrace 0 \rbrace$, $H = \lbrace 18 \rbrace$ and $W = \lbrace 0, \dots, 6 \rbrace$. So $N = 1 \times 1 \times 7 = 7$ runs a week, one each evening.
+- A "check the lemons every 15 minutes during opening hours on weekdays" schedule `*/15 9-17 * * 1-5` gives $M = \lbrace 0, 15, 30, 45 \rbrace$ ($|M| = 4$), $H = \lbrace 9, \dots, 17 \rbrace$ ($|H| = 9$, both ends included) and $W = \lbrace 1, \dots, 5 \rbrace$ ($|W| = 5$). So $N = 4 \times 9 \times 5 = 180$ runs a week. The last run each day is at 17:45, not 18:00.
+
+### StatefulSet names
+
+$$
+\operatorname{pods}(s, n) = \lbrace s\text{-}i \mid i \in \lbrace 0, 1, \dots, n-1 \rbrace \rbrace, \qquad \operatorname{pvc}(v, s\text{-}i) = v\text{-}s\text{-}i
+$$
+
+where $s$ is the StatefulSet name, $n$ its `replicas`, $i$ the ordinal number, and $v$ the name of the volume claim template.
+
+**Example:** $s = \texttt{ledger}$, $n = 2$ and $v = \texttt{books}$ give the pods $\lbrace \texttt{ledger-0}, \texttt{ledger-1} \rbrace$ and the PVCs `books-ledger-0` and `books-ledger-1`, exactly as listed above. Scaling to $n = 3$ adds `ledger-2` and `books-ledger-2`. Scaling back to $n = 2$ removes the **highest** ordinal, `ledger-2`, but keeps its PVC for next time.
+
+## References
+
+- Kubernetes, "Jobs": <https://kubernetes.io/docs/concepts/workloads/controllers/job/> (completions, parallelism, back-off 10 s doubling, capped at ten minutes, `backoffLimit` default 6).
+- Kubernetes, "CronJob": <https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/>.
+- Kubernetes, "DaemonSet": <https://kubernetes.io/docs/concepts/workloads/controllers/daemonset/>, and "StatefulSets": <https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/>.
+- Matt Butcher and Karen Chu, *Phippy Goes to the Zoo*: <https://www.cncf.io/phippy/phippy-goes-to-the-zoo-book/>.
+
+[← Previous: Health, Resources and Scheduling](11-health-resources-and-scheduling.qmd) · [Part index](index.qmd) · [Next: Helm and Auto-Deploy →](13-helm-and-auto-deploy.qmd)

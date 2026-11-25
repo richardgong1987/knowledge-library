@@ -1,0 +1,230 @@
+---
+title: "10. Storage"
+description: "Keep data when pods are replaced: volume types, PersistentVolumes and PersistentVolumeClaims, StorageClasses, access modes, reclaim policies, and the local-path provisioner in k3s."
+---
+
+## The problem
+
+The Lemonade Stand keeps an **order log**: one line per sale. A container's own filesystem is thrown away whenever the container is replaced. A crash, a rolling update or a node drain would erase the day's sales. We need storage that:
+
+1. **outlives the pod**, so a new pod finds the old data;
+2. can be **requested by size** ("1 GiB please") without knowing which disk it lives on;
+3. is created **automatically** when someone asks for it.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Goldie's present and the locker room
+
+In *The Illustrated Children's Guide to Kubernetes*, Phippy's friend Goldie gives her a present. Phippy is sad, because she has **nowhere to put it**. Goldie knows what to do: "Why not put it in a **volume**?" A volume is a place where containers can keep things, and it appears as part of their own folders.
+
+Think of a school locker room:
+
+- A **PersistentVolumeClaim (PVC)** is the request form: "Class 3B needs one locker, 1 GiB big."
+- A **PersistentVolume (PV)** is the actual locker that gets assigned.
+- A **StorageClass** is the locker company. It builds a new locker whenever a form arrives.
+- The pod is the pupil who uses the locker. If the pupil changes classrooms, the locker and everything inside stay.
+
+In k3s the locker company is the **local-path provisioner**. Its lockers are folders on the node's own disk, so they stay in that one building: the pod must always come back to the same node.
+:::
+
+## The concept, precisely
+
+**Volumes** are declared in `spec.volumes` and mounted with `volumeMounts`. Common types:
+
+| Volume type | Lives as long as | Use it for |
+| --- | --- | --- |
+| `emptyDir` | The pod | Scratch space, or sharing files between containers ([sidecar, lesson 4](04-pods.qmd)) |
+| `configMap` / `secret` | The object | Configuration files ([lesson 9](09-configmaps-and-secrets.qmd)) |
+| `hostPath` | The node's folder | System agents only; ties the pod to one node and is a security risk |
+| `persistentVolumeClaim` | The PVC | Application data that must survive the pod |
+
+**Persistent storage** uses three objects:
+
+- **PersistentVolume (PV):** a piece of real storage (a disk, a folder, a network share), with a capacity, access modes and a reclaim policy. PVs are **cluster-scoped**.
+- **PersistentVolumeClaim (PVC):** a request in a namespace: size, access mode, StorageClass. Kubernetes **binds** each PVC to exactly one PV.
+- **StorageClass:** a recipe for **dynamic provisioning**. When a PVC names a class, the class's provisioner creates a matching PV automatically.
+
+**Binding modes:**
+
+- `Immediate`: create and bind the PV as soon as the PVC exists.
+- `WaitForFirstConsumer`: wait until a pod that uses the PVC is **scheduled**, then create the PV on that pod's node. Local disks need this, otherwise the volume could end up on a node where the pod cannot run.
+
+**k3s difference:** k3s ships the **local-path provisioner** and a default StorageClass named `local-path`, with `WaitForFirstConsumer` and reclaim policy `Delete`. Volumes are folders under `/var/lib/rancher/k3s/storage/` on the node; change the location with `--default-local-storage-path`. They are fast and simple, but they live on one node. If that node dies, the data dies with it. For storage that replicates across nodes, the k3s docs describe installing **Longhorn**.
+
+## Every field for this topic
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `pvc.spec.accessModes` | How the volume may be mounted | `ReadWriteOnce` (RWO: one node), `ReadOnlyMany` (ROX), `ReadWriteMany` (RWX), `ReadWriteOncePod` (RWOP: one pod) | `accessModes: ["ReadWriteOnce"]` |
+| `pvc.spec.resources.requests.storage` | Requested size | Binary units `Ki`, `Mi`, `Gi`; decimal `k`, `M`, `G` | `storage: 1Gi` |
+| `pvc.spec.storageClassName` | Which StorageClass provisions it | Omit it to use the default class; `""` means "no dynamic provisioning" | `storageClassName: local-path` |
+| `pvc.spec.volumeName` | Bind to one specific existing PV | For static provisioning | `volumeName: pv-orders` |
+| `pv.spec.capacity.storage` | PV size | A PVC binds only if its request is ≤ this | `storage: 1Gi` |
+| `pv.spec.persistentVolumeReclaimPolicy` | What happens to the PV when the PVC is deleted | `Delete` (remove the data) or `Retain` (keep it for manual clean-up) | `persistentVolumeReclaimPolicy: Retain` |
+| `storageclass.provisioner` | Who creates PVs | In k3s: `rancher.io/local-path` | `provisioner: rancher.io/local-path` |
+| `storageclass.volumeBindingMode` | When to create and bind | `Immediate` or `WaitForFirstConsumer` | `volumeBindingMode: WaitForFirstConsumer` |
+| `storageclass.allowVolumeExpansion` | May PVCs grow later | local-path: `false` | `allowVolumeExpansion: true` |
+| `pod.spec.volumes[].persistentVolumeClaim.claimName` | Use a PVC in a pod | Same namespace as the pod | `claimName: lemonade-orders` |
+| `pod.spec.volumes[].emptyDir.sizeLimit` | Cap a scratch volume | Pod is evicted if it exceeds the limit | `emptyDir: {sizeLimit: 100Mi}` |
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `kubectl get storageclass` | List classes; `(default)` marks the default | `kubectl get sc` |
+| `kubectl get pvc` | Claims and their status (`Pending`, `Bound`) | `kubectl get pvc -n lemonade` |
+| `kubectl get pv` | Volumes, reclaim policy and owning claim | `kubectl get pv` |
+| `kubectl describe pvc` | Why a claim is still pending | `kubectl describe pvc lemonade-orders -n lemonade` |
+
+## Worked example
+
+[`10-storage.yaml`](examples/10-storage.yaml) asks for 1 GiB and mounts it at `/data`. The pod appends one line each time it starts:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lemonade-orders
+  namespace: lemonade
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: order-logger
+  namespace: lemonade
+spec:
+  containers:
+    - name: logger
+      image: busybox:1.37.0
+      command: ["sh", "-c", "echo \"order at $(date)\" >> /data/orders.log; sleep 3600"]
+      volumeMounts:
+        - name: orders
+          mountPath: /data
+  volumes:
+    - name: orders
+      persistentVolumeClaim:
+        claimName: lemonade-orders
+```
+
+```bash
+kubectl get storageclass
+kubectl apply -f 10-storage.yaml
+kubectl get pvc -n lemonade              # immediately
+kubectl get pvc -n lemonade              # once the pod is scheduled
+kubectl get pv
+```
+
+```text
+NAME                   PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE
+local-path (default)   rancher.io/local-path   Delete          WaitForFirstConsumer
+
+NAME              STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS
+lemonade-orders   Pending                                      local-path
+
+NAME              STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS
+lemonade-orders   Bound    pvc-9ff172f2-077a-463b-a5c5-27f9e977da88   1Gi        RWO            local-path
+
+NAME                                       CAPACITY   RECLAIM POLICY   STATUS   CLAIM
+pvc-9ff172f2-077a-463b-a5c5-27f9e977da88   1Gi        Delete           Bound    lemonade/lemonade-orders
+```
+
+`Pending` first is **normal** here. `WaitForFirstConsumer` waited until the pod had a node, then the provisioner created the PV there.
+
+Now replace the pod and check that the data survived:
+
+```bash
+kubectl exec order-logger -n lemonade -- cat /data/orders.log
+kubectl delete pod order-logger -n lemonade
+kubectl apply -f 10-storage.yaml
+kubectl exec order-logger -n lemonade -- cat /data/orders.log
+```
+
+```text
+order at Wed Nov 25 14:25:50 UTC 2026
+
+order at Wed Nov 25 14:25:50 UTC 2026
+order at Wed Nov 25 14:26:22 UTC 2026
+```
+
+The second pod found the first pod's line and added its own. On the node, the "locker" is a plain folder:
+
+```bash
+docker exec k3s-lab ls /var/lib/rancher/k3s/storage/
+```
+
+```text
+pvc-9ff172f2-077a-463b-a5c5-27f9e977da88_lemonade_lemonade-orders
+```
+
+The folder name is the PV name, then the namespace, then the claim name. Deleting the PVC would delete this folder too, because the reclaim policy is `Delete`.
+
+## Rules and conventions
+
+- Use a PVC for any data you would be sad to lose. Use `emptyDir` only for scratch data.
+- Ask for the access mode you really need. local-path supports `ReadWriteOnce` only; many pods writing the same files at once need an RWX-capable system (NFS, Longhorn RWX, a cloud file share).
+- Leave `storageClassName` out to get the cluster default, or name it explicitly in shared manifests.
+- On clusters with more than one node, remember that local-path data is tied to one node. Back it up, or use Longhorn or network storage for important data.
+- Use `Retain` (on a custom StorageClass or by editing the PV) for data that must survive an accidental `kubectl delete pvc`.
+- Databases normally belong in a **StatefulSet** with `volumeClaimTemplates`, which gives each replica its own PVC ([lesson 12](12-jobs-cronjobs-daemonsets-statefulsets.qmd)).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Worrying that the PVC is `Pending` before any pod uses it | It looks stuck | That is `WaitForFirstConsumer`; create the pod |
+| Asking local-path for `ReadWriteMany` | PVC stays `Pending`, with a provisioning error in `describe` | Use RWO, or a storage system that supports RWX |
+| Two pods of a Deployment sharing one RWO PVC on different nodes | Second pod stuck in `ContainerCreating` with a multi-attach or node-affinity error | One replica, or a StatefulSet with one PVC per pod |
+| Deleting the namespace to "restart the app" | PVCs and, with `Delete`, the data are gone | Delete the workload, not the PVC |
+| `storage: 1G` when you meant `1Gi` | Slightly smaller volume than expected | Use the binary suffix `Gi` |
+| Writing data into the container filesystem instead of the mount | Data vanishes after a restart | Write under the `mountPath` |
+
+## Mathematical Abstraction
+
+### Binary and decimal sizes
+
+Kubernetes accepts both binary suffixes (`Ki`, `Mi`, `Gi`) and decimal suffixes (`k`, `M`, `G`). They are different numbers:
+
+$$
+1\,\texttt{Gi} = 2^{30}\ \text{bytes} = 1{,}073{,}741{,}824\ \text{bytes}, \qquad 1\,\texttt{G} = 10^{9}\ \text{bytes}
+$$
+
+where $2^{30}$ means 2 multiplied by itself 30 times (one gibibyte), and $10^{9}$ is one billion (one gigabyte).
+
+**Example:** our claim asked for `1Gi` = 1,073,741,824 bytes. Had it said `1G`, it would have asked for 1,000,000,000 bytes, which is
+
+$$
+\frac{1{,}073{,}741{,}824 - 1{,}000{,}000{,}000}{1{,}073{,}741{,}824} = \frac{73{,}741{,}824}{1{,}073{,}741{,}824} \approx 0.0687
+$$
+
+about **6.9% less**. The same rule applies to memory (`64Mi` vs `64M`) in [lesson 11](11-health-resources-and-scheduling.qmd).
+
+### When a claim can bind to a volume
+
+For a statically created PV (no StorageClass doing the work), Kubernetes binds a claim $c$ to a volume $v$ only when all of these hold:
+
+$$
+\operatorname{bind}(c, v) \iff s_c \le s_v \;\wedge\; M_c \subseteq M_v \;\wedge\; \kappa_c = \kappa_v \;\wedge\; v \text{ is unbound}
+$$
+
+where
+
+- $s_c$ is the size the claim requests and $s_v$ the volume's capacity, both in bytes.
+- $M_c$ is the set of access modes the claim asks for, and $M_v$ the set the volume offers.
+- $\kappa_c$ and $\kappa_v$ are the StorageClass names of the claim and the volume.
+- $\wedge$ means "and", and $\iff$ means "exactly when".
+
+**Example:** a claim for $s_c = 1\,\texttt{Gi}$ with $M_c = \lbrace \text{RWO} \rbrace$ and class `manual`, and a volume of $s_v = 5\,\texttt{Gi}$ offering $M_v = \lbrace \text{RWO}, \text{ROX} \rbrace$ in class `manual`: $1 \le 5$, $\lbrace \text{RWO} \rbrace \subseteq \lbrace \text{RWO}, \text{ROX} \rbrace$, and the classes match, so they bind. The claim then owns the **whole** 5 Gi volume; the extra 4 Gi cannot be given to anyone else. A claim for $\lbrace \text{RWX} \rbrace$ would not bind, because $\text{RWX} \notin M_v$. With dynamic provisioning (our `local-path` case) the provisioner simply creates a volume with $s_v = s_c$, so nothing is wasted.
+
+## References
+
+- Kubernetes, "Volumes": <https://kubernetes.io/docs/concepts/storage/volumes/>, "Persistent Volumes": <https://kubernetes.io/docs/concepts/storage/persistent-volumes/>, and "Storage Classes": <https://kubernetes.io/docs/concepts/storage/storage-classes/>.
+- Kubernetes, "Resource units": <https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#resource-units-in-kubernetes>.
+- k3s, "Volumes and Storage": <https://docs.k3s.io/add-ons/storage>, and the local-path provisioner: <https://github.com/rancher/local-path-provisioner>.
+- Butcher, Beougher and Chu, *The Illustrated Children's Guide to Kubernetes*: <https://www.cncf.io/phippy/the-childrens-illustrated-guide-to-kubernetes/>.
+
+[← Previous: ConfigMaps and Secrets](09-configmaps-and-secrets.qmd) · [Part index](index.qmd) · [Next: Health, Resources and Scheduling →](11-health-resources-and-scheduling.qmd)

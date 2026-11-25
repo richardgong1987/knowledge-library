@@ -1,0 +1,199 @@
+---
+title: "8. Ingress with Traefik"
+description: "One front door for many web apps: Ingress rules by host and path, the Traefik controller bundled with k3s, TLS, and how to customise Traefik."
+---
+
+## The problem
+
+The Service from [lesson 7](07-services-and-dns.qmd) gives the Lemonade Stand a stable address *inside* the cluster. A NodePort works from outside, but customers would have to type `:30080`, and every app would need its own odd port.
+
+We want normal web addresses on port 80 (and 443 for HTTPS):
+
+- `http://lemonade.localhost/` → the lemonade web pods
+- later, `http://cookies.localhost/` → a cookie stand, on the **same** port 80
+
+Something must look at each HTTP request, read the host name and path, and pass the request to the right Service. That something is an **Ingress controller**, configured by **Ingress** objects.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The fish and the reef
+
+In *Phippy Goes to the Zoo*, Phippy and Zee stop at a big aquarium with a coral reef. Hundreds of tiny fish rush at one single hole in the rock. Moments later they pop out from many small cracks all over the far side of the reef. "Ingresses are beautiful," sighs Phippy. Traffic arrives at **one entrance** and is sent on to **many destinations** inside the cluster.
+
+Or think of the receptionist at a shopping centre. Everyone comes through the same front door. You say "I'm going to the Lemonade Stand", and the receptionist points you to the right shop. The list of shops on the receptionist's desk is the **Ingress**. The receptionist is the **Ingress controller**. In k3s, the receptionist is called **Traefik**, and it is already at the desk when the cluster starts.
+:::
+
+## The concept, precisely
+
+- An **Ingress** is a set of HTTP routing rules: *host* + *path* → *Service and port*. On its own it does nothing.
+- An **Ingress controller** is a reverse proxy running in the cluster. It watches Ingress objects and routes real traffic according to them. Upstream Kubernetes ships **no** controller.
+- **k3s ships Traefik v3.** It runs in `kube-system` behind a `LoadBalancer` Service on ports 80 and 443. ServiceLB publishes those ports on the node. Traefik registers an **IngressClass** called `traefik`, marked as the cluster default.
+- An Ingress chooses its controller with `spec.ingressClassName`. If the field is empty, the default class is used.
+- **TLS** is done by naming a Secret of type `kubernetes.io/tls` in `spec.tls`. Traefik then answers HTTPS for those hosts with that certificate.
+- **Traefik's own resources.** Traefik also has its own `IngressRoute` resource (`traefik.io/v1alpha1`) for features that a plain Ingress cannot express, such as middlewares and weighted routing. k3s also installs the **Gateway API** definitions, the newer, role-oriented successor of Ingress. Plain Ingress is still supported and not deprecated, and it is portable, so this lesson uses it.
+- **Customising Traefik.** Write a `HelmChartConfig` named `traefik` in `kube-system` ([lesson 13](13-helm-and-auto-deploy.qmd)). Never edit k3s's own `traefik.yaml`; k3s rewrites it at every start.
+
+```text
+curl -H "Host: lemonade.localhost" http://NODE:80/menu
+        │
+        ▼
+ Traefik (kube-system)  ── reads Ingress rules ──►  host lemonade.localhost, path / (Prefix)
+        │
+        ▼
+ Service lemonade-web:80  ──►  pod :8080
+```
+
+## Every field for this topic
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `spec.ingressClassName` | Which controller handles this Ingress | In k3s: `traefik` | `ingressClassName: traefik` |
+| `spec.rules[].host` | Host name to match | Exact name, or one leading wildcard (`*.example.com`); omit it to match any host | `host: lemonade.localhost` |
+| `spec.rules[].http.paths[].path` | URL path to match | Starts with `/` | `path: /` |
+| `…paths[].pathType` | How `path` is compared | `Prefix` (by `/`-separated segments), `Exact`, or `ImplementationSpecific` | `pathType: Prefix` |
+| `…paths[].backend.service.name` | Target Service | Same namespace as the Ingress | `name: lemonade-web` |
+| `…paths[].backend.service.port.number` / `.name` | Target Service port | The Service's `port`, not the pod's `targetPort` | `number: 80` |
+| `spec.defaultBackend` | Where unmatched requests go | Optional; otherwise the controller answers 404 | `defaultBackend: {service: {name: lemonade-web, port: {number: 80}}}` |
+| `spec.tls[].hosts` | Hosts served over HTTPS | Must match rule hosts | `hosts: [lemonade.example.com]` |
+| `spec.tls[].secretName` | Secret with `tls.crt` and `tls.key` | Type `kubernetes.io/tls`, same namespace | `secretName: lemonade-tls` |
+| `metadata.annotations` | Controller-specific extras | Traefik reads `traefik.ingress.kubernetes.io/…` keys | `traefik.ingress.kubernetes.io/router.entrypoints: websecure` |
+
+Useful commands:
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `kubectl get ingress` | List rules with host and address | `kubectl get ingress -n lemonade` |
+| `kubectl describe ingress` | Show rules and backends | `kubectl describe ingress lemonade-web -n lemonade` |
+| `kubectl get ingressclass` | List controllers | `kubectl get ingressclass` |
+| `kubectl create secret tls` | Store a certificate for `spec.tls` | `kubectl create secret tls lemonade-tls --cert=c.pem --key=k.pem -n lemonade` |
+| `curl -H "Host: …"` | Test a host rule without DNS | `curl -H "Host: lemonade.localhost" http://localhost:8081/` |
+
+## Worked example
+
+The Ingress ([`08-ingress.yaml`](examples/08-ingress.yaml)):
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lemonade-web
+  namespace: lemonade
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: lemonade.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: lemonade-web
+                port:
+                  number: 80
+```
+
+```bash
+kubectl get ingressclass
+kubectl apply -f 08-ingress.yaml
+kubectl get ingress -n lemonade
+```
+
+```text
+NAME                CONTROLLER                      PARAMETERS
+traefik (default)   traefik.io/ingress-controller   <none>
+
+ingress.networking.k8s.io/lemonade-web created
+NAME           CLASS     HOSTS                ADDRESS      PORTS
+lemonade-web   traefik   lemonade.localhost   172.17.0.3   80
+```
+
+`ADDRESS` is the node IP that ServiceLB uses for Traefik. In the Docker lab, the node's port 80 is published as `localhost:8081`:
+
+```bash
+curl -s -H 'Host: lemonade.localhost' http://localhost:8081/
+curl -s http://lemonade.localhost:8081/                     # *.localhost resolves to 127.0.0.1
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: cookies.localhost' http://localhost:8081/
+```
+
+```text
+<h1>Lemonade Stand</h1>
+<p>Classic lemonade: 2.00</p>
+<p>Pink lemonade: 2.50</p>
+<h1>Lemonade Stand</h1>
+…
+404
+```
+
+The third request names a host that no rule matches, so Traefik answers `404` itself. Adding the cookie stand later means adding a second rule (or a second Ingress) with `host: cookies.localhost`. Nothing else changes.
+
+To change Traefik itself, drop a `HelmChartConfig` into the server's auto-deploy folder (`/var/lib/rancher/k3s/server/manifests/`). This one tells Traefik to keep request logs:
+
+```yaml
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    accessLog:
+      enabled: true
+```
+
+Value names belong to the Traefik chart version that your k3s ships (here chart 41.6.1, shown by `kubectl get helmcharts -n kube-system`). Check them with `helm show values --repo https://traefik.github.io/charts traefik --version 41.6.1`.
+
+## Rules and conventions
+
+- Use one Ingress per app (per team) rather than one giant shared Ingress. Each team then edits only its own file.
+- Always set `ingressClassName`, even though `traefik` is the default. The manifest then still works on clusters with several controllers.
+- Point the backend at the **Service** port (80), not the container port (8080).
+- Use `pathType: Prefix` for whole sites, and `Exact` for single endpoints.
+- Terminate HTTPS at the Ingress with a TLS Secret. In production, let a tool such as cert-manager renew certificates automatically.
+- Customise Traefik only through `HelmChartConfig`. If you do not want Traefik at all, start the k3s servers with `--disable=traefik` and install another controller.
+- In Traefik chart v40 and later (shipped with k3s since the June 2026 releases), the Service type moved from `service.type` to `service.spec.type`. Old `HelmChartConfig` files that set `service.type` are silently ignored.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| No `Host` header (or DNS) matching the rule | Traefik answers 404 | Use the exact host name, or `curl -H "Host: …"` |
+| Backend port set to the container port | 404 or 503 from Traefik | Use the Service's `port` |
+| Ingress in a different namespace from the Service | Backend not found, 404 | Put the Ingress in the Service's namespace |
+| Service has no ready endpoints | 503 Service Unavailable | Fix the pods or the selector ([lesson 7](07-services-and-dns.qmd)) |
+| Another program already uses port 80 on the node | ServiceLB pod stays `Pending`, Traefik has no address | Free port 80, or move Traefik with a `HelmChartConfig` |
+| Editing `/var/lib/rancher/k3s/server/manifests/traefik.yaml` | Changes vanish after a restart | Use a separate `HelmChartConfig` file |
+
+## Mathematical Abstraction
+
+For one host, the controller must pick **one** rule for each request path. With `pathType: Prefix`, a rule path $p$ matches a request path $x$ when $p$'s segments are a prefix of $x$'s segments, and the **longest** matching path wins:
+
+$$
+\operatorname{rule}(x) = \underset{p \,\in\, P,\; \operatorname{seg}(p) \,\preceq\, \operatorname{seg}(x)}{\operatorname{arg\,max}} \; |\operatorname{seg}(p)|
+$$
+
+where
+
+- $P$ is the set of `path` values in the rules for the request's host.
+- $\operatorname{seg}(p)$ is the list of path segments: `/api/orders` becomes $(\texttt{api}, \texttt{orders})$, and `/` becomes the empty list $()$.
+- $a \preceq b$ means "list $a$ is a prefix of list $b$", compared **segment by segment**.
+- $|\operatorname{seg}(p)|$ is the number of segments, and $\operatorname{arg\,max}$ picks the $p$ with the most segments.
+
+**Example:** suppose the lemonade host has two rules, $P = \lbrace \texttt{/}, \texttt{/api} \rbrace$:
+
+- Request `/api/orders`: $\operatorname{seg} = (\texttt{api}, \texttt{orders})$. Both $()$ (length 0) and $(\texttt{api})$ (length 1) are prefixes. The maximum is 1, so `/api` wins.
+- Request `/apix`: $\operatorname{seg} = (\texttt{apix})$. $(\texttt{api})$ is **not** a segment prefix of $(\texttt{apix})$, because `api` ≠ `apix`. Only `/` matches (length 0), so the request goes to the `/` rule.
+- Request `/`: only `/` matches.
+
+The same idea decides which **host** rule applies: an exact host such as `lemonade.localhost` matches only itself, and a request with any other `Host` header falls through to the default backend, or to a 404, as we saw with `cookies.localhost`.
+
+## References
+
+- Kubernetes, "Ingress": <https://kubernetes.io/docs/concepts/services-networking/ingress/>, and "Ingress Controllers": <https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/>.
+- k3s, "Networking Services" (Traefik, ServiceLB, Gateway API): <https://docs.k3s.io/networking/networking-services>.
+- k3s, "Helm", section on `HelmChartConfig`: <https://docs.k3s.io/add-ons/helm>.
+- Traefik, "Kubernetes Ingress" provider: <https://doc.traefik.io/traefik/providers/kubernetes-ingress/>.
+- Matt Butcher and Karen Chu, *Phippy Goes to the Zoo*: <https://www.cncf.io/phippy/phippy-goes-to-the-zoo-book/>.
+
+[← Previous: Services and DNS](07-services-and-dns.qmd) · [Part index](index.qmd) · [Next: ConfigMaps and Secrets →](09-configmaps-and-secrets.qmd)

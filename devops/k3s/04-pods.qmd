@@ -1,0 +1,261 @@
+---
+title: "4. Pods"
+description: "The smallest unit Kubernetes runs: pod fields, shared network and volumes, the sidecar pattern, pod phases, container states and CrashLoopBackOff."
+---
+
+## The problem
+
+We want the Lemonade Stand's NGINX container to run **inside the cluster**, not on a laptop. Kubernetes never runs a bare container. It always wraps one or more containers in a **pod**. To read any error message later, we need to know what a pod is, which fields it has, and which states it moves through.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Squirrels carrying boxes
+
+At the zoo in *Phippy Goes to the Zoo*, the first animals Zee sees are small, furry and blue, about the size of squirrels. Each one carries a tiny box and runs back and forth all day. Phippy says they are **Pods**, and the box each carries is its **container**. When the container is finished, the pod is finished too.
+
+In the first Phippy book, Captain Kube invites Phippy to move her container "into a pod on board the ship", and it feels like home. The pod is the cabin: it has a door number (an IP address) and a cupboard (volumes) shared by everyone in it.
+
+A **sidecar** is exactly like a motorcycle sidecar. The main container drives. A small helper container rides along in the same pod and does one side job, such as reading the log book.
+:::
+
+## The concept, precisely
+
+- A **pod** is one or more containers that are always placed **on the same node** and share:
+    - **one network identity**: one pod IP, and containers reach each other on `localhost`;
+    - **volumes** that the pod declares.
+- Each pod gets its own IP from the cluster's pod network. In k3s, Flannel hands out addresses from `10.42.0.0/16` by default.
+- Pods are **ephemeral**. If one is deleted, or its node dies, it is gone. A new pod gets a new name and a new IP. That is why we normally create pods through a controller such as a Deployment ([lesson 6](06-deployments-and-rolling-updates.qmd)), and reach them through a Service ([lesson 7](07-services-and-dns.qmd)).
+- The **kubelet** on the node starts the containers through containerd, and restarts them according to `restartPolicy`.
+- Every pod also has a tiny hidden **pause** container (`mirrored-pause` in [lesson 1](01-containers-and-orchestration.qmd)). It holds the shared network namespace open.
+
+### Pod phases (the `status.phase` field)
+
+| Phase | Meaning |
+| --- | --- |
+| `Pending` | Accepted, but not all containers are running yet: waiting for a node, pulling images, mounting volumes |
+| `Running` | Bound to a node, and at least one container is running or restarting |
+| `Succeeded` | All containers exited with code 0 and will not restart (typical for Jobs) |
+| `Failed` | All containers have stopped, and at least one exited with an error |
+| `Unknown` | The node stopped reporting |
+
+### Container states and common reasons (`kubectl get` STATUS column)
+
+| State | Common reason | What it usually means |
+| --- | --- | --- |
+| `Waiting` | `ContainerCreating` | Pulling the image or mounting volumes |
+| `Waiting` | `ErrImagePull` / `ImagePullBackOff` | Wrong image name or tag, or a private registry without credentials |
+| `Waiting` | `CrashLoopBackOff` | The container keeps exiting; the kubelet waits longer before each restart |
+| `Running` | – | The process is running |
+| `Terminated` | `Completed` | Exited with code 0 |
+| `Terminated` | `Error` | Exited with a non-zero code |
+| `Terminated` | `OOMKilled` | Used more memory than its limit ([lesson 11](11-health-resources-and-scheduling.qmd)) |
+
+`CrashLoopBackOff` is not a phase. It is a reason shown while the kubelet waits between restarts.
+
+## Every field for this topic
+
+| Field | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `metadata.name` | Pod name | Lowercase DNS name; controllers generate it for you | `name: lemonade-pod` |
+| `spec.containers[]` | The containers to run | At least one | `containers: [{name: web, image: …}]` |
+| `containers[].name` | Container name inside the pod | Unique within the pod | `name: web` |
+| `containers[].image` | Image to run | Pin a version tag | `image: nginxinc/nginx-unprivileged:1.30.5-alpine` |
+| `containers[].imagePullPolicy` | When to pull | `IfNotPresent` (default for pinned tags), `Always` (default for `:latest`), `Never` | `imagePullPolicy: IfNotPresent` |
+| `containers[].ports[].containerPort` | The port the process listens on | Informational, but Services and probes can refer to it by `name` | `containerPort: 8080` |
+| `containers[].env[]` | Environment variables | `value`, or `valueFrom` a ConfigMap or Secret | `env: [{name: SHOP, value: lemonade}]` |
+| `containers[].command` | Replaces the image's ENTRYPOINT | A list, one item per word | `command: ["sh", "-c"]` |
+| `containers[].args` | Replaces the image's CMD | A list | `args: ["echo hello"]` |
+| `containers[].resources` | CPU and memory requests and limits | [Lesson 11](11-health-resources-and-scheduling.qmd) | `requests: {cpu: 50m}` |
+| `containers[].volumeMounts[]` | Where a volume appears inside the container | `name` must match `spec.volumes[].name` | `{name: menu, mountPath: /usr/share/nginx/html}` |
+| `spec.volumes[]` | Volumes the pod provides | [Lessons 9](09-configmaps-and-secrets.qmd) and [10](10-storage.qmd) | `volumes: [{name: menu, configMap: {name: lemonade-menu}}]` |
+| `spec.restartPolicy` | When the kubelet restarts containers | `Always` (default), `OnFailure`, `Never` | `restartPolicy: Never` |
+| `spec.initContainers[]` | Containers that run to completion **before** the app starts | With `restartPolicy: Always` they become **sidecars** | `initContainers: [{name: wait-db, …}]` |
+| `spec.nodeName` | Pin the pod to a node and skip the scheduler | Avoid; use scheduling rules instead | `nodeName: k3s-lab` |
+
+`command` and `args` follow a simple rule. If you set only `args`, the image's own entrypoint runs with your arguments. If you set `command`, the image's entrypoint is ignored.
+
+## Worked example
+
+The smallest useful pod ([`04-pod.yaml`](examples/04-pod.yaml)):
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lemonade-pod
+  namespace: lemonade
+spec:
+  containers:
+    - name: web
+      image: nginxinc/nginx-unprivileged:1.30.5-alpine
+      ports:
+        - containerPort: 8080
+```
+
+```bash
+kubectl apply -f 04-pod.yaml
+kubectl get pod lemonade-pod -n lemonade -o wide
+```
+
+```text
+NAME           READY   STATUS    RESTARTS   AGE   IP          NODE
+lemonade-pod   1/1     Running   0          7s    10.42.0.9   k3s-lab
+```
+
+The events tell the life story of the pod:
+
+```bash
+kubectl describe pod lemonade-pod -n lemonade      # bottom section
+```
+
+```text
+Events:
+  Normal  Scheduled  default-scheduler  Successfully assigned lemonade/lemonade-pod to k3s-lab
+  Normal  Pulling    kubelet            Pulling image "nginxinc/nginx-unprivileged:1.30.5-alpine"
+  Normal  Pulled     kubelet            Successfully pulled image … in 6.622s. Image size: 25944222 bytes.
+  Normal  Created    kubelet            Container created
+  Normal  Started    kubelet            Container started
+```
+
+Talk to it through a temporary tunnel, and run a command inside it:
+
+```bash
+kubectl port-forward -n lemonade pod/lemonade-pod 8080:8080 &
+curl -s localhost:8080 | grep '<title>'
+kubectl exec -n lemonade lemonade-pod -- nginx -v
+```
+
+```text
+<title>Welcome to nginx!</title>
+nginx version: nginx/1.30.5
+```
+
+### A sidecar
+
+Here a busybox "till" writes sales into a shared `emptyDir` volume. A sidecar reads them. The single line `restartPolicy: Always` on an init container turns it into a sidecar that keeps running next to the app:
+
+```yaml
+spec:
+  initContainers:
+    - name: log-reader
+      image: busybox:1.37.0
+      restartPolicy: Always
+      command: ["sh", "-c", "touch /shared/sales.log; tail -f /shared/sales.log"]
+      volumeMounts: [{name: shared, mountPath: /shared}]
+  containers:
+    - name: till
+      image: busybox:1.37.0
+      command: ["sh", "-c", "while true; do echo sold 1 lemonade >> /shared/sales.log; sleep 5; done"]
+      volumeMounts: [{name: shared, mountPath: /shared}]
+  volumes:
+    - name: shared
+      emptyDir: {}
+```
+
+```bash
+kubectl get pod till-with-sidecar -n lemonade
+kubectl logs till-with-sidecar -n lemonade -c log-reader --tail=3
+```
+
+```text
+NAME                READY   STATUS    RESTARTS   AGE
+till-with-sidecar   2/2     Running   0          13s
+sold 1 lemonade
+sold 1 lemonade
+sold 1 lemonade
+```
+
+`2/2` means two containers, both ready. `-c log-reader` picks which container's logs to show.
+
+### A crashing pod
+
+```bash
+kubectl run broken -n lemonade --image=busybox:1.37.0 -- sh -c 'echo out of lemons; exit 1'
+kubectl get pod broken -n lemonade -w
+```
+
+```text
+NAME     READY   STATUS             RESTARTS
+broken   0/1     ContainerCreating  0
+broken   0/1     CrashLoopBackOff   1
+broken   0/1     Error              2
+broken   0/1     Error              3
+broken   1/1     Running            4
+broken   0/1     CrashLoopBackOff   4
+```
+
+The gaps between restarts grow each time. The logs show why it dies, and the events show the back-off:
+
+```bash
+kubectl logs broken -n lemonade
+kubectl get events -n lemonade --field-selector involvedObject.name=broken
+```
+
+```text
+out of lemons
+Warning   BackOff   pod/broken   Back-off restarting failed container broken in pod broken_lemonade(…)
+```
+
+Use `kubectl logs --previous` to read the output of the run *before* the latest restart. Clean up with `kubectl delete pod broken -n lemonade`.
+
+## Rules and conventions
+
+- One main process per container, and one main container per pod. Add more containers to the same pod only when they must share the same network or files (sidecars, helpers).
+- Do not create bare pods for apps. Use a Deployment, Job, DaemonSet or StatefulSet, so the pod is replaced after a failure.
+- Containers in a pod talk over `localhost`. Pods talk to *other* pods through Services, never through pod IPs, because pod IPs change.
+- Write `command` and `args` as YAML lists (`["sh", "-c", "…"]`). That avoids quoting surprises.
+- Debug in this order: `kubectl get` (status), `kubectl describe` (events), `kubectl logs` (output), `kubectl logs --previous` (output before the last crash).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Typo in the image tag | `ErrImagePull`, then `ImagePullBackOff` | Fix the tag; check it with `docker pull` |
+| App exits immediately (a missing setting, a bad command) | `CrashLoopBackOff` with growing gaps | `kubectl logs` and `kubectl logs --previous` |
+| Expecting pods to survive node loss | The pod disappears and nobody recreates it | Use a Deployment |
+| Two containers in one pod on the same port | The second fails with "address already in use" | They share one network namespace; use different ports |
+| Using `containerPort` to "open" a port | Nothing changes | The process decides which port it listens on; `containerPort` only documents it |
+| Busybox or alpine pod with no long-running command | `Completed`, then `CrashLoopBackOff` under `restartPolicy: Always` | Give it a long-running command, or use a Job |
+
+## Mathematical Abstraction
+
+When a container keeps crashing, the kubelet waits longer before each new attempt. The Kubernetes documentation gives the delays as 10 s, 20 s, 40 s and so on, capped at 300 s, and resets them after the container has run for 10 minutes without trouble:
+
+$$
+d_k = \min\bigl(10 \cdot 2^{\,k-1},\; 300\bigr)
+$$
+
+where
+
+- $k$ is the number of the back-off, counting from $k = 1$ for the wait after the first repeated crash.
+- $d_k$ is the delay in **seconds** before that restart attempt.
+- $\min(a, b)$ picks the smaller of the two numbers. Here it caps the delay at 300 s, which is 5 minutes.
+
+**Example:**
+
+- $k = 1$: $d_1 = \min(10 \cdot 2^{0}, 300) = \min(10, 300) = 10$ s.
+- $k = 2$: $d_2 = \min(10 \cdot 2^{1}, 300) = 20$ s.
+- $k = 3$: $d_3 = 40$ s, $k = 4$: $d_4 = 80$ s, $k = 5$: $d_5 = 160$ s.
+- $k = 6$: $10 \cdot 2^{5} = 320$, so $d_6 = \min(320, 300) = 300$ s. From now on every wait is 5 minutes.
+
+The total waiting before the seventh attempt is
+
+$$
+W_6 = \sum_{k=1}^{6} d_k = 10 + 20 + 40 + 80 + 160 + 300 = 610 \text{ s}
+$$
+
+where $W_n$ is the sum of the first $n$ delays, in seconds. That is just over 10 minutes. Our `broken` pod showed exactly this growth: restarts 1, 2, 3 came quickly, and the gap before restart 4 was clearly longer. On a busy laptop the real times drift by a few seconds, because the delay is a minimum wait, not an exact timer.
+
+**Why back off at all?** If the kubelet restarted a broken container every second, then 100 broken pods would cause 100 restarts per second on one node. With back-off, after six crashes each pod restarts at most once every 300 s. 100 broken pods then cost about $100 / 300 \approx 0.33$ restarts per second.
+
+Kubernetes has an alpha feature gate, `ReduceDefaultCrashLoopBackOffDecay`, that would change these defaults to a 1 s start and a 60 s cap. It is off by default in v1.37, so the numbers above are what k3s does.
+
+## References
+
+- Kubernetes, "Pods": <https://kubernetes.io/docs/concepts/workloads/pods/>, and "Pod Lifecycle" (phases, container states, restart policy, back-off): <https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/>.
+- Kubernetes, "Sidecar Containers": <https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/>.
+- Kubernetes, "Define a Command and Arguments for a Container": <https://kubernetes.io/docs/tasks/inject-data-application/define-command-argument-container/>.
+- Matt Butcher and Karen Chu, *Phippy Goes to the Zoo*: <https://www.cncf.io/phippy/phippy-goes-to-the-zoo-book/>.
+
+[← Previous: kubectl and Manifests](03-kubectl-and-manifests.qmd) · [Part index](index.qmd) · [Next: Labels, Selectors and Namespaces →](05-labels-selectors-and-namespaces.qmd)
