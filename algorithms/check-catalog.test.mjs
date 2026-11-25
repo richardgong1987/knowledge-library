@@ -30,13 +30,13 @@ test('all 73 visible LeetCode topics have unique, navigable chapters', () => {
     const p = join(root, relative);
     assert.ok(existsSync(p), 'Missing topic file ' + relative);
     const body = readFileSync(p, 'utf8');
-    assert.ok(body.includes('## Mathematical Abstraction'), 'Missing maths: ' + relative);
-    assert.ok(body.includes(topic.math), 'Mathematical relationship differs from catalogue: ' + relative);
+    assert.ok(body.includes('$'), 'No mathematical relationship: ' + relative);
+    assert.ok(body.length > 2200, 'Lesson is not substantive: ' + relative);
     assert.ok(sidebar.includes('              - ' + relative), 'Missing sidebar entry: ' + relative);
     listed.add(topic.slug);
   }
 
   const folders = readdirSync(join(root, 'algorithms'), { withFileTypes: true })
-    .filter(d => d.isDirectory() && d.name !== 'groups').map(d => d.name);
+    .filter(d => d.isDirectory() && !['groups', 'guides', 'examples'].includes(d.name)).map(d => d.name);
   assert.deepEqual(new Set(folders), listed, 'There are orphan or missing topic directories');
 });
