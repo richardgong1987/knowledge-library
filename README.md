@@ -5,6 +5,7 @@ An English-language technical knowledge website powered by [Quarto](https://quar
 ## Topics
 
 - **Programming Languages:** Java (including JVM Topics → Java Memory Model), Rust, Go, TypeScript, JavaScript, Python, C#, Prolog
+- **Algorithms:** 73 LeetCode topic categories, each with its own chapter, mathematical abstraction, and practice prompt
 - **System Design:** fundamentals, distributed systems, and data consistency
 - **DevOps:** Ansible, Kubernetes, CI/CD pipelines
 - **Finance:** fixed income, bond pricing, duration, and future financial topics
