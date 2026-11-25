@@ -1,32 +1,71 @@
 ---
-title: "TypeScript"
-description: "Structural typing, generics, inference, and application architecture."
+title: "TypeScript — Core Concepts"
+description: "Structural typing, discriminated unions, generics, unknown input and Promises in tiny examples."
 ---
 
-Structural typing, generics, inference, and application architecture.
+# TypeScript — types checked before JavaScript executes
 
-::: {.callout-note}
-## Chapter status
+TypeScript type annotations do not automatically generate runtime validators. Understanding this distinction makes the following examples easier.
 
-This is a chapter outline. Detailed lessons and interactive examples will be added progressively.
-:::
+## 1. Structural typing
 
-## The problem
+~~~ts
+type User = { id: number };
+const value = { id: 7, name: "Ada" };
+const user: User = value;
+console.log(user.id); // 7
+~~~
 
-What real-world need motivates this topic?
+Compatibility is based on the required object shape. Fresh object literals may also receive excess-property checks.
 
-## A running example
+## 2. Discriminated unions
 
-Start with one concrete scenario and keep it throughout the explanation.
+~~~ts
+type Payment =
+  | { kind: "cash" }
+  | { kind: "card"; last4: string };
+function describe(p: Payment): string {
+  if (p.kind === "cash") return "cash";
+  return p.last4; // narrowed to card
+}
+console.log(describe({ kind: "card", last4: "1234" }));
+~~~
 
-## Step-by-step reasoning
+The common kind field distinguishes valid alternatives. The compiler knows that a card's last four digits exist only in the card branch.
 
-Explain what changes, why it changes, and what can be inferred.
+## 3. Generics preserve a type relationship
 
-## Implementation or mathematical model
+~~~ts
+function first<T>(items: T[]): T | undefined {
+  return items[0];
+}
+console.log(first([3, 7])); // 3
+~~~
 
-Add code, equations, diagrams, or an interactive experiment here.
+The output element type depends on the input element type T. Empty arrays yield undefined; the return type makes that possibility explicit.
 
-## Related concepts
+## 4. Unknown input needs an actual runtime test
 
-Link to prerequisite and follow-up lessons as the library grows.
+~~~ts
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+console.log(asNumber("7")); // undefined
+~~~
+
+A cast changes the compiler's interpretation; it cannot magically convert or validate untrusted JSON.
+
+## 5. Async functions return Promises
+
+~~~ts
+async function double(): Promise<number> {
+  return 21 * 2;
+}
+double().then(console.log); // 42
+~~~
+
+A Promise models eventual completion. It does not mean CPU work automatically runs on another thread.
+
+**Official source:** [TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/intro.html).
+
+[← Programming Languages](index.qmd)

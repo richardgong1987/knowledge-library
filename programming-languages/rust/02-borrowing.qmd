@@ -1,0 +1,53 @@
+---
+title: "Borrowing: Shared `&T` vs Exclusive `&mut T`"
+description: "One key Rust idea, one tiny executable example, the reason it works, and a precise pitfall."
+---
+
+## The question
+
+**How can a function read a String without taking it away from its caller?**
+
+Borrow using a reference. Many active shared references can read a value; an exclusive mutable reference can modify it when no overlapping incompatible references are being used.
+
+## The core rule
+
+Shared reads may overlap; an exclusive writer must not overlap with those reads.
+
+## One complete example
+
+Paste these lines into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`, or [use the tested Rust examples project](examples/index.qmd).
+
+~~~rust
+fn main() {
+    let mut name = String::from("Ada");
+    let view = &name;
+    println!("{view}");         // shared borrow ends at last use
+    let edit = &mut name;
+    edit.push('!');
+    println!("{name}");         // Ada!
+}
+~~~
+
+**Walk through it:** `view` borrows the String without owning it. After its last use, the borrow checker permits the later mutable borrow `edit`. This is **non-lexical lifetime** behaviour: a borrow need not remain live until the closing brace.
+
+## Mathematical model — explained with real values
+
+$$
+W(v)=1\ \Longrightarrow\ R(v)=0
+$$
+
+**What every symbol means:** `W(v)` means the number of active exclusive mutable borrows of the value v; `R(v)` is the number of conflicting active shared borrows. This is an instructional abstraction for the borrow rule, not Rust's complete aliasing model.
+
+**Substitute actual values:** While `view` is being used, there is one shared borrow (`R=1`) and no mutable borrow (`W=0`). During the later `edit.push('!')`, there is one active mutable borrow (`W=1`) and no overlapping shared borrow (`R=0`).
+
+## Common misunderstanding
+
+Incorrect: take `let edit = &mut name;` and then still use an earlier `view` later. Rust rejects the conflicting overlap at compile time, rather than racing at runtime.
+
+## Remember it in one sentence
+
+Shared reads may overlap; an exclusive writer must not overlap with those reads.
+
+**Official reference:** [The Rust Programming Language / Rust Reference](https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html).
+
+[← Rust learning path](index.qmd) · [Examples and tests](examples/index.qmd)

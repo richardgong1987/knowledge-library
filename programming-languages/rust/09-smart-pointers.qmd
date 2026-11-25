@@ -1,0 +1,39 @@
+---
+title: "Smart Pointers: `Box`, `Rc`, and `RefCell`"
+description: "One Rust language concept taught with one short runnable example and a precise explanation."
+---
+
+## The question
+
+**When is `String` ownership not enough?**
+
+`Box<T>` puts a value on the heap with one owner. `Rc<T>` shares ownership **within one thread** using reference counting. `RefCell<T>` checks borrow rules **at runtime** for interior mutation.
+
+## The rule to remember
+
+Choose the smallest tool: `Box` for owned indirection, `Rc` for several owners in one thread, `RefCell` only when safe runtime-checked borrowing is necessary.
+
+## The smallest complete example
+
+Paste into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`. The [Rust examples page](examples/index.qmd) describes how to check all snippets automatically.
+
+~~~rust
+use std::rc::Rc;
+fn main() {
+    let a = Rc::new(String::from("hello"));
+    let b = Rc::clone(&a);
+    println!("{a} {b}"); // hello hello
+}
+~~~
+
+**Follow the state:** `a` and `b` are two smart-pointer handles referring to one shared String allocation. `Rc::clone(&a)` increments the reference count; it does not clone the String itself. Both handles can read the same value.
+
+## Important limitation
+
+`Rc<T>` is **not** thread-safe. Use `Arc<T>` across threads. `RefCell<T>::borrow_mut()` can panic if an incompatible borrow is active; it does not disable the borrowing discipline.
+
+## Continue learning
+
+**Official source:** [The Rust Book / Rust Reference](https://doc.rust-lang.org/book/ch15-04-rc.html).
+
+[← Rust](index.qmd) · [Rust examples](examples/index.qmd)

@@ -1,0 +1,88 @@
+---
+title: "Rust — Core Concepts"
+subtitle: "One idea, one tiny program, one reason it matters"
+description: "Rust 2024 Edition: ownership, borrowing, lifetimes, enums, traits, async, concurrency, macros and custom attributes."
+---
+
+# Learn Rust by understanding what its compiler guarantees
+
+Rust is easier to understand when you begin with **ownership**, not with its syntax. The compiler must know who owns a value, whether a reference may safely read or change it, and when that value is no longer valid.
+
+The learning materials use **Rust stable 1.100.0** (released 12 November 2026) and **Rust 2024 Edition**. The concepts are illustrated with original programs that normally fit in one short \`fn main()\`.
+
+::: {.callout-tip}
+## Start here
+
+Begin with **[Ownership](01-ownership.qmd) → [Borrowing](02-borrowing.qmd) → [Lifetimes](03-lifetimes.qmd)**. These three ideas explain a large share of Rust's surprising compiler errors.
+:::
+
+## First, understand the four kinds of access
+
+~~~rust
+fn main() {
+    let mut text = String::from("hello");
+    let read = &text;
+    println!("{read}");      // shared read
+    let write = &mut text;    // earlier read is no longer used
+    write.push('!');
+    println!("{text}");      // hello!
+}
+~~~
+
+**What happened?** The String is still owned by \`text\`. Both references merely borrow it. Once the shared reference is no longer used, the compiler can permit a new mutable borrow. If both incompatible borrows were used simultaneously, compilation would fail. This is a *lifetime and aliasing* guarantee, not a garbage collector.
+
+## The 16 short chapters
+
+### 1. Values and references
+
+1. [Ownership and Moves](01-ownership.qmd) — why \`let b = a\` moves a String.
+2. [Borrowing](02-borrowing.qmd) — \`&T\` versus \`&mut T\`.
+3. [Lifetimes](03-lifetimes.qmd) — why annotations do **not** extend a value's life.
+4. [Slices and Strings](04-slices-and-strings.qmd) — \`String\` ownership versus \`&str\` views.
+5. [Enums and Match](05-enums-and-match.qmd) — represent one of several valid states.
+6. [Option, Result, and ?](06-option-and-result.qmd) — make missing data and errors explicit.
+7. [Traits and Generics](07-traits-and-generics.qmd) — reusable behaviour without class inheritance.
+8. [Collections and Iterators](08-collections-and-iterators.qmd) — transform values without index bookkeeping.
+
+### 2. Memory and concurrent execution
+
+9. [Smart Pointers](09-smart-pointers.qmd) — \`Box\`, \`Rc\`, \`RefCell\`.
+10. [Thread Safety](10-concurrency.qmd) — \`Arc\`, \`Mutex\`, \`Send\`, \`Sync\`.
+11. [Async/Await](11-async-await.qmd) — a Future is not a thread.
+12. [Macros by Example](12-declarative-macros.qmd) — \`macro_rules!\` and token expansion.
+
+### 3. Meta-programming, organisation and boundaries
+
+13. [Attributes and Procedural Macros](13-attributes-and-proc-macros.qmd) — the precise answer to "custom annotations".
+14. [Modules, Cargo and Tests](14-modules-cargo-and-tests.qmd) — small projects with explicit namespaces.
+15. [Unsafe and FFI](15-unsafe-and-ffi.qmd) — where the compiler transfers a safety obligation.
+16. [Copy, Clone and Drop](16-copy-clone-and-drop.qmd) — implicit value copies, explicit clones, cleanup.
+
+## The special case: custom annotations
+
+Built-in \`#[derive(Debug)]\` works in a single Rust file. But **defining a custom \`#[add_label]\` attribute needs a separate procedural-macro crate**, because it executes at compile time and emits Rust tokens. Our [two-crate example](examples/index.qmd) adds one generated function to a marked item, with no third-party dependencies.
+
+This differs from Java's reflection-oriented annotation model: Rust attributes are not automatically runtime metadata that can be inspected through a reflection API.
+
+## Run examples, without a framework
+
+For most lessons, copy the \`fn main\` example to \`main.rs\`, then run:
+
+~~~bash
+rustc --edition 2024 main.rs
+./main
+~~~
+
+Or use the [examples and automated checks](examples/index.qmd). The website CI compiles **each standalone chapter example** and runs the real procedural-macro project.
+
+## How to study each page
+
+First describe the problem in ordinary English. Then read the rule, execute the program with the shown values, and explain why an invalid variation fails. When a mathematical relation appears, the page explains every symbol and substitutes concrete values immediately afterwards.
+
+## References
+
+- [Rust Book, current stable](https://doc.rust-lang.org/stable/book/) — ownership, borrowing, types, traits, error handling, concurrency, async and macros.
+- [Rust Reference — procedural macros](https://doc.rust-lang.org/reference/procedural-macros.html) — the three procedural-macro forms and separate-crate requirement.
+- [Rust 1.100.0 release](https://blog.rust-lang.org/2026/11/12/Rust-1.100.0/) — verified stable toolchain as of 25 November 2026.
+
+[← Programming Languages](../index.qmd)

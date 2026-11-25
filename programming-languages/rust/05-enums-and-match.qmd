@@ -1,0 +1,45 @@
+---
+title: "Structs, Enums, and Exhaustive Pattern Matching"
+description: "One key Rust idea, one tiny executable example, the reason it works, and a precise pitfall."
+---
+
+## The question
+
+**How do you model a payment that can be either cash or a card with a fee?**
+
+An enum represents **one of several valid cases**; the compiler checks that `match` handles them all. A struct groups fields that exist together.
+
+## The core rule
+
+Make invalid combinations difficult to represent.
+
+## One complete example
+
+Paste these lines into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`, or [use the tested Rust examples project](examples/index.qmd).
+
+~~~rust
+enum Payment { Cash, Card(u32) }
+fn fee(p: Payment) -> u32 {
+    match p {
+        Payment::Cash => 0,
+        Payment::Card(amount) => amount / 100,
+    }
+}
+fn main() {
+    println!("{}", fee(Payment::Card(500))); // 5
+}
+~~~
+
+**Walk through it:** `Payment::Card(500)` carries an amount of 500 and selects the Card match arm. Dividing by 100 returns 5; `Cash` returns 0. Adding a new enum variant forces you to revisit non-exhaustive matches.
+
+## Common misunderstanding
+
+The data-carrying `Card(u32)` is a tuple-like enum variant. If both cash and card should store different data, use variants with appropriate fields instead of many optional fields in one struct.
+
+## Remember it in one sentence
+
+Make invalid combinations difficult to represent.
+
+**Official reference:** [The Rust Programming Language / Rust Reference](https://doc.rust-lang.org/book/ch06-02-match.html).
+
+[← Rust learning path](index.qmd) · [Examples and tests](examples/index.qmd)

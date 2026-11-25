@@ -1,32 +1,76 @@
 ---
-title: "JavaScript"
-description: "Closures, the event loop, promises, and the language runtime."
+title: "JavaScript — Core Concepts"
+description: "Learn JavaScript's object model, closures, asynchronous event loop, prototypes and this through tiny examples."
 ---
 
-Closures, the event loop, promises, and the language runtime.
+# JavaScript — understand state and execution order
 
-::: {.callout-note}
-## Chapter status
+## 1. Primitive values versus object references
 
-This is a chapter outline. Detailed lessons and interactive examples will be added progressively.
-:::
+~~~js
+const a = { n: 3 };
+const b = a;
+b.n = 7;
+console.log(a.n); // 7
+~~~
 
-## The problem
+The variables refer to the same object. Reassigning b to a different object would not reassign a. For a separate shallow copy use an object spread, but nested objects can remain shared.
 
-What real-world need motivates this topic?
+## 2. A closure remembers an outer binding
 
-## A running example
+~~~js
+function counter() {
+  let n = 0;
+  return () => ++n;
+}
+const next = counter();
+console.log(next(), next()); // 1 2
+~~~
 
-Start with one concrete scenario and keep it throughout the explanation.
+The returned function keeps access to n even after counter has returned. It captures a binding, not a fresh integer copied for every invocation.
 
-## Step-by-step reasoning
+## 3. Microtasks are processed before the next timer task
 
-Explain what changes, why it changes, and what can be inferred.
+~~~js
+console.log("A");
+setTimeout(() => console.log("C"), 0);
+Promise.resolve().then(() => console.log("B"));
+// A, B, C
+~~~
 
-## Implementation or mathematical model
+The synchronous print runs first; the fulfilled Promise continuation is a microtask; the timer callback is queued for a later task. A zero delay does not mean immediate execution.
 
-Add code, equations, diagrams, or an interactive experiment here.
+## 4. Async functions yield a Promise
 
-## Related concepts
+~~~js
+async function answer() { return 42; }
+answer().then(console.log); // 42
+~~~
 
-Link to prerequisite and follow-up lessons as the library grows.
+An async function returning a plain number still produces a Promise that resolves to the number. It does not turn CPU-intensive loops into work on another thread.
+
+## 5. The receiver and lexical this are different
+
+~~~js
+const user = {
+  name: "Ada",
+  greet() { return this.name; },
+};
+console.log(user.greet()); // Ada
+~~~
+
+A normal method uses the receiver at call time. An arrow function captures this lexically; it does not receive a new this from the object property to which it happens to be assigned.
+
+## 6. Prototypes supply inherited properties
+
+~~~js
+const proto = { speak() { return "hello"; } };
+const user = Object.create(proto);
+console.log(user.speak()); // hello
+~~~
+
+Property lookup checks the object, then its prototype chain. Prototypes are not copied into every object.
+
+**Official reference:** [ECMAScript specification](https://tc39.es/ecma262/), [MDN JavaScript Guide](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide).
+
+[← Programming Languages](index.qmd)

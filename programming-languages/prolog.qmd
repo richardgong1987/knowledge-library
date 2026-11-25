@@ -1,32 +1,77 @@
 ---
-title: "Prolog"
-description: "Unification, logical inference, backtracking, and declarative programming."
+title: "Prolog — Core Concepts"
+description: "Learn facts, rules, unification, goals, backtracking and recursion with a tiny family graph."
 ---
 
-Unification, logical inference, backtracking, and declarative programming.
+# Prolog — describe relations, then ask questions
 
-::: {.callout-note}
-## Chapter status
+Prolog is not a sequence of assignments. We state **facts and rules** and ask whether a relation can be proved. Its engine uses unification and backtracking to search for solutions.
 
-This is a chapter outline. Detailed lessons and interactive examples will be added progressively.
-:::
+## 1. Facts represent relations
 
-## The problem
+~~~prolog
+parent(ann, bob).
+parent(bob, cat).
+~~~
 
-What real-world need motivates this topic?
+The fact parent(ann,bob) says Ann is Bob's parent. It is not a function that returns a value.
 
-## A running example
+Ask a query:
 
-Start with one concrete scenario and keep it throughout the explanation.
+~~~prolog
+?- parent(ann, bob).
+true.
+~~~
 
-## Step-by-step reasoning
+## 2. Variables unify with values
 
-Explain what changes, why it changes, and what can be inferred.
+~~~prolog
+?- parent(ann, Child).
+Child = bob.
+~~~
 
-## Implementation or mathematical model
+A capitalised name such as Child is a variable. The engine finds a binding that makes the query match a fact.
 
-Add code, equations, diagrams, or an interactive experiment here.
+## 3. Rules express new relationships
 
-## Related concepts
+~~~prolog
+grandparent(X, Z) :- parent(X, Y), parent(Y, Z).
+~~~
 
-Link to prerequisite and follow-up lessons as the library grows.
+Read the rule as: X is a grandparent of Z if there exists a Y who is a child of X and parent of Z.
+
+$$
+G(x,z)\iff\exists y:\ P(x,y)\land P(y,z)
+$$
+
+**Symbols:** G(x,z) is the grandparent relation; P(x,y) is the parent relation; there exists means at least one intermediary y; and the symbol AND requires both parent relations.
+
+**Concrete substitution:** With parent(ann,bob) and parent(bob,cat), choose x=ann, y=bob, z=cat. Both required facts are true, so grandparent(ann,cat) holds.
+
+## 4. Backtracking finds alternatives
+
+~~~prolog
+color(red).
+color(blue).
+~~~
+
+Querying color(X) produces X=red and, when you request another answer, X=blue. This is search over possible matching facts, not an imperative for-loop.
+
+## 5. Recursion needs a base case
+
+~~~prolog
+ancestor(X, Y) :- parent(X, Y).
+ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
+~~~
+
+The base case is a direct parent; the recursive case follows one parent link then continues searching. For parent(ann,bob), parent(bob,cat), the query ancestor(ann,cat) succeeds.
+
+**Important limitation:** Prolog's default depth-first search can loop on cyclic or poorly ordered recursive rules even when a logical answer exists. Logical meaning and operational search behaviour are related but not identical.
+
+## 6. A small complete file
+
+Put the facts plus grandparent and ancestor rules into family.pl. Run SWI-Prolog and query grandparent(ann,cat). One file is enough; no agent framework is needed.
+
+**Official source:** [SWI-Prolog manual](https://www.swi-prolog.org/pldoc/man?section=quickstart), [The Art of Prolog reference](https://www.swi-prolog.org/pldoc/).
+
+[← Programming Languages](index.qmd)

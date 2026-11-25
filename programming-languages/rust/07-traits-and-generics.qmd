@@ -1,0 +1,42 @@
+---
+title: "Traits and Generics: Behaviour Without Inheritance"
+description: "One key Rust idea, one tiny executable example, the reason it works, and a precise pitfall."
+---
+
+## The question
+
+**How can one function print the name of different user-defined types?**
+
+A trait defines required behaviour; a generic constraint says which types may be passed. It is a *capability contract*, not classical subclass inheritance.
+
+## The core rule
+
+`impl Trait` and `T: Trait` describe behaviour available on concrete types.
+
+## One complete example
+
+Paste these lines into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`, or [use the tested Rust examples project](examples/index.qmd).
+
+~~~rust
+trait Named { fn name(&self) -> &str; }
+struct User(&'static str);
+impl Named for User {
+    fn name(&self) -> &str { self.0 }
+}
+fn show<T: Named>(item: &T) { println!("{}", item.name()); }
+fn main() { show(&User("Ada")); } // Ada
+~~~
+
+**Walk through it:** `Named` defines a method; `User` implements it; `show<T: Named>` accepts any type that implements the trait. `&self` borrows the receiver.
+
+## Common misunderstanding
+
+Rust's coherence/orphan rules limit where external traits may be implemented for external types. `dyn Named` is dynamic dispatch; `T: Named` typically uses static dispatch and monomorphisation.
+
+## Remember it in one sentence
+
+`impl Trait` and `T: Trait` describe behaviour available on concrete types.
+
+**Official reference:** [The Rust Programming Language / Rust Reference](https://doc.rust-lang.org/book/ch10-02-traits.html).
+
+[← Rust learning path](index.qmd) · [Examples and tests](examples/index.qmd)

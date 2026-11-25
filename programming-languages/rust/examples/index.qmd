@@ -1,0 +1,48 @@
+---
+title: "Rust Examples — One File per Concept"
+description: "Compile the short Rust Book-inspired snippets and run a real custom attribute macro."
+---
+
+## Ordinary concepts: one file
+
+Each Rust chapter has a \`~~~rust\` code block containing a complete \`fn main()\`. Copy it into a file and run \`rustc --edition 2024 main.rs && ./main\`.
+
+The [curriculum checker](check_curriculum.py) compiles and executes each standalone chapter example with the pinned Rust toolchain in CI. They do not require Cargo dependencies or a runtime framework.
+
+## Custom attribute macro: an honest exception
+
+A custom attribute macro cannot be defined and used inside a single standard Rust source file. Rust requires a **separate crate of type \`proc-macro\`**. This project intentionally has only two tiny crates:
+
+~~~text
+examples/
+  Cargo.toml
+  attributes/
+    Cargo.toml
+    src/lib.rs       # defines #[add_label]
+  app/
+    Cargo.toml
+    src/main.rs      # uses #[add_label]
+~~~
+
+Run from the repository root:
+
+~~~bash
+cargo +1.100.0 run --manifest-path programming-languages/rust/examples/Cargo.toml -p attribute-demo
+cargo +1.100.0 test --manifest-path programming-languages/rust/examples/Cargo.toml --workspace
+~~~
+
+Expected output:
+
+~~~text
+hello: generated at compile time
+~~~
+
+### Three pieces of syntax to distinguish
+
+1. **Attribute use:** \`#[derive(Debug)]\` invokes the standard Debug derive; it generates trait implementation code.
+2. **Declarative macro definition:** \`macro_rules! twice { ... }\` defines a token-pattern macro invoked as \`twice!(value)\`.
+3. **Custom attribute macro definition:** \`#[proc_macro_attribute]\` on a function in a special crate defines something you may invoke as \`#[add_label]\` in another crate.
+
+The minimal \`add_label\` macro *keeps the annotated function* and appends a generated \`label()\` function. It does not manipulate syntax trees or reflect on runtime objects. It deliberately uses fixed output, so applying it twice in one module would create a name collision; real reusable macros need robust parsing, unique names, and good diagnostics.
+
+[← Rust Core Concepts](../index.qmd) · [Attributes and Procedural Macros](../13-attributes-and-proc-macros.qmd) · [Rust Reference](https://doc.rust-lang.org/reference/procedural-macros.html)

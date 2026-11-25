@@ -1,0 +1,40 @@
+---
+title: "`Copy`, `Clone`, `Drop`: Three Different Ideas"
+description: "One Rust language concept taught with one short runnable example and a precise explanation."
+---
+
+## The question
+
+**Why can an integer still be used after assignment, but a String cannot?**
+
+`Copy` makes an implicit bitwise value copy for eligible types; `Clone` is an explicit operation that may allocate; `Drop` is the cleanup hook called when an owned value leaves scope.
+
+## The rule to remember
+
+Copying a handle and cloning the owned contents are not automatically the same operation.
+
+## The smallest complete example
+
+Paste into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`. The [Rust examples page](examples/index.qmd) describes how to check all snippets automatically.
+
+~~~rust
+fn main() {
+    let x = 3;
+    let y = x; // i32 is Copy
+    let a = String::from("hi");
+    let b = a.clone(); // another owned String
+    println!("{x} {y} {a} {b}"); // 3 3 hi hi
+}
+~~~
+
+**Follow the state:** `x` remains usable because `i32` implements `Copy`. `a.clone()` requests a new String allocation, so both `a` and `b` remain valid. A normal `let b = a;` without `.clone()` would move the String instead.
+
+## Important limitation
+
+Types that implement `Drop` cannot also be `Copy`. `Rc::clone()` normally increments a count instead of deep-copying its inner value; inspect what a particular type's `Clone` implementation actually promises.
+
+## Continue learning
+
+**Official source:** [The Rust Book / Rust Reference](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html).
+
+[← Rust](index.qmd) · [Rust examples](examples/index.qmd)

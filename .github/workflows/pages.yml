@@ -48,6 +48,16 @@ jobs:
       - name: Test advanced NestJS algorithms and HTTP adapter
         working-directory: system-design/interviews/lab
         run: npm test
+      - name: Verify small JavaScript, Python and available Go/Java snippets
+        run: python3 programming-languages/check_examples.py
+      - name: Install Rust 1.100.0
+        run: rustup toolchain install 1.100.0 --profile minimal
+      - name: Compile and run all 16 tiny Rust chapter examples
+        run: python3 programming-languages/rust/check_curriculum.py
+      - name: Test custom Rust attribute macro and run its application
+        run: |
+          cargo +1.100.0 test --manifest-path programming-languages/rust/examples/Cargo.toml --workspace
+          cargo +1.100.0 run --manifest-path programming-languages/rust/examples/Cargo.toml -p attribute-demo
       - name: Install Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:

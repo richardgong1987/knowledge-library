@@ -1,0 +1,39 @@
+---
+title: "Unsafe Rust and FFI: Who Proves Safety?"
+description: "One Rust language concept taught with one short runnable example and a precise explanation."
+---
+
+## The question
+
+**Does `unsafe` turn off the entire Rust type system?**
+
+No. Unsafe allows a small set of operations such as dereferencing raw pointers or calling unsafe functions. It transfers the proof obligation for those operations to the programmer; safe callers may still depend on those guarantees.
+
+## The rule to remember
+
+Use safe references whenever possible; create narrow `unsafe` blocks only when low-level work requires them.
+
+## The smallest complete example
+
+Paste into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`. The [Rust examples page](examples/index.qmd) describes how to check all snippets automatically.
+
+~~~rust
+fn main() {
+    let mut n = 3;
+    let ptr: *mut i32 = &mut n;
+    unsafe { *ptr += 1; }
+    println!("{n}"); // 4
+}
+~~~
+
+**Follow the state:** A raw pointer is created from a live mutable reference. Dereferencing it requires `unsafe`. Here `n` remains valid throughout, and there is no conflicting pointer access. The `unsafe` block marks an operation the compiler cannot fully validate.
+
+## Important limitation
+
+This simple example does NOT need unsafe in real code: `n += 1` is clearer and safer. Invalid raw pointers, aliasing violations or data races can create undefined behaviour even if the code compiles.
+
+## Continue learning
+
+**Official source:** [The Rust Book / Rust Reference](https://doc.rust-lang.org/book/ch20-01-unsafe-rust.html).
+
+[← Rust](index.qmd) · [Rust examples](examples/index.qmd)

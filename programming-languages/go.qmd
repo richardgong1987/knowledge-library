@@ -1,32 +1,93 @@
 ---
-title: "Go (Golang)"
-description: "Goroutines, channels, interfaces, and concurrent services."
+title: "Go (Golang) — Core Concepts"
+description: "Short independent examples of Go values, slices, interfaces, goroutines, channels and errors."
 ---
 
-Goroutines, channels, interfaces, and concurrent services.
+# Go — explicit behaviour, small examples
 
-::: {.callout-note}
-## Chapter status
+Each block below is a **separate complete program**. Put one block in main.go and run with Go.
 
-This is a chapter outline. Detailed lessons and interactive examples will be added progressively.
-:::
+## 1. Pointers change a caller's value
 
-## The problem
+~~~go
+package main
+import "fmt"
+func double(n *int) { *n *= 2 }
+func main() {
+    x := 3
+    double(&x)
+    fmt.Println(x) // 6
+}
+~~~
 
-What real-world need motivates this topic?
+The expression &x takes the address of x; *n dereferences it. Go still passes the pointer value as an argument by value.
 
-## A running example
+## 2. Slices can share a backing array
 
-Start with one concrete scenario and keep it throughout the explanation.
+~~~go
+package main
+import "fmt"
+func main() {
+    a := []int{1, 2}
+    b := a
+    b[0] = 9
+    fmt.Println(a) // [9 2]
+}
+~~~
 
-## Step-by-step reasoning
+A slice copies a descriptor, not necessarily its underlying elements. Append can allocate a different backing array; sharing after append is not guaranteed.
 
-Explain what changes, why it changes, and what can be inferred.
+## 3. Interfaces are implemented implicitly
 
-## Implementation or mathematical model
+~~~go
+package main
+import "fmt"
+type Greeter interface { Greet() string }
+type Person struct{}
+func (Person) Greet() string { return "hello" }
+func say(g Greeter) { fmt.Println(g.Greet()) }
+func main() { say(Person{}) } // hello
+~~~
 
-Add code, equations, diagrams, or an interactive experiment here.
+No implements clause is necessary. The compiler checks the method set. A method using a pointer receiver changes which concrete types satisfy the interface.
 
-## Related concepts
+## 4. Goroutines communicate through channels
 
-Link to prerequisite and follow-up lessons as the library grows.
+~~~go
+package main
+import "fmt"
+func main() {
+    done := make(chan int)
+    go func() { done <- 42 }()
+    fmt.Println(<-done) // 42
+}
+~~~
+
+The unbuffered receive waits for the send. Goroutine scheduling order is NOT fixed by source-code order.
+
+$$
+\operatorname{send}(x)\prec\operatorname{receive}(x)
+$$
+
+**Symbols:** send(x) and receive(x) are matching channel communication operations; the ordering symbol expresses their communication dependency, not an ordering of every operation in every goroutine.
+
+**Substitute numbers:** x=42. The reader can start first, but it cannot finish receiving the value 42 before the corresponding send.
+
+## 5. Errors are explicit return values
+
+~~~go
+package main
+import ("fmt"; "strconv")
+func double(s string) (int, error) {
+    n, err := strconv.Atoi(s)
+    if err != nil { return 0, err }
+    return n * 2, nil
+}
+func main() { fmt.Println(double("21")) } // 42 <nil>
+~~~
+
+A conversion can fail, so the caller needs both the result and error. For cancellation, pass context.Context to operations that can honour cancellation.
+
+**Sources:** [A Tour of Go](https://go.dev/tour/welcome/1), [Effective Go](https://go.dev/doc/effective_go), [Go Memory Model](https://go.dev/ref/mem).
+
+[← Programming Languages](index.qmd)

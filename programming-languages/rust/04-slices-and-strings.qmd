@@ -1,0 +1,42 @@
+---
+title: "String, `&str`, and Slices"
+description: "One key Rust idea, one tiny executable example, the reason it works, and a precise pitfall."
+---
+
+## The question
+
+**Why should a function usually accept `&str` instead of taking an owned String?**
+
+`String` owns and can grow its UTF-8 bytes. `&str` is a borrowed view of a valid UTF-8 string slice. Taking `&str` makes a function usable with both a String and string literals.
+
+## The core rule
+
+Borrow the part you need, not an unnecessary copy of the whole allocation.
+
+## One complete example
+
+Paste these lines into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`, or [use the tested Rust examples project](examples/index.qmd).
+
+~~~rust
+fn first_word(s: &str) -> &str {
+    s.split_whitespace().next().unwrap_or("")
+}
+fn main() {
+    let sentence = String::from("hello world");
+    println!("{}", first_word(&sentence)); // hello
+}
+~~~
+
+**Walk through it:** The `first_word` function reads through a `&str`; it neither clones nor moves the `String`. The returned slice refers to the existing text and cannot safely outlive that text.
+
+## Common misunderstanding
+
+Strings are UTF-8: indexing `s[0]` is not allowed because a byte index is not necessarily a Unicode character boundary. Distinguish bytes, `chars()`, and grapheme clusters.
+
+## Remember it in one sentence
+
+Borrow the part you need, not an unnecessary copy of the whole allocation.
+
+**Official reference:** [The Rust Programming Language / Rust Reference](https://doc.rust-lang.org/book/ch04-03-slices.html).
+
+[← Rust learning path](index.qmd) · [Examples and tests](examples/index.qmd)

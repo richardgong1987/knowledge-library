@@ -1,22 +1,88 @@
 ---
-title: "Java"
-description: "A structured exploration of the Java language, JVM, memory model, and concurrency."
+title: "Java — Core Language Concepts and JVM"
+description: "Modern Java language fundamentals with tiny examples and the existing in-depth JVM/JMM courses."
 ---
 
-Learn Java by connecting language behaviour to the problems it solves.
+# Java — understand the language and the runtime separately
 
-## JVM Topics
+The Java language defines types, methods, classes, generics and exceptions. The **JVM** executes bytecode, manages runtime memory and implements defined concurrency semantics. Both layers matter, but they answer different questions.
 
-Explore how Java programmes run, including runtime behaviour, memory, and concurrency.
+## 1. Object references are copied; objects are not
 
-- [JVM Topics](java/jvm/index.qmd)
-  - [Java Memory Model (JMM)](java/jvm/jmm/index.qmd)
+~~~java
+public class Main {
+    static class User { int age = 3; }
+    public static void main(String[] args) {
+        User a = new User();
+        User b = a;
+        b.age = 7;
+        System.out.println(a.age); // 7
+    }
+}
+~~~
 
-## Further Java topics (planned)
+Both variables refer to one User object. Java passes method arguments by value: when the value is an object reference, the reference is copied. This is different from Rust moves and borrows.
 
-- Type system, generics, and collections
-- Threading and concurrency utilities
-- Garbage collection and performance
-- Class loading and bytecode
+## 2. Interfaces specify a capability
 
-Each chapter will begin with a concrete example before introducing formal terminology.
+~~~java
+public class Main {
+    interface Named { String name(); }
+    record User(String name) implements Named {}
+    public static void main(String[] args) {
+        Named x = new User("Ada");
+        System.out.println(x.name()); // Ada
+    }
+}
+~~~
+
+The record generates its constructor and accessor. The interface promises a method, not a particular class inheritance chain.
+
+## 3. Generic types are mostly erased at runtime
+
+~~~java
+import java.util.List;
+public class Main {
+    public static void main(String[] args) {
+        List<String> names = List.of("Ada");
+        System.out.println(names.get(0)); // Ada
+    }
+}
+~~~
+
+The compiler verifies that this list is used as a list of String values; generic type arguments are generally erased from the runtime representation. Do not treat List<String> and List<Integer> as distinct JVM classes.
+
+## 4. Checked exceptions and resources
+
+~~~java
+import java.io.StringReader;
+public class Main {
+    public static void main(String[] args) throws Exception {
+        try (StringReader r = new StringReader("A")) {
+            System.out.println((char) r.read()); // A
+        }
+    }
+}
+~~~
+
+Try-with-resources closes the resource deterministically even when the body throws; this is a distinct concept from waiting for garbage collection.
+
+## 5. Concurrency begins with happens-before
+
+A shared Java field read and written by different threads needs a **memory-model** explanation, not only an instruction-order explanation. Volatile publication, synchronized blocks and other synchronisation mechanisms create defined ordering guarantees.
+
+For a single minimal runnable concurrency programme, follow the existing [JMM example](java/jvm/jmm/index.qmd). That specialised course covers read/write actions, visibility, data races, volatile, final-field publication and atomicity in depth.
+
+## Your existing JVM course
+
+- [JVM Overview](java/jvm/index.qmd)
+- [Runtime Memory Areas](java/jvm/memory/index.qmd)
+- [Garbage Collection](java/jvm/gc/index.qmd)
+- [Class Loading and Bytecode](java/jvm/bytecode/index.qmd)
+- [Java Memory Model (JMM)](java/jvm/jmm/index.qmd)
+
+The language examples above are intentionally simple. The runtime chapters provide formal relationships and experiments where they are genuinely needed.
+
+**Official sources:** [Java Language Specification](https://docs.oracle.com/javase/specs/), [Java Tutorials](https://dev.java/learn/).
+
+[← Programming Languages](index.qmd)

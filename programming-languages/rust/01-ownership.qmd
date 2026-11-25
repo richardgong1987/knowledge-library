@@ -1,0 +1,51 @@
+---
+title: "Ownership and Move Semantics"
+description: "One key Rust idea, one tiny executable example, the reason it works, and a precise pitfall."
+---
+
+## The question
+
+**Why doesn't assigning one String simply make two independent owners?**
+
+A String owns a heap allocation. Assigning it to another variable normally moves that ownership; the old binding can no longer be used.
+
+## The core rule
+
+String moves; integer types such as i32 implement Copy, so their values are duplicated.
+
+## One complete example
+
+Paste these lines into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`, or [use the tested Rust examples project](examples/index.qmd).
+
+~~~rust
+fn main() {
+    let a = String::from("hello");
+    let b = a;             // ownership moves to b
+    println!("{b}");       // hello
+    // println!("{a}");    // does not compile: a moved
+}
+~~~
+
+**Walk through it:** The binding `a` is no longer allowed to access its old allocation after the move. The allocation is freed when its current owner (`b`) goes out of scope. No garbage collector is required for this ordinary owned value.
+
+## Mathematical model — explained with real values
+
+$$
+owners(v)=1
+$$
+
+**What every symbol means:** `owners(v)` is a teaching shorthand for the number of active owning bindings to one non-`Copy` value `v`. Rust enforces one current owner in ordinary ownership moves; this shorthand is not a complete formal memory model.
+
+**Substitute actual values:** At first, the `String` allocation belongs to `a` (one owner). After `let b = a`, ownership moves to `b` (still one owner), not two. An explicit `clone()` creates **another value** with another allocation.
+
+## Common misunderstanding
+
+What if you need both Strings? Use `let b = a.clone();` to explicitly allocate a second owned String. A `let x = 3; let y = x;` assignment is different because `i32` is `Copy`.
+
+## Remember it in one sentence
+
+String moves; integer types such as i32 implement Copy, so their values are duplicated.
+
+**Official reference:** [The Rust Programming Language / Rust Reference](https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html).
+
+[← Rust learning path](index.qmd) · [Examples and tests](examples/index.qmd)

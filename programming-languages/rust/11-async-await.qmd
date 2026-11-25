@@ -1,0 +1,40 @@
+---
+title: "Async/Await: A Future Is Not a Thread"
+description: "One Rust language concept taught with one short runnable example and a precise explanation."
+---
+
+## The question
+
+**Does calling an `async fn` immediately perform its body?**
+
+Calling an async function creates a **Future**. That future must be polled by an executor to make progress. `async` is not equivalent to `thread::spawn`, and the standard library doesn't supply a general-purpose executor API like Tokio.
+
+## The rule to remember
+
+First understand the Future model; add a runtime only when the task actually needs asynchronous I/O.
+
+## The smallest complete example
+
+Paste into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`. The [Rust examples page](examples/index.qmd) describes how to check all snippets automatically.
+
+~~~rust
+async fn answer() -> u8 {
+    7
+}
+fn main() {
+    let _future = answer(); // created, not executed
+    println!("a future was created");
+}
+~~~
+
+**Follow the state:** The program prints only the message from `main`. The future has not been polled, so the `answer` body has not run. For real network I/O, choose an async runtime and await the future.
+
+## Important limitation
+
+An `async` operation can still block an executor if it calls a blocking synchronous operation. Async is about cooperative progress at suspension points, not automatically parallel CPU execution.
+
+## Continue learning
+
+**Official source:** [The Rust Book / Rust Reference](https://doc.rust-lang.org/book/ch17-00-async-await.html).
+
+[← Rust](index.qmd) · [Rust examples](examples/index.qmd)

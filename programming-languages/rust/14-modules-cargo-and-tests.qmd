@@ -1,0 +1,39 @@
+---
+title: "Modules, Cargo, and Tests"
+description: "One Rust language concept taught with one short runnable example and a precise explanation."
+---
+
+## The question
+
+**How do you organise code without building a large framework?**
+
+A module defines a namespace and visibility boundary. Cargo builds and tests crates. Most basic demonstrations need only one file; a procedural macro is the exception because the compiler requires a special crate type.
+
+## The rule to remember
+
+Keep examples small and test ordinary functions before extracting many packages.
+
+## The smallest complete example
+
+Paste into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`. The [Rust examples page](examples/index.qmd) describes how to check all snippets automatically.
+
+~~~rust
+mod math {
+    pub fn double(n: i32) -> i32 { n * 2 }
+}
+fn main() {
+    println!("{}", math::double(3)); // 6
+}
+~~~
+
+**Follow the state:** `mod math` creates a namespace and `pub` makes `double` accessible from its parent. Without `pub`, calling it from `main` would violate Rust visibility rules.
+
+## Important limitation
+
+Run with `rustc --edition 2024 main.rs`. For a Cargo project, `cargo test` discovers `#[test]` functions. Rust 2024 edition affects language defaults; it does not require learning every new edition feature before understanding modules.
+
+## Continue learning
+
+**Official source:** [The Rust Book / Rust Reference](https://doc.rust-lang.org/book/ch07-00-managing-growing-projects-with-packages-crates-and-modules.html).
+
+[← Rust](index.qmd) · [Rust examples](examples/index.qmd)

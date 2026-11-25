@@ -1,0 +1,53 @@
+---
+title: "Lifetimes: References Must Not Outlive Data"
+description: "One key Rust idea, one tiny executable example, the reason it works, and a precise pitfall."
+---
+
+## The question
+
+**Does writing `'a` keep a variable alive longer?**
+
+No. A lifetime annotation describes a relationship the compiler must check. It does not extend a value's existence. When a function may return either of two borrowed strings, an explicit common lifetime makes that relationship visible.
+
+## The core rule
+
+The returned reference must be valid for the part of the inputs' lifetimes in which both remain usable.
+
+## One complete example
+
+Paste these lines into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`, or [use the tested Rust examples project](examples/index.qmd).
+
+~~~rust
+fn longer<'a>(a: &'a str, b: &'a str) -> &'a str {
+    if a.len() >= b.len() { a } else { b }
+}
+fn main() {
+    let a = String::from("apple");
+    let b = String::from("pear");
+    println!("{}", longer(&a, &b));  // apple
+}
+~~~
+
+**Walk through it:** The syntax `<'a>` introduces a lifetime parameter; `&'a str` ties input and output reference validity together. The compiler infers concrete borrowing scopes for this particular call.
+
+## Mathematical model — explained with real values
+
+$$
+L_{\mathrm{return}}\subseteq L_a\cap L_b
+$$
+
+**What every symbol means:** `L_return` denotes where the returned borrowed reference may validly be used; `L_a` and `L_b` denote validity regions for the two borrowed inputs; `∩` means the overlapping region; `⊆` means the result cannot demand a longer valid region.
+
+**Substitute actual values:** If input a can be borrowed through steps 1–5 and b through steps 2–4, the returned reference may be used only within the common steps 2–4. The lifetime parameter **does not add steps 5–6** to b.
+
+## Common misunderstanding
+
+Incorrect intuition: return a reference to a locally created String after the String has already been dropped. The annotation cannot fix dangling references; return an owned `String` when ownership must leave the function.
+
+## Remember it in one sentence
+
+The returned reference must be valid for the part of the inputs' lifetimes in which both remain usable.
+
+**Official reference:** [The Rust Programming Language / Rust Reference](https://doc.rust-lang.org/book/ch10-03-lifetime-syntax.html).
+
+[← Rust learning path](index.qmd) · [Examples and tests](examples/index.qmd)

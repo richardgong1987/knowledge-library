@@ -1,0 +1,40 @@
+---
+title: "Declarative Macros with `macro_rules!`"
+description: "One Rust language concept taught with one short runnable example and a precise explanation."
+---
+
+## The question
+
+**Why does `println!` have an exclamation mark?**
+
+`println!` is a macro invocation. Unlike an ordinary function, a macro can accept token patterns and expand into Rust syntax **at compile time**. The simplest user-defined form is `macro_rules!`.
+
+## The rule to remember
+
+Macros generate syntax. Prefer ordinary functions when a function can express the same operation clearly.
+
+## The smallest complete example
+
+Paste into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`. The [Rust examples page](examples/index.qmd) describes how to check all snippets automatically.
+
+~~~rust
+macro_rules! twice {
+    ($x:expr) => { $x + $x };
+}
+fn main() {
+    let n = 3;
+    println!("{}", twice!(n)); // 6
+}
+~~~
+
+**Follow the state:** `$x:expr` accepts an expression token fragment. Calling `twice!(n)` expands to an expression equivalent to `n + n`, producing 6. The expansion is checked as Rust code.
+
+## Important limitation
+
+This macro evaluates `$x` twice. For `twice!({ counter += 1; counter })`, side effects happen twice; an ordinary `fn twice(x: i32) -> i32 { x + x }` is safer for simple arithmetic. Use macros only when you actually need syntax generation.
+
+## Continue learning
+
+**Official source:** [The Rust Book / Rust Reference](https://doc.rust-lang.org/reference/macros-by-example.html).
+
+[← Rust](index.qmd) · [Rust examples](examples/index.qmd)

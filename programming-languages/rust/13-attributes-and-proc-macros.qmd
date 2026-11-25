@@ -1,0 +1,38 @@
+---
+title: "Attributes and Custom Procedural Macros"
+description: "One Rust language concept taught with one short runnable example and a precise explanation."
+---
+
+## The question
+
+**Can Rust define something like Java's `@MyAnnotation`?**
+
+The closest syntax is an attribute such as `#[derive(Debug)]` or a custom `#[my_attribute]`. But Rust attributes are mainly **compile-time metadata / transformations**, not Java-style runtime-reflection objects.
+
+## The rule to remember
+
+Built-in and derive attributes can be used in one file. Defining a new attribute macro requires a separate **proc-macro crate**; the demonstration below is intentionally the smallest truthful example.
+
+## The smallest complete example
+
+Paste into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`. The [Rust examples page](examples/index.qmd) describes how to check all snippets automatically.
+
+~~~rust
+#[derive(Debug)]
+struct User { id: u32 }
+fn main() {
+    println!("{:?}", User { id: 7 }); // User { id: 7 }
+}
+~~~
+
+**Follow the state:** `#[derive(Debug)]` asks an existing derive macro to generate an implementation of `Debug` for `User`. The `{:?}` formatter can then display the struct. `#[cfg(test)]` controls conditional compilation; not every attribute generates a trait implementation.
+
+## Important limitation
+
+A custom attribute macro receives token streams and returns token streams. It is not a no-code annotation tag that Rust reflects upon at runtime. Production procedural macros should parse syntax carefully (often with `syn`/`quote`) and provide diagnostics; the minimal lab purposely uses fixed output without dependencies.
+
+## Continue learning
+
+**Official source:** [The Rust Book / Rust Reference](https://doc.rust-lang.org/reference/procedural-macros.html).
+
+[← Rust](index.qmd) · [Rust examples](examples/index.qmd)

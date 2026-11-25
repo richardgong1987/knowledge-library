@@ -1,18 +1,51 @@
 ---
 title: "Programming Languages"
+subtitle: "One essential idea at a time"
+description: "Core programming language semantics, taught with independent tiny examples and a deeper Rust/JVM learning path."
 ---
 
-Programming language concepts, runtime behaviour, type systems, and practical examples.
+# Learn the meaning before the syntax
 
-## Topics
+A language is not merely its keywords. The most useful questions concern **who owns data, what the type checker guarantees, how functions communicate and when code actually runs**.
 
-- [Java](java.qmd) — Start with [JVM Topics](java/jvm/index.qmd), including the [Java Memory Model (JMM)](java/jvm/jmm/index.qmd).
-- [Rust](rust.qmd) — Ownership, borrowing, lifetimes, traits, and fearless concurrency.
-- [Go (Golang)](go.qmd) — Goroutines, channels, interfaces, and concurrent services.
-- [TypeScript](typescript.qmd) — Structural typing, generics, inference, and application architecture.
-- [JavaScript](javascript.qmd) — Closures, the event loop, promises, and the language runtime.
-- [Python](python.qmd) — The object model, iterators, typing, concurrency, and scientific computing.
-- [C#](csharp.qmd) — The type system, async/await, LINQ, memory, and runtime behaviour.
-- [Prolog](prolog.qmd) — Unification, logical inference, backtracking, and declarative programming.
+Every example in this section should be the smallest code that demonstrates **one idea**. Do not combine unrelated frameworks, persistence, concurrency and metaprogramming in one demonstration.
 
-Each topic will grow into a collection of worked examples, conceptual explanations, and interactive experiments.
+## Recommended: Rust fundamentals first
+
+[**Rust Core Concepts — 16 small chapters**](rust/index.qmd) gives a clear progression:
+
+1. [Ownership and Moves](rust/01-ownership.qmd) — why a String is moved rather than implicitly copied.
+2. [Borrowing](rust/02-borrowing.qmd) — shared references versus exclusive mutable references.
+3. [Lifetimes](rust/03-lifetimes.qmd) — relationships between reference validity, not extra runtime objects.
+4. [Traits and Generics](rust/07-traits-and-generics.qmd) — constraints on behaviour.
+5. [Declarative Macros](rust/12-declarative-macros.qmd) and [Custom Attributes](rust/13-attributes-and-proc-macros.qmd) — compile-time syntax generation.
+
+The [Rust examples](rust/examples/index.qmd) compile each tiny chapter's program and run one **real custom procedural attribute** in an independent two-crate Cargo workspace. That separation is required by Rust, not arbitrary architectural complexity.
+
+## Other languages: concise core ideas
+
+- **[Java](java.qmd):** object references, generics, interfaces, records, exceptions, and the full [JVM/JMM path](java/jvm/index.qmd).
+- **[Go](go.qmd):** pointer values, slice backing arrays, implicitly implemented interfaces, channels, and errors.
+- **[TypeScript](typescript.qmd):** structural typing, discriminated unions, generics, runtime validation, and Promises.
+- **[JavaScript](javascript.qmd):** object references, closures, microtasks, Promises, prototypes, and receivers.
+- **[Python](python.qmd):** object names, mutable defaults, generators, decorators, type hints, and coroutines.
+- **[C#](csharp.qmd):** value/reference semantics, nullable references, records, patterns, Tasks, and LINQ.
+- **[Prolog](prolog.qmd):** facts, rules, unification, backtracking, and recursive relations.
+
+## A useful comparison before the syntax
+
+A string-like value is passed between two functions. Does the callee own an independent value, borrow it, or merely hold another reference? The answer depends on the language and type.
+
+- Rust makes moves, borrows and explicit clones central to its static rules.
+- Go copies the argument value, even when that value is a slice descriptor or pointer.
+- JavaScript and Python bindings can refer to the same mutable object.
+- Java copies primitive values or object references as arguments.
+- TypeScript adds a compile-time structural type system to JavaScript; the runtime object behaviour is still JavaScript.
+
+**The right question is not which language is best. It is what each language guarantees at the exact operation you are trying to understand.**
+
+## Mathematics when useful, not for decoration
+
+When a language concept needs a formula (for example, a happens-before relation), immediately explain **every symbol** and **substitute a real execution or set of numbers**. If the idea is clearer with just five lines of code, use the code instead of adding a gratuitous equation.
+
+[← Knowledge Library](../index.qmd)

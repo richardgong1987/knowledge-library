@@ -1,0 +1,43 @@
+---
+title: "`Option`, `Result`, and the `?` Operator"
+description: "One key Rust idea, one tiny executable example, the reason it works, and a precise pitfall."
+---
+
+## The question
+
+**How does Rust force the caller to acknowledge a missing value or a recoverable error?**
+
+Use `Option<T>` for `Some(T)` or `None`, and `Result<T,E>` for `Ok(T)` or `Err(E)`. The `?` operator propagates an error early to the caller.
+
+## The core rule
+
+Encode failure in the return type, instead of assuming every conversion works.
+
+## One complete example
+
+Paste these lines into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`, or [use the tested Rust examples project](examples/index.qmd).
+
+~~~rust
+fn double(s: &str) -> Result<i32, std::num::ParseIntError> {
+    let n: i32 = s.parse()?; // Err returns early
+    Ok(n * 2)
+}
+fn main() {
+    println!("{:?}", double("21")); // Ok(42)
+    println!("{:?}", double("x"));  // Err(...)
+}
+~~~
+
+**Walk through it:** The successful parse of `"21"` produces 21, then `Ok(42)`. Parsing `"x"` fails; `?` returns that error without executing the multiplication.
+
+## Common misunderstanding
+
+`unwrap()` panics on `Err`/`None`; use it only when failure truly violates a known invariant. For expected input errors, propagate `Result` or handle them with `match`.
+
+## Remember it in one sentence
+
+Encode failure in the return type, instead of assuming every conversion works.
+
+**Official reference:** [The Rust Programming Language / Rust Reference](https://doc.rust-lang.org/book/ch09-02-recoverable-errors-with-result.html).
+
+[← Rust learning path](index.qmd) · [Examples and tests](examples/index.qmd)

@@ -1,32 +1,89 @@
 ---
-title: "Python"
-description: "The object model, iterators, typing, concurrency, and scientific computing."
+title: "Python — Core Concepts"
+description: "References, mutable defaults, generators, decorators, type hints and async in minimal Python."
 ---
 
-The object model, iterators, typing, concurrency, and scientific computing.
+# Python — names refer to objects
 
-::: {.callout-note}
-## Chapter status
+A Python variable is a name bound to an object. Several names can refer to the same mutable object, which is different from Rust's move and borrow rules.
 
-This is a chapter outline. Detailed lessons and interactive examples will be added progressively.
-:::
+## 1. Aliasing of a mutable list
 
-## The problem
+~~~python
+a = [1, 2]
+b = a
+b.append(3)
+print(a)  # [1, 2, 3]
+~~~
 
-What real-world need motivates this topic?
+Both a and b refer to the same list. A shallow copy creates a new outer list but may still share nested objects.
 
-## A running example
+## 2. Mutable defaults are evaluated once
 
-Start with one concrete scenario and keep it throughout the explanation.
+~~~python
+def add(x, items=None):
+    if items is None:
+        items = []
+    items.append(x)
+    return items
 
-## Step-by-step reasoning
+print(add(1)) # [1]
+print(add(2)) # [2]
+~~~
 
-Explain what changes, why it changes, and what can be inferred.
+Using a default list directly can accidentally retain state from earlier calls. The None sentinel creates a fresh list only when needed.
 
-## Implementation or mathematical model
+## 3. Generators yield on demand
 
-Add code, equations, diagrams, or an interactive experiment here.
+~~~python
+def numbers():
+    yield 2
+    yield 3
 
-## Related concepts
+print(sum(numbers())) # 5
+~~~
 
-Link to prerequisite and follow-up lessons as the library grows.
+The function pauses at yield and continues when the consumer requests the next item. It does not need to build an entire list first.
+
+## 4. Decorators transform a function binding
+
+~~~python
+def loud(fn):
+    def wrapper():
+        return fn().upper()
+    return wrapper
+
+@loud
+def greet():
+    return "hello"
+
+print(greet()) # HELLO
+~~~
+
+Unlike Rust procedural macros, this ordinary Python decorator is applied during execution of the function definition, commonly at import time.
+
+## 5. Type hints and runtime are separate
+
+~~~python
+def double(n: int) -> int:
+    return n * 2
+
+print(double(3)) # 6
+~~~
+
+The annotation communicates intended types to tools; Python does not use it automatically to reject every mismatched runtime argument.
+
+## 6. Await with an event loop
+
+~~~python
+import asyncio
+async def answer():
+    return 42
+print(asyncio.run(answer())) # 42
+~~~
+
+Asynchronous functions coordinate waiting, not automatic parallel CPU computation. Interpreter and build details matter for threaded execution.
+
+**Sources:** [Python Tutorial](https://docs.python.org/3/tutorial/), [Language Reference](https://docs.python.org/3/reference/), [asyncio](https://docs.python.org/3/library/asyncio.html).
+
+[← Programming Languages](index.qmd)

@@ -1,0 +1,44 @@
+---
+title: "Threads, `Arc<Mutex<T>>`, `Send`, and `Sync`"
+description: "One Rust language concept taught with one short runnable example and a precise explanation."
+---
+
+## The question
+
+**How can two threads safely access one mutable counter?**
+
+`Arc<T>` supplies thread-safe shared ownership; `Mutex<T>` gives exclusive access while holding a lock. `Send` and `Sync` are marker traits describing safe movement/sharing across threads.
+
+## The rule to remember
+
+Thread safety requires BOTH ownership and synchronisation; `Arc` alone does not make an arbitrary mutable value safe.
+
+## The smallest complete example
+
+Paste into `main.rs` and run with `rustc --edition 2024 main.rs && ./main`. The [Rust examples page](examples/index.qmd) describes how to check all snippets automatically.
+
+~~~rust
+use std::sync::{Arc, Mutex};
+use std::thread;
+fn main() {
+    let count = Arc::new(Mutex::new(0));
+    let shared = Arc::clone(&count);
+    let worker = thread::spawn(move || {
+        *shared.lock().unwrap() += 1;
+    });
+    worker.join().unwrap();
+    println!("{}", *count.lock().unwrap()); // 1
+}
+~~~
+
+**Follow the state:** The thread closure takes ownership of its cloned `Arc` handle (`move`). It locks before changing the number. The join waits for that worker to finish before main prints 1.
+
+## Important limitation
+
+Locking is not free. Two locks acquired in opposite order can deadlock. Rust prevents many data races in safe code, but deadlocks and logical races remain possible. A Mutex is not a replacement for a correct concurrency design.
+
+## Continue learning
+
+**Official source:** [The Rust Book / Rust Reference](https://doc.rust-lang.org/book/ch16-03-shared-state.html).
+
+[← Rust](index.qmd) · [Rust examples](examples/index.qmd)
