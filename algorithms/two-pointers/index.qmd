@@ -52,6 +52,32 @@ console.log(twoSumSorted([2,7,11,15],9));
 
 Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function twoSumSorted(a, target) {
+  let l = 0, r = a.length - 1;
+  while (l < r) {
+    const sum = a[l] + a[r];
+    if (sum === target) return [l, r];
+    if (sum < target) l++;
+    else r--;
+  }
+  return null;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. With a sorted array, the current smallest and largest candidates are `a[l]` and `a[r]`.
+2. When their sum exceeds target, increasing the smaller number cannot help; reduce the larger number by moving `r`.
+3. When the sum is too small, decreasing the larger number cannot help; advance `l`.
+4. For `[2,7,11,15]`, target 9, the sequence 17→13→9 discards only impossible pairs.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Analyse the work; do not guess big-O
 
 **Cost:** O(n) pointer movements after sorting; if sorting is required first, total can be O(n log n). n is number of values.

@@ -52,6 +52,36 @@ console.log(bfsDistances([[1,2],[3],[3],[]],0));
 
 Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function bfsDistances(graph, source) {
+  const d = Array(graph.length).fill(Infinity);
+  d[source] = 0;
+  const queue = [source];
+  for (let head = 0; head < queue.length; head++) {
+    const v = queue[head];
+    for (const u of graph[v]) if (d[u] === Infinity) {
+      d[u] = d[v] + 1;
+      queue.push(u);
+    }
+  }
+  return d;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. Initialise all distances to infinity except the source at zero; unvisited means no path has yet been established.
+2. The queue processes already-discovered vertices in nondecreasing distance layers.
+3. The first time you discover a neighbour, assign `d[u] = d[v] + 1` and enqueue it.
+4. The integer `head` advances through the array instead of repeatedly shifting it.
+5. For edges 0→1, 0→2, 1→3 and 2→3, results are **[0,1,1,2]**.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Analyse the work; do not guess big-O
 
 **Cost:** O(V+E) time, O(V) memory; V is number of vertices and E number of adjacency-list entries.

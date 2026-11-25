@@ -50,6 +50,40 @@ The implementation is in the [small, tested Node.js algorithms lab](../examples/
 
 The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function dijkstraSimple(graph, source) {
+  const d = Array(graph.length).fill(Infinity);
+  const settled = Array(graph.length).fill(false);
+  d[source] = 0;
+  for (let step = 0; step < graph.length; step++) {
+    let u = -1;
+    for (let i = 0; i < graph.length; i++)
+      if (!settled[i] && (u < 0 || d[i] < d[u])) u = i;
+    if (u < 0 || d[u] === Infinity) break;
+    settled[u] = true;
+    for (const [v, w] of graph[u]) {
+      if (w < 0) throw Error('Dijkstra needs nonnegative weights');
+      d[v] = Math.min(d[v], d[u] + w);
+    }
+  }
+  return d;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. `d` stores the cheapest discovered source-to-vertex route so far.
+2. Find the unsettled vertex with the smallest tentative `d` using a plain linear scan. This is easy to inspect, but slower than a heap.
+3. Settle that vertex, then relax each outgoing edge by comparing existing cost with cost through the current vertex.
+4. The **nonnegative-weight assumption** is required for settling a vertex to be safe.
+5. With A→B=2, A→C=5 and B→C=1, the final distances are **[0,2,3]**.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Work and limitations
 
 **Complexity:** The simple readable lab uses O(V²+E) time with linear minimum selection. A binary-heap implementation is typically O((V+E) log V). V is vertices, E edges.

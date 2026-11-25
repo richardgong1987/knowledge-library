@@ -48,6 +48,32 @@ console.log(nextGreater([2,1,3]));
 
 Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function nextGreater(a) {
+  const out = Array(a.length).fill(-1), stack = [];
+  for (let i = 0; i < a.length; i++) {
+    while (stack.length && a[stack[stack.length - 1]] < a[i])
+      out[stack.pop()] = a[i];
+    stack.push(i);
+  }
+  return out;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. The stack stores unresolved **indices**, not answers.
+2. A new larger value answers the next-greater question for all smaller waiting values on top of the stack.
+3. Pop while the current value is strictly greater. Equal values must not be treated as next strictly greater.
+4. Each index is pushed once and popped at most once, so nested loops do not imply quadratic time.
+5. `[2,1,3]` returns **[3,3,-1]**.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Count the work rigorously
 
 **Time and memory:** O(n) total time despite the nested while: every index enters and leaves the stack at most once. O(n) stack space.

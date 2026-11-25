@@ -49,6 +49,30 @@ console.log(maxNonOverlapping([[1,4],[2,3],[3,5]]));
 
 Run this from a `.mjs` file inside this topic directory. The same function is exercised by [the unit tests](../examples/patterns.test.mjs). The implementation is intentionally tiny so the recurrence remains visible.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function maxNonOverlapping(intervals) {
+  const a = [...intervals].sort((x, y) => x[1] - y[1]);
+  let end = -Infinity, count = 0;
+  for (const [start, stop] of a)
+    if (start >= end) { count++; end = stop; }
+  return count;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. Sort intervals by finish time; this order encodes the greedy-choice proof.
+2. `end` is the finish of the most recently selected interval.
+3. A new activity is compatible if `start >= end` (half-open meetings may touch at endpoints).
+4. Keeping the earliest-finishing compatible meeting leaves maximum space for all later activities.
+5. From `[1,4], [2,3], [3,5]`, select the second and third, for a result of **2**.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Complexity and failure conditions
 
 **Cost model:** O(n log n) sorting followed by O(n) scanning, where n is meeting count; additional space depends on sorting implementation.

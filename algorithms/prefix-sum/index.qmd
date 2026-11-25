@@ -48,6 +48,33 @@ console.log(subarraySumEqualsK([1,-1,0],0));
 
 Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function subarraySumEqualsK(a, k) {
+  let prefix = 0, answer = 0;
+  const freq = new Map([[0, 1]]);
+  for (const x of a) {
+    prefix += x;
+    answer += freq.get(prefix - k) ?? 0;
+    freq.set(prefix, (freq.get(prefix) ?? 0) + 1);
+  }
+  return answer;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. `prefix` is the sum up to the current index.
+2. If the target sum is `k`, every earlier prefix with value `prefix - k` creates one matching subarray.
+3. The map stores the **frequency** of earlier prefixes, not merely whether the value exists.
+4. Initialise frequency of zero to one, representing the empty prefix.
+5. For `[1,-1,0]` and target zero, the method counts **three** subarrays.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Count the work rigorously
 
 **Time and memory:** O(n) expected counting with a hash map and O(n) space, where n is number of elements; each prefix is processed once.

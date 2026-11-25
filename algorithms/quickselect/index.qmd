@@ -52,6 +52,41 @@ console.log(quickselect([8,2,7,1,9],2));
 
 Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function quickselect(a, k) {
+  if (!Number.isInteger(k) || k < 0 || k >= a.length) throw Error('invalid k');
+  const b = [...a];
+  let left = 0, right = b.length - 1;
+  while (left <= right) {
+    const pivot = b[Math.floor((left + right)/2)];
+    let i=left,j=right;
+    while (i <= j) {
+      while (b[i] < pivot) i++;
+      while (b[j] > pivot) j--;
+      if (i <= j) { [b[i],b[j]]=[b[j],b[i]]; i++; j--; }
+    }
+    if (k <= j) right = j;
+    else if (k >= i) left = i;
+    else return b[k];
+  }
+  return b[k];
+}
+~~~
+
+**Walk through the important lines:**
+
+1. Copy the array so the caller's input remains unchanged.
+2. Choose a pivot value and partition the current candidate segment with two pointers.
+3. If desired rank `k` lies completely left/right of the partition boundaries, discard the other side.
+4. If it lies between the boundaries, the element at `k` has the target rank.
+5. For `[8,2,7,1,9]` and zero-based k=2, the third-smallest value is **7**.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Analyse the work; do not guess big-O
 
 **Cost:** Expected O(n) time with suitable randomisation, worst-case O(n²) for naive pivoting; O(n) copied space in this educational implementation.

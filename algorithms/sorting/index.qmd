@@ -48,6 +48,35 @@ console.log(mergeSort([4,1,4,2]));
 
 Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function mergeSort(a) {
+  if (a.length <= 1) return [...a];
+  const m = Math.floor(a.length / 2);
+  const l = mergeSort(a.slice(0, m)), r = mergeSort(a.slice(m));
+  const result = [];
+  let i = 0, j = 0;
+  while (i < l.length || j < r.length) {
+    if (j === r.length || (i < l.length && l[i] <= r[j]))
+      result.push(l[i++]);
+    else result.push(r[j++]);
+  }
+  return result;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. Every returned array is a permutation of the input values; no value is invented or dropped.
+2. The recursive halves establish sorted subarrays.
+3. The merge repeatedly chooses the smaller available head, so the output remains ordered.
+4. Duplicate values are preserved; for `[4,1,4,2]` output is **[1,2,4,4]**.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Count the work rigorously
 
 **Time and memory:** Merge sort O(n log n) time, O(n) space; built-in library sort performance depends on runtime and comparator.

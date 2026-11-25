@@ -52,6 +52,31 @@ console.log(lowerBound([1,3,3,6],3));
 
 Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function lowerBound(a, target) {
+  let l = 0, r = a.length;
+  while (l < r) {
+    const mid = l + Math.floor((r - l) / 2);
+    if (a[mid] < target) l = mid + 1;
+    else r = mid;
+  }
+  return l;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. `l` and `r` delimit a **half-open** candidate interval. Initially the answer may be anywhere from index zero through array length.
+2. `mid` divides the interval. If `a[mid] < target`, the entire left portion is impossible, so advance `l` beyond `mid`.
+3. Otherwise keep `mid` as a possible first qualifying index and set `r = mid`.
+4. When `l === r`, the boundary has been located. For `[1,3,3,6]` and target `3`, the result is index **1**, not 2.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Analyse the work; do not guess big-O
 
 **Cost:** O(log n) comparisons, where n is sorted array length; with n=16 there are at most around 5 halving decisions.

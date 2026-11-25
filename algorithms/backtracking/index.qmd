@@ -52,6 +52,35 @@ console.log(subsets([1,2,3]));
 
 Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function subsets(a) {
+  const result = [], path = [];
+  function visit(i) {
+    if (i === a.length) { result.push([...path]); return; }
+    visit(i + 1);
+    path.push(a[i]);
+    visit(i + 1);
+    path.pop();
+  }
+  visit(0);
+  return result;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. `visit(i)` means the first `i` items have already had their include/exclude choice decided.
+2. First recurse without selecting item `i`, then add it and recurse with it selected.
+3. `path.pop()` **restores the state** before returning; otherwise one branch contaminates another.
+4. At the leaf, `[...path]` copies the solution, because the mutable path will change during later exploration.
+5. For three distinct items there are 2×2×2 = **8** leaves.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Analyse the work; do not guess big-O
 
 **Cost:** At least Ω(2^n) outputs for listing all subsets; n=20 already means 1,048,576 subsets. Extra recursion depth O(n), excluding stored output.

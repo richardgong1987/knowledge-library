@@ -52,6 +52,33 @@ console.log(longestUniqueSubstring('abba'));
 
 Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function longestUniqueSubstring(s) {
+  let left = 0, best = 0;
+  const last = new Map();
+  for (let right = 0; right < s.length; right++) {
+    const old = last.get(s[right]);
+    if (old !== undefined && old >= left) left = old + 1;
+    last.set(s[right], right);
+    best = Math.max(best, right - left + 1);
+  }
+  return best;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. `left` is the beginning of a valid substring; `right` is the newly examined character.
+2. `last` remembers the most recent index of each character. A duplicate matters **only if that previous index is inside the current window**.
+3. The `Math.max`-like monotonic effect comes from checking `old >= left` before moving `left = old + 1`; never move the left pointer backwards.
+4. `best` stores the maximum length encountered. For `abba`, the answer remains **2**, including after the second `b` forces the window to shrink.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Analyse the work; do not guess big-O
 
 **Cost:** O(n) expected time and O(min(n,alphabet)) space; n is number of indexed characters. Each pointer moves at most n steps.

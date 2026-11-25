@@ -49,6 +49,31 @@ console.log(houseRobber([2,7,9,3,1]));
 
 Run this from a `.mjs` file inside this topic directory. The same function is exercised by [the unit tests](../examples/patterns.test.mjs). The implementation is intentionally tiny so the recurrence remains visible.
 
+## Study the complete implementation, one line at a time
+
+Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+
+~~~js
+export function houseRobber(a) {
+  let beforePrevious = 0, previous = 0;
+  for (const money of a) {
+    const current = Math.max(previous, beforePrevious + money);
+    beforePrevious = previous; previous = current;
+  }
+  return previous;
+}
+~~~
+
+**Walk through the important lines:**
+
+1. `previous` is the best result for the prefix ending immediately before the current house.
+2. `beforePrevious` is the best for the prefix two houses earlier.
+3. `current` chooses between SKIPPING the house (`previous`) and TAKING it (`beforePrevious + money`).
+4. Shift the two saved answers forward; the whole DP table is unnecessary.
+5. On `[2,7,9,3,1]`, successive optima are **2,7,11,11,12**.
+
+Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+
 ## Complexity and failure conditions
 
 **Cost model:** O(n) time because each house is processed once; O(1) extra space after storing only the previous two states. n is number of houses.
