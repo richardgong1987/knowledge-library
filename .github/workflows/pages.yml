@@ -58,6 +58,10 @@ jobs:
         run: |
           cargo +1.100.0 test --manifest-path programming-languages/rust/examples/Cargo.toml --workspace
           cargo +1.100.0 run --manifest-path programming-languages/rust/examples/Cargo.toml -p attribute-demo
+      - name: Test standalone financial mathematics lab
+        run: python3 -m unittest discover -s finance/examples -p 'test_*.py'
+      - name: Verify 28 finance lessons have symbol definitions and worked numbers
+        run: python3 finance/check_curriculum.py
       - name: Install Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:

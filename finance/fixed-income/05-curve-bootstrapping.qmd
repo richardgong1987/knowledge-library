@@ -1,0 +1,45 @@
+---
+title: "Bootstrapping — Solve the Yield Curve One Maturity at a Time"
+description: "An original source-grounded fixed-income lesson explained with small arithmetic and precise financial assumptions."
+---
+
+## Begin with the question
+
+**How can we discover a two-year zero rate when the market only quotes a one-year zero bond and a two-year coupon bond?**
+
+Use a price you know and subtract the value of the earlier cash flow. The money left must be the price of the final cash flow. Solve one unknown discount factor at a time.
+
+## One mathematical relationship
+
+$$
+d_2=\frac{P-C_1d_1}{C_2}
+$$
+
+**What every symbol means:** d_2 is the unknown year-two discount factor, P the observed coupon-bond price, C_1 and C_2 the year-one and year-two cash flows, and d_1 the known year-one discount factor.
+
+**Put actual numbers into the formula:** Take price P=100; C_1=5, C_2=105; s_1=4%, so d_1=1/1.04=0.961538. Calculate d_2=(100−5×0.961538)/105≈0.9065934. Reverse the two-year discount relationship to obtain spot rate 1/sqrt(0.9065934)−1≈5.02525%.
+
+## The reasoning, not just the answer
+
+Why does this work? You already know the today's value of the first coupon, approximately 4.80769. The rest of the observed price, 95.19231, pays for 105 in two years. Divide remaining present value by final cash amount to recover its discount factor.
+
+**Why the method works:** Repeat this process at the next maturity after solving shorter discount factors. This sequential calibration is the basic intuition of bootstrapping. Real desks use exact instrument schedules, swap conventions, multiple curve types and interpolation between available maturities.
+
+## Check it with a tiny programme
+
+Save this inside the Finance lab directory, alongside the [single-file Python library](../examples/finance_lab.py):
+
+~~~python
+from finance_lab import bootstrap_two_year
+print(round(bootstrap_two_year(5,100,.04)*100,5)) # 5.02525
+~~~
+
+Run it with Python 3. The example computes exactly the values in the calculation above, instead of introducing an unrelated finance application.
+
+## When the shortcut stops working
+
+One quote cannot identify a whole continuous curve. Inconsistent illiquid prices, credit exposure, embedded options and mismatched conventions can produce misleading or nonmonotone factors.
+
+**Textbook basis:** Luenberger, Investment Science 2e Ch. 4 §§4.2–4.3; Fabozzi, Handbook 8e Ch. 8. These are independent educational examples rather than reproductions of the books.
+
+[← Fixed Income overview](index.qmd) · [Finance learning map](../index.qmd)

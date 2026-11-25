@@ -1,15 +1,74 @@
 ---
-title: "Finance"
+title: "Finance — Investment Science and Fixed Income"
+subtitle: "Understand difficult finance from tiny, exact cash-flow examples"
+description: "A textbook-grounded, child-friendly route through money, bonds, yield curves, risk, portfolios and derivatives."
 ---
 
-Understand financial instruments and markets by starting with cash flows, economic needs, and concrete numerical examples.
+# Finance is a story about money changing hands at different times
 
-## Fixed income
+The first question in any financial problem is **not which complicated model to choose**. It is: **Who gives whom how much money, and when?**
 
-- [Fixed Income Overview](fixed-income/index.qmd)
-- [Interactive Bond Pricing](fixed-income/bond-pricing.qmd)
-- [Duration](fixed-income/duration.qmd)
+If you can draw the money on a timeline, then we can explain discounting, bond valuation, yield curves, portfolio risk and derivatives step by step.
 
-## Planned areas
+This course uses **three books you provided**: David G. Luenberger, *Investment Science* (1st and 2nd editions), and Frank J. Fabozzi (ed.), *The Handbook of Fixed Income Securities*, 8th edition. It follows their concepts but uses **entirely original explanations and numerical teaching examples**, not copied textbook passages. See the [reading and source map](guides/books-and-learning-map.qmd).
 
-Derivatives, portfolio construction, risk management, market structure, and financial mathematics.
+::: {.callout-tip}
+## Our recurring example: one very small bond
+
+You lend **100** today. You receive **5** in year one and **105** in year two. We will reuse this until the ideas feel natural. A bond is not difficult because of its name; it is a set of dated cash flows.
+:::
+
+## 1. Financial Foundations — understand every number
+
+[**Start here: Financial Foundations**](foundations/index.qmd)
+
+Learn cash-flow timelines → compounding → present value → NPV/IRR → no arbitrage → holding-period return.
+
+**Question to answer:** Why is receiving 105 next year worth 100 today when the appropriate annual rate is 5%?
+
+## 2. Fixed Income — value the promised payments
+
+[**Fixed Income: Bonds, Curves and Risk**](fixed-income/index.qmd)
+
+From the [interactive bond price experiment](fixed-income/bond-pricing.qmd), continue through quoted yields, accrued interest, spot rates, bootstrapping, forward rates, [duration](fixed-income/duration.qmd), convexity, DV01, immunisation, credit, embedded options, MBS and floaters.
+
+**Question to answer:** Why does a bond's price decline when its required yield increases, and how much can it decline?
+
+## 3. Portfolio Theory — decisions involving more than one asset
+
+[**Portfolio Construction and Risk**](portfolio/index.qmd)
+
+Understand expected returns, covariance and correlation, Markowitz portfolio choice, CAPM beta, benchmark tracking error, VaR, expected shortfall and performance attribution.
+
+**Question to answer:** How can combining two risky assets produce less volatility than an average of their individual volatilities?
+
+## 4. Derivatives — the value of agreements and choices
+
+[**Forwards, Swaps, Options and Hedges**](derivatives/index.qmd)
+
+Start with a simple forward agreement, then understand swapping fixed and floating coupons, an option's one-period price, and why half a share plus a loan can replicate a call payoff in a two-state model.
+
+**Question to answer:** Why can an option have value even when its owner may choose never to use it?
+
+## A formula is not an explanation until you substitute numbers
+
+$$
+PV=\frac{105}{1+0.05}=100
+$$
+
+**What every symbol means:** $PV$ is present value; 105 is the money received in exactly one year; 0.05 is the suitable one-year discount rate written as a decimal.
+
+**Calculate it:** 105/1.05=100. If you already have 100 today, investing at 5% gives the same 105 next year. That is the intuition behind present value.
+
+Our rule is universal: **story → timeline → equation → every symbol explained → numerical substitution → small code → what can go wrong.** We never introduce mathematics just to look sophisticated.
+
+## Run the entire financial calculator
+
+~~~bash
+python3 finance/examples/finance_lab.py
+python3 -m unittest discover -s finance/examples -p 'test_*.py'
+~~~
+
+The [single original Python file](examples/finance_lab.py) and its [unit tests](examples/test_finance_lab.py) use only Python's standard library. Production trading models need many more conventions; the lab intentionally isolates each finance idea.
+
+[Full learning roadmap and book references](guides/books-and-learning-map.qmd)

@@ -1,0 +1,45 @@
+---
+title: "Spot Rates and Discount Factors — One Price per Payment Date"
+description: "An original source-grounded fixed-income lesson explained with small arithmetic and precise financial assumptions."
+---
+
+## Begin with the question
+
+**Should money arriving in one year and money arriving in two years really be discounted at the same interest rate?**
+
+A spot (zero-coupon) curve supplies a separate price tag for money paid at each maturity. Discount factors make the tags easier to use.
+
+## One mathematical relationship
+
+$$
+d_t=\frac{1}{(1+s_t)^t}
+$$
+
+**What every symbol means:** d_t is the price today of one unit paid at future year t; s_t is the annual-compounded spot rate for that maturity; t counts years.
+
+**Put actual numbers into the formula:** If the one-year spot rate is 4%, d_1=1/1.04=0.961538. If the two-year spot rate is 5%, d_2=1/(1.05)^2=0.907029. Thus a future coin in year two is worth less today than one arriving in year one.
+
+## The reasoning, not just the answer
+
+Value our familiar bond with cash flows 5 and 105. Multiplying 5×0.961538≈4.80769 and 105×0.907029≈95.23810 gives 100.04579. The same bond was worth exactly 100 when both payments were discounted at 5%. This difference comes from the TERM STRUCTURE, not altered promises.
+
+**Why the method works:** Discounting each cash flow at its own maturity's zero rate is simply adding today's prices for each separate future payment. A coupon bond YTM is one summarising rate that reproduces the total price; the underlying spot curve contains more information.
+
+## Check it with a tiny programme
+
+Save this inside the Finance lab directory, alongside the [single-file Python library](../examples/finance_lab.py):
+
+~~~python
+from finance_lab import bond_price_spot
+print(round(bond_price_spot([5,105],[.04,.05]),4)) # 100.0458
+~~~
+
+Run it with Python 3. The example computes exactly the values in the calculation above, instead of introducing an unrelated finance application.
+
+## When the shortcut stops working
+
+Do not combine rates from incompatible collateral, currencies, benchmark instruments, compounding or day-count conventions. A curve is a calibrated market object, not a universal interest rate for every security.
+
+**Textbook basis:** Luenberger, Investment Science 2e Ch. 4 §§4.1–4.2; Fabozzi Handbook 8e Ch. 8. These are independent educational examples rather than reproductions of the books.
+
+[← Fixed Income overview](index.qmd) · [Finance learning map](../index.qmd)

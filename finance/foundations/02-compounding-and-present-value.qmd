@@ -1,0 +1,67 @@
+---
+title: "Compounding and Present Value — A Time Machine for Money"
+description: "Understand why 100 today and 100 next year are different with small arithmetic."
+---
+
+# Why receiving 100 today is better than receiving it next year
+
+Suppose a bank pays **5% interest per year**. If you put 100 coins in today, you will have 105 in a year.
+
+$$
+FV=PV(1+r)^n
+$$
+
+**Symbols:** $FV$ means future value; $PV$ means money today; $r$ is the interest rate for one compounding period written as a decimal; $n$ is how many periods pass.
+
+**Substitute numbers:** With $PV=100$, $r=0.05$, $n=2$, we get 100×1.05×1.05=**110.25** after two years. The extra 0.25 comes from earning interest *on the first year's interest*.
+
+## Now turn the question backwards
+
+If a bank promises to pay you 105 **one year from now**, how much should that promise be worth **today** when a comparable risk-free investment earns 5%? It should be worth 100: investing 100 today produces 105 next year.
+
+$$
+PV=\frac{FV}{(1+r)^n}
+$$
+
+**Symbols:** $PV$ is today's value; $FV$ is future cash paid after $n$ periods; $r$ is the per-period discount rate. The denominator removes the growth we could earn by waiting.
+
+**Substitute numbers:** To receive 105 in one year at 5%, calculate 105/1.05=**100**. To receive 110.25 in two years, calculate 110.25/(1.05×1.05)=**100** again.
+
+This backward operation is called **discounting**. It is the most important financial calculation in the rest of the course.
+
+## Not every interest quote has the same compounding convention
+
+If 12% is an *annual nominal rate compounded monthly*, the monthly rate is 1% and twelve monthly interest steps occur.
+
+$$
+FV=100\left(1+\frac{0.12}{12}\right)^{12}
+$$
+
+**Symbols:** 100 is today's principal; 0.12 is the nominal annual rate; 12 in the denominator means 12 compounding periods per year; the exponent 12 counts the monthly periods.
+
+**Substitute numbers:** The first month produces 100×1.01=101. The second produces 101×1.01=102.01. Continuing for twelve months gives approximately **112.68**, slightly more than the simple annual result of 112. Changing compounding frequency changes the value.
+
+## Apply it to our bond
+
+The two promised receipts are 5 next year and 105 in year two:
+
+$$
+P=\frac{5}{1.05}+\frac{105}{1.05^2}=100
+$$
+
+**Symbols:** $P$ is the bond price today; 5 and 105 are its future cash flows; 1.05 is one plus the assumed annual discount rate; the square discounts the second payment twice.
+
+**Substitute numbers:** 5/1.05≈4.7619 and 105/1.1025≈95.2381; adding gives **100.00**.
+
+## Small executable check
+
+~~~python
+from finance_lab import present_value
+print(round(present_value([5, 105], .05), 2))  # 100.0
+~~~
+
+**What the formula does not know:** It does not automatically allow for taxes, inflation, default, calendar conventions or differences between borrowing and lending rates. Those questions come later.
+
+**Book connection:** Luenberger, *Investment Science*, 2nd ed., §§2.1–2.3; 1st ed., Chapter 2.
+
+[Previous](01-cash-flow-timeline.qmd) · [Next: NPV and IRR](03-npv-and-irr.qmd)

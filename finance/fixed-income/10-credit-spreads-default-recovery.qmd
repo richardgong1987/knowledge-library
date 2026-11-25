@@ -1,0 +1,41 @@
+---
+title: "Credit Risk — The Borrower May Not Pay"
+description: "A deeper but child-friendly finance lesson with original numeric examples and risk assumptions."
+---
+
+## A real question to answer
+
+**Why should lending to a company typically require a higher yield than lending to a benchmark government issuer?**
+
+A bond is a promise, and promises can be broken. The higher return investors require may reflect expected losses, uncertainty, liquidity, and risk premia; it is NOT just a calculator's default probability.
+
+## Build the exact relationship
+
+$$
+s\approx\lambda(1-R)
+$$
+
+**What every symbol means:** s is an approximate annual credit spread in decimal form; λ is a small annual default intensity/hazard rate; R is recovery fraction on default, between zero and one. The approximation assumes a highly simplified continuous-time credit setting and omits many market effects.
+
+**Substitute numbers and calculate:** If default intensity is roughly 2% per year and recovery is 40% of principal, loss given default is 1−0.40=60%. The heuristic spread is 0.02×0.60=0.012, or 1.2%=120 basis points. This does NOT mean every 120-bp spread implies precisely 2% actual default probability.
+
+## Why the financial reasoning works
+
+Consider a separate one-year risk-neutral toy example: a claim pays 100 if no default, 40 if default; assume **risk-neutral** default probability 2% and a risk-free rate of 3%. Expected cash at year end is 0.98×100+0.02×40=98.8, so toy price=98.8/1.03≈95.92. The reduced price compensates for the bad state.
+
+## A tiny calculation, not a large framework
+
+~~~python
+from finance_lab import credit_spread_approx
+print(credit_spread_approx(.02,.4)*10000) # 120 basis points
+~~~
+
+The examples are checked, where applicable, in the [small finance calculation lab](../examples/index.qmd).
+
+## When this answer is no longer enough
+
+Real market-implied default intensities are risk-neutral/model-dependent, often differing from historical default frequencies. Recovery timing, seniority, covenants, collateral, liquidity, maturity and the benchmark curve matter. Never conflate 'credit spread' and 'default probability' without a model.
+
+**Textbook basis:** Fabozzi Handbook 8e Ch. 2 (credit risk), Ch. 12 (corporate bonds); Luenberger Investment Science 2e Ch. 17 (credit risk).. The calculations and child-friendly explanations are original.
+
+[← Fixed Income](index.qmd) · [Finance home](../index.qmd)

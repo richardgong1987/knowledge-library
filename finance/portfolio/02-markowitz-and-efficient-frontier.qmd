@@ -1,0 +1,41 @@
+---
+title: "Markowitz Portfolio Choice — Best Risk for a Chosen Return"
+description: "Explain portfolio mathematics with a small numerical example and practical risk limitations."
+---
+
+## The question
+
+**Should you always buy the asset with the highest expected return?**
+
+No. A higher expected return may carry much greater risk. Mean–variance theory asks which combinations are most attractive when we compare expected return and volatility TOGETHER.
+
+## Build one relationship
+
+$$
+\sigma_p^2=w_A^2(0.10)^2+(1-w_A)^2(0.20)^2
+$$
+
+**Explain every symbol:** σ_p² is portfolio variance, w_A is the fraction in asset A, 1−w_A the fraction in B, and 0.10 and 0.20 are standard deviations. This particular formula assumes **zero correlation** between A and B.
+
+**Substitute concrete numbers:** Assume A's expected return is 6% and B's 10%. At equal weights, expected return=0.5×6%+0.5×10%=8% and volatility=11.18%. At 80% A and 20% B, variance=0.8²×0.01+0.2²×0.04=0.008, so volatility=**8.94%**, with expected return 0.8×6%+0.2×10%=6.8%.
+
+## Why this matters for decisions
+
+The 80/20 mix in this simple zero-correlation example gives the MINIMUM variance among the two-asset combinations without extra constraints; you can verify by differentiating the quadratic or checking nearby weights. The efficient frontier keeps portfolios that cannot improve return without increasing risk, or reduce risk without giving up return.
+
+~~~python
+from finance_lab import portfolio_return,portfolio_variance
+from math import sqrt
+w=[.8,.2];r=[.06,.10]
+print(portfolio_return(w,r),sqrt(portfolio_variance(w,[[.01,0],[0,.04]])))
+~~~
+
+These minimal examples build on the [Finance calculation lab](../examples/index.qmd), where relevant.
+
+## What the model leaves out
+
+Optimising expected returns and covariance estimated from small noisy data can produce absurdly concentrated weights. Practical portfolio construction adds position limits, benchmark exposure, turnover, liquidity, taxes and robust-estimation considerations.
+
+**Source basis:** Luenberger Investment Science 2e Ch. 6 (feasible set, Markowitz model and fund theorems).. Text and examples are independently developed.
+
+[← Portfolio overview](index.qmd) · [Finance home](../index.qmd)

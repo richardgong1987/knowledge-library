@@ -1,0 +1,39 @@
+---
+title: "Value at Risk, Expected Shortfall, and Stress Testing"
+description: "Explain portfolio mathematics with a small numerical example and practical risk limitations."
+---
+
+## The question
+
+**Is knowing the loss you exceed only 20% of the time enough to understand how BAD those rare losses might be?**
+
+No. A threshold tells you where the dangerous tail begins. It does not describe whether the worst outcome is a loss of 4 coins or 400 coins. Risk management needs both tail probability and tail severity.
+
+## Build one relationship
+
+$$
+VaR_\alpha(L)=\inf\{\ell:P(L\leq\ell)\geq\alpha\}
+$$
+
+**Explain every symbol:** L is a loss amount (positive means losing money); α is a confidence level between 0 and 1; P is probability; inf means the smallest threshold ℓ whose cumulative probability is at least α.
+
+**Substitute concrete numbers:** Assume five equally likely daily losses: 0, 1, 2, 3 and 10 coins. At α=80%, cumulative probability reaches 80% at loss 3, so VaR_80%=**3**. Yet the worst 20% of outcomes consists of a loss of **10**. Expected shortfall over that tail is 10 in this five-scenario example, much worse than the VaR threshold 3.
+
+## Why this matters for decisions
+
+The example makes clear that a quantile can hide the size of losses beyond it. Expected shortfall averages the tail under a specified definition; scenario stress tests ask what happens if interest rates, spreads and liquidity move in adverse ways together.
+
+~~~python
+losses=[0,1,2,3,10]
+print(sorted(losses)[3],sorted(losses)[-1]) # 80%-VaR 3; worst-tail loss 10
+~~~
+
+These minimal examples build on the [Finance calculation lab](../examples/index.qmd), where relevant.
+
+## What the model leaves out
+
+Five hypothetical equally probable outcomes are for teaching; production historical VaR needs enough reliable observations and careful choices about horizons, distribution assumptions, confidence levels and fat tails. A numerical VaR is not a guarantee that larger losses cannot occur.
+
+**Source basis:** Luenberger Investment Science 2e Ch. 10 (risk measures); Fabozzi Handbook 8e Ch. 2 (portfolio risk and tracking error).. Text and examples are independently developed.
+
+[← Portfolio overview](index.qmd) · [Finance home](../index.qmd)

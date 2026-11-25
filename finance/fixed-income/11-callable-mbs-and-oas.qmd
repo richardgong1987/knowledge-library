@@ -1,0 +1,42 @@
+---
+title: "Callable Bonds, Mortgages, and Option-Adjusted Spread"
+description: "A deeper but child-friendly finance lesson with original numeric examples and risk assumptions."
+---
+
+## A real question to answer
+
+**If lower interest rates make fixed-rate bonds more valuable, why might a mortgage security gain far less than expected?**
+
+Because the person who borrowed money may be able to repay it early. When rates fall, homeowners often refinance; investors receive their principal earlier and lose some high-coupon future payments. The CASH FLOWS can change alongside the discount curve.
+
+## Build the exact relationship
+
+$$
+V_{\rm callable}=V_{\rm straight}-V_{\rm issuer\ call}
+$$
+
+**What every symbol means:** V_callable is the value of a bond with an issuer call option; V_straight is the otherwise identical noncallable bond value; V_issuer call is the value of the call option from the issuer's perspective. This is an idealised option decomposition with matching contracts.
+
+**Substitute numbers and calculate:** If a straight bond would be worth 110, but the issuer's call feature is worth 7, the callable bond is worth about 110−7=103 under the same model assumptions. Investors pay less because the issuer can end favourable payments early.
+
+## Why the financial reasoning works
+
+A traditional YTM assumes one cash-flow schedule. For mortgage-backed securities, falling and rising rates can change projected prepayment amounts, so a single fixed schedule is misleading. **OAS** uses a rate-path model and a spread calibrated to observed price after accounting for embedded options. Effective duration then reprices the whole model with rate shocks, generally holding the OAS convention fixed.
+
+## A tiny calculation, not a large framework
+
+~~~python
+straight = 110
+issuer_call_value = 7
+print(straight - issuer_call_value) # 103
+~~~
+
+The examples are checked, where applicable, in the [small finance calculation lab](../examples/index.qmd).
+
+## When this answer is no longer enough
+
+OAS is MODEL-DEPENDENT: different prepayment assumptions or interest-rate-volatility models produce different estimates even for the same security. This is a simplified conceptual chapter, not a claim that subtracting 7 is sufficient to price real MBS or complex callable notes.
+
+**Textbook basis:** Fabozzi Handbook 8e Ch. 7 (effective duration), Chs. 40–41 (embedded options and agency MBS); Luenberger 2e Ch. 16 (interest-rate derivatives).. The calculations and child-friendly explanations are original.
+
+[← Fixed Income](index.qmd) · [Finance home](../index.qmd)

@@ -15,7 +15,11 @@ A future payment is worth less than an identical payment today. Discount each ca
 
 $$
 P(y)=\frac{5}{1+y}+\frac{105}{(1+y)^2}
-$$ {#eq-bond-price}
+$ {#eq-bond-price}
+
+**What every symbol means:** $P(y)$ is today's bond price at required annual yield $y$; 5 is the first year's coupon; 105 is the second year's coupon (5) plus return of face value (100). The denominators $1+y$ and $(1+y)^2$ undo one and two years of compounding.
+
+**Substitute actual numbers:** At $y=0.05$ (5%), the first payment has present value 5/1.05≈4.7619. The second has present value 105/1.05²≈95.2381. Together they give **100.00**. At $y=0.06$ (6%) they give 5/1.06≈4.7170 and 105/1.06²≈93.4496, totalling **98.1666**. The future payments DID NOT change.
 
 If $y=0.05$, the bond is worth exactly 100. The next experiment changes **only the yield**, keeping the cash flows fixed.
 
@@ -73,3 +77,12 @@ The price is **not** changing because the issuer changed the promised payments. 
 The price-yield curve is not a straight line. For a small yield change, we can approximate the local effect with a derivative. This is the motivation for [Duration](duration.qmd).
 
 > **Scope:** The model uses annual compounding, fixed payments, a single yield, and no default risk or accrued-interest adjustment. It is an educational example rather than a market pricing engine.
+
+
+## Understand the market limitations
+
+This interactive graph holds future coupons fixed, ignores default and uses one annual rate for every maturity. The actual market may require spot rates, accrued-interest conventions, credit spreads, optionality and valuation curves. Those are explained in the next lessons; the graph is a deliberately simple starting model.
+
+**Book basis:** Luenberger, *Investment Science*, 2nd ed., Chapters 2–4; Fabozzi (ed.), *Handbook of Fixed Income Securities*, 8th ed., Chapter 6. The chart and numeric illustrations are original.
+
+[Next: Yield Measures](02-yield-and-total-return.qmd) · [Spot Rates](04-spot-rates-and-discount-factors.qmd) · [Finance Calculator](../examples/index.qmd)

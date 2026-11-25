@@ -1,0 +1,41 @@
+---
+title: "Floating-Rate Notes — When Coupons Reset"
+description: "A deeper but child-friendly finance lesson with original numeric examples and risk assumptions."
+---
+
+## A real question to answer
+
+**Why does a floating-rate note often move less in price when interest rates change, compared with a fixed-coupon bond?**
+
+Its coupon is periodically recalculated. If the reference rate rises, future payments can rise too, partly offsetting the effect of discounting with higher rates.
+
+## Build the exact relationship
+
+$$
+C=F(r_{\rm ref}+m)\Delta t
+$$
+
+**What every symbol means:** C is one coupon in currency units; F is face amount; r_ref is the reference floating rate; m is contractual margin/spread; Δt is the coupon year fraction under the chosen day-count convention.
+
+**Substitute numbers and calculate:** For face 100, reference rate 3%, margin 1%, and one full year of accrual, coupon=100×(0.03+0.01)×1=4. If the reset reference rises to 5% next year while margin remains 1%, the next annual coupon would be 100×0.06=6.
+
+## Why the financial reasoning works
+
+A fixed-rate bond keeps the same coupon after rate changes. A floater adapts some future payments, usually reducing sensitivity to changes in the reference curve close to its next reset. It is not completely risk-free: discount margins, creditworthiness and optional caps/floors remain relevant.
+
+## A tiny calculation, not a large framework
+
+~~~python
+face=100; reference=.03; margin=.01; accrual=1
+print(face*(reference+margin)*accrual) # 4.0
+~~~
+
+The examples are checked, where applicable, in the [small finance calculation lab](../examples/index.qmd).
+
+## When this answer is no longer enough
+
+Actual floaters use reset observation dates, fixings, payment lags, compounding or averaging, day counts and benchmark conventions. A capped floater stops passing through rises after the cap is reached. A longer reset interval increases fixed-rate-like sensitivity between resets.
+
+**Textbook basis:** Fabozzi Handbook 8e Ch. 17 (floating-rate securities); Luenberger Investment Science 2e §4.7.. The calculations and child-friendly explanations are original.
+
+[← Fixed Income](index.qmd) · [Finance home](../index.qmd)

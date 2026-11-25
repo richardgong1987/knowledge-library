@@ -1,0 +1,41 @@
+---
+title: "Immunization — Protect the Money Needed on a Future Date"
+description: "A deeper but child-friendly finance lesson with original numeric examples and risk assumptions."
+---
+
+## A real question to answer
+
+**You must pay 110.25 in exactly two years. Can you build a portfolio whose value is less sensitive to small interest-rate changes?**
+
+A liability has an amount and a date. Match its present value AND first-order interest-rate sensitivity with assets, rather than buying arbitrary bonds with the same face value.
+
+## Build the exact relationship
+
+$$
+D_A=\sum_i w_iD_i=D_L
+$$
+
+**What every symbol means:** D_A is Macaulay duration of assets, D_L is that of the liability, w_i is the MARKET-VALUE fraction in asset i (weights sum to 1), and D_i is each asset's Macaulay duration. This is the simple parallel-shift first-order matching condition.
+
+**Substitute numbers and calculate:** At flat 5%, a liability paying 110.25 in year two has present value 100 and Macaulay duration 2 years. Hold 50 of present value in a one-year zero (duration 1) and 50 in a three-year zero (duration 3). Asset PV=50+50=100; asset duration=0.5×1+0.5×3=2 years. Both initial value and duration match.
+
+## Why the financial reasoning works
+
+If yields change slightly and roughly in parallel, both the assets' and liability's first-order present-value sensitivities match. A small rate move should therefore have a reduced effect on the NET surplus. This is called first-order immunisation, not perfect cashflow matching.
+
+## A tiny calculation, not a large framework
+
+~~~python
+from finance_lab import portfolio_duration
+print(portfolio_duration([50,50],[1,3])) # 2.0
+~~~
+
+The examples are checked, where applicable, in the [small finance calculation lab](../examples/index.qmd).
+
+## When this answer is no longer enough
+
+The assets pay on years one and three, but the bill comes in year two: cash still needs management and reinvestment. Nonparallel curve shifts, convexity differences, credit risk and time passage undermine a naive duration-only hedge. Exact cash-flow matching is stronger but often more expensive.
+
+**Textbook basis:** Luenberger, Investment Science 2e §§3.6,4.9 (immunisation); Fabozzi Handbook 8e duration and portfolio management chapters.. The calculations and child-friendly explanations are original.
+
+[← Fixed Income](index.qmd) · [Finance home](../index.qmd)
