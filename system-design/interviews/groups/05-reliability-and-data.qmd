@@ -1,0 +1,26 @@
+---
+title: "Distributed Reliability and Data Design"
+description: "Stale regional reads, repeated delivery and identifier allocation."
+---
+
+Stale regional reads, repeated delivery and identifier allocation.
+
+These **3 independent interview problems** are intended to train deep reasoning, not an oversized implementation.
+
+1. [**Read Your Writes Across Two Regions**](../05-reliability-and-data/multi-region-consistency.qmd) — How can a user see their own update when the nearest replica is behind?
+
+2. [**Reliable Notifications Without Double-Sending**](../05-reliability-and-data/notifications-at-least-once.qmd) — At-least-once brokers replay messages; external delivery itself may have unknown results.
+
+3. [**URL Shortener: Unique IDs Under Concurrent Writers**](../05-reliability-and-data/url-shortener-ids.qmd) — What really makes generated links unique and stable through failover?
+
+## The learning contract
+
+For each problem identify the naive solution, exhibit a failure, derive the invariant, prove the correction, then reproduce a small part with the [NestJS lab](../lab/README.md). Production distribution requires extra atomicity, shared state or durable messaging where indicated.
+
+$$
+\text{Design}=\text{State}\ +\ \text{Transitions}\ +\ \text{Invariants}\ +\ \text{Failure model}.
+$$
+
+This is a **conceptual decomposition**, not a numeric equation.
+
+[← Advanced Interview Problems](../index.qmd)

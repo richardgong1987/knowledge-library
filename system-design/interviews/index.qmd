@@ -1,0 +1,109 @@
+---
+title: "Advanced System Design Interview Problems"
+subtitle: "Difficult principles, intentionally small implementations"
+description: "18 mathematically grounded senior-level system-design problems with original NestJS 12 code."
+---
+
+## Think harder, implement less
+
+This path contains **18 advanced system-design exercises**. Difficulty comes from choosing the **correct guarantee**, constructing an adversarial scenario, proving an invariant, and reasoning about failure. A large architecture diagram is not a substitute for a small correct model.
+
+::: {.callout-important}
+## About company names
+
+These are **original exercises inspired by publicly documented engineering problems and community interview practice**, not confidential or independently verified interview questions asked by Meta, Google or Microsoft. The public sources are linked below.
+:::
+
+## The five learning groups
+
+### [1. Fairness, Scheduling and Admission](groups/01-fairness-and-capacity.qmd)
+
+Finite compute, variable work sizes, starvation and overload.
+
+- [**Fair Scheduling for Multi-Tenant Compute**](01-fairness-and-capacity/fair-multitenant-scheduling.qmd) — Google-style resource-scheduling reasoning: stop a 5 GB user's backlog from starving tiny jobs.
+- [**Fair RAG Ingestion: Gigabytes vs Megabytes**](01-fairness-and-capacity/chunked-rag-ingestion.qmd) — Split expensive documents into schedulable units without causing duplicate embeddings.
+- [**Rate Limiting Without Unfair Bursts**](01-fairness-and-capacity/rate-limiter-bursts.qmd) — Design a burst-tolerant limiter that still constrains average admitted work.
+- [**When to Reject Work Rather Than Queue It**](01-fairness-and-capacity/deadline-admission-control.qmd) — Give latency-critical RPCs a bounded delay and avoid retry storms.
+
+### [2. Correctness Under Concurrency and Retries](groups/02-correctness-and-coordination.qmd)
+
+Idempotency, ordering, fencing and atomicity.
+
+- [**Exactly-Once Business Effects from At-Least-Once Requests**](02-correctness-and-coordination/idempotent-payment-api.qmd) — A timeout after charging does not tell the client whether it was charged.
+- [**Preserving Per-Order Event Order with Parallel Workers**](02-correctness-and-coordination/per-entity-event-ordering.qmd) — Messages arrive 2,1,3: apply consistent order without globally serialising everything.
+- [**Expiring Seat Holds and Fencing Tokens**](02-correctness-and-coordination/expiring-seat-reservations.qmd) — A timed-out worker must not confirm a seat that was granted to another customer.
+- [**Solving the Dual-Write Problem**](02-correctness-and-coordination/transactional-outbox.qmd) — Save an order and publish an event when DB commit and broker publish can fail separately.
+
+### [3. Caching, Consistency and Hotspots](groups/03-cache-and-partitioning.qmd)
+
+Stale writes, stampedes, partition movement and hotspot keys.
+
+- [**The Cache Fill That Resurrects Deleted Data**](03-cache-and-partitioning/cache-invalidation-race.qmd) — An older in-flight read must not overwrite a newer cache version.
+- [**One Hot Key, Ten Thousand Simultaneous Misses**](03-cache-and-partitioning/cache-stampede-singleflight.qmd) — Coalesce cache misses without making recovery depend on one stuck promise.
+- [**Stable Sharding Versus Hot Keys**](03-cache-and-partitioning/consistent-hashing-and-hot-keys.qmd) — Move few keys when nodes change, yet handle the one celebrity key that consumes 80% of traffic.
+
+### [4. Feeds, Ranking, Search and Crawling](groups/04-social-search-and-crawling.qmd)
+
+Celebrity fan-out, global merge, prefix search and politeness.
+
+- [**The Celebrity Fan-Out Problem**](04-social-search-and-crawling/celebrity-news-feed.qmd) — Normal users have 200 followers; a celebrity has 30 million.
+- [**Exact Global Top-K from Distributed Search Shards**](04-social-search-and-crawling/distributed-topk-search.qmd) — Each shard sends candidates; can the coordinator produce the true top ten?
+- [**Search Autocomplete Under a Strict Latency Budget**](04-social-search-and-crawling/autocomplete-index.qmd) — Predict the next word with bounded prefix work, ranking and updating.
+- [**A Web Crawler That Does Not Overload One Host**](04-social-search-and-crawling/polite-web-crawler.qmd) — Distribute crawling while observing host-specific delays, deduplication and safe fetching.
+
+### [5. Distributed Reliability and Data Design](groups/05-reliability-and-data.qmd)
+
+Stale regional reads, repeated delivery and identifier allocation.
+
+- [**Read Your Writes Across Two Regions**](05-reliability-and-data/multi-region-consistency.qmd) — How can a user see their own update when the nearest replica is behind?
+- [**Reliable Notifications Without Double-Sending**](05-reliability-and-data/notifications-at-least-once.qmd) — At-least-once brokers replay messages; external delivery itself may have unknown results.
+- [**URL Shortener: Unique IDs Under Concurrent Writers**](05-reliability-and-data/url-shortener-ids.qmd) — What really makes generated links unique and stable through failover?
+
+
+## The one-file mindset
+
+The [runnable NestJS 12 lab](lab/README.md) uses **pure, tested TypeScript primitives** ([core.ts](lab/src/core.ts)) wrapped in one small [NestJS controller](lab/src/main.ts). You can run the core algorithms through the API, while the book chapters explain the distributed guarantees that a single process **cannot** supply.
+
+~~~bash
+cd system-design/interviews/lab
+npm install
+npm run build
+npm test
+npm start
+~~~
+
+## How to answer in 30 minutes
+
+**0–5 min:** requirements, scale and the critical safety or fairness property.
+
+**5–12 min:** explain the smallest baseline design and the meaning of its data.
+
+**12–20 min:** construct a counterexample, add the smallest corrective algorithm and prove the invariant.
+
+**20–27 min:** consider crashes, retries, partitions, races and the difference between local and distributed correctness.
+
+**27–30 min:** trade-offs, measurable SLOs, and one justified scaling evolution.
+
+## The mathematical habit
+
+A state machine has state $S_t$, transition $T$ and a safety invariant $I$:
+
+$$
+S_{t+1}=T(S_t,e_t),qquad
+I(S_0)landigl(I(S_t)Rightarrow I(S_{t+1})igr).
+$$
+
+Provided the transition preserves the invariant for **all legal events**, induction establishes safety. This is the reasoning that makes a short answer technically strong.
+
+## Public background material
+
+- [Meta Engineering — News Feed ranking](https://engineering.fb.com/2021/01/26/ml-applications/news-feed-ranking/) and [Cache made consistent](https://engineering.fb.com/2022/06/08/core-infra/cache-made-consistent/)
+- [Google Research — Load balancing](https://research.google/blog/load-balancing-with-random-job-arrivals/) and [Consistent Hashing with Bounded Loads](https://research.google/blog/consistent-hashing-with-bounded-loads/)
+- [Microsoft Azure — Idempotent Consumer](https://learn.microsoft.com/en-us/azure/architecture/patterns/idempotent-consumer) and [Sequential Convoy](https://learn.microsoft.com/en-us/azure/architecture/patterns/sequential-convoy)
+- [Hello Interview — Guided practice](https://www.hellointerview.com/practice/system-design)
+- [DRR — Shreedhar and Varghese](https://web.stanford.edu/class/ee384x/EE384X/papers/DRR.pdf)
+- [NestJS documentation](https://docs.nestjs.com/first-steps) and [version compatibility](https://docs.nestjs.com/faq/versions)
+
+All content and code in this library are independently authored.
+
+[← System Design](../index.qmd) · [Microservices Course](../microservices/index.qmd)

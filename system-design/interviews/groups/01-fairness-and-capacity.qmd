@@ -1,0 +1,28 @@
+---
+title: "Fairness, Scheduling and Admission"
+description: "Finite compute, variable work sizes, starvation and overload."
+---
+
+Finite compute, variable work sizes, starvation and overload.
+
+These **4 independent interview problems** are intended to train deep reasoning, not an oversized implementation.
+
+1. [**Fair Scheduling for Multi-Tenant Compute**](../01-fairness-and-capacity/fair-multitenant-scheduling.qmd) — Google-style resource-scheduling reasoning: stop a 5 GB user's backlog from starving tiny jobs.
+
+2. [**Fair RAG Ingestion: Gigabytes vs Megabytes**](../01-fairness-and-capacity/chunked-rag-ingestion.qmd) — Split expensive documents into schedulable units without causing duplicate embeddings.
+
+3. [**Rate Limiting Without Unfair Bursts**](../01-fairness-and-capacity/rate-limiter-bursts.qmd) — Design a burst-tolerant limiter that still constrains average admitted work.
+
+4. [**When to Reject Work Rather Than Queue It**](../01-fairness-and-capacity/deadline-admission-control.qmd) — Give latency-critical RPCs a bounded delay and avoid retry storms.
+
+## The learning contract
+
+For each problem identify the naive solution, exhibit a failure, derive the invariant, prove the correction, then reproduce a small part with the [NestJS lab](../lab/README.md). Production distribution requires extra atomicity, shared state or durable messaging where indicated.
+
+$$
+\text{Design}=\text{State}\ +\ \text{Transitions}\ +\ \text{Invariants}\ +\ \text{Failure model}.
+$$
+
+This is a **conceptual decomposition**, not a numeric equation.
+
+[← Advanced Interview Problems](../index.qmd)

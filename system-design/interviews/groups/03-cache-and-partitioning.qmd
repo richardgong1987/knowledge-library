@@ -1,0 +1,26 @@
+---
+title: "Caching, Consistency and Hotspots"
+description: "Stale writes, stampedes, partition movement and hotspot keys."
+---
+
+Stale writes, stampedes, partition movement and hotspot keys.
+
+These **3 independent interview problems** are intended to train deep reasoning, not an oversized implementation.
+
+1. [**The Cache Fill That Resurrects Deleted Data**](../03-cache-and-partitioning/cache-invalidation-race.qmd) — An older in-flight read must not overwrite a newer cache version.
+
+2. [**One Hot Key, Ten Thousand Simultaneous Misses**](../03-cache-and-partitioning/cache-stampede-singleflight.qmd) — Coalesce cache misses without making recovery depend on one stuck promise.
+
+3. [**Stable Sharding Versus Hot Keys**](../03-cache-and-partitioning/consistent-hashing-and-hot-keys.qmd) — Move few keys when nodes change, yet handle the one celebrity key that consumes 80% of traffic.
+
+## The learning contract
+
+For each problem identify the naive solution, exhibit a failure, derive the invariant, prove the correction, then reproduce a small part with the [NestJS lab](../lab/README.md). Production distribution requires extra atomicity, shared state or durable messaging where indicated.
+
+$$
+\text{Design}=\text{State}\ +\ \text{Transitions}\ +\ \text{Invariants}\ +\ \text{Failure model}.
+$$
+
+This is a **conceptual decomposition**, not a numeric equation.
+
+[← Advanced Interview Problems](../index.qmd)

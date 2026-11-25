@@ -39,6 +39,22 @@ Before placing a request into a queue, estimate whether it can finish before its
 
 The runnable lab implements the token bucket and fair scheduler as two small independent primitives. It deliberately **does not promise a p99 SLA**, because that needs latency measurements, service-time distributions and overload tests.
 
+## Run a minimal admission decision
+
+A local deadline check can be expressed in a few TypeScript lines, alongside the tested token-bucket primitive:
+
+~~~ts
+const deadlineMs = 200;
+const alreadySpentMs = 60;
+const estimatedRemainingMs = 160;
+const likelyToFinish = alreadySpentMs + estimatedRemainingMs <= deadlineMs;
+const limiter = new TokenBucket(3, 1);
+const admitted = likelyToFinish && limiter.allow('tenant-A', 0);
+// The job is rejected here because the estimated critical path exceeds 200 ms.
+~~~
+
+The estimate must be calibrated from observations; this code deliberately models **admission**, not a perfect latency predictor.
+
 ## Two traps
 
 **Always retry a timeout**: if the downstream already processed the request, a retry can duplicate side effects. Combine idempotency and a common deadline.

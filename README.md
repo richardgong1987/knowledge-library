@@ -6,7 +6,7 @@ An English-language technical knowledge website powered by [Quarto](https://quar
 
 - **Programming Languages:** Java (including JVM Topics → Java Memory Model), Rust, Go, TypeScript, JavaScript, Python, C#, Prolog
 - **Algorithms:** 73 LeetCode topic categories, each with its own chapter, mathematical abstraction, and practice prompt
-- **System Design:** fundamentals, distributed systems, and data consistency
+- **System Design:** fully written fundamentals plus 18 advanced mathematically grounded interview cases (fair scheduling, RAG, idempotency, cache coherence, feeds, search, consistency), with a runnable and tested NestJS 12 teaching lab, alongside the microservices course
 - **DevOps:** Ansible, Kubernetes, CI/CD pipelines
 - **Finance:** fixed income, bond pricing, duration, and future financial topics
 - **AI & Mathematics:** 11 original mathematical chapter guides, 68 worked topic lessons aligned with *Mathematics for Machine Learning*, a dependency-free Python lab, and interactive experiments

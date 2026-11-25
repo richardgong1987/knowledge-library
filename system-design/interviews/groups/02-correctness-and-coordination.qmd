@@ -1,0 +1,28 @@
+---
+title: "Correctness Under Concurrency and Retries"
+description: "Idempotency, ordering, fencing and atomicity."
+---
+
+Idempotency, ordering, fencing and atomicity.
+
+These **4 independent interview problems** are intended to train deep reasoning, not an oversized implementation.
+
+1. [**Exactly-Once Business Effects from At-Least-Once Requests**](../02-correctness-and-coordination/idempotent-payment-api.qmd) — A timeout after charging does not tell the client whether it was charged.
+
+2. [**Preserving Per-Order Event Order with Parallel Workers**](../02-correctness-and-coordination/per-entity-event-ordering.qmd) — Messages arrive 2,1,3: apply consistent order without globally serialising everything.
+
+3. [**Expiring Seat Holds and Fencing Tokens**](../02-correctness-and-coordination/expiring-seat-reservations.qmd) — A timed-out worker must not confirm a seat that was granted to another customer.
+
+4. [**Solving the Dual-Write Problem**](../02-correctness-and-coordination/transactional-outbox.qmd) — Save an order and publish an event when DB commit and broker publish can fail separately.
+
+## The learning contract
+
+For each problem identify the naive solution, exhibit a failure, derive the invariant, prove the correction, then reproduce a small part with the [NestJS lab](../lab/README.md). Production distribution requires extra atomicity, shared state or durable messaging where indicated.
+
+$$
+\text{Design}=\text{State}\ +\ \text{Transitions}\ +\ \text{Invariants}\ +\ \text{Failure model}.
+$$
+
+This is a **conceptual decomposition**, not a numeric equation.
+
+[← Advanced Interview Problems](../index.qmd)

@@ -66,3 +66,12 @@ Use `## Mathematical Abstraction`, include a display formula or formal relation 
 - Distinguish an **exact theorem** from a fitted estimate or simplified pedagogical model; label illustrative algorithms that do not implement full numerical optimisation.
 - Prefer Python standard-library examples that run with a single file; do not silently require optional packages or incompatible library versions.
 - Do not copy book PDFs into this public repository. Link to https://mml-book.com/ for authorised reading.
+
+## Advanced system-design interview chapters
+
+- The intellectual difficulty must come from **formal guarantees, failure schedules, counterexamples and trade-offs**, not from unnecessary infrastructure.
+- Each interview problem includes a question, an explicit naive design, a violating sequence, mathematics, original small TypeScript/NestJS code, production limitations and difficult follow-ups.
+- Distinguish a **single-process proof** from cross-replica correctness; document where atomic database writes, leases, fencing, durable queues or broker semantics become necessary.
+- Link to public Meta/Google/Microsoft research and interview-practice resources as *inspiration*, without claiming a specific company asked a private or verbatim question.
+- Keep pure algorithms separately executable and test edge cases: duplicates, unknown outcomes, out-of-order events, version reversals, expired leases, and starvation.
+- Use stable current language/framework releases; verify with official documentation and CI before claiming a successful build.

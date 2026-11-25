@@ -147,10 +147,12 @@ export class SequencedInbox<T> {
   constructor(private readonly maxBuffered = 100) {}
   receive(key: string, seq: number, value: T): { applied: T[]; next: number } {
     if (!key || !Number.isSafeInteger(seq) || seq < 1) throw Error('Invalid sequence');
-    const s = this.state.get(key) ?? { next: 1, waiting: new Map<number,T>(), applied: [] };
+    const s: { next: number; waiting: Map<number,T>; applied: T[] } =
+      this.state.get(key) ?? { next: 1, waiting: new Map<number,T>(), applied: [] };
     this.state.set(key, s);
     if (seq < s.next || s.waiting.has(seq)) return { applied: [], next: s.next };
-    if (seq - s.next > this.maxBuffered || s.waiting.size >= this.maxBuffered)
+    if (seq - s.next > this.maxBuffered ||
+        (s.waiting.size >= this.maxBuffered && seq !== s.next))
       throw Error('Gap too large; request replay or snapshot');
     s.waiting.set(seq, value);
     const applied: T[] = [];
@@ -271,7 +273,7 @@ export class Autocomplete {
     }
   }
   suggest(prefix: string,k = 5): string[] {
-    return [...(this.prefixes.get(prefix.toLowerCase()) ?? new Map()).entries()]
+    return [...(this.prefixes.get(prefix.toLowerCase()) ?? new Map<string,number>()).entries()]
       .sort((a,b) => b[1]-a[1] || a[0].localeCompare(b[0])).slice(0,k).map(([word])=>word);
   }
 }

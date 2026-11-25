@@ -1,20 +1,43 @@
 ---
 title: "System Design"
-description: "Design reliable, scalable systems starting from concrete engineering requirements."
+description: "Learn deep architecture principles through mathematical models, adversarial scenarios, and small runnable NestJS code."
 ---
 
-System design connects requirements, constraints, trade-offs, and failure scenarios. Start with a real application problem, examine the design decisions, and only then introduce the abstractions.
+## Design by correctness, not by component count
 
-## Learning paths
+A sophisticated system-design answer does not require dozens of boxes. It requires a **clear invariant**, a precise failure model, and one defensible trade-off.
 
-- [Microservices Architecture](microservices/index.qmd) — A structured, eleven-unit course covering service discovery, clients, resilience, gateways, tracing, messaging, configuration, and performance, based on the uploaded Spring Cloud materials.
+## The foundations
 
-- [Fundamentals](fundamentals.qmd) — Requirements, capacity estimates, latency, throughput, and service boundaries.
-- [Distributed Systems](distributed-systems.qmd) — Multiple nodes, failures, replication, and partition tolerance.
-- [Data Consistency](data-consistency.qmd) — What readers observe after concurrent writes, and why consistency guarantees matter.
+- [System Design Fundamentals](fundamentals.qmd) — Capacity estimation, latency budgets, throughput, requirements and bottlenecks.
+- [Distributed Systems](distributed-systems.qmd) — Crash/partition models, safety and liveness, replication and partial ordering.
+- [Data Consistency](data-consistency.qmd) — Linearizability, read-your-writes, conditional updates, idempotency and cache races.
 
-## Planned topics
+## Advanced Interview Problems
 
-Caching, load balancing, message queues, database scaling, observability, fault tolerance, and architecture interviews.
+The [18-problem advanced learning path](interviews/index.qmd) covers multi-tenant fair scheduling, RAG file ingestion, rate limiting, deadline admission, payment idempotency, event ordering, seat fencing, transactional outbox, stale cache fills, cache stampedes, sharding and hot keys, celebrity feeds, distributed Top-K, autocomplete, crawler politeness, multi-region session consistency, notification retries and URL-shortener ID allocation.
 
-The material will use consistent running examples rather than disconnected definitions.
+The original [NestJS 12 teaching lab](interviews/lab/README.md) runs without a database or message broker; its algorithms are small enough to inspect and test. Production guarantees are **not** silently claimed for its in-memory code.
+
+## One representative challenge
+
+Two users upload documents: one file is 5 GB, the other 5 MB. A compute worker is finite. FIFO can block the small file; strict shortest-first can starve the large file. Split files into bounded-cost tasks, then schedule **by tenant and resource cost**, not by uploaded file count:
+
+$$
+\operatorname{Work}(f)=\sum_{c\in\operatorname{chunks}(f)}\operatorname{cost}(c),
+\qquad\operatorname{cost}(c)\leq C_{\max}.
+$$
+
+Start with [Fair Multi-Tenant Scheduling](interviews/01-fairness-and-capacity/fair-multitenant-scheduling.qmd) or [Fair RAG Ingestion](interviews/01-fairness-and-capacity/chunked-rag-ingestion.qmd).
+
+## Microservices Architecture
+
+The existing [Microservices Architecture](microservices/index.qmd) course remains intact and covers service decomposition, discovery, load balancing, gateways, resilience, messaging, configuration and observability.
+
+**Study distinction:** Microservices explains how the application pieces interact; advanced interviews investigate which invariant fails and what the smallest sufficient correction looks like.
+
+## Our writing method
+
+**Problem → naive solution → counterexample → mathematical model → actual code → failure tests → scaling boundary.**
+
+All public material is in English. Public Meta, Google and Microsoft work is cited as context; the exercises are not claimed to be company-verbatim interview questions.
