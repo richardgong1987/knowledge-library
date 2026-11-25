@@ -1,503 +1,353 @@
 ---
 title: "Backtracking"
-description: "From trying on outfits to interview level: the state-space tree and the partial solution vector, the choose–explore–un-choose loop, exact node counts and recurrences for subsets and permutations, pruning as a predicate with nodes counted before and after, the N-Queens conflict condition, and hard problems (Combination Sum, N-Queens, Sudoku Solver) solved math-first."
+description: "Understand classical backtracking through mathematical notation, explicit recursive pseudocode, state restoration, a simple Python example and complexity analysis."
 ---
 
-Backtracking solves a problem by making **one decision at a time**, and **undoing** the last decision as soon as it cannot lead to a solution. Every backtracking program walks a tree of partial decisions, so the whole subject comes down to three questions: what is the tree, how many nodes does it have, and which subtrees can be cut off without looking inside? This lesson answers all three with formulas and real counts, then uses them on three interview problems.
+## 1. Definition
 
-All code is in [`BacktrackingLab.java`](BacktrackingLab.java). Run it from this folder with `java BacktrackingLab.java`; it checks every number on this page and prints `OK`.
+Backtracking is an algorithmic technique for exploring possible solutions by making a sequence of decisions. It constructs a partial solution, explores its possible extensions, and returns to a previous state to try alternative choices.
 
-## The problem
-
-Place 4 queens on a $4 \times 4$ chessboard so that no two attack each other: no two in the same row, column or diagonal.
-
-- Dropping 4 queens on 16 squares in every possible way gives $\binom{16}{4} = 1{,}820$ boards to check, and only **2** of them work.
-- On the real $8 \times 8$ board it is $\binom{64}{8} = 4{,}426{,}165{,}368$ boards for **92** solutions.
-- Backtracking places one queen per row, and abandons a partial board the moment two queens attack. It looks at only **17** partial boards for $n = 4$, and **2,057** for $n = 8$.
-
-The rest of this lesson explains where the numbers 17 and 2,057 come from.
-
-## Explain it like I'm ten
-
-::: {.callout-tip}
-You are getting dressed and have to pick a shirt, then trousers, then shoes. You put on the red shirt, then the green trousers, and they clash horribly. You do **not** take everything off and start again: you take off only the trousers, the last thing you chose, and try the next pair. If no trousers go with the red shirt, you take the shirt off too and try the blue one.
-
-That is backtracking: **choose** one thing, **explore** what comes next, and **un-choose** it when you get stuck. Like walking through a maze, you go back only as far as the last fork that still has a path you have not tried.
-
-The eight queens puzzle is the classic example. Max Bezzel posed it in a German chess magazine in 1848, and Franz Nauck published all 92 solutions in 1850. Jeff Erickson's *Algorithms* (Chapter 2) retells a letter in which Gauss said that Nauck's 92 solutions could be confirmed in a few hours of methodical *Tatonniren*, from the French *tâtonner*: to grope around as if in the dark. Gauss's method is this lesson's: place the queens row by row, and step back whenever you are stuck. In 1971 Niklaus Wirth used the same puzzle to teach how to design programs step by step.
-:::
-
-## From simple to advanced
-
-### Level 1: decisions as a vector, and the state-space tree
-
-Write a solution as a **vector of decisions** $x = (x_1, x_2, \dots, x_n)$, made in order. A *partial solution* is a prefix $(x_1, \dots, x_k)$ with $k < n$ decisions made. All the prefixes together form the **state-space tree**: the root is the empty prefix, and the children of a node are its prefixes with one more decision.
-
-The simplest tree lists every subset of $n$ items. Decision $x_i$ is 1 if item $i$ is taken and 0 if it is skipped, so every node has 2 children:
+Its fundamental principle is:
 
 $$
-x_i \in \lbrace 0, 1 \rbrace, \qquad \text{nodes at level } k = 2^k, \qquad \text{all nodes} = \sum_{k=0}^{n} 2^k = 2^{n+1} - 1
+\boxed{\text{Choose}\rightarrow\text{Explore}\rightarrow\text{Undo}}
 $$
 
-where:
+Backtracking usually explores a decision tree using depth-first search (DFS). It can also use **pruning** to abandon a branch that cannot lead to a valid solution.
 
-- $x_i$ is the decision about item $i$, and level $k$ holds the prefixes with exactly $k$ decisions made;
-- each of the $2^k$ prefixes at level $k$ has 2 children, so level $k + 1$ has $2^{k+1}$;
-- level $n$ holds the **leaves**: complete vectors, one per subset;
-- the sum is a geometric series: $1 + 2 + 4 + \dots + 2^n = 2^{n+1} - 1$.
+Think of a maze: at a fork, choose one route, explore it, and return to the fork to try another route. You do not need to start from the entrance again.
 
-Example: $n = 3$ items $\lbrace 1, 2, 3 \rbrace$.
+## 2. Mathematical notation
 
-```text
-level 0                    ()                            1 node
-                 take 1 /       \ skip 1
-level 1             (1)           (0)                    2 nodes
-                   /   \         /   \
-level 2        (1,1)  (1,0)   (0,1)  (0,0)               4 nodes
-               /  \    /  \    /  \    /  \
-level 3      111  110 101 100 011 010 001 000            8 nodes (leaves)
-```
+| Symbol | Meaning |
+|---|---|
+| $P$ | Current path (partial solution) |
+| $C(P)$ | Available choices from the current path |
+| $x$ | A selected choice |
+| $G(P)$ | Goal condition: is the path a complete solution? |
+| $V(P)$ | Promising condition: is the path still worth exploring? |
+| $R$ | Set of solutions found so far |
+| $B(P)$ | Recursive backtracking procedure |
 
-The leaves, left to right, are the subsets $\lbrace 1,2,3 \rbrace$, $\lbrace 1,2 \rbrace$, $\lbrace 1,3 \rbrace$, $\lbrace 1 \rbrace$, $\lbrace 2,3 \rbrace$, $\lbrace 2 \rbrace$, $\lbrace 3 \rbrace$ and $\lbrace \rbrace$. The tree has $1 + 2 + 4 + 8 = 15 = 2^4 - 1$ nodes.
+Initially, the path and the result set are empty:
 
-The code visits this tree **depth-first**. Every call is one node; the list `chosen` holds the items taken so far, which is the prefix $x$ written as a set:
+$$
+P=[], \qquad R=\varnothing
+$$
 
-```java
-static void subsets(int[] items, int k, List<Integer> chosen, List<List<Integer>> out) {
-    nodes++;                                        // every call is one node of the tree
-    if (k == items.length) { out.add(new ArrayList<>(chosen)); return; } // a leaf: all n decided
-    chosen.add(items[k]);                           // choose: x_{k+1} = 1, take items[k]
-    subsets(items, k + 1, chosen, out);             // explore
-    chosen.remove(chosen.size() - 1);               // un-choose
-    subsets(items, k + 1, chosen, out);             // x_{k+1} = 0, skip items[k]
+The symbol $\varnothing$ means the empty set. The path is a sequence, not a set: its order may matter.
+
+## 3. Mathematical pseudocode
+
+This is the classical backtracking algorithm for enumerating solutions:
+
+$$
+\boxed{
+\begin{aligned}
+B(P):\quad &\\
+&\text{if }\neg V(P):\\
+&\quad\text{return}\\[4pt]
+&\text{if }G(P):\\
+&\quad R\leftarrow R\cup\{P\}\\
+&\quad\text{return}\\[4pt]
+&\text{for each }x\in C(P):\\
+&\quad P\leftarrow P+[x]\\
+&\quad B(P)\\
+&\quad P\leftarrow P[:-1]
+\end{aligned}
 }
-```
-
-This is LeetCode 78, *Subsets* (Medium). Counting the calls gives a recurrence, where $T(m)$ is the number of nodes in a subtree with $m$ decisions still to make:
-
-$$
-T(0) = 1, \qquad T(m) = 2\,T(m - 1) + 1 \implies T(m) = 2^{m+1} - 1
 $$
 
-where:
+Start the algorithm with $B([])$.
 
-- the $+1$ is the node itself, and $2\,T(m-1)$ are its two subtrees (take and skip);
-- the closed form can be checked by substituting it back: $2(2^m - 1) + 1 = 2^{m+1} - 1$.
-
-Example: $T(1) = 2 \cdot 1 + 1 = 3$, $T(2) = 2 \cdot 3 + 1 = 7$, $T(3) = 2 \cdot 7 + 1 = 15$. The lab counts 15 calls for 3 items and 31 for 4 items. Copying each of the $2^n$ leaves costs up to $n$, so the total time is $O(n \cdot 2^n)$: for $n = 20$ that is about 2 million nodes.
-
-### Level 2: choose, explore, un-choose, with shrinking choices
-
-For orderings, decision $x_k$ is **which item goes in position $k$**, chosen from the items not used yet. Every backtracking program has the same loop:
+The three operations inside the loop are the most important part:
 
 $$
-\text{BT}(x_1, \dots, x_k) =
+\boxed{
+\begin{aligned}
+&\text{for each }x\in C(P):\\
+&\quad P\leftarrow P+[x] &&\text{Choose}\\
+&\quad B(P) &&\text{Explore}\\
+&\quad P\leftarrow P[:-1] &&\text{Undo}
+\end{aligned}
+}
+$$
+
+### Choose
+
+$$
+x\in C(P),\qquad P\leftarrow P+[x]
+$$
+
+Read this as: select a choice belonging to the candidate set and append it to the path. The symbol $\leftarrow$ means assignment, and $+$ here means sequence concatenation.
+
+For example, $[1]+[2]=[1,2]$.
+
+### Explore
+
+$$
+B(P)
+$$
+
+Recursively explore the extended path. If it satisfies the goal condition, record a snapshot of it:
+
+$$
+G(P)=\text{true}
+\quad\Longrightarrow\quad
+R\leftarrow R\cup\{P\}
+$$
+
+The symbol $\cup$ means set union.
+
+### Undo
+
+If the current path is $P=[p_1,\ldots,p_k]$, remove its last element:
+
+$$
+P\leftarrow[p_1,\ldots,p_{k-1}]
+$$
+
+We use the shorthand $P[:-1]$ to mean the sequence without its last element.
+
+After undoing, the path is exactly as it was before choosing $x$:
+
+$$
+\boxed{
+P\xrightarrow{\text{choose }x}P+[x]
+\xrightarrow{\text{explore}}P+[x]
+\xrightarrow{\text{undo }x}P
+}
+$$
+
+Equivalently:
+
+$$
+\operatorname{undo}(\operatorname{choose}(P,x))=P
+$$
+
+If choosing also changes auxiliary state, such as a set of used items or a board, undo must restore that state too. Each recursive call in this template restores the path before returning. The loop therefore tries each candidate from the same parent state.
+
+## 4. Recursive mathematical definition
+
+The pseudocode describes **how** the algorithm executes. We can also define **what** it computes.
+
+Let $F(P)$ denote the set of all solutions extending $P$:
+
+$$
+\boxed{
+F(P)=
 \begin{cases}
-\text{record } x & \text{if } k = n \\[2pt]
-\text{for each } a \in C_{k+1}(x_1, \dots, x_k): \ \text{choose } x_{k+1} = a,\ \text{BT}(x_1, \dots, x_{k+1}),\ \text{un-choose} & \text{otherwise}
+\varnothing,&\neg V(P)\\[4pt]
+\{P\},&G(P)\\[4pt]
+\displaystyle\bigcup_{x\in C(P)}F(P+[x]),
+&\text{otherwise}
 \end{cases}
-$$
-
-where:
-
-- $\text{BT}$ is the backtracking procedure, called on the current prefix;
-- $C_{k+1}(x_1, \dots, x_k)$ is the *candidate set* for the next decision, which may depend on the decisions already made;
-- "choose" changes shared state (here: append $a$ and mark it used), and "un-choose" restores it exactly, so the next candidate starts from the same state.
-
-Example: items $\lbrace 1, 2, 3 \rbrace$. At the root $C_1 = \lbrace 1, 2, 3 \rbrace$. After choosing $x_1 = 2$, the candidates shrink to $C_2(2) = \lbrace 1, 3 \rbrace$, and after $x_2 = 3$ to $C_3(2, 3) = \lbrace 1 \rbrace$. The leaf is $(2, 3, 1)$.
-
-```text
-level 0:                          ()                                  1
-level 1:         (1)              (2)              (3)                3
-level 2:     (1,2)  (1,3)     (2,1)  (2,3)     (3,1)  (3,2)           6
-level 3:   (1,2,3)(1,3,2)   (2,1,3)(2,3,1)   (3,1,2)(3,2,1)           6
-```
-
-Level $k$ holds the prefixes of $k$ distinct items in order, and there are $n (n-1) \cdots (n-k+1)$ of them:
-
-$$
-\text{nodes at level } k = \frac{n!}{(n-k)!}, \qquad \text{all nodes} = \sum_{k=0}^{n} \frac{n!}{(n-k)!} = \lfloor e \cdot n! \rfloor
-$$
-
-where:
-
-- $n! = n \cdot (n-1) \cdots 1$, with $0! = 1$;
-- $\frac{n!}{(n-k)!}$ counts the ways to fill the first $k$ positions: $n$ choices, then $n - 1$, and so on;
-- $e \approx 2.718$, and the floor $\lfloor \cdot \rfloor$ rounds down; the sum equals it exactly for every $n \ge 1$.
-
-Example: $n = 3$ gives $1 + 3 + 6 + 6 = 16$ nodes, and $\lfloor 2.718 \times 6 \rfloor = \lfloor 16.31 \rfloor = 16$. For $n = 4$: $1 + 4 + 12 + 24 + 24 = 65$, and $\lfloor 2.718 \times 24 \rfloor = \lfloor 65.24 \rfloor = 65$.
-
-```java
-static void permute(int[] items, boolean[] used, List<Integer> path, List<List<Integer>> out) {
-    nodes++;
-    if (path.size() == items.length) { out.add(new ArrayList<>(path)); return; }
-    for (int i = 0; i < items.length; i++) {
-        if (used[i]) continue;                      // each item at most once
-        used[i] = true;                             // choose
-        path.add(items[i]);
-        permute(items, used, path, out);            // explore
-        path.remove(path.size() - 1);               // un-choose
-        used[i] = false;
-    }
 }
-```
-
-This is LeetCode 46, *Permutations* (Medium). Each node scans all $n$ items to find the unused ones, which gives the time recurrence
-
-$$
-T(n) = n \cdot T(n - 1) + O(n), \qquad N(m) = 1 + m \cdot N(m - 1), \ N(0) = 1
 $$
 
-where:
+The symbol $\bigcup$ means the union of the solution sets returned by every candidate branch. The final answer is $F([])$.
 
-- $T(n)$ is the time for $n$ items: $n$ subtrees, one per first item, each a problem with $n - 1$ items, plus $O(n)$ for the loop;
-- $N(m)$ counts the nodes of a subtree in which $m$ items are still unused;
-- solving the first gives $T(n) = \Theta(n \cdot n!)$.
+This is the same search expressed as a recursive set definition. Unlike $B$, which is a procedure that updates $R$, $F$ returns a set.
 
-Example: $N(1) = 1 + 1 \cdot 1 = 2$, $N(2) = 1 + 2 \cdot 2 = 5$, $N(3) = 1 + 3 \cdot 5 = 16$, matching the 16 nodes above. For $n = 10$ the tree has $\lfloor e \cdot 3{,}628{,}800 \rfloor = 9{,}864{,}101$ nodes. That is why permutations are only practical for small $n$.
+The model assumes a finite search tree, complete candidate enumeration, safe pruning and terminal goal states. If a valid solution can itself have valid extensions, record it and continue exploring instead of returning immediately.
 
-### Level 3: pruning, a predicate that cuts subtrees
+## 5. From mathematics to Python
 
-Most trees are far too big to visit completely. **Pruning** tests every prefix with a predicate $P$, and when $P$ is false it skips the node's whole subtree. The cut is safe only if $P$ never rejects a prefix that could still grow into a solution.
+| Mathematics | Python |
+|---|---|
+| $\neg V(P)$ | `not promising(path)` |
+| $G(P)$ | `is_solution(path)` |
+| $R\leftarrow R\cup\{P\}$ | `result.append(path.copy())` |
+| $\text{for each }x\in C(P)$ | `for x in choices(path):` |
+| $P\leftarrow P+[x]$ | `path.append(x)` |
+| $B(P)$ | `backtrack(path)` |
+| $P\leftarrow P[:-1]$ | `path.pop()` |
 
-Find the subsets of the positive numbers $\lbrace 3, 5, 6, 7 \rbrace$ that sum to $T = 15$:
+### General template
+
+~~~python
+result = []
+
+def backtrack(path):
+    if not promising(path):
+        return
+
+    if is_solution(path):
+        result.append(path.copy())
+        return
+
+    for x in choices(path):
+        path.append(x)    # Choose
+        backtrack(path)   # Explore
+        path.pop()        # Undo
+
+backtrack([])
+~~~
+
+The functions `promising`, `is_solution` and `choices` depend on the problem. This is a template, not a standalone executable program.
+
+Python uses a list to collect the results here. When different search paths produce distinct solutions, it represents the mathematical solution set without needing explicit set union.
+
+## 6. A simple runnable example
+
+Generate all ordered pairs of distinct numbers from $S=\{1,2,3\}$.
+
+We need only define the available choices and goal condition:
 
 $$
-P(x_1, \dots, x_k) = \big(s_k \le T\big) \land \big(s_k + r_k \ge T\big), \qquad s_k = \sum_{i \le k} x_i a_i, \quad r_k = \sum_{i > k} a_i
+C(P)=S\setminus\operatorname{set}(P)
 $$
 
-where:
+The symbol $\setminus$ means set difference: remove the numbers already used.
 
-- $a_1, \dots, a_n$ are the numbers, and $x_i \in \lbrace 0, 1 \rbrace$ says whether $a_i$ is taken;
-- $s_k$ is the sum taken so far, and $r_k$ is the sum of all numbers not yet decided;
-- $s_k \le T$: the numbers are positive, so an overshoot can never be undone;
-- $s_k + r_k \ge T$: even taking everything that is left must still reach $T$;
-- $\land$ means "and". If either part is false, no completion can sum to $T$, so the cut is safe.
+$$
+G(P):\quad |P|=2
+$$
 
-Example: $a = (3, 5, 6, 7)$, $T = 15$.
+Here $|P|$ is the length of the path.
 
-- The root: $s_0 = 0$ and $r_0 = 21$. Is $0 \le 15 \le 0 + 21$? Yes, so explore.
-- Skip 3, skip 5: $s_2 = 0$ and $r_2 = 6 + 7 = 13$. Is $0 + 13 \ge 15$? No: **cut**. The 6 nodes below it are never created.
-- Take 3, 5, 6, 7: $s_4 = 21 > 15$: cut.
+### The decision tree
 
-The whole pruned tree, written as (next decision $k$, amount still needed $T - s_k$):
+~~~text
+                      []
+             /         |         \
+           [1]        [2]        [3]
+          /   \      /   \      /   \
+       [1,2] [1,3] [2,1] [2,3] [3,1] [3,2]
+~~~
 
-```text
-(0, need 15)
-├─ take 3 → (1, 12)
-│  ├─ take 5 → (2, 7)
-│  │  ├─ take 6 → (3, 1)
-│  │  │  ├─ take 7 → (4, -6)   ✗ overshot
-│  │  │  └─ skip 7 → (4, 1)    ✗ nothing left to add
-│  │  └─ skip 6 → (3, 7)
-│  │     ├─ take 7 → (4, 0)    ✓ {3, 5, 7}
-│  │     └─ skip 7 → (4, 7)    ✗
-│  └─ skip 5 → (2, 12)
-│     ├─ take 6 → (3, 6)
-│     │  ├─ take 7 → (4, -1)   ✗
-│     │  └─ skip 7 → (4, 6)    ✗
-│     └─ skip 6 → (3, 12)      ✗ only 7 is left
-└─ skip 3 → (1, 15)
-   ├─ take 5 → (2, 10)
-   │  ├─ take 6 → (3, 4)
-   │  │  ├─ take 7 → (4, -3)   ✗
-   │  │  └─ skip 7 → (4, 4)    ✗
-   │  └─ skip 6 → (3, 10)      ✗ only 7 is left
-   └─ skip 5 → (2, 15)         ✗ only 6 + 7 = 13 is left
-```
+### Follow the execution
 
-| Search | Nodes visited | Solutions |
-| --- | --- | --- |
-| No pruning (the full tree of Level 1) | $2^5 - 1 = 31$ | $\lbrace 3, 5, 7 \rbrace$ |
-| With $P$ | 21 | $\lbrace 3, 5, 7 \rbrace$ |
+$$
+\begin{aligned}
+[]&\rightarrow[1] &&\text{Choose 1}\\
+&\rightarrow[1,2] &&\text{Choose 2; record solution}\\
+&\rightarrow[1] &&\text{Undo 2}\\
+&\rightarrow[1,3] &&\text{Choose 3; record solution}\\
+&\rightarrow[1] &&\text{Undo 3}\\
+&\rightarrow[] &&\text{Undo 1}\\
+&\rightarrow[2] &&\text{Try the next branch}\\
+&\rightarrow\cdots
+\end{aligned}
+$$
 
-Pruning saved 10 nodes here. The saving grows quickly with $n$, because one cut at level $k$ removes the $2^{n-k+1} - 2$ nodes below it: $2^3 - 2 = 6$ for the cut at level 2 above. With a target of 30, more than all four numbers add up to, the root itself fails $P$ and the search visits 1 node instead of 31.
+Notice that the algorithm returns only to the previous decision point, rather than starting the entire search again.
 
-```java
-void search(int k, int remaining) {
-    nodes++;
-    if (prune && (remaining < 0 || remaining > restSum[k])) return; // no completion can work
-    if (k == items.length) {
-        if (remaining == 0) solutions.add(new ArrayList<>(chosen));
-        return;
-    }
-    chosen.add(items[k]);
-    search(k + 1, remaining - items[k]);
-    chosen.remove(chosen.size() - 1);
-    search(k + 1, remaining);
+### Python implementation
+
+~~~python
+numbers = [1, 2, 3]
+result = []
+
+def backtrack(path):
+    if len(path) == 2:
+        result.append(path.copy())
+        return
+
+    for x in numbers:
+        if x in path:
+            continue
+
+        path.append(x)    # Choose
+        backtrack(path)   # Explore
+        path.pop()        # Undo
+
+backtrack([])
+print(result)
+~~~
+
+Output:
+
+~~~text
+[[1, 2], [1, 3], [2, 1], [2, 3], [3, 1], [3, 2]]
+~~~
+
+The membership test implements $C(P)$ directly: we skip numbers already in the path. No additional pruning predicate is needed in this example.
+
+Notice the use of `path.copy()`. Without copying, the stored result would refer to the same mutable list that subsequent calls modify.
+
+## 7. Pruning
+
+Pruning means stopping the exploration of a branch when we can prove that it cannot contain a required solution.
+
+$$
+\boxed{\neg V(P)\Rightarrow F(P)=\varnothing}
+$$
+
+The symbol $\neg$ means "not".
+
+For example, if repeated elements are forbidden, then $P=[1,1]$ cannot be extended into a valid solution, because appending more elements cannot remove the repetition.
+
+$$
+V([1,1])=\text{false}
+$$
+
+So the entire branch can be abandoned. We can also reject such a candidate before entering its branch, as the Python example does.
+
+A safe pruning condition may allow some branches that eventually fail, but it must never reject a branch containing a required solution.
+
+## 8. Why it works
+
+Backtracking is correct when the following properties hold:
+
+- **Soundness:** every recorded solution satisfies the goal and all constraints.
+- **Completeness:** every valid solution is reachable through the candidate choices, and safe pruning never removes it.
+- **Termination:** the search tree is finite and every recursive call progresses to a child.
+- **State restoration:** after exploring one child, the parent state is restored before the next child is explored.
+
+If every solution corresponds to exactly one path through the tree, the algorithm also avoids duplicate solutions.
+
+## 9. Time and space complexity
+
+Let $b$ be the maximum number of children per node (branching factor) and $d$ the maximum search depth.
+
+The number of visited nodes is bounded by:
+
+$$
+N\leq\sum_{i=0}^{d}b^i
+=1+b+b^2+\cdots+b^d
+$$
+
+For $b\geq2$, assuming constant amortised processing cost per visited node, excluding output copying:
+
+$$
+\boxed{T=O(b^d)}
+$$
+
+This is an upper bound, not the complexity of every backtracking problem. Candidate generation, validity checks and recording solutions may cost more, and pruning can substantially reduce the actual number of visited nodes.
+
+With a single mutable path, constant-sized recursion frames and no other growing state:
+
+$$
+\boxed{S=O(d)}
+$$
+
+This is auxiliary space, excluding output storage and any additional candidate or constraint data.
+
+## 10. Summary
+
+Remember the general algorithm, not a particular interview problem:
+
+$$
+\boxed{
+\begin{aligned}
+&\text{for each }x\in C(P):\\
+&\quad P\leftarrow P+[x] &&\text{Choose}\\
+&\quad B(P) &&\text{Explore}\\
+&\quad P\leftarrow P[:-1] &&\text{Undo}
+\end{aligned}
 }
-```
-
-Here `remaining` is $T - s_k$ and `restSum[k]` is $r_k$, so `remaining < 0` means $s_k > T$, and `remaining > restSum[k]` means $s_k + r_k < T$. The flag `prune` lets the lab count the same search both ways.
-
-### Level 4: constraints between decisions, the N-Queens condition
-
-In N-Queens, decision $x_{r+1}$ is **the column of the queen in row $r$**, counting rows and columns from 0. One queen per row is built into the vector, so only columns and diagonals can clash. Along a diagonal going down to the right, $r - c$ stays the same; along one going down to the left, $r + c$ stays the same:
-
-$$
-\text{attack}\big((r_1, c_1), (r_2, c_2)\big) \iff c_1 = c_2 \ \lor\ r_1 - c_1 = r_2 - c_2 \ \lor\ r_1 + c_1 = r_2 + c_2
 $$
 
-where:
+Backtracking is a general framework for exploring alternative decisions. To apply it to a new problem, identify the state, available choices, goal condition and safe pruning rules.
 
-- $(r, c)$ is the square in row $r$ and column $c$, both counted from 0;
-- $\lor$ means "or": the same column, the same "$\backslash$" diagonal, or the same "$/$" diagonal;
-- different rows are guaranteed, because row $r$ holds exactly one queen.
+Typical applications include permutations, combinations, subsets, N-Queens and Sudoku.
 
-Example:
+## Further practice and references
 
-- $(0, 1)$ and $(2, 3)$: $r - c = 0 - 1 = -1$ and $2 - 3 = -1$, equal, so they **attack** on a diagonal.
-- $(1, 3)$ and $(3, 1)$: $r + c = 4$ and $4$, equal, so they **attack** on the other diagonal.
-- $(1, 3)$ and $(2, 0)$: columns $3 \ne 0$, $r - c$ is $-2$ and $2$, $r + c$ is $4$ and $2$. All different, so they are **safe**.
-
-```java
-static boolean attacks(int r1, int c1, int r2, int c2) {
-    return c1 == c2 || r1 - c1 == r2 - c2 || r1 + c1 == r2 + c2;
-}
-```
-
-The predicate $P(x_1, \dots, x_k)$ is "no two of the first $k$ queens attack". A clash never goes away when more queens are added, so cutting at the first clash is safe. The prefixes that pass are $1, 4, 6, 4, 2$ at levels $0$ to $4$ for $n = 4$, which is $17$ nodes, and the 2 at the bottom are the solutions. Compare three ways to search:
-
-| Search | Tree | Nodes, $n = 4$ | Nodes, $n = 8$ |
-| --- | --- | --- | --- |
-| Any column in each row, check at the end | $\sum_{k=0}^{n} n^k$ | $1 + 4 + 16 + 64 + 256 = 341$ | 19,173,961 |
-| Distinct columns only (the permutation tree of Level 2) | $\sum_{k} \frac{n!}{(n-k)!}$ | 65 | 109,601 |
-| Columns and both diagonals checked at every level | prefixes passing $P$ | **17** | **2,057** |
-
-The solutions are 2 for $n = 4$ and **92** for $n = 8$. Interview problem 2 turns this into code that checks each square in $O(1)$ time.
-
-## Why it works and what it costs
-
-**Every solution is found, once.** The invariant is: *every node of the tree is a prefix that passes $P$, and every complete vector that is a solution is a leaf of the pruned tree.*
-
-- *Every prefix of a solution passes $P$.* This is exactly the safety condition: $P$ only rejects a prefix when no completion of it is a solution. So no ancestor of a solution is ever cut.
-- *The search visits every node that is not cut.* It is a depth-first walk of the tree, and the loop tries every candidate in $C_{k+1}$.
-- *Nothing is reported twice.* Different leaves are different vectors, and each vector is a single path from the root.
-- *Un-choose restores the state.* After a child returns, `chosen`, `used` or the board is exactly as it was before the child was chosen, so the next sibling starts from the right state. That is the "back" in backtracking.
-
-**What it costs.** The time is the number of nodes visited multiplied by the work done at each node:
-
-$$
-\text{time} = \sum_{k=0}^{n} \lvert \mathcal{T}_k \rvert \cdot w_k
-$$
-
-where:
-
-- $\mathcal{T}_k$ is the set of prefixes at level $k$ that the search visits, and $\lvert \mathcal{T}_k \rvert$ is how many there are;
-- $w_k$ is the work at one node of level $k$: building the candidates and testing $P$.
-
-Example: 8-queens visits 2,057 nodes, and each tries 8 columns with three $O(1)$ array checks, so about $2{,}057 \times 8 = 16{,}456$ square checks, compared with 4,426,165,368 boards for blind trial. The same count explains every row of this table:
-
-| Problem | Tree | Nodes | Time |
-| --- | --- | --- | --- |
-| Subsets of $n$ | binary, depth $n$ | $2^{n+1} - 1$ | $O(n \cdot 2^n)$ |
-| Permutations of $n$ | $n, n-1, \dots, 1$ children | $\lfloor e \cdot n! \rfloor$ | $O(n \cdot n!)$ |
-| Subset sum with $P$ | binary, pruned | at most $2^{n+1} - 1$ (21 of 31 above) | depends on the data |
-| $n$-queens | $n$ children, pruned | 17 for $n = 4$, 2,057 for $n = 8$ | exponential, but small in practice |
-
-Pruning never changes the worst case of an exponential search, but it often changes the real running time by many orders of magnitude.
-
-## Common mistakes
-
-| Mistake | Symptom | Fix |
-| --- | --- | --- |
-| Forgetting to un-choose | Later branches see items from earlier ones; results are wrong or missing | Undo exactly what "choose" did, in reverse order |
-| `out.add(chosen)` instead of `out.add(new ArrayList<>(chosen))` | Every result is the same list, empty at the end | Copy the prefix when you record a leaf |
-| A pruning test that is not safe | Solutions silently disappear | Prove "$P$ false $\implies$ no completion works"; for example, "sum > target" is wrong if numbers can be negative |
-| Using `i + 1` where reuse is allowed (Combination Sum) | Misses `[2, 2, 3]` | Recurse with `i` to allow reuse, `i + 1` to forbid it |
-| Starting every loop at 0 for combinations | `[2, 3]` and `[3, 2]` are both reported | Pass a start index so choices are non-decreasing |
-| Checking N-Queens conflicts by scanning the whole board | $O(n^2)$ per square, slow for larger $n$ | Three boolean arrays for columns, $r - c$ and $r + c$ |
-| In Sudoku, continuing after the grid is complete | The solution is undone on the way back | Return `true` up the recursion as soon as it is solved |
-
-## Interview problems
-
-Each solution starts with the mathematics: the decision vector, the candidates, and the predicate that prunes.
-
-### 1. LeetCode 39: Combination Sum (Medium)
-
-**Problem.** Given distinct positive candidates and a target, return every combination that sums to the target, where each candidate may be used any number of times and order does not matter. For `[2, 3, 6, 7]` and target 7 the answer is `[[2, 2, 3], [7]]`.
-
-**Math first.** To list each combination only once, write it in **non-decreasing** order, and choose from the sorted candidates:
-
-$$
-x_1 \le x_2 \le \dots \le x_k, \qquad \sum_{i=1}^{k} x_i = T, \qquad \text{cut at } x_{k+1} = c \text{ when } c > T - \sum_{i \le k} x_i
-$$
-
-where:
-
-- $x_i$ is the $i$-th number in the combination, and $T$ is the target;
-- non-decreasing order means the next choice starts at the current index (reuse allowed), never earlier, so `[3, 2, 2]` cannot appear next to `[2, 2, 3]`;
-- the cut: if candidate $c$ is bigger than what is still needed, then so is **every later** candidate, because they are sorted. So the loop can stop, not just skip $c$.
-
-Example: sorted $[2, 3, 6, 7]$, $T = 7$.
-
-```text
-need 7
-├─ 2 → need 5
-│  ├─ 2 → need 3
-│  │  ├─ 2 → need 1        2 > 1: stop this loop
-│  │  └─ 3 → need 0  ✓     [2, 2, 3]
-│  └─ 3 → need 2           3 > 2: stop
-├─ 3 → need 4
-│  └─ 3 → need 1           3 > 1: stop
-├─ 6 → need 1              6 > 1: stop
-└─ 7 → need 0  ✓           [7]
-```
-
-That is **10** nodes. Without the sorted cut, the search must step into each too-big candidate and see it overshoot, which takes 28 nodes.
-
-**Idea.** Sort. At each node try candidates from the current index upward, and break out of the loop at the first one that is too big.
-
-```java
-static void combinationSum(int[] sorted, int start, int remaining, List<Integer> path, List<List<Integer>> out) {
-    nodes++;
-    if (remaining == 0) { out.add(new ArrayList<>(path)); return; }
-    for (int i = start; i < sorted.length; i++) {
-        if (sorted[i] > remaining) break;           // sorted: every later candidate is too big as well
-        path.add(sorted[i]);
-        combinationSum(sorted, i, remaining - sorted[i], path, out);   // i, not i + 1: reuse allowed
-        path.remove(path.size() - 1);
-    }
-}
-```
-
-**Answer.** `[[2, 2, 3], [7]]`, after visiting 10 nodes instead of 28. The depth is at most $T / \min_i a_i = 7 / 2$, so at most 3 numbers, and the tree has at most $n^{T / \min a}$ leaves: exponential in the worst case, which is why the cut matters. Space is $O(T / \min a)$ for the path.
-
-### 2. LeetCode 51: N-Queens (Hard)
-
-**Problem.** Return every way to place $n$ non-attacking queens on an $n \times n$ board, each drawn as strings with `Q` and `.`. For $n = 4$ there are 2:
-
-```text
-. Q . .      . . Q .
-. . . Q      Q . . .
-Q . . .      . . . Q
-. . Q .      . Q . .
-```
-
-**Math first.** Use the vector $x = (x_1, \dots, x_n)$ of Level 4, one column per row. The conflict condition has three parts, and each part names a "line" that can hold at most one queen. Give every line its own array slot:
-
-$$
-\text{col}[c], \qquad \text{diag}[r - c + n - 1], \qquad \text{anti}[r + c], \qquad 0 \le r - c + n - 1,\ r + c \le 2n - 2
-$$
-
-where:
-
-- $\text{col}[c]$ is true when column $c$ is taken;
-- $r - c$ ranges from $-(n-1)$ to $n - 1$, so adding $n - 1$ turns it into an index from 0 to $2n - 2$; $\text{diag}$ marks the "$\backslash$" diagonals;
-- $r + c$ already ranges from 0 to $2n - 2$; $\text{anti}$ marks the "$/$" diagonals;
-- a square $(r, c)$ is safe exactly when all three slots are false, which is checked in $O(1)$ time.
-
-Example: $n = 4$, with queens at $(0, 1)$ and $(1, 3)$. They mark $\text{col}[1]$ and $\text{col}[3]$, $\text{diag}[0 - 1 + 3] = \text{diag}[2]$ and $\text{diag}[1 - 3 + 3] = \text{diag}[1]$, and $\text{anti}[0 + 1] = \text{anti}[1]$ and $\text{anti}[1 + 3] = \text{anti}[4]$.
-
-- Row 2, column 0: $\text{col}[0]$, $\text{diag}[2 - 0 + 3] = \text{diag}[5]$ and $\text{anti}[2]$ are all free, so $x_3 = 0$.
-- Row 3: column 0 and column 1 are taken. Column 2 needs $\text{diag}[3 - 2 + 3] = \text{diag}[4]$ and $\text{anti}[5]$, both free, so $x_4 = 2$.
-
-That completes $x = (1, 3, 0, 2)$, the first board above.
-
-**Idea.** Fill rows top to bottom. In each row try every column; skip attacked squares; mark the three slots, recurse, and unmark them.
-
-```java
-void place(int r) {
-    nodes++;
-    if (r == n) { boards.add(draw()); return; }
-    for (int c = 0; c < n; c++) {
-        if (col[c] || diag[r - c + n - 1] || anti[r + c]) continue;   // attacked: prune
-        queenCol[r] = c;
-        col[c] = diag[r - c + n - 1] = anti[r + c] = true;           // choose
-        place(r + 1);                                                // explore
-        col[c] = diag[r - c + n - 1] = anti[r + c] = false;          // un-choose
-    }
-}
-```
-
-At a leaf, `draw` turns the vector into strings:
-
-```java
-List<String> draw() {
-    List<String> board = new ArrayList<>();
-    for (int r = 0; r < n; r++) {
-        char[] row = ".".repeat(n).toCharArray();
-        row[queenCol[r]] = 'Q';
-        board.add(new String(row));
-    }
-    return board;
-}
-```
-
-**Answer.** For $n = 4$: the 2 boards above, $x = (1, 3, 0, 2)$ and $(2, 0, 3, 1)$, after 17 nodes. For $n = 8$: 92 boards after 2,057 nodes. For $n = 2$ and $n = 3$ there are none. Each node costs $O(n)$ for its loop, and the tree is bounded by the permutation tree, so the time is $O(n \cdot n!)$ in the worst case, while the space is $O(n)$ for the arrays plus the output.
-
-### 3. LeetCode 37: Sudoku Solver (Hard)
-
-**Problem.** Fill a $9 \times 9$ grid so that every row, every column and every $3 \times 3$ box contains the digits 1 to 9 exactly once. The puzzle has exactly one solution. The lab's puzzle starts with the row `53..7....` and has 51 empty cells.
-
-**Math first.** The decision vector holds one digit per empty cell, in reading order. Candidate $d$ for cell $(r, c)$ passes the predicate when it is new in all three of its groups:
-
-$$
-P(r, c, d) = d \notin \text{row}_r \ \land\ d \notin \text{col}_c \ \land\ d \notin \text{box}_b, \qquad b = 3 \left\lfloor \frac{r}{3} \right\rfloor + \left\lfloor \frac{c}{3} \right\rfloor
-$$
-
-where:
-
-- $\text{row}_r$, $\text{col}_c$ and $\text{box}_b$ are the sets of digits already in row $r$, column $c$ and box $b$;
-- the boxes are numbered 0 to 8, left to right and top to bottom; $\lfloor r/3 \rfloor$ is the box row and $\lfloor c/3 \rfloor$ the box column;
-- the box's top-left cell is $(3 \lfloor r/3 \rfloor, 3 \lfloor c/3 \rfloor)$, and its 9 cells are that corner plus $(\lfloor i/3 \rfloor, i \bmod 3)$ for $i = 0, \dots, 8$.
-
-Example: cell $(4, 7)$ is in box $b = 3 \cdot 1 + 2 = 5$, the middle-right box, whose top-left cell is $(3, 6)$. Blind trial would try up to $9^{51} \approx 4.6 \times 10^{48}$ fillings. With $P$ checked at every cell, the lab's solver makes 4,209 calls.
-
-**Idea.** Find the first empty cell, try the digits that pass $P$, and recurse. Return `true` as soon as the grid is full, so the finished solution is never undone; return `false` when no digit fits, which sends the search back to the previous cell.
-
-```java
-static boolean solveSudoku(char[][] board) {
-    nodes++;
-    for (int r = 0; r < 9; r++) {
-        for (int c = 0; c < 9; c++) {
-            if (board[r][c] != '.') continue;
-            for (char d = '1'; d <= '9'; d++) {
-                if (!canPlace(board, r, c, d)) continue;   // prune: d is already in the row, column or box
-                board[r][c] = d;                           // choose
-                if (solveSudoku(board)) return true;       // explore; true means solved, so stop
-                board[r][c] = '.';                         // un-choose
-            }
-            return false;                                  // no digit fits this cell: go back
-        }
-    }
-    return true;                                           // no empty cell is left
-}
-
-static boolean canPlace(char[][] board, int r, int c, char d) {
-    for (int i = 0; i < 9; i++) {
-        if (board[r][i] == d || board[i][c] == d) return false;
-        if (board[3 * (r / 3) + i / 3][3 * (c / 3) + i % 3] == d) return false;  // the 3 x 3 box
-    }
-    return true;
-}
-```
-
-**Answer.** The first row becomes `534678912` and the last `345286179`, after 4,209 calls. Each call scans the grid for an empty cell ($\le 81$ steps) and tests 9 digits with 27 reads each, so a call costs at most about $81 + 9 \times 27 = 324$ steps. Well-known speed-ups are to keep the three digit sets as bit masks, and to fill first the cell with the **fewest** candidates, which shrinks the tree the most.
-
-## Mathematical Abstraction
-
-A backtracking search visits the prefixes of the decision vector that survive a safe pruning predicate:
-
-$$
-\mathcal{T} = \big\lbrace (x_1, \dots, x_k) : 0 \le k \le n,\ x_i \in C_i(x_1, \dots, x_{i-1}),\ P(x_1, \dots, x_i) \text{ for all } i \le k \big\rbrace, \qquad \text{nodes} = \lvert \mathcal{T} \rvert = \sum_{k=0}^{n} \lvert \mathcal{T}_k \rvert
-$$
-
-where:
-
-- $x_i$ is the $i$-th decision and $C_i$ its candidate set, which may depend on the earlier decisions;
-- $P$ is the pruning predicate, *safe* when $P(\text{prefix})$ false implies that no completion of the prefix is a solution;
-- $\mathcal{T}_k$ is the set of surviving prefixes with exactly $k$ decisions, and the solutions are the complete vectors in $\mathcal{T}_n$.
-
-Example: for 4-queens, $C_i = \lbrace 0, 1, 2, 3 \rbrace$ and $P$ is "no two queens attack". The level sizes are $\lvert \mathcal{T}_0 \rvert, \dots, \lvert \mathcal{T}_4 \rvert = 1, 4, 6, 4, 2$, so the search visits $1 + 4 + 6 + 4 + 2 = 17$ nodes, and $\mathcal{T}_4$ holds the 2 solutions. Without $P$ the same formula gives $1 + 4 + 16 + 64 + 256 = 341$. For subsets, $C_i = \lbrace 0, 1 \rbrace$ and $P$ is always true, giving $2^{n+1} - 1 = 15$ for $n = 3$.
-
-## References
-
-- Jeff Erickson, *Algorithms* (2019), Chapter 2, "Backtracking", including the history of the $n$ queens problem and Gauss's row-by-row method: <https://jeffe.cs.illinois.edu/teaching/algorithms/book/02-backtracking.pdf>.
-- Donald E. Knuth, *The Art of Computer Programming*, Volume 4B, *Combinatorial Algorithms, Part 2* (Addison-Wesley, 2022), whose backtracking material first appeared as Volume 4 Fascicle 5, *Mathematical Preliminaries Redux; Introduction to Backtracking; Dancing Links* (2019): <https://www-cs-faculty.stanford.edu/~knuth/taocp.html>.
-- Niklaus Wirth, "Program Development by Stepwise Refinement", *Communications of the ACM* 14(4), 1971, which develops an eight-queens program.
-- Robert Sedgewick and Kevin Wayne, *Computer Science: An Interdisciplinary Approach*, §2.3 "Recursion", with `Queens.java`: <https://introcs.cs.princeton.edu/java/23recursion/>.
-- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), has no backtracking chapter; Chapter 34, "NP-Completeness", explains why problems such as subset sum are not expected to have fast exact algorithms, so search with pruning is often the practical tool. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- LeetCode: [78. Subsets](https://leetcode.com/problems/subsets/), [46. Permutations](https://leetcode.com/problems/permutations/), [39. Combination Sum](https://leetcode.com/problems/combination-sum/), [51. N-Queens](https://leetcode.com/problems/n-queens/), [37. Sudoku Solver](https://leetcode.com/problems/sudoku-solver/).
+- [BacktrackingLab.java](BacktrackingLab.java) — the existing optional Java lab contains additional examples, including subsets, permutations, subset sum, N-Queens, Combination Sum and Sudoku. Run it with `java BacktrackingLab.java`.
+- Jeff Erickson, *Algorithms* (2019), [Chapter 2: Backtracking](https://jeffe.cs.illinois.edu/teaching/algorithms/book/02-backtracking.pdf).
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 4B (2022), [Combinatorial Algorithms, Part 2](https://www-cs-faculty.stanford.edu/~knuth/taocp.html).
+- Niklaus Wirth, "Program Development by Stepwise Refinement", *Communications of the ACM* 14(4), 1971.
 
 [← Breadth-First Search](../breadth-first-search/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Recursion →](../recursion/index.qmd)
