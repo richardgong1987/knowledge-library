@@ -1,62 +1,406 @@
 ---
 title: "Interactive"
-description: "An original, understandable lesson on the Interactive LeetCode topic with fully explained mathematics."
+description: "Problems where a judge hides the data and answers your questions: the judge API, query budgets and the ⌈log2 n⌉ lower bound from decision trees, adaptive adversaries, minimax query choice, and Guess Number, First Bad Version, Find in Mountain Array and Guess the Word solved math-first."
 ---
 
-## What is the real challenge?
+In an interactive problem you cannot see the input. A **judge** hides it and answers questions through an API, and it counts every question against a budget. The algorithm is a questioning strategy, and its cost is the number of questions. This lesson shows how to count the questions a strategy needs, how to prove that no strategy can need fewer, and how to choose good questions when the judge plays against you.
 
-**LeetCode 278 — First Bad Version.** Choose queries based on replies while respecting an interaction limit.
+All code is in [`InteractiveLab.java`](InteractiveLab.java). Run it from this folder with `java InteractiveLab.java`; it checks every number on this page and prints `OK`. The lab plays the judge itself: small classes implement each judge API and count the calls.
 
-This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
+## The problem
 
-## The tempting solution
+A friend thinks of a whole number from 1 to 100. You may ask "is it $x$?", and the friend answers **too high**, **too low** or **correct**. How many questions do you need in the worst case?
 
-Query all n versions one at a time. If each query talks to a remote grader, the number of calls matters more than local CPU.
+- Asking 1, 2, 3, … in order needs up to **100** questions.
+- Always asking the middle of the numbers that are still possible needs at most **7**.
+- And no strategy at all can promise fewer than 7.
 
-## The idea worth remembering
+On LeetCode the friend is a program: `guess(num)` returns $-1$, $1$ or $0$, the hidden number can be as large as $2^{31} - 1$, and a solution that asks too many questions fails. The whole topic is about the gap between 100 and 7, and about proving the 7.
 
-Interactive problems separate local computation from oracle requests. A monotone yes/no response allows binary search with exponentially fewer queries.
+## Explain it like I'm ten
 
-## One mathematical expression — with every symbol explained
+::: {.callout-tip}
+**Twenty Questions.** One player thinks of something; the others may ask only yes-or-no questions. A good question splits the possibilities into two halves: "is it alive?" is better than "is it a giraffe?". Each perfect split halves what is left, so 20 questions can tell apart $2^{20} = 1{,}048{,}576$ things, about a million.
+
+That is also the limit. However clever you are, one yes-or-no answer can at best cut the possibilities in half, so you cannot beat halving.
+
+**The sneaky friend.** Now imagine a friend who cheats in a clever way: they never really choose a number. Each time you ask, they give the answer that leaves the **most** numbers still possible, while never contradicting anything they said before. Against this friend, any lucky shortcut fails, and only the halving strategy still finishes in 7 questions. Computer scientists call this friend an **adversary**, and they use it to prove that a number of questions is truly necessary.
+
+Aditya Bhargava's *Grokking Algorithms* opens its first chapter with this guessing game to introduce binary search.
+:::
+
+## From simple to advanced
+
+### Level 1: the judge and the budget
+
+Model the judge as an object with one method. The real judge's code is hidden; in the lab, a small class plays the judge honestly and counts the calls:
+
+```java
+interface GuessJudge {
+    int guess(int num);
+}
+
+static final class HonestJudge implements GuessJudge {
+    private final int pick;
+    int calls;
+
+    HonestJudge(int pick) {
+        this.pick = pick;
+    }
+
+    public int guess(int num) {
+        calls++;
+        return Integer.compare(pick, num);
+    }
+}
+```
+
+`Integer.compare(pick, num)` is $-1$ when `num` is too high, $1$ when it is too low and $0$ when it is right, the same convention as LeetCode 374. The simplest strategy asks every number in turn:
+
+```java
+static int guessByCounting(int n, GuessJudge judge) {
+    for (int num = 1; num <= n; num++) {
+        if (judge.guess(num) == 0) return num;
+    }
+    throw new IllegalStateException("the judge broke its own rules");
+}
+```
+
+Its cost is the position of the hidden number:
 
 $$
-Q(n)\leq\lceil\log_2(n+1)\rceil
+Q_{\text{count}}(n) = \max_{1 \le p \le n} p = n
 $$
 
-**Every symbol means:** Q(n) counts oracle comparisons for locating the first bad version in n possible positions plus a sentinel; log₂ is base-two logarithm; ceiling rounds upward. The exact bound depends on implementation and sentinel rules.
+where:
 
-**Numerical substitution:** With 16 ordered versions and first bad at 11, ask near the midpoint: version 8 is good, so discard 1..8. Ask version 12 (bad), narrowing to 9..12. Ask 10 (good), then 11 (bad). Four queries locate the boundary instead of up to sixteen.
+- $Q_{\text{count}}(n)$ is the worst-case number of questions for numbers from 1 to $n$;
+- $p$ is the hidden number, and counting up needs exactly $p$ questions to reach it.
 
-The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
+Example: with $n = 10$ and $p = 6$ the lab's judge counts 6 calls; the worst case $p = 10$ needs all 10. For $n = 2^{31} - 1 = 2{,}147{,}483{,}647$ that is over two billion calls, far beyond any budget.
 
-## Why the method is justified
+### Level 2: the lower bound, from a decision tree
 
-Each query splits a remaining contiguous candidate interval; a monotone predicate guarantees the discarded half cannot contain the first true position.
+Any questioning strategy can be drawn as a **decision tree**. The root is the first question; each answer leads to the next question; a leaf is the moment the number is known. With three answers, "correct" ends the game at that node, so each question node identifies exactly one number and has at most two children for "too low" and "too high". A tree of depth $t$ therefore has at most $1 + 2 + 4 + \dots + 2^{t-1} = 2^t - 1$ nodes, and it must have one node per possible number:
 
-**Complexity or resource cost:** O(log n) oracle calls and O(1) local extra memory; n is number of candidate versions.
+$$
+2^t - 1 \ge n \quad \Longrightarrow \quad t \ge \lceil \log_2 (n + 1) \rceil
+$$
 
-## Executable example
+where:
 
-A related operation exists in the [original, unit-tested JavaScript algorithms lab](../examples/patterns.mjs):
+- $t$ is the number of questions in the worst case, the depth of the tree;
+- $n$ is the number of possible hidden values;
+- $\lceil x \rceil$ rounds $x$ up to a whole number, because questions come in whole numbers.
 
-~~~js
-import { lowerBound } from '../examples/patterns.mjs';
+Example 1: $n = 100$ gives $\log_2 101 = 6.66$, so at least **7** questions. Example 2: $n = 10$ gives $\lceil \log_2 11 \rceil = \lceil 3.46 \rceil = 4$. Example 3: $n = 2^{31} - 1$ gives $\lceil \log_2 2^{31} \rceil = 31$.
 
-console.log(lowerBound([0,0,0,1,1],1));
-~~~
+For pure **yes/no** questions, as in LeetCode 278, a tree of depth $t$ has at most $2^t$ leaves, so $t \ge \lceil \log_2 n \rceil$. With $n = 5$ versions that is $\lceil 2.32 \rceil = 3$ questions; with $n = 2^{31} - 1$ it is again 31.
 
-Run this from a `.mjs` file inside this topic directory. The mathematical relation above is the key concept, while the linked helper illustrates its prerequisite.
+The number $\lceil \log_2(n+1) \rceil$ is simply the number of binary digits of $n$, which Java computes with one instruction:
 
-## Which assumption makes it fail?
+```java
+static int minGuesses(int n) {
+    return 32 - Integer.numberOfLeadingZeros(n);       // the number of bits in n
+}
+```
 
-Do not query outside the official allowed range. A remote interaction budget may forbid linear scans even when input size is moderate.
+### Level 3: adaptive adversaries
 
-For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+The bound in Level 2 is about the **worst** case. To show that an algorithm cannot do better, imagine a judge that picks its answers *adaptively*: it does not decide the hidden number in advance, and it always keeps as many numbers possible as it can without contradicting itself. If a strategy can force such an adversary to give up, it can certainly beat an honest judge.
 
-## Source and interview practice
+```java
+static final class AdversaryJudge implements GuessJudge {
+    private int low, high;                             // every number in [low, high] fits all past answers
+    int calls;
 
-- **Textbook relationship:** CLRS Chapters 2–3 (binary search idea and comparison complexity); interactive judge protocols are a specialised domain.. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode/practice:** LeetCode 278 — First Bad Version — [problem or problem set](https://leetcode.com/problems/first-bad-version/).
-- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+    AdversaryJudge(int n) {
+        low = 1;
+        high = n;
+    }
 
-[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)
+    public int guess(int num) {
+        calls++;
+        if (num < low) return 1;
+        if (num > high) return -1;
+        if (low == high) return 0;                     // only num is left, so it must admit it
+        if (num - low >= high - num) {                 // keep the bigger side: say "too high"
+            high = num - 1;
+            return -1;
+        }
+        low = num + 1;
+        return 1;
+    }
+}
+```
+
+A question at $x$ splits the $m$ remaining numbers into $a$ below, the one number $x$, and $b$ above. The adversary keeps the larger side:
+
+$$
+m' = \max(a, b) \ge \left\lceil \frac{m - 1}{2} \right\rceil, \qquad a + b = m - 1
+$$
+
+where:
+
+- $m$ is how many numbers are still possible before the question, and $m'$ after the answer;
+- $a$ and $b$ are the numbers below and above the guess;
+- the larger of two numbers that add up to $m - 1$ is at least half of $m - 1$.
+
+Example: $n = 10$ against binary search. Guess 5: the sides are $\lbrace 1..4 \rbrace$ and $\lbrace 6..10 \rbrace$, so the adversary says "too low" and keeps 5 numbers. Guess 8: sides $\lbrace 6, 7 \rbrace$ and $\lbrace 9, 10 \rbrace$, it says "too high" and keeps 2. Guess 6: it keeps $\lbrace 7 \rbrace$. Guess 7: only 7 is left, so it must say "correct". That is $10 \to 5 \to 2 \to 1 \to$ found, **4** questions, exactly $\lceil \log_2 11 \rceil$. Counting up from 1 against the same adversary takes all 10. The lab plays binary search against the adversary for $n = 1, 2, 3, 10, 100, 1{,}000$ and $2^{31} - 1$ and gets exactly `minGuesses(n)` every time: binary search is **optimal**.
+
+Real judges are sometimes adaptive too. In LeetCode 843 and in many contest problems the statement warns that the hidden answer "may change as long as it is consistent with previous answers". Then only worst-case reasoning is safe.
+
+### Level 4: choosing questions with minimax
+
+"Too high or too low" makes the best question obvious: the middle. When answers are richer, such as "how many letters match?", choose the question whose **worst** answer leaves the fewest candidates. This rule is called **minimax**: minimise the maximum.
+
+$$
+q^\ast = \operatorname*{arg\,min}_{q} \; \max_{r} \; \lvert C_{q,r} \rvert, \qquad C_{q,r} = \lbrace w \in C : \operatorname{answer}(w, q) = r \rbrace
+$$
+
+where:
+
+- $C$ is the set of candidates still consistent with every answer so far;
+- $q$ is a possible question and $r$ a possible answer to it;
+- $C_{q,r}$ is the group of candidates that would make the judge reply $r$ to $q$;
+- $\operatorname*{arg\,min}_q$ picks the question $q$ with the smallest worst group.
+
+Example: six candidate words, `garden`, `harden`, `warden`, `pardon`, `golden`, `burden`, where the answer is the number of positions with the same letter. Asking `garden` gives the answers $6, 5, 5, 4, 4, 4$ for the six words, so the groups are $\lbrace 6: 1, 5: 2, 4: 3 \rbrace$ and the worst case leaves **3** words. Asking `harden` gives the answers $5, 6, 5, 4, 3, 4$, so the groups are $\lbrace 5: 2, 6: 1, 4: 2, 3: 1 \rbrace$ and the worst case leaves only **2**. Minimax asks `harden`.
+
+```java
+static int worstCase(List<String> candidates, String query) {
+    int[] groupSize = new int[7];                      // an answer is 0..6 matching letters
+    for (String word : candidates) groupSize[matches(word, query)]++;
+    return Arrays.stream(groupSize).max().getAsInt();
+}
+
+static int matches(String a, String b) {
+    int same = 0;
+    for (int i = 0; i < a.length(); i++) if (a.charAt(i) == b.charAt(i)) same++;
+    return same;
+}
+```
+
+Binary search is minimax too: for "higher or lower", the middle is exactly the question whose larger side is smallest. Minimax is greedy, one question ahead; it is not always optimal over many questions, but it is the standard practical rule. Knuth used a minimax rule of this kind (published 1976–77) to show that the code-breaking game *Mastermind* can always be won in five guesses.
+
+## Why it works and what it costs
+
+**Binary search keeps one invariant**: *the hidden number is always in $[lo, hi]$*. It holds at the start ($[1, n]$). "Too high" for $mid$ means the number is below $mid$, so setting $hi = mid - 1$ keeps it; "too low" sets $lo = mid + 1$. Each question removes $mid$ and at least half of the rest, so after $t$ questions at most $\lfloor n / 2^t \rfloor$ numbers remain, and the search ends within $\lceil \log_2(n+1) \rceil$ questions, matching the lower bound of Level 2.
+
+**The lower bound is a counting argument**, not a statement about any particular algorithm: a decision tree of depth $t$ cannot have more than $2^t - 1$ question nodes. The adversary of Level 3 makes it concrete: it shows one sequence of answers that forces any strategy to ask $\lceil \log_2(n+1) \rceil$ questions.
+
+**Minimax keeps progress.** In LeetCode 843 the guessed word is always one of the candidates, and it matches itself in all 6 positions. Any reply other than 6 removes it, so every round shrinks the candidate set by at least one, and the loop ends.
+
+**Costs on this page:**
+
+| Problem | Questions (worst case) | With numbers | Extra work per question |
+| --- | --- | --- | --- |
+| Counting up | $n$ | $10$ for $n = 10$ | $O(1)$ |
+| Binary search, three answers | $\lceil \log_2(n+1) \rceil$ | $4$ for $n = 10$, $31$ for $2^{31} - 1$ | $O(1)$ |
+| Binary search, yes/no | $\lceil \log_2 n \rceil$ | $3$ for $n = 5$, $31$ for $2^{31} - 1$ | $O(1)$ |
+| Mountain array | $2\lceil \log_2 n \rceil + \lceil \log_2 n \rceil + \lceil \log_2 n \rceil$ | at most $56$ for $n = 10^4$ | $O(1)$ |
+| Minimax word guessing | at most $\lvert C \rvert$, usually far fewer | $3$ for the six words | $O(\lvert C \rvert^2 L)$ for words of length $L$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `mid = (lo + hi) / 2` | Near $2^{31}$ the sum overflows to a negative number: wrong answers or an endless loop | `lo + (hi - lo) / 2` |
+| Misreading the judge's sign | LeetCode 374's $-1$ means *your guess is too high*; flipping it walks away from the answer | Write the convention next to the call, or wrap it in a named method |
+| `hi = mid - 1` when `mid` is a bad version | The first bad version is skipped | When `mid` satisfies the condition, keep it: `hi = mid` |
+| Calling `get(mid)` twice in one comparison | Twice the calls; a 100-call budget runs out | Read each value once into a local variable |
+| Searching the descending side first in a mountain | Returns the larger of two matching indices | Search the ascending side first; the problem asks for the minimum index |
+| Guessing a word that is not in the list | The judge returns $-1$ and the guess is wasted | Guess only words from the list, preferably current candidates |
+| Assuming the secret is fixed and "typical" | A strategy tuned to average cases fails on an adaptive judge | Optimise the worst case: minimax |
+| Not flushing output in a stdin/stdout interactive judge | The judge waits forever: "idleness limit exceeded" | Flush after every query (`System.out.flush()`), as contest judges require |
+
+## Interview problems
+
+Each solution starts with the mathematics: the invariant, the number of questions, and the budget.
+
+### 1. LeetCode 374: Guess Number Higher or Lower (Easy)
+
+**Problem.** A number `pick` is chosen from 1 to $n$, with $n \le 2^{31} - 1$. The API `guess(num)` returns $-1$ if `num` is higher than `pick`, $1$ if it is lower, and $0$ if they are equal. Return `pick`. Example: $n = 10$, `pick` $= 6$.
+
+**Math first.** Keep the invariant $\text{pick} \in [lo, hi]$ and always ask the middle:
+
+$$
+mid = lo + \left\lfloor \frac{hi - lo}{2} \right\rfloor, \qquad Q \le \lceil \log_2 (n + 1) \rceil
+$$
+
+where:
+
+- $[lo, hi]$ is the range that still contains `pick`, starting at $[1, n]$;
+- $\lfloor x \rfloor$ rounds down; writing $lo + \lfloor (hi - lo)/2 \rfloor$ instead of $\lfloor (lo + hi)/2 \rfloor$ keeps every intermediate value below $2^{31}$;
+- $Q$ is the number of calls, bounded by Level 2's lower bound, which binary search meets.
+
+Example: $n = 10$, `pick` $= 6$. Ask $1 + \lfloor 9/2 \rfloor = 5$: too low, so $[6, 10]$. Ask $6 + 2 = 8$: too high, so $[6, 7]$. Ask $6$: correct. That is 3 calls, within the bound $\lceil \log_2 11 \rceil = 4$.
+
+**Idea.** A loop that asks the middle and moves one end past it. The method takes the judge as a parameter; on LeetCode, `guess` is inherited from the `GuessGame` base class instead.
+
+```java
+static int guessNumber(int n, GuessJudge judge) {
+    int lo = 1, hi = n;
+    while (true) {
+        int mid = lo + (hi - lo) / 2;                  // (lo + hi) / 2 would overflow near 2^31
+        int answer = judge.guess(mid);
+        if (answer == 0) return mid;
+        if (answer < 0) hi = mid - 1;
+        else lo = mid + 1;
+    }
+}
+```
+
+**Answer.** `guessNumber(10)` returns 6 after asking 5, 8, 6. For `pick` $= n = 2^{31} - 1$ it returns without overflow in at most 31 calls. $O(\log n)$ time, at most 31 calls, and $O(1)$ space.
+
+### 2. LeetCode 278: First Bad Version (Easy)
+
+**Problem.** Versions $1..n$ of a product were released; from some version on, every version is bad. The API `isBadVersion(v)` says whether $v$ is bad. Find the first bad version with as few calls as possible, for $n \le 2^{31} - 1$. Example: $n = 5$, first bad version 4.
+
+**Math first.** The answers form a monotone sequence, good then bad: $B(v) = [v \ge b]$ for an unknown $b$. Search for the boundary, keeping $b \in [lo, hi]$:
+
+$$
+B(mid) \Rightarrow b \in [lo, mid], \qquad \lnot B(mid) \Rightarrow b \in [mid + 1, hi], \qquad Q \le \lceil \log_2 n \rceil
+$$
+
+where:
+
+- $b$ is the first bad version, and $B(v)$ is the API's yes/no answer for version $v$;
+- $\Rightarrow$ means "so we know that", and $\lnot$ means "not";
+- $Q$ is the number of calls; each call halves the range, and the range ends at size 1.
+
+Example: $n = 5$, $b = 4$. Start $[1, 5]$. Ask $mid = 3$: good, so $b \in [4, 5]$. Ask $mid = 4$: bad, so $b \in [4, 4]$. Done: $b = 4$ after 2 calls, within $\lceil \log_2 5 \rceil = 3$.
+
+**Idea.** Unlike LeetCode 374, a bad `mid` might itself be the answer, so the range keeps it: `hi = mid`. The loop stops when the range has one element.
+
+```java
+static int firstBadVersion(int n, IntPredicate isBadVersion) {
+    int lo = 1, hi = n;                                // the first bad version is always in [lo, hi]
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (isBadVersion.test(mid)) hi = mid;          // mid is bad: the first bad one is mid or earlier
+        else lo = mid + 1;
+    }
+    return lo;
+}
+```
+
+**Answer.** `firstBadVersion(5)` returns 4 after 2 calls; with $n = b = 2^{31} - 1$ it uses at most 31 calls. $O(\log n)$ time and $O(1)$ space.
+
+### 3. LeetCode 1095: Find in Mountain Array (Hard)
+
+**Problem.** A *mountain array* strictly increases to a peak and then strictly decreases; its length is between 3 and $10^4$. It is hidden behind `get(index)` and `length()`, and a solution that calls `get` more than **100** times is judged wrong. Return the **smallest** index holding `target`, or $-1$. Example: `[1, 3, 5, 7, 6, 5, 2]` and target 5 give index 2 (5 also sits at index 5).
+
+**Math first.** Three binary searches. First find the peak by asking whether the slope at $mid$ goes up; then search the ascending part; then, only if needed, the descending part:
+
+$$
+\text{up}(i) = \big[A[i] < A[i+1]\big], \qquad Q \le \underbrace{2\lceil \log_2 n \rceil}_{\text{peak}} + \underbrace{\lceil \log_2 n \rceil}_{\text{left}} + \underbrace{\lceil \log_2 n \rceil}_{\text{right}}
+$$
+
+where:
+
+- $A$ is the hidden array and $n$ its length;
+- $\text{up}(i)$ is true on the climb and false from the peak on, a monotone yes/no sequence just like LeetCode 278, so the peak is its first "false";
+- each peak step reads two values, $A[mid]$ and $A[mid+1]$; each step of the other two searches reads one;
+- searching the left part first returns the smaller index when the target appears on both sides.
+
+Example: $n = 10^4$, so $\lceil \log_2 10^4 \rceil = \lceil 13.29 \rceil = 14$. The three searches take $3 \times 14 = 42$ steps; counting two calls per peak step, $28 + 14 + 14 = 56$ calls, comfortably within 100. On the small example, the peak search reads $(7, 6)$, $(3, 5)$, $(5, 7)$ and finds the peak at index 3 in 6 calls; the ascending search reads index 1 (value 3) and index 2 (value 5): found, 8 calls in total.
+
+**Idea.** `peakIndex` is the First Bad Version search on the slope. `search` is ordinary binary search with a flag that flips the comparison on the descending side.
+
+```java
+static int findInMountainArray(int target, MountainArray mountain) {
+    int peak = peakIndex(mountain);
+    int left = search(mountain, target, 0, peak, true);
+    return left != -1 ? left : search(mountain, target, peak + 1, mountain.length() - 1, false);
+}
+
+static int peakIndex(MountainArray mountain) {
+    int lo = 0, hi = mountain.length() - 1;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (mountain.get(mid) < mountain.get(mid + 1)) lo = mid + 1;   // still climbing: the peak is right of mid
+        else hi = mid;
+    }
+    return lo;
+}
+
+static int search(MountainArray mountain, int target, int lo, int hi, boolean ascending) {
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / 2;
+        int value = mountain.get(mid);
+        if (value == target) return mid;
+        if ((value < target) == ascending) lo = mid + 1;
+        else hi = mid - 1;
+    }
+    return -1;
+}
+```
+
+**Answer.** Target 5 gives 2 after 8 calls; target 2 gives 6 (right side only); target 4 gives $-1$. On a 10,000-element mountain the lab tries every target from $-1$ to 6,001 and the worst one uses 50 calls, under the bound of 56 and the budget of 100. $O(\log n)$ time and $O(1)$ space.
+
+### 4. LeetCode 843: Guess the Word (Hard)
+
+**Problem.** A secret word is one of `words`: at most 100 distinct words of 6 lowercase letters. `Master.guess(word)` returns $-1$ if the word is not in the list, and otherwise the number of positions where it matches the secret. Guess the secret within `allowedGuesses`, which is between 10 and 30. Example: the six words of Level 4.
+
+**Math first.** Keep the candidates consistent with every reply, and pick each guess by minimax:
+
+$$
+C \leftarrow \lbrace w \in C : \operatorname{match}(w, g) = r \rbrace, \qquad g = \operatorname*{arg\,min}_{q \in C} \max_{r} \lvert C_{q,r} \rvert, \qquad Q \ge \lceil \log_7 \lvert C \rvert \rceil
+$$
+
+where:
+
+- $C$ is the candidate set, $g$ the guess and $r = \operatorname{match}(g, \text{secret})$ the reply;
+- $C_{q,r}$ is the group of candidates that would give reply $r$ to question $q$, as in Level 4;
+- the secret always stays in $C$, because the secret matches the guess in exactly $r$ positions;
+- a reply takes at most 7 values ($0$ to $6$), so even a perfect strategy needs $\lceil \log_7 \lvert C \rvert \rceil$ guesses: $\lceil \log_7 100 \rceil = \lceil 2.37 \rceil = 3$ for 100 words.
+
+Example: secret `burden`. Minimax first asks `harden` (worst group 2, against 3 for `garden`). The reply is 4 (`_ _ r d e n`), so $C = \lbrace \texttt{pardon}, \texttt{burden} \rbrace$, the two words that match `harden` in exactly 4 places. Both have worst group 1; asking `pardon` gives reply 3, which leaves $C = \lbrace \texttt{burden} \rbrace$; the third guess is `burden`, reply 6. Over all six possible secrets, the worst case is 3 guesses.
+
+**Idea.** Loop: choose the minimax candidate, ask it, stop on 6, otherwise filter the candidates by the reply. Guessing from the candidates themselves guarantees progress, as shown above.
+
+```java
+static void findSecretWord(String[] words, Master master) {
+    List<String> candidates = new ArrayList<>(List.of(words));
+    while (!candidates.isEmpty()) {
+        String best = candidates.get(0);
+        for (String word : candidates) {
+            if (worstCase(candidates, word) < worstCase(candidates, best)) best = word;   // minimax choice
+        }
+        int answer = master.guess(best);
+        if (answer == 6) return;
+        String guessed = best;
+        candidates.removeIf(word -> matches(word, guessed) != answer);   // keep words that agree with the reply
+    }
+}
+```
+
+**Answer.** For the six words every secret is found in at most 3 guesses; `burden` takes `harden` (4), `pardon` (3), `burden` (6). Each round costs $O(\lvert C \rvert^2 \cdot 6)$ letter comparisons: at most $100^2 \times 6 = 60{,}000$ for the first round. Space is $O(\lvert C \rvert)$. The `worstCase(candidates, best)` call is recomputed inside the loop to keep the code short; caching it halves the work.
+
+## Mathematical Abstraction
+
+An interactive algorithm is a decision tree: each internal node is a question, each edge is an answer, and each leaf is a final output. Its worst-case cost is the tree's depth, and counting leaves gives the lower bound:
+
+$$
+\text{depth} \ge \lceil \log_b N \rceil, \qquad \text{cost of a strategy } S = \max_{\text{adversary answers}} Q(S)
+$$
+
+where:
+
+- $N$ is the number of different outputs the algorithm may need to give (possible hidden numbers, versions or words);
+- $b$ is the number of different answers a question can get, so a tree of depth $t$ has at most $b^t$ leaves;
+- $Q(S)$ is the number of questions strategy $S$ asks, and the maximum is over every sequence of answers an adaptive judge could give.
+
+Example: yes/no questions ($b = 2$) about $N = 2^{31} - 1$ versions need at least $\lceil \log_2 N \rceil = 31$ questions, and binary search uses 31. For "higher, lower or equal", the sharper count $2^t - 1 \ge N$ gives $\lceil \log_2(N+1) \rceil$: $4$ for $N = 10$. For word guessing, $b = 7$ and $N = 100$ give at least 3. The mountain array needs about $4 \lceil \log_2 10^4 \rceil = 56$ calls, comfortably within its budget of 100.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): §8.1, "Lower bounds for sorting", for the decision-tree argument; Chapter 2, "Getting Started", whose exercises introduce binary search. CLRS has no chapter on interactive problems. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.1 "Basic Programming Model" (binary search) and §2.2 (the compare-based lower bound for sorting): <https://algs4.cs.princeton.edu/11model/> and <https://algs4.cs.princeton.edu/22mergesort/>.
+- Jon Bentley, *Programming Pearls*, 2nd edition (Addison-Wesley, 2000), Column 4, "Writing Correct Programs": a binary search proved correct with an invariant.
+- Donald E. Knuth, "The Computer as Master Mind", *Journal of Recreational Mathematics* 9(1), 1–6 (1976–77): minimax guessing wins Mastermind within five guesses.
+- Aditya Bhargava, *Grokking Algorithms* (Manning), Chapter 1, "Introduction to algorithms" (binary search as a guessing game): <https://livebook.manning.com/book/grokking-algorithms/chapter-1>.
+- LeetCode: [374. Guess Number Higher or Lower](https://leetcode.com/problems/guess-number-higher-or-lower/), [278. First Bad Version](https://leetcode.com/problems/first-bad-version/), [1095. Find in Mountain Array](https://leetcode.com/problems/find-in-mountain-array/), [843. Guess the Word](https://leetcode.com/problems/guess-the-word/).
+
+[← Design](../design/index.qmd) · [Randomisation, Design, and Special Domains](../groups/07-specialised-domains.qmd) · [Database →](../database/index.qmd)

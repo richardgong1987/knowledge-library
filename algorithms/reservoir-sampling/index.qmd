@@ -1,64 +1,268 @@
 ---
 title: "Reservoir Sampling"
-description: "An original, understandable lesson on the Reservoir Sampling LeetCode topic with fully explained mathematics."
+description: "How to pick k items uniformly at random from a stream of unknown length with only k slots of memory: the one-item rule, Algorithm R and its k/n proof, the cost in writes and skipping (Algorithm L), weighted sampling with random keys, and LeetCode 382 and 398 solved math-first."
 ---
 
-## What is the real challenge?
+Reservoir sampling picks a fair random sample from a stream that is too long to store, or whose length you do not know until it ends. It keeps only $k$ items in memory, a *reservoir*, and still gives every item the same chance $k/n$ of being in the final sample. This lesson proves that with real numbers, then builds the variants used in practice.
 
-**LeetCode 382 — Linked List Random Node.** Maintain a uniform sample from a stream without knowing its final size.
+All code is in [`ReservoirSamplingLab.java`](ReservoirSamplingLab.java). Run it from this folder with `java ReservoirSamplingLab.java`; it checks every number on this page and prints `OK`. The frequency checks use a seeded `java.util.Random` and a stated tolerance, so the run is the same every time.
 
-This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
+## The problem
 
-## The tempting solution
+A web server writes a log line for every request: millions a day, arriving one at a time. An engineer wants **2 lines chosen uniformly at random** from today's log, to read by hand. Two rules:
 
-Load the whole unknown-length stream into memory before selecting one uniformly random element.
+- memory holds only 2 lines, so the log cannot be stored and indexed;
+- nobody knows how many lines there will be until midnight.
 
-## The idea worth remembering
+The obvious method, "pick 2 random line numbers between 1 and $n$", needs $n$ before the first line arrives. The other obvious method, "store everything, then pick", needs memory for all $n$ lines. Reservoir sampling needs neither. With a toy stream of $n = 5$ lines and $k = 2$ slots, every line must end up in the sample with probability $2/5 = 0.4$.
 
-Maintain one selected item. At the i-th arrival, replace the current sample with probability 1/i. Surprisingly, every earlier item retains equal probability after the final arrival.
+## Explain it like I'm ten
 
-## One mathematical expression — with every symbol explained
+::: {.callout-tip}
+Sweets roll past you on a conveyor belt, one at a time, and your pocket holds **one** sweet. You do not know how many sweets are coming. When the belt stops, the sweet in your pocket should be a fair random pick: every sweet equally likely.
 
-$$
-P(\text{item }j\text{ survives after }n)=\frac1n
-$$
+Here is the rule. The 1st sweet goes in your pocket. When the 2nd sweet arrives, flip a coin: heads, swap. When the 3rd arrives, roll a 3-sided die: if it shows 1, swap. When the $i$-th arrives, roll an $i$-sided die and swap only on a 1.
 
-**Every symbol means:** n is total number of observed items; j is any particular item's arrival index, between 1 and n; P is the probability over the sampler's random choices.
+Later sweets get a smaller chance to jump in, but earlier sweets had to survive more rolls to stay. The two effects cancel exactly, and every sweet ends with the same chance, $1/n$.
 
-**Numerical substitution:** For three items A,B,C: A is initially selected with probability 1. It survives B with probability (1−1/2)=1/2 and C with probability (1−1/3)=2/3. Multiply: 1×1/2×2/3=1/3. B is selected with 1/2 then survives C with 2/3, also 1/3. C enters with 1/3.
+Donald Knuth gives this method as *Algorithm R* in *The Art of Computer Programming*, Volume 2 (§3.4.2), and credits it to Alan G. Waterman. Jeffrey Vitter's 1985 paper "Random Sampling with a Reservoir" also credits Waterman for Algorithm R, then shows how to make it faster by skipping ahead.
+:::
 
-The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
+## From simple to advanced
 
-## Why the method is justified
+### Level 1: a reservoir of one item
 
-Induction: before arrival i, earlier item j has probability 1/(i−1); it survives the i-th replacement with probability (i−1)/i, giving 1/i. New item i is selected with 1/i.
+Keep the $i$-th item with probability $1/i$, replacing whatever was kept before. `random.nextInt(i) == 0` is true for exactly 1 of the $i$ equally likely values $0..i-1$.
 
-**Complexity or resource cost:** O(n) total processing and O(1) memory for one sample; selecting k samples needs O(k) memory.
-
-## Executable example
-
-The following small example can be run directly in its own environment:
-
-~~~js
-let chosen=null;
-for(let i=1;i<=3;i++) {
-  if(Math.random() < 1/i) chosen=['A','B','C'][i-1];
+```java
+static int pickOne(int[] stream, Random random) {
+    int kept = 0;
+    for (int i = 1; i <= stream.length; i++) {
+        if (random.nextInt(i) == 0) kept = stream[i - 1];   // true with probability 1/i
+    }
+    return kept;
 }
-console.log(chosen); // each item has probability 1/3
-~~~
+```
 
-Run the JavaScript with Node.js; it illustrates the precise toy case from the formula.
+The loop looks at each item once and never needs `stream.length` in advance, so it works the same on an iterator, a file or a network socket. An item $i$ is the final answer when it is chosen at step $i$ and then **not** replaced at any later step:
 
-## Which assumption makes it fail?
+$$
+P(\text{item } i \text{ kept}) = \frac{1}{i} \cdot \prod_{t=i+1}^{n} \left(1 - \frac{1}{t}\right) = \frac{1}{i} \cdot \frac{i}{i+1} \cdot \frac{i+1}{i+2} \cdots \frac{n-1}{n} = \frac{1}{n}
+$$
 
-Selecting each new item with a fixed probability such as 1/2 is biased toward later arrivals. Reservoir sampling assumes the stream sampling policy and replacement random numbers meet its conditions.
+where:
 
-For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+- $n$ is the length of the stream and $i$ is the position of the item, from 1 to $n$;
+- $\frac{1}{i}$ is the chance that item $i$ is taken when it arrives;
+- $1 - \frac{1}{t} = \frac{t-1}{t}$ is the chance that a later item $t$ does *not* replace it;
+- $\prod$ multiplies those survival chances, and the product *telescopes*: each numerator cancels the previous denominator.
 
-## Source and interview practice
+Example: $n = 4$ items. Item 2 is taken with $\frac{1}{2}$, survives item 3 with $\frac{2}{3}$ and item 4 with $\frac{3}{4}$:
 
-- **Textbook relationship:** CLRS Chapter 5 (indicator probabilities and randomised algorithms), Chapter 27 (online algorithms).. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode/practice:** LeetCode 382 — Linked List Random Node — [problem or problem set](https://leetcode.com/problems/linked-list-random-node/).
-- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+$$
+\frac{1}{2} \cdot \frac{2}{3} \cdot \frac{3}{4} = \frac{6}{24} = \frac{1}{4}
+$$
 
-[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)
+Item 1 gets $1 \cdot \frac{1}{2} \cdot \frac{2}{3} \cdot \frac{3}{4} = \frac{1}{4}$, item 3 gets $\frac{1}{3} \cdot \frac{3}{4} = \frac{1}{4}$, and item 4 gets $\frac{1}{4}$ directly. The lab runs `pickOne` on `[10, 20, 30, 40]` 100,000 times and sees each value $25\% \pm 1\%$ of the time.
+
+### Level 2: a reservoir of k items (Algorithm R)
+
+Now the pocket holds $k$ items. The first $k$ items fill it. Item $i > k$ draws a random slot number $j$ from $0..i-1$; if $j < k$, it replaces the item in slot $j$. So item $i$ enters with probability $k/i$, and it lands in a uniformly random slot.
+
+```java
+static int[] algorithmR(int[] stream, int k, Random random) {
+    int[] reservoir = Arrays.copyOf(stream, k);             // the first k items fill the reservoir
+    for (int i = k + 1; i <= stream.length; i++) {
+        int j = random.nextInt(i);                           // uniform in 0..i-1
+        if (j < k) reservoir[j] = stream[i - 1];             // happens with probability k/i
+    }
+    return reservoir;
+}
+```
+
+A later item $t$ evicts one particular resident only if it enters (probability $\frac{k}{t}$) **and** picks that resident's slot (probability $\frac{1}{k}$). So the chance of surviving step $t$ is $1 - \frac{k}{t} \cdot \frac{1}{k} = \frac{t-1}{t}$, the same factor as before:
+
+$$
+P(\text{item } i \in R) = \frac{k}{i} \cdot \prod_{t=i+1}^{n} \frac{t - 1}{t} = \frac{k}{i} \cdot \frac{i}{n} = \frac{k}{n}
+$$
+
+where:
+
+- $R$ is the final reservoir, $k$ its size and $n$ the stream length, with $k \le n$;
+- $\frac{k}{i}$ is the chance that item $i$ enters, for $i > k$; the first $k$ items enter with probability 1, which is $\frac{k}{i}$ capped at 1;
+- $\frac{t-1}{t}$ is the chance of surviving the arrival of item $t$;
+- the product again telescopes to $\frac{i}{n}$.
+
+Example: $k = 2$, $n = 5$. Item 3 enters with $\frac{2}{3}$, then survives item 4 with $\frac{3}{4}$ and item 5 with $\frac{4}{5}$: $\frac{2}{3} \cdot \frac{3}{4} \cdot \frac{4}{5} = \frac{24}{60} = \frac{2}{5} = 0.4$. Item 1 starts inside, then survives items 3, 4 and 5: $1 \cdot \frac{2}{3} \cdot \frac{3}{4} \cdot \frac{4}{5} = 0.4$. Every item gets $k/n = 0.4$. The lab samples 100,000 times and finds each of the 5 items in the sample $40\% \pm 1\%$ of the time.
+
+### Level 3: what it costs, and skipping ahead (Algorithm L)
+
+Algorithm R draws one random number per item, $n - k$ in total. But it **writes** to the reservoir far less often, because late items rarely get in. The expected number of writes after the reservoir is full is the sum of the entry chances:
+
+$$
+E[\text{writes}] = \sum_{i=k+1}^{n} \frac{k}{i} = k\,(H_n - H_k) \approx k \ln \frac{n}{k}
+$$
+
+where:
+
+- $\frac{k}{i}$ is the chance that item $i$ is written, and expectations of a sum add up (linearity of expectation);
+- $H_m = 1 + \frac{1}{2} + \dots + \frac{1}{m}$ is the $m$-th harmonic number, and $H_n - H_k \approx \ln n - \ln k$;
+- $\ln$ is the natural logarithm.
+
+Example 1: $k = 1$, $n = 4$: $\frac{1}{2} + \frac{1}{3} + \frac{1}{4} = 0.5 + 0.333 + 0.25 = 1.083$ writes after the first item. The lab counts $1.083 \pm 0.01$.
+
+Example 2: $k = 10$, $n = 10^6$: $10\,(H_{10^6} - H_{10}) = 10\,(14.393 - 2.929) = 114.6$ writes, close to $10 \ln(10^5) = 10 \times 11.51 = 115.1$. A million random numbers are drawn just to make about 115 changes.
+
+That waste is what the faster variants remove. Instead of rolling a die for every item, they compute **how many items to skip** before the next write, drawing the skip length from the right distribution. Vitter's Algorithm Z (1985) and Kim-Hung Li's simpler Algorithm L (1994) both do this, drawing $O(k(1 + \log(n/k)))$ random numbers in total instead of $n$. For $k = 10$ and $n = 10^6$, that is on the order of the 115 writes, not a million draws. The sample has exactly the same distribution; only the work changes.
+
+### Level 4: random keys and weighted sampling
+
+There is a second way to see a uniform sample: give every item an independent random key $u \in (0, 1)$ and keep the $k$ items with the **largest** keys. All $\binom{n}{k}$ sets are equally likely to hold the top keys, because the keys are identically distributed. A min-heap of size $k$ keeps the top keys of a stream with $O(\log k)$ work per item. This view generalises.
+
+**Weighted sampling.** Sometimes items deserve different chances: a customer who bought 3 times should be 3 times as likely to be picked for a survey as one who bought once. Pavlos Efraimidis and Paul Spirakis (2006) showed that changing the key is enough. Give item $i$ with weight $w_i > 0$ the key
+
+$$
+\text{key}_i = u_i^{1 / w_i}, \qquad P(\text{item } i \text{ has the largest key}) = \frac{w_i}{\sum_j w_j}
+$$
+
+where:
+
+- $u_i$ is a fresh uniform random number in $(0, 1)$ for each item;
+- $w_i$ is the item's weight; a larger weight pushes the key towards 1, since $u^{1/w}$ grows as $w$ grows;
+- the probability on the right is for a sample of size $k = 1$; for larger $k$, keeping the $k$ largest keys draws items one after another *without replacement*, each draw proportional to weight among the items not yet drawn.
+
+Example: two items with weights $w_1 = 1$ and $w_2 = 3$. The heavy item's key $Y = u_2^{1/3}$ is at most $y$ exactly when $u_2 \le y^3$, so $P(Y \le y) = y^3$. It beats the light item's key $X = u_1$ with probability $\int_0^1 (1 - x^3)\,dx = 1 - \frac{1}{4} = \frac{3}{4}$, which matches $\frac{3}{1 + 3} = 0.75$. The lab draws both keys 100,000 times and the heavy item wins $75\% \pm 1\%$ of them. In code, the key is one line, `Math.pow(random.nextDouble(), 1.0 / weight)`, and the rest is the same min-heap of the $k$ largest keys. Efraimidis and Spirakis call this algorithm A-Res, and they also give a skipping version, A-ExpJ, in the spirit of Algorithm L.
+
+**Two more variants in prose.** *Distributed sampling*: give every item a random key on every machine, keep each machine's top $k$, then keep the top $k$ of the union. Because "largest $k$ keys" does not care where the keys were computed, the merge is exact. *Sliding windows*: sampling from only the last $W$ items needs a different technique, because an expired item must be replaced by one that was already passed over; such methods keep more than $k$ candidates.
+
+## Why it works and what it costs
+
+**Invariant of Algorithm R.** *After processing $i \ge k$ items, the reservoir is a uniformly random set of $k$ of those $i$ items: each item is in it with probability $k/i$.*
+
+- *Base case, $i = k$:* the reservoir holds all $k$ items, and $k/k = 1$.
+- *Step from $i - 1$ to $i$:* the new item enters with probability $\frac{k}{i}$, which is what the invariant demands for it. An older item was in with probability $\frac{k}{i-1}$, by the invariant, and survives with probability $1 - \frac{k}{i} \cdot \frac{1}{k} = \frac{i-1}{i}$. So it is in with probability $\frac{k}{i-1} \cdot \frac{i-1}{i} = \frac{k}{i}$.
+- *Conclusion:* when the stream ends at $i = n$, every item is in the sample with probability $\frac{k}{n}$.
+
+The statement "each item has probability $k/n$" is weaker than "every $k$-set is equally likely", but Algorithm R satisfies the stronger one too: by the same induction, each of the $\binom{i}{k}$ sets is equally likely after step $i$.
+
+**Costs, counted on the examples:**
+
+| Method | Time | Random numbers | Writes to the reservoir | Memory |
+| --- | --- | --- | --- | --- |
+| Store all, then pick | $O(n)$ | $k$ | $n$ (store everything) | $O(n)$ |
+| Algorithm R | $O(n)$ | $n - k$: 3 for $k = 2, n = 5$ | $k(H_n - H_k)$ on average: 114.6 for $k = 10, n = 10^6$ | $O(k)$ |
+| Algorithm L | $O(n)$ to read, $O(k(1 + \log \frac{n}{k}))$ draws | about as many as writes | same distribution as R | $O(k)$ |
+| Random keys + min-heap | $O(n \log k)$ | $n$ | at most $n$ heap updates | $O(k)$ |
+| Weighted (A-Res) | $O(n \log k)$ | $n$ | at most $n$ heap updates | $O(k)$ |
+
+Reading the stream is $O(n)$ for every method; reservoir sampling saves **memory**, from $O(n)$ to $O(k)$, and with skipping it also saves random numbers.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Replace with probability $1/k$, or a fixed $1/2$ | Late items dominate the sample; with $1/2$ and $n = 4$ the last item is kept half the time instead of $1/4$ | The $i$-th item enters with probability $k/i$ |
+| `random.nextInt(i + 1)` with a 1-based `i` | Item $i$ enters with probability $k/(i+1)$: early items are favoured | Draw from exactly $i$ values: `nextInt(i)` when `i` counts from 1 |
+| Evicting the **oldest** resident instead of a random slot | Old items vanish too fast: with $k = 2$, $n = 4$, item 1 survives $\frac{1}{3} \cdot \frac{1}{2} = \frac{1}{6}$ of the time instead of $\frac{1}{2}$ | The newcomer takes slot $j$, a uniformly random slot |
+| Counting the stream first to learn $n$ | Two passes, or $O(n)$ memory; impossible on a socket or an iterator | Decide on the fly with $i$, the count so far |
+| Weighted sampling with `u * w` as the key | Not proportional: weights 1 and 3 give the heavy item $5/6$, not $3/4$ | Use $u^{1/w}$, or equivalently the smallest $-\ln(u) / w$ |
+| Building a new `Random` per item | Correlated or repeated values on fast loops | One `Random` for the whole stream |
+
+## Interview problems
+
+LeetCode has no Hard problem tagged Reservoir Sampling; these are the two classic ones, both Medium. Each starts with the mathematics.
+
+### 1. LeetCode 382: Linked List Random Node (Medium)
+
+**Problem.** Given the head of a singly linked list, `getRandom()` returns the value of a uniformly random node. The follow-up asks for a solution that does not know the length and uses no extra space. For the list $1 \to 2 \to 3$, each value must come back with probability $1/3$.
+
+**Math first.** Walking the list is a stream of unknown length, so use the one-item reservoir:
+
+$$
+P(\text{node } c \text{ returned}) = \frac{1}{c} \cdot \prod_{t=c+1}^{m} \frac{t-1}{t} = \frac{1}{m}
+$$
+
+where:
+
+- $m$ is the number of nodes and $c$ is the position of a node, counting from 1;
+- $\frac{1}{c}$ is the chance that the walk switches to node $c$ when it reaches it;
+- $\frac{t-1}{t}$ is the chance that node $t$, further along, does not take its place.
+
+Example: $m = 3$. Node 1: $1 \cdot \frac{1}{2} \cdot \frac{2}{3} = \frac{1}{3}$. Node 2: $\frac{1}{2} \cdot \frac{2}{3} = \frac{1}{3}$. Node 3: $\frac{1}{3}$. All three equal $0.333$.
+
+**Idea.** Walk the list once per call, counting nodes in `seen`. Switch to the current node when `random.nextInt(seen) == 0`. LeetCode's class is `Solution(ListNode head)`; the lab passes a seeded `Random` as well.
+
+```java
+int getRandom() {
+    int chosen = 0, seen = 0;
+    for (ListNode node = head; node != null; node = node.next) {
+        seen++;
+        if (random.nextInt(seen) == 0) chosen = node.val;   // keep this node with probability 1/seen
+    }
+    return chosen;
+}
+```
+
+**Answer.** On $1 \to 2 \to 3$, 100,000 calls return each value $33.3\% \pm 1\%$ of the time, and a one-node list always returns its value. Each call is $O(m)$ time with $m$ random numbers and $O(1)$ extra space. The alternative, copying the values into an array once, makes each call $O(1)$ but costs $O(m)$ memory; with up to $10^4$ nodes either is fine, and the reservoir is the one that also works when the list keeps growing.
+
+### 2. LeetCode 398: Random Pick Index (Medium)
+
+**Problem.** Given an array `nums` that may contain duplicates, `pick(target)` returns a uniformly random index $i$ with `nums[i] == target`; the target is guaranteed to be present. For `nums = [1, 2, 3, 3, 3]` and target 3, the indices 2, 3 and 4 must each come back with probability $1/3$.
+
+**Math first.** Filter the stream to the matching indices only, then run the one-item reservoir on that filtered stream:
+
+$$
+P(\text{the } c\text{-th match returned}) = \frac{1}{c} \cdot \prod_{t=c+1}^{M} \frac{t-1}{t} = \frac{1}{M}
+$$
+
+where:
+
+- $M$ is the number of indices holding the target, which we never need to know in advance;
+- $c$ counts matches only, so non-matching values do not change any probability;
+- the product telescopes exactly as in Level 1.
+
+Example: `nums = [1, 2, 3, 3, 3]`, target 3, so $M = 3$. Index 2 is the 1st match, kept with $1 \cdot \frac{1}{2} \cdot \frac{2}{3} = \frac{1}{3}$. Index 3 is the 2nd match: $\frac{1}{2} \cdot \frac{2}{3} = \frac{1}{3}$. Index 4 is the 3rd match: $\frac{1}{3}$.
+
+**Idea.** Scan the array, skip non-matches, count matches in `matches`, and switch to the current index with probability $1/\text{matches}$.
+
+```java
+static int pickIndex(int[] nums, int target, Random random) {
+    int chosen = -1, matches = 0;
+    for (int i = 0; i < nums.length; i++) {
+        if (nums[i] != target) continue;
+        matches++;
+        if (random.nextInt(matches) == 0) chosen = i;       // the c-th match wins with probability 1/c
+    }
+    return chosen;
+}
+```
+
+**Answer.** `pickIndex([1, 2, 3, 3, 3], 3)` returns 2, 3 or 4, each $33.3\% \pm 1\%$ of 100,000 calls; `pickIndex(..., 1)` always returns 0. Each call is $O(n)$ time and $O(1)$ extra space, with $M$ random numbers. The trade-off: a hash map from value to its list of indices answers each pick in $O(1)$, but stores all $n$ indices; for $n = 2 \times 10^4$ that is 20,000 integers, against none for the reservoir.
+
+## Mathematical Abstraction
+
+Reservoir sampling maintains a random set $R_i$ of size $k$ after each prefix of the stream, with one property that survives every step:
+
+$$
+P(x_j \in R_i) = \frac{k}{i} \quad \text{for all } j \le i, \qquad
+P(x_i \text{ enters}) = \frac{k}{i}, \qquad
+P(\text{a resident survives step } i) = \frac{i - 1}{i}
+$$
+
+where:
+
+- $x_1, x_2, \dots$ are the stream items and $R_i$ is the reservoir after $i$ of them, with $i \ge k$;
+- the first equation is the invariant; the other two are the rule, and multiplying $\frac{k}{i-1} \cdot \frac{i-1}{i} = \frac{k}{i}$ shows the rule preserves the invariant.
+
+Example: $k = 2$. After $i = 4$ items each is in with probability $\frac{2}{4} = 0.5$. Item 5 enters with $\frac{2}{5}$, and each older item survives with $\frac{4}{5}$, so it stays in with $0.5 \times 0.8 = 0.4 = \frac{2}{5}$. The memory is $k = 2$ slots whatever $n$ is, and the expected number of writes, $k(H_n - H_k)$, grows only like $k \ln(n/k)$: about 115 for $k = 10$ and $n = 10^6$. Weighted sampling replaces the uniform key $u$ by $u^{1/w}$, giving item $i$ the first pick with probability $w_i / \sum_j w_j$: $3/4$ for weights 1 and 3.
+
+## References
+
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 2, *Seminumerical Algorithms*, §3.4.2 "Random Sampling and Shuffling": Algorithm R, credited to Alan G. Waterman.
+- Jeffrey S. Vitter, "Random Sampling with a Reservoir", *ACM Transactions on Mathematical Software* 11(1), 37–57 (1985): Algorithms R, X, Y and Z. <https://doi.org/10.1145/3147.3165>.
+- Kim-Hung Li, "Reservoir-Sampling Algorithms of Time Complexity $O(n(1 + \log(N/n)))$", *ACM Transactions on Mathematical Software* 20(4), 481–493 (1994): Algorithm L.
+- Pavlos S. Efraimidis and Paul G. Spirakis, "Weighted random sampling with a reservoir", *Information Processing Letters* 97(5), 181–185 (2006): A-Res and A-ExpJ.
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 5, "Probabilistic Analysis and Randomized Algorithms", and Appendix C, "Counting and Probability". CLRS does not present reservoir sampling itself; these chapters supply the probability tools used here.
+- LeetCode: [382. Linked List Random Node](https://leetcode.com/problems/linked-list-random-node/), [398. Random Pick Index](https://leetcode.com/problems/random-pick-index/).
+
+[← Randomized](../randomized/index.qmd) · [Randomisation, Design, and Special Domains](../groups/07-specialised-domains.qmd) · [Rejection Sampling →](../rejection-sampling/index.qmd)

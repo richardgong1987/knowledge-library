@@ -1,65 +1,286 @@
 ---
 title: "Rejection Sampling"
-description: "An original, understandable lesson on the Rejection Sampling LeetCode topic with fully explained mathematics."
+description: "Propose, then accept or reject: rerolling a die, von Neumann's fair coin from a biased one, sampling any density under an envelope, why the number of tries is geometric with mean 1/p, the curse of dimension, and LeetCode 470 and 478 solved math-first."
 ---
 
-## What is the real challenge?
+Rejection sampling makes a random value you **cannot** draw directly out of one you **can**. Draw from the easy distribution, throw away the draws that do not fit, and keep the first one that does. What survives has exactly the distribution you wanted. The only price is the wasted draws, and this lesson counts them.
 
-**A probability sampling technique (LeetCode Randomized topic).** Accept proposed random samples according to a target-to-proposal ratio.
+All code is in [`RejectionSamplingLab.java`](RejectionSamplingLab.java). Run it from this folder with `java RejectionSamplingLab.java`; it checks every number on this page and prints `OK`. Every random check uses a seeded `java.util.Random` and a stated tolerance, so the run is the same every time.
 
-This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
+## The problem
 
-## The tempting solution
+A board game needs a random number from 1 to 5, each with probability $1/5 = 0.2$. You only have an ordinary six-sided die.
 
-Call a uniform random generator and assume its output already follows the requested target distribution.
+The obvious trick is "roll, then take `roll % 5 + 1`". Rolls 1 to 5 give 2, 3, 4, 5, 1, and roll 6 gives 2 again. So 2 comes up with probability $2/6 = 0.333$ and every other number with $1/6 = 0.167$: the 2 is twice as likely as the rest. Folding six outcomes onto five can never be fair, because 6 is not a multiple of 5.
 
-## The idea worth remembering
+The fix is to **reroll the 6**. That single idea, made general, is rejection sampling.
 
-Generate a proposal x and accept it with a probability proportional to the ratio between target density and a simple envelope. Rejected proposals are retried.
+## Explain it like I'm ten
 
-## One mathematical expression — with every symbol explained
+::: {.callout-tip}
+**Rerolling.** "If you roll a 6, roll again." Every time you do get to keep a roll, it is a 1, 2, 3, 4 or 5, and none of them was treated differently from the others, so each is equally likely. You will rarely need more than two rolls.
 
-$$
-P(\text{accept}\mid X=x)=\frac{f(x)}{Mq(x)}
-$$
+**Darts.** Paint a circle on a square board and throw darts at random over the whole board. Throw away every dart that misses the circle. The darts you keep are spread evenly over the circle, even though you never aimed at it. About 3 darts in 4 land inside, because the circle covers $\pi/4 \approx 0.785$ of the square.
 
-**Every symbol means:** X is a candidate drawn from proposal density q; f is the target density; M is an envelope constant chosen so f(x)≤M q(x) everywhere; the ratio is between zero and one.
+Throwing random objects at a picture is an old idea: in the 18th century Buffon dropped needles on a floor of boards to estimate a probability that turned out to involve $\pi$. John von Neumann turned "propose, then accept or reject" into a general method for early computers in his 1951 note "Various techniques used in connection with random digits", which also contains the coin trick in Level 2.
+:::
 
-**Numerical substitution:** To sample density f(x)=2x on [0,1], use uniform proposal q(x)=1 and M=2. Acceptance probability is (2x)/(2×1)=x. Candidate x=.8 is accepted with probability .8; candidate x=.2 with probability .2. This biases accepted candidates toward larger x.
+## From simple to advanced
 
-The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
+### Level 1: reroll until it fits
 
-## Why the method is justified
+Propose a roll of the die; accept it if it is at most 5; otherwise try again.
 
-The probability of proposing a value in a small interval around x AND accepting it is proportional to q(x) f(x)/(M q(x))=f(x)/M. Conditioning on acceptance therefore yields the target density.
-
-**Complexity or resource cost:** Expected proposal count M for normalised f and q when envelope constant is valid; each proposal requires one density-ratio check.
-
-## Executable example
-
-The following small example can be run directly in its own environment:
-
-~~~js
-function sample() {
-  while(true) { const x=Math.random();
-    if(Math.random() < x) return x; // target density is 2x on [0,1]
-  }
+```java
+static int oneToFive(Random random) {
+    while (true) {
+        int roll = 1 + random.nextInt(6);          // propose: a fair six-sided die
+        if (roll <= 5) return roll;                // accept; a 6 is thrown away
+    }
 }
-console.log(sample());
-~~~
+```
 
-Run the JavaScript with Node.js; it illustrates the precise toy case from the formula.
+**Why the result is fair.** Given that a roll was accepted, each accepted face is equally likely:
 
-## Which assumption makes it fail?
+$$
+P(X = x \mid \text{accepted}) = \frac{P(\text{roll} = x)}{P(\text{accepted})} = \frac{1/6}{5/6} = \frac{1}{5}, \qquad x \in \lbrace 1, \dots, 5 \rbrace
+$$
 
-If M is too small, acceptance 'probabilities' can exceed one and the method is invalid. High M makes acceptance very inefficient.
+where:
 
-For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+- $X$ is the number the function returns;
+- "$\mid$ accepted" means "counting only the rolls that were kept";
+- $P(\text{accepted}) = 5/6$ is the acceptance probability $p$: 5 of the 6 faces are kept.
 
-## Source and interview practice
+Example: the face 3 has probability $\frac{1}{6} \div \frac{5}{6} = \frac{1}{6} \times \frac{6}{5} = \frac{1}{5} = 0.2$, and so does every other face from 1 to 5. The lab rolls 100,000 numbers and sees each face $20\% \pm 1\%$ of the time.
 
-- **Textbook relationship:** CLRS Chapter 5 (randomised analysis); continuous rejection sampling goes beyond its discrete examples.. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode/practice:** A probability sampling technique (LeetCode Randomized topic) — [problem or problem set](https://leetcode.com/problemset/).
-- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+**How many rolls?** Each roll is accepted with probability $p$, independently of the others. The number of rolls $T$ up to and including the first acceptance has a **geometric distribution**:
 
-[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)
+$$
+P(T = t) = (1 - p)^{t-1} p, \qquad E[T] = \frac{1}{p}
+$$
+
+where:
+
+- $t = 1, 2, 3, \dots$ is a possible number of rolls;
+- $(1 - p)^{t-1}$ is the chance that the first $t - 1$ rolls are all rejected, and the final $p$ is the chance that roll $t$ is accepted;
+- $E[T]$ is the expected (average) number of rolls.
+
+Example: $p = 5/6$. Needing exactly 3 rolls has probability $(1/6)^2 \cdot 5/6 = 5/216 \approx 0.023$, and the average is $E[T] = 6/5 = 1.2$ rolls. The lab counts 1.2 rolls per number, within 0.01.
+
+### Level 2: a fair coin from a biased coin (von Neumann's trick)
+
+A bent coin lands heads with an unknown probability $p$. To get a fair coin from it, flip it **twice**. If the flips differ, report the first one; if they are the same, reject both and start again.
+
+```java
+static boolean fairFromBiased(double pHeads, Random random) {
+    while (true) {
+        boolean first = random.nextDouble() < pHeads, second = random.nextDouble() < pHeads;
+        if (first != second) return first;         // HT and TH both have probability p(1 - p)
+    }
+}
+```
+
+$$
+P(HT) = p(1-p) = (1-p)p = P(TH), \qquad P(\text{accept}) = 2p(1-p)
+$$
+
+where:
+
+- $p$ is the chance of heads on one flip, and the two flips are independent;
+- $HT$ means heads then tails; both accepted outcomes have the same probability, so the report is heads or tails with probability $\frac{1}{2}$ each;
+- $HH$ and $TT$ are rejected.
+
+Example: $p = 0.3$. Then $P(HT) = 0.3 \times 0.7 = 0.21$ and $P(TH) = 0.7 \times 0.3 = 0.21$, so $P(\text{accept}) = 0.42$. On average a fair flip costs $1 / 0.42 = 2.38$ pairs, which is $4.76$ biased flips. The lab gets heads $50\% \pm 1\%$ of the time and counts $2.38 \pm 0.03$ pairs per fair flip. Note that the code never uses the value of $p$ to decide; it works for any bias strictly between 0 and 1.
+
+### Level 3: any density under an envelope
+
+The general method samples from a **target** density $f$ using a **proposal** density $g$ that we can sample, provided $f$ never rises above a stretched copy $M g$ of the proposal. That stretched copy is called the *envelope*.
+
+1. Propose $x$ from $g$.
+2. Accept $x$ with probability $\frac{f(x)}{M g(x)}$; otherwise go back to step 1.
+
+$$
+f(x) \le M g(x) \;\text{for all } x, \qquad P(\text{accept}) = \int \frac{f(x)}{M g(x)}\, g(x)\, dx = \frac{1}{M}, \qquad E[T] = M
+$$
+
+where:
+
+- $f$ is the target density and $g$ the proposal density, each with total area 1;
+- $M \ge 1$ is the envelope constant, the smallest number for which the inequality holds;
+- the integral averages the acceptance chance over all proposals, and the $g(x)$ cancels, leaving $\frac{1}{M} \int f = \frac{1}{M}$;
+- $T$ is the number of proposals, geometric with $p = \frac{1}{M}$, so $E[T] = M$.
+
+Accepted values have density proportional to $g(x) \cdot \frac{f(x)}{M g(x)} = \frac{f(x)}{M}$, which is $f$ after rescaling. That is the whole proof.
+
+Example: target $f(x) = 2x$ on $[0, 1]$, a ramp that makes large values more likely; proposal $g(x) = 1$, the uniform density. The largest ratio is $f(1)/g(1) = 2$, so $M = 2$ and the acceptance probability is $\frac{2x}{2 \cdot 1} = x$. A proposal of $x = 0.9$ is kept 90% of the time; $x = 0.1$ only 10%. The overall acceptance is $\frac{1}{M} = 0.5$, so each sample costs $2$ proposals on average. The accepted values have mean $\int_0^1 x \cdot 2x\,dx = \frac{2}{3} \approx 0.667$, and $P(X \le \frac{1}{2}) = \int_0^{1/2} 2x\,dx = \frac{1}{4}$. The lab measures all three: $2.00 \pm 0.03$ proposals, mean $0.667 \pm 0.005$, and $25\% \pm 1\%$ below one half.
+
+```java
+static double triangular(Random random) {
+    while (true) {
+        double x = random.nextDouble();            // proposal with density g(x) = 1
+        double u = random.nextDouble();
+        if (u <= x) return x;                      // accept with probability f(x) / (M g(x)) = 2x / 2
+    }
+}
+```
+
+"Accept with probability $q$" is always done the same way: draw a uniform $u$ in $[0, 1)$ and accept if $u \le q$. Levels 1 and 2 are special cases where $q$ is 0 or 1.
+
+### Level 4: when rejection gets expensive (the curse of dimension)
+
+Rejection sampling is only as good as its acceptance rate. Sampling a uniform point in a ball by proposing points in the surrounding cube works well in 2 dimensions and collapses in 10:
+
+$$
+p_d = \frac{V_d}{2^d}, \qquad V_d = \frac{\pi^{d/2}}{\Gamma(d/2 + 1)}, \qquad E[T] = \frac{1}{p_d}
+$$
+
+where:
+
+- $d$ is the number of dimensions;
+- $V_d$ is the volume of the ball of radius 1, and $2^d$ is the volume of the cube $[-1, 1]^d$ around it;
+- $\Gamma$ is the gamma function, with $\Gamma(k + 1) = k!$; the lab uses the equivalent recurrence $V_0 = 1$, $V_1 = 2$, $V_d = V_{d-2} \cdot \frac{2\pi}{d}$.
+
+Example: $d = 2$ gives $\pi / 4 = 0.785$ and $1.27$ tries. $d = 3$ gives $\frac{4\pi/3}{8} = \pi/6 = 0.524$ and $1.91$ tries. $d = 10$ gives $V_{10} = \pi^5 / 5! = 306.0 / 120 = 2.55$, so $p_{10} = 2.55 / 1024 = 0.00249$ and about $401.5$ tries per point.
+
+```java
+static double ballVolume(int d) {
+    if (d == 0) return 1;
+    if (d == 1) return 2;
+    return ballVolume(d - 2) * 2 * Math.PI / d;
+}
+
+static double acceptanceInCube(int d) {
+    return ballVolume(d) / Math.pow(2, d);         // the ball's share of the cube [-1, 1]^d
+}
+```
+
+**What to do instead** when $M$ is large: use a proposal closer to the target (a tighter envelope), or sample directly. *Inverse transform sampling* draws $u$ uniform and returns $F^{-1}(u)$, where $F$ is the cumulative distribution: for $f(x) = 2x$, $F(x) = x^2$ and the sample is $\sqrt{u}$, with no rejections at all. For a uniform point in a disc, the same idea gives the polar method in LeetCode 478. *Adaptive rejection sampling* refines the envelope as it goes, and Markov chain Monte Carlo (Metropolis 1953) replaces independent proposals with a random walk when even that fails.
+
+## Why it works and what it costs
+
+**Correctness, in plain words.** Every round is a fresh, independent experiment that ends with "accept $x$" or "reject". The rounds that end in rejection leave no trace. So the value returned is distributed like *one round's proposal, given that the round accepted*. In Level 3 that conditional density is $\frac{g(x) \cdot f(x)/(M g(x))}{1/M} = f(x)$, and in Level 1 it is $\frac{1/6}{5/6} = \frac{1}{5}$ for each kept face. The condition $f \le M g$ matters: if it failed somewhere, the "acceptance probability" there would exceed 1 and those values would be under-represented.
+
+**Termination.** The loop has no fixed bound, so it is a Las Vegas algorithm ([Randomized](../randomized/index.qmd)): always correct, random running time. It stops with probability 1, and the chance of needing more than $t$ rounds is $(1 - p)^t$, which shrinks geometrically: for the die, more than 5 rolls happen with probability $(1/6)^5 \approx 0.00013$.
+
+**Costs on this page:**
+
+| Sampler | Acceptance $p$ | Expected rounds $1/p$ | Random numbers per round | Expected random numbers |
+| --- | --- | --- | --- | --- |
+| 1 to 5 from a die | $5/6$ | $1.2$ | 1 | $1.2$ |
+| Fair coin from $p = 0.3$ | $0.42$ | $2.38$ | 2 | $4.76$ |
+| $f(x) = 2x$ from uniform | $1/2$ | $2$ | 2 | $4$ |
+| Rand10 from Rand7 | $40/49$ | $1.225$ | 2 | $2.45$ |
+| Point in a disc | $\pi/4$ | $1.27$ | 2 | $2.55$ |
+| Point in a 10-dimensional ball | $0.00249$ | $401.5$ | 10 | $4{,}015$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Folding instead of rejecting: `roll % 5 + 1` | For a six-sided die, 2 comes up with probability $2/6$ and the others $1/6$ | Reject the rolls that do not fit evenly, then fold |
+| Envelope too low: $f(x) > M g(x)$ somewhere | Values in that region are under-sampled, silently | Choose $M = \max_x f(x)/g(x)$; check it at the peaks |
+| Envelope much too high | Correct but slow: $E[T] = M$ grows with every overestimate | Use the smallest valid $M$, or a closer proposal |
+| Reusing the rejected draw for the next round | Correlated rounds; the output distribution drifts | Draw fresh values every round (or recycle them with a proof, as in LeetCode 470's follow-up) |
+| A loop with a fixed maximum and a fallback value | The fallback value is over-represented | Loop until accepted; the expected count is finite |
+| Polar coordinates with $r = R u$ | Points crowd the centre: half land within $R/2$ instead of a quarter | $r = R \sqrt{u}$, or reject from the square |
+| Proposing from a cube in many dimensions | 10 dimensions need about 400 proposals per point | Sample a Gaussian vector and rescale it, or use a direct method |
+
+## Interview problems
+
+LeetCode has only two problems tagged Rejection Sampling, both Medium, and no Hard; here they are, each starting with the mathematics.
+
+### 1. LeetCode 470: Implement Rand10() Using Rand7() (Medium)
+
+**Problem.** Given `rand7()`, which returns a uniform integer from 1 to 7, implement `rand10()`, which returns a uniform integer from 1 to 10, using no other randomness. Then minimise the expected number of `rand7()` calls.
+
+**Math first.** Two calls make a uniform number from 1 to 49, like the cell of a $7 \times 7$ grid. Keep the first 40 cells, which split into 4 equal rounds of 1 to 10:
+
+$$
+I = 7(a - 1) + b \in \lbrace 1, \dots, 49 \rbrace, \qquad \text{accept if } I \le 40, \qquad \text{rand10} = 1 + (I - 1) \bmod 10
+$$
+
+where:
+
+- $a$ and $b$ are two independent results of `rand7()`; $a$ picks the row and $b$ the column, so all $7 \times 7 = 49$ values of $I$ are equally likely;
+- $I \le 40$ is accepted with probability $p = 40/49$;
+- $(I - 1) \bmod 10$ maps $1..40$ onto $0..9$ exactly 4 times each, so every output has probability $\frac{4}{40} = \frac{1}{10}$.
+
+Example: $a = 3$, $b = 5$ gives $I = 7 \cdot 2 + 5 = 19 \le 40$, so the answer is $1 + 18 \bmod 10 = 9$. With $a = 7$, $b = 2$, $I = 44 > 40$ is rejected. The expected number of calls is two per round times the expected rounds:
+
+$$
+E[\text{calls}] = 2 \cdot \frac{1}{p} = 2 \cdot \frac{49}{40} = 2.45
+$$
+
+where $\frac{1}{p} = \frac{49}{40} = 1.225$ is the expected number of rounds. Example: over 100,000 calls of `rand10`, the lab counts $2.45 \pm 0.02$ calls of `rand7` per result.
+
+**Idea.** Build $I$, reject 41 to 49, fold the rest. The follow-up saves calls by *recycling*: a rejected $I$ in $41..49$ is itself a uniform number from 1 to 9; one more `rand7()` turns it into a uniform number from 1 to 63, of which 60 are kept, and so on. That lowers the expectation from $2.45$ to about $2.19$, by solving $E = 2 + \frac{9}{49}\left(1 + \frac{3}{63}\left(1 + \frac{E}{21}\right)\right)$. LeetCode provides `rand7()` through a base class; the lab passes a seeded `Random` instead.
+
+```java
+static int rand10(Random random) {
+    while (true) {
+        int index = 7 * (rand7(random) - 1) + rand7(random);   // uniform on 1..49
+        if (index <= 40) return 1 + (index - 1) % 10;          // 40 = four full rounds of 1..10
+    }
+}
+```
+
+**Answer.** Each of 1 to 10 comes up $10\% \pm 0.5\%$ of 100,000 times, with $2.45$ calls of `rand7()` per result on average ($2.19$ with recycling). Time is $O(1)$ expected per call, and the chance of needing more than 5 rounds is $(9/49)^5 \approx 0.0002$. Space is $O(1)$.
+
+### 2. LeetCode 478: Generate Random Point in a Circle (Medium)
+
+**Problem.** Given a circle's `radius`, `x_center` and `y_center`, `randPoint()` returns a uniformly random point inside it; a point on the circumference counts as inside. For radius 1 at the origin, a quarter of the points must lie within distance $0.5$ of the centre, because that smaller disc has a quarter of the area.
+
+**Math first.** Propose a uniform point $(x, y)$ in the square $[-1, 1)^2$ and accept it when it falls in the unit disc; then scale and shift:
+
+$$
+\text{accept} \iff x^2 + y^2 \le 1, \qquad p = \frac{\pi \cdot 1^2}{2^2} = \frac{\pi}{4}, \qquad E[\text{tries}] = \frac{4}{\pi}
+$$
+
+where:
+
+- $(x, y)$ is a proposal with each coordinate uniform in $[-1, 1)$;
+- $p$ is the disc's share of the square: area $\pi r^2$ with $r = 1$, over area $2 \times 2 = 4$;
+- the accepted point is uniform in the disc, so it is then mapped to $(x_c + R x, \; y_c + R y)$ for radius $R$ and centre $(x_c, y_c)$.
+
+Example: $p = 3.1416 / 4 = 0.785$, so on average $4 / 3.1416 = 1.27$ tries per point, or $2.55$ random numbers. A uniform point lies within half the radius with probability $\frac{\pi (1/2)^2}{\pi \cdot 1^2} = \frac{1}{4}$.
+
+**Idea.** Loop: draw $x$ and $y$, test $x^2 + y^2 \le 1$, return the scaled point. The tempting polar shortcut, angle $\theta = 2\pi u_1$ and radius $r = R u_2$, is wrong: it puts half the points within $R/2$ instead of a quarter. The correct polar radius is $r = R \sqrt{u_2}$ (inverse transform, Level 4), which needs no loop but calls `sqrt`, `cos` and `sin`.
+
+```java
+double[] randPoint() {
+    while (true) {
+        double x = 2 * random.nextDouble() - 1, y = 2 * random.nextDouble() - 1;   // the square [-1, 1)^2
+        if (x * x + y * y <= 1) return new double[] {xCenter + radius * x, yCenter + radius * y};
+    }
+}
+```
+
+**Answer.** For radius 1 at the origin, all 100,000 points lie inside, $25\% \pm 1\%$ of them within $0.5$ of the centre, and the lab counts $1.27 \pm 0.01$ tries per point. A circle of radius 2 centred at $(3, -1)$ also gets points inside it. Each call is $O(1)$ expected time with $4/\pi \approx 1.27$ tries, and $O(1)$ space.
+
+## Mathematical Abstraction
+
+Rejection sampling turns a proposal $g$ into a target $f$ through one inequality, and its cost is a geometric random variable:
+
+$$
+f \le M g \;\Longrightarrow\; P(X \in A \mid \text{accepted}) = \int_A f(x)\,dx, \qquad T \sim \operatorname{Geometric}\!\left(\frac{1}{M}\right), \quad E[T] = M
+$$
+
+where:
+
+- $f$ is the target density, $g$ the proposal density and $M$ the envelope constant;
+- $A$ is any set of values, so the first equation says accepted values follow $f$ exactly;
+- $T$ is the number of proposals until the first acceptance, and $\operatorname{Geometric}(p)$ means $P(T = t) = (1 - p)^{t-1} p$;
+- in discrete problems, $\frac{1}{M}$ is the fraction of equally likely proposals that are kept.
+
+Example: for LeetCode 470, 40 of 49 cells are kept, so $\frac{1}{M} = \frac{40}{49}$, $E[T] = 1.225$ rounds and $2.45$ calls of `rand7()`. For LeetCode 478, $\frac{1}{M} = \frac{\pi}{4} = 0.785$ and $E[T] = 1.27$ tries. For a ten-dimensional ball, $\frac{1}{M} = 0.00249$ and $E[T] \approx 401.5$: the same method, now too slow.
+
+## References
+
+- John von Neumann, "Various techniques used in connection with random digits", in *Monte Carlo Method*, National Bureau of Standards Applied Mathematics Series 12, 36–38 (1951): the acceptance–rejection idea and the fair coin from a biased coin. See also George E. Forsythe, "Von Neumann's Comparison Method for Random Sampling from the Normal and Other Distributions", *Mathematics of Computation* 26(120), 817–826 (1972).
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Appendix C, "Counting and Probability", §C.4 "The geometric and binomial distributions"; Chapter 5, "Probabilistic Analysis and Randomized Algorithms". CLRS does not present rejection sampling itself.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 2, *Seminumerical Algorithms*, §3.4.1, "Numerical Distributions", which covers the rejection method for continuous distributions.
+- Luc Devroye, *Non-Uniform Random Variate Generation* (Springer, 1986), Chapter II, "General Principles in Random Variate Generation", §3 "The rejection method"; free from the author at <https://luc.devroye.org/rnbookindex.html>.
+- LeetCode: [470. Implement Rand10() Using Rand7()](https://leetcode.com/problems/implement-rand10-using-rand7/), [478. Generate Random Point in a Circle](https://leetcode.com/problems/generate-random-point-in-a-circle/).
+
+[← Reservoir Sampling](../reservoir-sampling/index.qmd) · [Randomisation, Design, and Special Domains](../groups/07-specialised-domains.qmd) · [Design →](../design/index.qmd)

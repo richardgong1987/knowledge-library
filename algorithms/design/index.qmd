@@ -1,66 +1,501 @@
 ---
 title: "Design"
-description: "An original, understandable lesson on the Design LeetCode topic with fully explained mathematics."
+description: "How to design a data structure from its contract: list the operations and their target costs, choose structures to meet them, keep aggregates instead of history, keep two views in sync with an invariant, merge lazily with a heap, and solve Design Twitter, Underground System, All O\`one and Text Editor math-first."
 ---
 
-## What is the real challenge?
+A LeetCode "Design" problem gives you a list of operations and asks you to make every one of them fast. There is no single algorithm to learn. The skill is to **write down what each operation must cost, then choose the data structures that make those costs true**, and to state the invariant that keeps those structures consistent. This lesson builds that skill on small examples and then uses it on four interview problems.
 
-**LeetCode 146 — LRU Cache.** Implement an abstract data type that meets operational contracts and complexity targets.
+All code is in [`DesignLab.java`](DesignLab.java). Run it from this folder with `java DesignLab.java`; it checks every number on this page and prints `OK`.
 
-This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
+## The problem
 
-## The tempting solution
+A school keeps a **late board**. Every time a child arrives late, their late count goes up by one; when a late mark is forgiven, it goes down by one, and a child with 0 marks leaves the board. At any moment the head teacher may ask: *who has the most late marks, and who has the fewest?*
 
-Keep cached keys in a plain array; find and move a key by scanning the whole array on every hit.
+With 1,000 children and 10,000 events and questions in a term:
 
-## The idea worth remembering
+- A plain list of (child, count) pairs answers each question by scanning all 1,000 children: up to $10{,}000 \times 1{,}000 = 10^7$ steps.
+- Sorting after every change is worse: about $1{,}000 \times \log_2 1{,}000 \approx 10{,}000$ comparisons per change.
+- We want **every operation in $O(1)$**: one step each, however many children there are.
 
-Design problems ask for a DATA-TYPE CONTRACT, not one magic algorithm. For LRU, a hash map plus doubly linked list supports lookup and recency updates without full scans.
+That is LeetCode 432, the third interview problem below. Getting there takes four ideas, one per level.
 
-## One mathematical expression — with every symbol explained
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Think of a school office that must answer questions all day.
+
+- "Is *Matilda* out on loan?" The librarian does not read the whole loans book. She keeps a box of cards, one per borrowed book, filed so she can grab the right card at once.
+- "How many children are in school today?" The secretary does not count heads every time she is asked. She keeps a **tally** on the whiteboard and adds or subtracts one as children come and go.
+- "Who has the most gold stars?" The teacher keeps the star chart **sorted by number of stars**, so the answer is always at the top.
+
+Each trick is a **data structure chosen for the question that will be asked**. Designing is deciding, before any question arrives, what to keep on the whiteboard.
+
+Fred Brooks made the same point in *The Mythical Man-Month* (1975), in the chapter "Ten Pounds in a Five-Pound Sack": show him only your program's steps and he will stay puzzled, but show him your **tables**, the data, and the steps usually become obvious. A year later Niklaus Wirth named a whole book after the idea: *Algorithms + Data Structures = Programs*.
+:::
+
+## From simple to advanced
+
+### Level 1: write the contract, then pick one structure per operation
+
+A design starts as a **contract**: the operations, what each returns, and what each may cost. For a library desk:
+
+| Operation | Returns | Target cost |
+| --- | --- | --- |
+| `borrow(book)` | `false` if it is already out | $O(1)$ |
+| `giveBack(book)` | `false` if it was not out | $O(1)$ |
+| `isOut(book)` | whether it is out | $O(1)$ |
+| `outCount()` | how many books are out | $O(1)$ |
+
+A hash set meets every line, so the whole design is one field:
+
+```java
+static final class LibraryDesk {
+    private final Set<String> borrowed = new HashSet<>();
+
+    boolean borrow(String book) {
+        return borrowed.add(book);                    // false if the book is already out
+    }
+
+    boolean giveBack(String book) {
+        return borrowed.remove(book);
+    }
+
+    boolean isOut(String book) {
+        return borrowed.contains(book);
+    }
+
+    int outCount() {
+        return borrowed.size();
+    }
+}
+```
+
+The contract lets you compare designs before writing them. The total work is the sum, over operations, of how often each is called times what it costs:
 
 $$
-S_{t+1}=Op(S_t,a_t)
+W = \sum_{\text{op}} q_{\text{op}} \cdot c_{\text{op}}
 $$
 
-**Every symbol means:** S_t is the cache state before operation t; a_t is a get or put request; Op describes the state transition; S_(t+1) is the resulting cache and recency order.
+where:
 
-**Numerical substitution:** Capacity 2: put(A,1) gives recency [A]; put(B,2) gives [B,A]. get(A) moves A to newest: [A,B]. put(C,3) evicts least-recently used B, leaving [C,A]. Every step follows the same state transition rules.
+- $W$ is the total work for a day, in basic steps;
+- $q_{\text{op}}$ is how many times the operation is called;
+- $c_{\text{op}}$ is the cost of one call with the chosen structure.
 
-The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
+Example: 500 books are out and the desk answers $q = 1{,}000$ questions "is it out?". A list costs up to $c = 500$ checks per question, so $W = 1{,}000 \times 500 = 500{,}000$. A hash set costs about $c = 1$, so $W = 1{,}000$. The contract table told us which structure to pick before any code existed.
 
-## Why the method is justified
+The usual building blocks, and the operations they make cheap:
 
-The list contains exactly one node for each key in the map. Its head/tail encode newest/oldest access. Moving a known node to the front and evicting the tail preserves these invariants.
+| Structure | Cheap operations | Cost |
+| --- | --- | --- |
+| `HashMap` / `HashSet` | find, insert, delete by key | $O(1)$ average |
+| `TreeMap` / `TreeSet` | the same, plus smallest, largest, next larger | $O(\log n)$ |
+| `ArrayList` | read by index, add or remove at the end | $O(1)$ amortised |
+| `ArrayDeque` | add or remove at either end | $O(1)$ amortised |
+| `PriorityQueue` | insert, remove the smallest | $O(\log n)$ |
+| doubly linked list with a map to its nodes | move or remove a known node | $O(1)$ |
 
-**Complexity or resource cost:** Expected O(1) get/put using hash map plus linked list; O(capacity) memory.
+### Level 2: keep the aggregate, not the history
 
-## Executable example
+If the only question about a pile of numbers is "what is their average?", there is no need to keep the pile. Keep the **sum** and the **count**, and update both when a number arrives.
 
-The following small example can be run directly in its own environment:
+```java
+static final class RunningAverage {
+    private long sum;
+    private int count;
 
-~~~js
-const cache=new Map(),capacity=2;
-function put(k,v){ cache.delete(k); cache.set(k,v);
- if(cache.size>capacity) cache.delete(cache.keys().next().value); }
-function get(k){if(!cache.has(k))return -1;
- const v=cache.get(k);cache.delete(k);cache.set(k,v);return v;}
-put('A',1);put('B',2);get('A');put('C',3);
-console.log([...cache.keys()]); // ['A','C'] oldest to newest
-~~~
+    void add(int value) {
+        sum += value;
+        count++;
+    }
 
-Run the JavaScript with Node.js; it illustrates the precise toy case from the formula.
+    double average() {
+        return (double) sum / count;
+    }
+}
+```
 
-## Which assumption makes it fail?
+$$
+\bar{x} = \frac{S}{N}, \qquad S \leftarrow S + x, \quad N \leftarrow N + 1
+$$
 
-If you only use a Map but do not manage recency explicitly, you have no proven LRU contract. In languages with insertion-ordered maps you can use their semantics deliberately, but verify updates on get.
+where:
 
-For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+- $\bar{x}$ is the average of all values added so far;
+- $S$ is their sum and $N$ how many there are;
+- $\leftarrow$ means "is replaced by", so adding a value $x$ costs two updates, whatever $N$ is.
 
-## Source and interview practice
+Example: trips of 10, 12 and 14 minutes give $S = 36$ and $N = 3$, so $\bar{x} = 36 / 3 = 12$ minutes. Storing every trip instead would cost $O(N)$ memory and $O(N)$ time per question; the aggregate costs $O(1)$ for both. The same trick works for any quantity that can be updated piece by piece: count, sum, minimum, maximum. It does **not** work for the median, which needs more than a running total ([Data Stream](../data-stream/index.qmd) shows the two-heap fix).
 
-- **Textbook relationship:** CLRS Chapters 10–11 (linked lists and hash tables), Chapter 27 (caching).. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode/practice:** LeetCode 146 — LRU Cache — [problem or problem set](https://leetcode.com/problems/lru-cache/).
-- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+### Level 3: two views of the same data, kept in sync by an invariant
 
-[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)
+The late board needs two kinds of question: "what is Ben's count?" (by **key**) and "who has the largest count?" (by **count**). One structure cannot answer both fast, so keep two:
+
+- `countOf`, a hash map from key to count;
+- `keysWithCount`, a sorted map from count to the set of keys with that count.
+
+They describe the same facts, so they must always agree. That agreement is the **invariant**:
+
+$$
+k \in K[c] \iff \operatorname{count}(k) = c \ge 1, \qquad \operatorname{maxKey} \in K[\max c]
+$$
+
+where:
+
+- $k$ is a key (a child) and $\operatorname{count}(k)$ its current count, stored in `countOf`;
+- $K[c]$ is the set of keys whose count is exactly $c$, stored in `keysWithCount`;
+- $\iff$ means "exactly when": every key appears in exactly one set, the set of its count, and empty sets are deleted;
+- $\max c$ is the largest count present, which a `TreeMap` returns from `lastEntry()`.
+
+Example: after `inc(a)`, `inc(b)`, `inc(b)`, we have $\operatorname{count}(a) = 1$ and $\operatorname{count}(b) = 2$, so $K = \lbrace 1 \mapsto \lbrace a \rbrace, 2 \mapsto \lbrace b \rbrace \rbrace$ and the largest count is 2, giving `maxKey() = b`. After two `dec(b)`, $b$ reaches 0 and disappears from both maps, so `maxKey() = a`.
+
+The safest way to keep an invariant is to change the two views in **one place only**:
+
+```java
+void inc(String key) {
+    setCount(key, countOf.getOrDefault(key, 0) + 1);
+}
+
+void dec(String key) {
+    setCount(key, countOf.get(key) - 1);
+}
+
+String maxKey() {
+    return keysWithCount.isEmpty() ? "" : keysWithCount.lastEntry().getValue().iterator().next();
+}
+
+private void setCount(String key, int count) {   // the only place that changes either view
+    Integer old = countOf.remove(key);
+    if (old != null) {
+        keysWithCount.get(old).remove(key);
+        if (keysWithCount.get(old).isEmpty()) keysWithCount.remove(old);
+    }
+    if (count == 0) return;
+    countOf.put(key, count);
+    keysWithCount.computeIfAbsent(count, c -> new LinkedHashSet<>()).add(key);
+}
+```
+
+Every operation costs $O(\log d)$, where $d$ is the number of different counts. For a million keys that is at most $\log_2 10^6 \approx 20$ steps. `minKey` is the same with `firstEntry()`. LeetCode 432 asks for $O(1)$, which needs one more idea: counts only ever change by **one**, so the next bucket is always a neighbour (interview problem 3).
+
+### Level 4: merge lazily with a heap
+
+A social feed shows the 10 newest posts from you and everyone you follow. Each person's posts are already in time order. Sorting everything for every feed wastes work: we only need the first 10. Put each list's **newest** post in a max-heap; take the top; replace it with the next post from the same list. This is the *k-way merge*.
+
+```java
+static List<Post> newest(List<List<Post>> lists, int t) {
+    record Head(List<Post> list, int index) {
+        Post post() {
+            return list.get(index);
+        }
+    }
+    PriorityQueue<Head> heap = new PriorityQueue<>((a, b) -> b.post().time() - a.post().time());
+    for (List<Post> list : lists) {
+        if (!list.isEmpty()) heap.add(new Head(list, list.size() - 1));   // each list's newest post
+    }
+    List<Post> result = new ArrayList<>();
+    while (!heap.isEmpty() && result.size() < t) {
+        Head head = heap.poll();
+        result.add(head.post());
+        if (head.index() > 0) heap.add(new Head(head.list(), head.index() - 1));
+    }
+    return result;
+}
+```
+
+$$
+\text{cost} = O\big((k + t) \log k\big) \quad \text{instead of} \quad O(n \log n)
+$$
+
+where:
+
+- $k$ is the number of lists (you plus the people you follow);
+- $t$ is how many posts are wanted, 10 for a feed;
+- $n$ is the total number of posts in all $k$ lists;
+- each heap operation costs $O(\log k)$ because the heap never holds more than $k$ entries.
+
+Example: you follow 2 people and each of the 3 lists holds 100 posts, so $k = 3$, $t = 10$, $n = 300$. The merge does at most $3 + 10 + 10 = 23$ heap operations on a heap of at most 3 entries, roughly $23 \times \log_2 3 \approx 37$ comparisons. Sorting all 300 posts costs about $300 \log_2 300 \approx 2{,}469$ comparisons. In the lab, three lists with posts at times $\lbrace 1, 5 \rbrace$, $\lbrace 2, 3, 6 \rbrace$ and $\lbrace 4 \rbrace$ give the four newest at times 6, 5, 4, 3.
+
+**Other design techniques, in brief.** *Amortisation*: a growing array doubles when full, so appends cost $O(1)$ on average ([Hash Table](../hash-table/index.qmd), Level 5). *Lazy deletion*: mark an entry dead and skip it when it reaches the top of a heap, instead of searching the heap for it. *Versioning*: keep `(time, value)` pairs in time order and binary-search them to answer "what was the value at time $t$?". *Bucketing*: when values change by $\pm 1$, keep buckets in a linked list in value order (problem 3). The LRU and LFU caches, which combine a hash map with a doubly linked list, are worked in [Doubly Linked List](../doubly-linked-list/index.qmd).
+
+## Why it works and what it costs
+
+**Correctness is an invariant, preserved by every operation.** For each design, write the invariant, then check three things: it holds for the empty structure; every public operation that starts in a state satisfying it ends in one; and every query reads the answer correctly *because* it holds. Formally the invariant is called the **representation invariant**, and the map from the stored fields to the abstract value they mean is the **abstraction function** (Liskov and Guttag).
+
+- `LibraryDesk`: the set holds exactly the books that are out. `borrow` adds, `giveBack` removes, so it stays true, and `outCount` is the set's size.
+- `RunningAverage`: $S$ is the sum and $N$ the count of the values added. `add` updates both, so $S / N$ is the average.
+- `CountIndex`: $k \in K[c] \iff \operatorname{count}(k) = c \ge 1$. Only `setCount` touches either map, and it removes $k$ from the old set before adding it to the new one, so the invariant cannot be half-updated.
+- `newest`: the heap holds, for each list, the newest post not yet taken. The overall newest remaining post is therefore at the top of the heap.
+
+**Costs on this page:**
+
+| Design | Operation | Time | Space |
+| --- | --- | --- | --- |
+| `LibraryDesk` | every operation | $O(1)$ average | $O(b)$ for $b$ books out |
+| `RunningAverage` | `add`, `average` | $O(1)$ | $O(1)$ |
+| `CountIndex` | `inc`, `dec`, `maxKey` | $O(\log d)$, about 20 for $10^6$ | $O(n)$ keys |
+| `newest` | one feed | $O((k + t) \log k)$: about 37 comparisons for $k = 3$, $t = 10$ | $O(k + t)$ |
+| `AllOne` (problem 3) | every operation | $O(1)$ | $O(n)$ |
+| `TextEditor` (problem 4) | every operation | $O(k)$ for $k$ characters moved | $O(\text{text})$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Updating one view and forgetting the other | `maxKey` returns a key whose count has already changed | Change both views inside one private method |
+| Recomputing an aggregate on every query | An average over $10^5$ trips is recomputed $10^5$ times: $10^{10}$ steps | Keep the running sum and count |
+| Sorting all posts to build each feed | $O(n \log n)$ per feed; slow for popular users | Merge only the newest $t$ with a heap of size $k$ |
+| Building a composite key by string concatenation | `"AB" + "C"` and `"A" + "BC"` both give `"ABC"`: two routes share one average | Use a `record` key such as `Route(from, to)` |
+| `HashSet.iterator().next()` in an $O(1)$ path | After many removals, finding the first element scans empty table slots | `LinkedHashSet`, whose first element is linked directly |
+| Letting a user follow themselves | Their tweets appear twice in the feed | Reject `follow(u, u)`, or use a set of sources |
+| Storing text as one `String` with a cursor index | Every edit in the middle copies the whole text | Two stacks around the cursor (problem 4) |
+| Forgetting the empty answers | `NoSuchElementException` from `lastEntry()` or `iterator().next()` | Return the contract's empty value, here `""` |
+
+## Interview problems
+
+Each solution starts with the mathematics: the contract's costs and the invariant that makes them true.
+
+### 1. LeetCode 355: Design Twitter (Medium)
+
+**Problem.** Support `postTweet(userId, tweetId)`, `follow(followerId, followeeId)`, `unfollow(followerId, followeeId)` and `getNewsFeed(userId)`, which returns the 10 most recent tweet ids from the user and the people they follow, newest first. Example: user 1 posts tweet 5; user 1 follows user 2; user 2 posts tweet 6; the feed of user 1 is `[6, 5]`; after unfollowing it is `[5]`.
+
+**Math first.** The feed is the top 10 by time of a union of posting lists:
+
+$$
+\operatorname{feed}(u) = \operatorname{top}_{10}\Big(\bigcup_{v \in \lbrace u \rbrace \cup F(u)} P(v)\Big)
+$$
+
+where:
+
+- $F(u)$ is the set of users that $u$ follows, stored as a hash set per user;
+- $P(v)$ is the list of $v$'s posts, each with a global time stamp, appended in time order;
+- $\operatorname{top}_{10}$ takes the 10 newest posts, which the heap merge of Level 4 does in $O((k + 10) \log k)$ for $k = 1 + \lvert F(u) \rvert$ lists.
+
+Example: $P(1) = [(t_0, 5)]$ and $P(2) = [(t_1, 6)]$ with $t_0 < t_1$. While $F(1) = \lbrace 2 \rbrace$, the union holds both posts, and the newest first is $[6, 5]$. After unfollowing, $F(1) = \emptyset$ and the feed is $[5]$.
+
+**Idea.** A clock gives each post a global time. Posting appends to the user's own list in $O(1)$. A feed gathers the user's list and the followees' lists, and the Level 4 merge takes the newest 10.
+
+```java
+void postTweet(int userId, int tweetId) {
+    posts.computeIfAbsent(userId, u -> new ArrayList<>()).add(new Post(clock++, tweetId));
+}
+
+List<Integer> getNewsFeed(int userId) {
+    List<List<Post>> sources = new ArrayList<>();
+    sources.add(posts.getOrDefault(userId, List.of()));
+    for (int followee : following.getOrDefault(userId, Set.of())) {
+        sources.add(posts.getOrDefault(followee, List.of()));
+    }
+    List<Integer> feed = new ArrayList<>();
+    for (Post post : newest(sources, 10)) feed.add(post.id());
+    return feed;
+}
+
+void follow(int followerId, int followeeId) {
+    if (followerId != followeeId) following.computeIfAbsent(followerId, u -> new HashSet<>()).add(followeeId);
+}
+
+void unfollow(int followerId, int followeeId) {
+    following.getOrDefault(followerId, new HashSet<>()).remove(followeeId);
+}
+```
+
+**Answer.** The example gives `[5]`, then `[6, 5]`, then `[5]`; a followee with 12 tweets contributes only the newest 10. `postTweet`, `follow` and `unfollow` are $O(1)$ average time; `getNewsFeed` is $O((k + 10) \log k)$ for $k$ sources. Even if one user follows all 500 users, that is about $510 \times \log_2 500 \approx 4{,}600$ comparisons, however many tweets exist. Space is $O(\text{tweets} + \text{follow pairs})$.
+
+### 2. LeetCode 1396: Design Underground System (Medium)
+
+**Problem.** Riders `checkIn(id, station, t)` and later `checkOut(id, station, t)`. `getAverageTime(start, end)` returns the average time of all completed trips from `start` to `end`; direction matters. Example: card 45 enters Leyton at time 3 and leaves at Waterloo at 15; card 27 enters Leyton at 10 and leaves at Waterloo at 20. The average from Leyton to Waterloo is $(12 + 10) / 2 = 11$.
+
+**Math first.** Two maps, each answering one question in $O(1)$:
+
+$$
+\text{open}: \text{id} \mapsto (s, t_{\text{in}}), \qquad \operatorname{avg}(a, b) = \frac{S(a, b)}{N(a, b)}
+$$
+
+where:
+
+- $\text{open}$ holds the riders still travelling: where and when each one entered;
+- $(a, b)$ is a route: start station $a$, end station $b$;
+- $S(a, b)$ is the sum and $N(a, b)$ the number of trip times on that route, kept by Level 2's running average.
+
+Example: the two trips add $S = 12 + 10 = 22$ and $N = 2$, so $\operatorname{avg} = 11$. A third trip from Leyton at 24 to Waterloo at 38 takes 14, giving $S = 36$, $N = 3$ and $\operatorname{avg} = 12$.
+
+**Idea.** `checkIn` stores the entry. `checkOut` removes it, computes the trip time and adds it to the route's running average. The route is a `record`, so `("AB", "C")` and `("A", "BC")` stay different keys.
+
+```java
+void checkIn(int id, String stationName, int t) {
+    travelling.put(id, new CheckIn(stationName, t));
+}
+
+void checkOut(int id, String stationName, int t) {
+    CheckIn start = travelling.remove(id);
+    trips.computeIfAbsent(new Route(start.station(), stationName), r -> new RunningAverage()).add(t - start.time());
+}
+
+double getAverageTime(String startStation, String endStation) {
+    return trips.get(new Route(startStation, endStation)).average();
+}
+```
+
+**Answer.** `getAverageTime("Leyton", "Waterloo")` returns 11.0, and 12.0 after the third trip. Every operation is $O(1)$ average time. Space is $O(r + p)$ for $r$ routes and $p$ riders currently travelling, not the number of trips.
+
+### 3. LeetCode 432: All O\`one Data Structure (Hard)
+
+**Problem.** Store string counts with `inc(key)`, `dec(key)` (a key whose count reaches 0 is removed), `getMaxKey()` and `getMinKey()` (any key with the largest or smallest count, or `""` when empty). **Every** operation must be $O(1)$ average time. This is the late board from the start of the lesson.
+
+**Math first.** Keep **buckets**, one per count that occurs, in a doubly linked list sorted by count, and a hash map from each key to its bucket:
+
+$$
+b_1.\text{count} < b_2.\text{count} < \dots < b_d.\text{count}, \qquad k \in b_i.\text{keys} \iff \operatorname{count}(k) = b_i.\text{count}
+$$
+
+where:
+
+- $b_1, \dots, b_d$ are the non-empty buckets in list order, and $d$ is the number of distinct counts;
+- $b_i.\text{keys}$ is the set of keys with that count;
+- the minimum is in $b_1$ and the maximum in $b_d$, the two ends of the list;
+- `inc` moves a key from count $c$ to $c + 1$. Because counts change by exactly one, the target bucket is either the **next** bucket or a new bucket inserted right after the current one. No search is needed.
+
+Example: `inc(a)`, `inc(b)`, `inc(b)` gives $[1:\lbrace a \rbrace] \leftrightarrow [2:\lbrace b \rbrace]$: max $b$, min $a$. Two more `inc(a)` move $a$ to a new bucket 2, then to a new bucket 3, and bucket 1 empties and is unlinked: $[2:\lbrace b \rbrace] \leftrightarrow [3:\lbrace a \rbrace]$, max $a$, min $b$. `dec(b)` inserts a bucket 1 before bucket 2: $[1:\lbrace b \rbrace] \leftrightarrow [3:\lbrace a \rbrace]$.
+
+**Idea.** Two sentinel buckets, `head` (count 0) and `tail`, remove every null check. A new key starts "in" `head`, so `inc` treats it like any other key. After moving a key, `leave` removes it from its old bucket and unlinks the bucket if it is now empty. The key sets are `LinkedHashSet`, so reading one key from a bucket is $O(1)$.
+
+```java
+private final Bucket head = new Bucket(0), tail = new Bucket(0);   // sentinels: no null checks
+private final Map<String, Bucket> bucketOf = new HashMap<>();
+```
+
+```java
+void inc(String key) {
+    Bucket from = bucketOf.getOrDefault(key, head);
+    Bucket to = from.next.count == from.count + 1 ? from.next : insertAfter(from, from.count + 1);
+    to.keys.add(key);
+    bucketOf.put(key, to);
+    leave(from, key);
+}
+
+void dec(String key) {
+    Bucket from = bucketOf.get(key);
+    if (from.count == 1) {
+        bucketOf.remove(key);
+    } else {
+        Bucket to = from.prev.count == from.count - 1 ? from.prev : insertAfter(from.prev, from.count - 1);
+        to.keys.add(key);
+        bucketOf.put(key, to);
+    }
+    leave(from, key);
+}
+
+String getMaxKey() {
+    return tail.prev == head ? "" : tail.prev.keys.iterator().next();
+}
+
+String getMinKey() {
+    return head.next == tail ? "" : head.next.keys.iterator().next();
+}
+```
+
+The two helpers are plain linked-list surgery:
+
+```java
+private Bucket insertAfter(Bucket left, int count) {
+    Bucket bucket = new Bucket(count);
+    bucket.prev = left;
+    bucket.next = left.next;
+    left.next.prev = bucket;
+    left.next = bucket;
+    return bucket;
+}
+
+private void leave(Bucket bucket, String key) {   // remove key from its old bucket; unlink the bucket if empty
+    if (bucket == head) return;
+    bucket.keys.remove(key);
+    if (bucket.keys.isEmpty()) {
+        bucket.prev.next = bucket.next;
+        bucket.next.prev = bucket.prev;
+    }
+}
+```
+
+**Answer.** The trace in the lab returns max `b` / min `a`, then max `a` / min `b`, then min `b` with count 1, and finally `""` for both when every key has been decremented away. Each operation does one hash lookup, at most one bucket insertion and at most one unlink: $O(1)$ average time. Space is $O(n)$ for $n$ keys; there are at most $n$ buckets.
+
+### 4. LeetCode 2296: Design a Text Editor (Hard)
+
+**Problem.** An editor with a cursor supports `addText(text)` at the cursor, `deleteText(k)` (delete up to $k$ characters left of the cursor; return how many were deleted), and `cursorLeft(k)` / `cursorRight(k)` (move up to $k$ places; return the last $\min(10, \text{len})$ characters to the left of the cursor). Example: type `"hello world"`, move left 6, delete 2, type `"lo, my"`, move right 10.
+
+**Math first.** Split the text at the cursor into two stacks. The left stack holds the text before the cursor; the right stack holds the text after it, **reversed**, so the character next to the cursor is on top of each stack:
+
+$$
+\text{text} = L \mathbin{\Vert} \operatorname{reverse}(R), \qquad \text{cursor} = \lvert L \rvert
+$$
+
+where:
+
+- $L$ and $R$ are the two stacks, stored as `StringBuilder`s whose ends are the tops;
+- $\mathbin{\Vert}$ joins two strings, and $\lvert L \rvert$ is the length of $L$;
+- typing pushes onto $L$, deleting pops from $L$, and moving the cursor pops from one stack and pushes onto the other, one character per step.
+
+Example: after typing `"hello world"`, $L$ is `"hello world"` and $R$ is empty. `cursorLeft(6)` moves 6 characters, so $L$ becomes `"hello"` and $R$ becomes `"dlrow "`, which is `" world"` reversed; it returns `"hello"`. `deleteText(2)` leaves $L$ = `"hel"` and returns 2. Typing `"lo, my"` gives $L$ = `"hello, my"`. `cursorRight(10)` can move only 6, giving $L$ = `"hello, my world"` (15 characters), and returns the last 10: `", my world"`.
+
+**Idea.** Every operation touches only the tops of the stacks, so its cost is the number of characters typed, deleted or moved, never the length of the whole text.
+
+```java
+void addText(String text) {
+    left.append(text);
+}
+
+int deleteText(int k) {
+    int deleted = Math.min(k, left.length());
+    left.setLength(left.length() - deleted);
+    return deleted;
+}
+
+String cursorLeft(int k) {
+    for (int i = 0; i < k && left.length() > 0; i++) moveLastChar(left, right);
+    return lastTen();
+}
+
+String cursorRight(int k) {
+    for (int i = 0; i < k && right.length() > 0; i++) moveLastChar(right, left);
+    return lastTen();
+}
+
+private static void moveLastChar(StringBuilder from, StringBuilder to) {
+    to.append(from.charAt(from.length() - 1));
+    from.setLength(from.length() - 1);
+}
+
+private String lastTen() {
+    return left.substring(Math.max(0, left.length() - 10));
+}
+```
+
+**Answer.** The example returns `"hello"`, `2`, and `", my world"`; deleting 100 afterwards deletes only the 15 characters that exist. Each call costs $O(k)$ with $k \le 40$, so $2 \times 10^4$ calls move at most $40 \times 2 \times 10^4 = 8 \times 10^5$ characters. A single string with a cursor index would copy the whole text on each edit in the middle: $2 \times 10^8$ character copies for a 10,000-character text. Space is $O(\text{text length})$.
+
+## Mathematical Abstraction
+
+An abstract data type is a set of states, a set of operations and an invariant that every operation preserves, together with a cost bound for each operation:
+
+$$
+\text{ADT} = (S, \operatorname{Ops}, I), \qquad \forall s \in S,\; \forall o \in \operatorname{Ops}: \; I(s) \Rightarrow I(o(s)), \qquad \operatorname{cost}(o) \le c_o
+$$
+
+where:
+
+- $S$ is the set of possible states of the stored fields, and $I(s)$ is the invariant, true or false for each state;
+- $\operatorname{Ops}$ is the set of public operations, and $o(s)$ is the state after applying $o$ to $s$;
+- $\Rightarrow$ means "implies": an operation started in a valid state ends in a valid state;
+- $c_o$ is the cost promised in the contract, and the design is the choice of $S$ that makes every $c_o$ achievable.
+
+Example: for the text editor, a state is a pair $(L, R)$ and the abstraction function reads it as the text $L \mathbin{\Vert} \operatorname{reverse}(R)$ with the cursor at $\lvert L \rvert$. The state $L$ = `"hello"`, $R$ = `"dlrow "` means the text `"hello world"` with the cursor at position $\lvert L \rvert = 5$. `cursorRight(1)` moves one character, giving $L$ = `"hello "` and $R$ = `"dlrow"`: still the text `"hello world"`, now with the cursor at 6, at a cost of 1 character moved. For All O\`one, the invariant is "buckets sorted by count, each key in the bucket of its count", and every operation preserves it with $O(1)$ work.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 10, "Elementary Data Structures" (stacks, linked lists with sentinels); Chapter 11, "Hash Tables"; §6.5, "Priority queues"; Chapter 16, "Amortized Analysis". CLRS has no chapter called "design"; these are the building blocks. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.2 "Data Abstraction" and §2.4 "Priority Queues" (including the multiway merge): <https://algs4.cs.princeton.edu/12oop/> and <https://algs4.cs.princeton.edu/24pq/>.
+- Frederick P. Brooks Jr., *The Mythical Man-Month* (Addison-Wesley, 1975), Chapter 9, "Ten Pounds in a Five-Pound Sack".
+- Niklaus Wirth, *Algorithms + Data Structures = Programs* (Prentice-Hall, 1976).
+- Barbara Liskov and John Guttag, *Program Development in Java: Abstraction, Specification, and Object-Oriented Design* (Addison-Wesley, 2000): representation invariants and abstraction functions.
+- LeetCode: [355. Design Twitter](https://leetcode.com/problems/design-twitter/), [1396. Design Underground System](https://leetcode.com/problems/design-underground-system/), [432. All O\`one Data Structure](https://leetcode.com/problems/all-oone-data-structure/), [2296. Design a Text Editor](https://leetcode.com/problems/design-a-text-editor/).
+
+[← Rejection Sampling](../rejection-sampling/index.qmd) · [Randomisation, Design, and Special Domains](../groups/07-specialised-domains.qmd) · [Interactive →](../interactive/index.qmd)

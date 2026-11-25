@@ -1,43 +1,144 @@
 ---
 title: "Randomisation, Design, and Special Domains"
-description: "A connected learning path through 8 worked algorithms topics."
+description: "Eight topics that fall outside the classic algorithm families: randomized algorithms, reservoir and rejection sampling, data-structure design, interactive judges, SQL, shell pipelines and Java concurrency, with a reading order, a tool chooser and a formula cheat sheet."
 ---
 
-## What you are really learning
+## What this group is about
 
-Respect the domain's actual contract: randomness, database joins, shell transformations and synchronisation are not one algorithm family.
+Most algorithm topics share one setting: you get all the input in an array, and you return an answer. The eight topics here break that setting in different ways.
 
-The goal is not to learn 8 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+- **Randomness.** Sometimes the fairest or fastest answer flips coins: shuffling a playlist, picking a winner from a stream that never ends, turning a six-sided die into a five-sided one.
+- **Design.** Sometimes there is no single input, only a list of operations that will be called again and again, and you choose what to keep "on the whiteboard" so each call is quick.
+- **Other worlds.** Sometimes you cannot see the input at all (a judge hides it and answers questions), or the work happens in another language (SQL tables, shell pipelines), or several threads run at the same time and must not trip over each other.
 
-## Begin with a small example
+Think of a school fair. A **raffle** must be fair: every ticket equally likely (randomized, reservoir, rejection). The **lost-property desk** must answer "is my coat here?" instantly (design). A **guessing game** stall lets you ask "higher or lower?" only seven times (interactive). The **office** keeps registers and asks questions of them (database). The **kitchen line** passes trays from one helper to the next (shell). And two helpers updating one scoreboard must take turns (concurrency). Every lesson starts from a picture like this and ends with hard interview problems, always with the mathematics first.
 
-A stream sample can remain unbiased without storing every element.
+## Reading order, from simple to advanced
+
+Read the three parts in order; inside each part, each topic uses the one before it.
+
+**Part 1: randomness**
+
+1. **[Randomized](../randomized/index.qmd)**: Las Vegas versus Monte Carlo, expected values, the Fisher–Yates shuffle and why the naive one is biased ($3^3 = 27$ paths cannot split evenly into $3! = 6$ orders), and randomized quicksort's $\approx 2n \ln n$ comparisons.
+2. **[Reservoir Sampling](../reservoir-sampling/index.qmd)**: keep $k$ uniform items from a stream of unknown length with $k$ slots of memory; the telescoping proof that each item survives with probability $k/n$; skipping and weighted variants.
+3. **[Rejection Sampling](../rejection-sampling/index.qmd)**: propose, then accept or reject; the number of tries is geometric with mean $1/p$; why it collapses in high dimensions.
+
+**Part 2: designing structures and questions**
+
+4. **[Design](../design/index.qmd)**: write the contract, pick one structure per operation, keep aggregates instead of history, keep two views in sync with an invariant, and merge lazily with a heap.
+5. **[Interactive](../interactive/index.qmd)**: a hidden input behind an API and a question budget; the decision-tree lower bound $\lceil \log_2(n+1) \rceil$; adaptive adversaries and minimax questions.
+
+**Part 3: other languages and runtimes**
+
+6. **[Database](../database/index.qmd)**: SQL as relational algebra, $\sigma$, $\pi$, $\bowtie$ and grouping with exact row counts; `NULL` and three-valued logic; ranking windows; why a B-tree index needs about $\log_b n$ page reads.
+7. **[Shell](../shell/index.qmd)**: pipelines as function composition, the three standard streams and exit codes, and the `grep`/`sed`/`awk`/`sort`/`uniq` toolbox, portable between macOS and Linux.
+8. **[Concurrency](../concurrency/index.qmd)**: why `x++` races (18 of 20 interleavings lose an update), happens-before, `synchronized`, `volatile`, semaphores and latches, and deadlock broken by ordering locks.
+
+## Which tool when
+
+| If the problem says… | Reach for… | Because… |
+| --- | --- | --- |
+| "return a random permutation; all orders equally likely" | Fisher–Yates | each of the $n!$ orders gets exactly one path of choices |
+| "insert, delete and get a random element, all in $O(1)$" | array plus a hash map from value to index | remove by moving the last element into the hole |
+| "pick uniformly from a linked list or a stream of unknown length" | reservoir sampling | keep item $i$ with probability $k/i$; memory stays $k$ |
+| "build a uniform value or point from another random source" | rejection sampling | keep only proposals inside the target; $E[\text{tries}] = 1/p$ |
+| "pick uniformly from $[0, n)$ except a blacklist" | remap black numbers below $n - \lvert B \rvert$ to white ones above | one random number per pick, even when rejection would need thousands |
+| "design a class whose every operation is fast" | a contract table, then hash maps, lists, heaps, trees | each structure makes some operations cheap; combine them and state the invariant |
+| "max and min key, counts change by one" | buckets in a doubly linked list | the next count is always a neighbour, so every update is $O(1)$ |
+| "you may call an API at most $Q$ times" | binary search, or minimax over candidates | each answer should cut the candidates by as much as possible in the worst case |
+| "every row of table A, even without a match in B" | `LEFT JOIN` | it keeps unmatched left rows and fills `NULL` |
+| "the top $N$ distinct values per group" | `DENSE_RANK() OVER (PARTITION BY ...)` | ties share a rank and there are no gaps |
+| "count, filter or reshape the lines of a text file" | a shell pipeline: `grep`, `sort`, `uniq -c`, `awk` | each tool does one step, and the pipe composes them |
+| "these threads must print in a fixed order" | `CountDownLatch` or `Semaphore` | each creates a happens-before edge from one thread's step to the next |
+| "many threads update one counter" | `synchronized` or `AtomicInteger` | read-add-write must become one indivisible step |
+| "a thread needs two locks at once" | always lock in a fixed global order | a cycle of waiting threads becomes impossible |
+
+## Cheat sheet
+
+Every formula below is derived and checked in its lesson's lab.
+
+**Expected tries (Las Vegas loops, rejection sampling).**
 
 $$
-P(\text{chosen item after }n)=\frac1n
+E[T] = \frac{1}{p}
 $$
 
-**What the symbols mean:** P is probability over random replacement decisions and n is the total number of items processed by the one-item reservoir sampler.
+where $T$ is the number of independent tries until the first success and $p$ the success chance of one try. Example: LeetCode 470 accepts 40 of 49 cells, so $p = 40/49$, $E[T] = 49/40 = 1.225$ rounds, and $2 \times 1.225 = 2.45$ calls of `rand7()`.
 
-**Substitute actual numbers:** For n=3, the first item survives insertion 2 with probability 1/2 and insertion 3 with probability 2/3; multiply to get 1/3. Every item has the same final selection probability.
+**A fair shuffle.**
 
-This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+$$
+P(\text{order } \pi) = \frac{1}{n} \cdot \frac{1}{n-1} \cdots \frac{1}{1} = \frac{1}{n!}
+$$
 
-## The chapters in this family
+where $n$ is the number of items and $\pi$ any one order. Example: $n = 3$ gives $\frac{1}{3} \cdot \frac{1}{2} \cdot 1 = \frac{1}{6}$; the naive shuffle's $27$ equal paths give some orders $\frac{5}{27}$ and others $\frac{4}{27}$.
 
-1. **[Randomized](../randomized/index.qmd)** — Use random choices inside an algorithm to influence expected performance or output.
-2. **[Reservoir Sampling](../reservoir-sampling/index.qmd)** — Maintain a uniform sample from a stream without knowing its final size.
-3. **[Rejection Sampling](../rejection-sampling/index.qmd)** — Accept proposed random samples according to a target-to-proposal ratio.
-4. **[Design](../design/index.qmd)** — Implement an abstract data type that meets operational contracts and complexity targets.
-5. **[Interactive](../interactive/index.qmd)** — Choose queries based on replies while respecting an interaction limit.
-6. **[Database](../database/index.qmd)** — Express relational queries and transformations over tables.
-7. **[Shell](../shell/index.qmd)** — Compose command-line utilities and streams as processing pipelines.
-8. **[Concurrency](../concurrency/index.qmd)** — Reason about overlapping operations, coordination, and shared-state correctness.
+**Reservoir sampling.**
 
-## Practice method
+$$
+P(x_i \in R) = \frac{k}{i} \prod_{t=i+1}^{n} \frac{t-1}{t} = \frac{k}{n}
+$$
 
-Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
+where $R$ is the reservoir of size $k$, $x_i$ the $i$-th item of a stream of length $n$, and $\frac{t-1}{t}$ the chance of surviving item $t$. Example: $k = 2$, $n = 5$, item 3: $\frac{2}{3} \cdot \frac{3}{4} \cdot \frac{4}{5} = \frac{2}{5} = 0.4$.
 
-The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
+**Rejection sampling with an envelope.**
+
+$$
+f \le M g \;\Longrightarrow\; P(\text{accept}) = \frac{1}{M}
+$$
+
+where $f$ is the target density, $g$ the proposal density and $M$ the envelope constant. Example: a uniform point in a disc from a square has $\frac{1}{M} = \frac{\pi}{4} \approx 0.785$, so about $1.27$ tries per point.
+
+**Monte Carlo amplification.**
+
+$$
+P(\text{wrong after } k \text{ rounds}) \le \delta^k
+$$
+
+where $\delta$ is the one-sided error of one round and $k$ the number of independent rounds. Example: Freivalds' check has $\delta = \frac{1}{2}$, so $k = 10$ rounds give $\frac{1}{1024} \approx 0.001$.
+
+**Design cost.**
+
+$$
+W = \sum_{\text{op}} q_{\text{op}} \cdot c_{\text{op}}
+$$
+
+where $q_{\text{op}}$ is how often an operation is called and $c_{\text{op}}$ its cost with the chosen structure. Example: 1,000 lookups among 500 items cost $1{,}000 \times 500 = 500{,}000$ steps with a list and about $1{,}000$ with a hash set.
+
+**Question budget (interactive).**
+
+$$
+t \ge \lceil \log_2 (n + 1) \rceil
+$$
+
+where $t$ is the worst-case number of "higher, lower or equal" questions and $n$ the number of possible hidden values. Example: $n = 100$ needs 7 questions and $n = 2^{31} - 1$ needs 31; binary search achieves both.
+
+**Joins and indexes (database).**
+
+$$
+0 \le \lvert R \bowtie S \rvert \le \lvert R \rvert \cdot \lvert S \rvert, \qquad h = \lceil \log_b n \rceil
+$$
+
+where $R$, $S$ are tables, $h$ is the height of a B-tree index with fan-out $b$ over $n$ rows. Example: $3 \times 3 = 9$ pairs, of which 2 match; and $n = 10^6$, $b = 100$ give $h = 3$ page reads instead of a $10^6$-row scan.
+
+**Pipelines (shell).**
+
+$$
+f_1 \mid f_2 \mid \dots \mid f_n = f_n \circ \dots \circ f_1
+$$
+
+where each $f_i$ is a command viewed as a function on lists of lines and $\circ$ is composition. Example: `cut | sort | uniq -c | sort -rn | awk` takes the 6-line log through $6 \to 6 \to 6 \to 3 \to 3 \to 3$ lines.
+
+**Interleavings (concurrency).**
+
+$$
+\lvert \mathcal{I} \rvert = \frac{(km)!}{(m!)^k}
+$$
+
+where $\mathcal{I}$ is the set of interleavings of $k$ threads with $m$ ordered steps each. Example: two threads doing read-add-write give $\frac{6!}{3!\,3!} = 20$ interleavings, and 18 of them lose an update.
+
+## How to practise
+
+Pick one lesson. Run its lab first and watch it print `OK`: every number on the page is checked there. Then close the page and redo one worked example on paper, write the interview solution from the "Math first" formula alone, and compare. For the randomized topics, change the seed and the tolerance in the lab and see the frequencies move but stay inside the bound.
 
 [← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

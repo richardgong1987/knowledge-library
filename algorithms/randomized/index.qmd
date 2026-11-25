@@ -1,62 +1,482 @@
 ---
 title: "Randomized"
-description: "An original, understandable lesson on the Randomized LeetCode topic with fully explained mathematics."
+description: "Las Vegas and Monte Carlo algorithms, expected-value analysis, the Fisher–Yates shuffle and why the naive shuffle is biased, randomized quicksort's 2n ln n comparisons, Freivalds' matrix check, and hard interview problems solved math-first."
 ---
 
-## What is the real challenge?
+A randomized algorithm flips coins while it runs. The coins do not make it sloppy. They make it **fair** (every outcome equally likely), **safe** (no input is always slow) or **cheap** (a tiny chance of error buys a huge speed-up). This lesson starts with a hat full of names and ends with the hard LeetCode problems that need exactly these ideas.
 
-**LeetCode 215 — Kth Largest Element (randomised selection).** Use random choices inside an algorithm to influence expected performance or output.
+All code is in [`RandomizedLab.java`](RandomizedLab.java). Run it from this folder with `java RandomizedLab.java`; it checks every number on this page and prints `OK`. Every random check uses a seeded `java.util.Random`, so the run is the same every time.
 
-This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
+## The problem
 
-## The tempting solution
+A music app has a playlist of 3 songs, `[1, 2, 3]`, and a **Shuffle** button. Each of the $3! = 6$ orders should come up equally often, $1/6$ of the time.
 
-A deterministic pivot such as the first value can trigger very unbalanced quickselect partitions on already sorted input.
+The obvious code walks over the positions and swaps each one with **any** random position. Each of the 3 steps picks one of 3 positions, so there are $3^3 = 27$ equally likely runs. But 27 runs cannot be shared out equally among 6 orders, because $27 / 6 = 4.5$ is not a whole number. Some orders *must* come up more often than others. Users notice.
 
-## The idea worth remembering
+There is a second, quieter problem. Quicksort that always picks the last element as the pivot compares every pair on an already sorted list: $\frac{8 \cdot 7}{2} = 28$ comparisons for 8 songs, instead of about 17. A random pivot fixes that. Both fixes need the same skill: counting outcomes and computing averages.
 
-Randomness is a way to change how expensive inputs interact with the algorithm. A uniformly chosen pivot makes systematically bad partitions unlikely under a suitable adversary model.
+## Explain it like I'm ten
 
-## One mathematical expression — with every symbol explained
+::: {.callout-tip}
+**The hat.** Write the 3 song names on slips and put them in a hat. Pull one out without looking: that plays first. Pull another from the slips that are *left*: that plays second. The last slip plays third. At the first draw there are 3 choices, then 2, then 1, so there are $3 \times 2 \times 1 = 6$ ways to draw, one for each order. Fair.
+
+The broken version is like putting a slip **back** into the hat after you looked at it. Then some orders can be reached in more ways than others.
+
+Ronald Fisher and Frank Yates printed this hat method in 1938, for scientists shuffling with pencil, paper and a table of random digits. Richard Durstenfeld turned it into a computer algorithm in 1964, and Donald Knuth gives it as *Algorithm P* in *The Art of Computer Programming*, Volume 2.
+
+**Two kinds of lucky guessers.** A box holds 8 cards, half marked **a**. You want to find an **a** card by grabbing cards at random.
+
+- The **Las Vegas** child keeps grabbing until she holds an **a**. She is *never wrong*, but on a bad day she grabs many times.
+- The **Monte Carlo** child grabs at most 10 times and then says "there is no **a**". She is *always quick*, but once in about a thousand days she is wrong.
+
+The name Monte Carlo, after the casino, reached print in Metropolis and Ulam's 1949 paper; László Babai named the other kind after Las Vegas in 1979.
+
+Sedgewick and Wayne's Java quicksort **shuffles the array first**, like shuffling a deck before a card game so that nobody can stack it against you.
+:::
+
+## From simple to advanced
+
+### Level 1: Las Vegas and Monte Carlo
+
+Both searches below look for an `'a'` in `"abbaabab"`, where half the letters are `'a'`. The Las Vegas search is always right, but its running time is random. The Monte Carlo search has a fixed running time, but its answer can be wrong.
+
+```java
+static int lasVegasFind(char[] letters, Random random) {
+    while (true) {
+        int i = random.nextInt(letters.length);
+        if (letters[i] == 'a') return i;           // always correct; only the time is random
+    }
+}
+
+static int monteCarloFind(char[] letters, int tries, Random random) {
+    for (int t = 0; t < tries; t++) {
+        int i = random.nextInt(letters.length);
+        if (letters[i] == 'a') return i;
+    }
+    return -1;                                     // fixed time, but may wrongly say "none"
+}
+```
+
+**How long does Las Vegas take on average?** Each grab succeeds with probability $p$, independently. The number of grabs $T$ is then *geometric*, and its **expected value**, the long-run average, is
 
 $$
-\mathbb E[T(n)]=O(n)
+E[T] = \sum_{t=1}^{\infty} t \cdot (1 - p)^{t-1} p = \frac{1}{p}
 $$
 
-**Every symbol means:** T(n) is quickselect's running work on n elements; E is expectation over its random pivot choices; O(n) means expected work grows at most proportionally to n up to constants for the stated algorithm.
+where:
 
-**Numerical substitution:** For 8 items, pivot rank 4 leaves at most 4 candidates on the side we keep. Pivot rank 1 can leave 7. Randomisation does not prevent a bad step; it changes the distribution over many possible steps.
+- $T$ is the number of grabs until the first success;
+- $p$ is the chance that one grab succeeds, here the fraction of `'a'` letters;
+- $(1 - p)^{t-1} p$ is the chance that the first $t - 1$ grabs fail and grab $t$ succeeds;
+- $E[\cdot]$ means "average over all random outcomes": each possible value times its probability, added up.
 
-The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
+Example: $p = 4/8 = 1/2$. The sum is $1 \cdot \frac{1}{2} + 2 \cdot \frac{1}{4} + 3 \cdot \frac{1}{8} + 4 \cdot \frac{1}{16} + \dots = 0.5 + 0.5 + 0.375 + 0.25 + \dots$, which adds up to $1 / p = 2$ grabs. The lab repeats the search 100,000 times and gets an average within 0.03 of 2.
 
-## Why the method is justified
+**How often is Monte Carlo wrong?** It is wrong only when all $k$ grabs miss:
 
-After partitioning, the target order statistic belongs to at most one partition. Randomly distributed pivot ranks allow the standard expected-cost recurrence to remain linear even though worst-case remains quadratic for simple randomised quickselect.
+$$
+P(\text{wrong}) = (1 - p)^k
+$$
 
-**Complexity or resource cost:** Expected O(n), worst-case O(n²) comparisons; n is input length.
+where:
 
-## Executable example
+- $k$ is the fixed number of grabs (`tries` in the code);
+- $(1 - p)$ is the chance that one grab misses, so $(1-p)^k$ is the chance that all $k$ miss.
 
-A related operation exists in the [original, unit-tested JavaScript algorithms lab](../examples/patterns.mjs):
+Example: with $p = 1/2$ and $k = 3$, $P(\text{wrong}) = (1/2)^3 = 0.125$; the lab sees 12.5% failures, within half a percentage point. With $k = 10$ it is $(1/2)^{10} = 1/1024 \approx 0.001$. **Each extra try halves the error.** That is called *amplification*, and it is why Monte Carlo algorithms are practical.
 
-~~~js
-import { quickselect } from '../examples/patterns.mjs';
+You can also turn Las Vegas into Monte Carlo: stop after $2 E[T]$ grabs. Markov's inequality says $P(T \ge 2E[T]) \le 1/2$, so stopping there is wrong at most half the time; here the true chance is $(1/2)^4 = 1/16$.
 
-console.log(quickselect([8,2,7,1,9],2));
-~~~
+### Level 2: a fair shuffle, and why the obvious one is biased
 
-Run this from a `.mjs` file inside this topic directory. The mathematical relation above is the key concept, while the linked helper illustrates its prerequisite.
+**Fisher–Yates** fills the array from the back. For position $i$ it picks a card uniformly from the positions $0..i$ that are not yet placed: the slips still in the hat.
 
-## Which assumption makes it fail?
+```java
+static void fisherYates(int[] a, Random random) {
+    for (int i = a.length - 1; i > 0; i--) {
+        int j = random.nextInt(i + 1);             // 0 <= j <= i: only cards not yet placed
+        swap(a, i, j);
+    }
+}
+```
 
-Expected does not mean every run takes linear time. For reproducible tests, inject a seeded pseudo-random generator rather than hiding randomness in globally shared state.
+The chance of producing one particular order $\pi$ is a product of one choice per step:
 
-For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+$$
+P(\text{output} = \pi) = \frac{1}{n} \cdot \frac{1}{n-1} \cdot \dots \cdot \frac{1}{2} \cdot \frac{1}{1} = \frac{1}{n!}
+$$
 
-## Source and interview practice
+where:
 
-- **Textbook relationship:** CLRS Chapter 5 (randomised analysis), Chapter 9 (selection).. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode/practice:** LeetCode 215 — Kth Largest Element (randomised selection) — [problem or problem set](https://leetcode.com/problems/kth-largest-element-in-an-array/).
-- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+- $n$ is the number of cards;
+- $\pi$ is any one target order (a *permutation*);
+- $\frac{1}{n - s}$ is the chance that step $s$ (counting from 0) picks exactly the card that $\pi$ needs in that position, out of the $n - s$ cards left;
+- $n! = n \cdot (n-1) \cdots 1$ is the number of possible orders.
 
-[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)
+Example: $n = 3$. The chance of the order `[2, 3, 1]` is $\frac{1}{3} \cdot \frac{1}{2} \cdot 1 = \frac{1}{6}$. There are $3 \times 2 = 6$ paths through the choices and 6 orders, one path each. The lab enumerates all 6 paths with a scripted `Random` and finds each order exactly once, then shuffles 60,000 times and sees each order $10{,}000 \pm 400$ times.
+
+**The naive shuffle** swaps every position with *any* position:
+
+```java
+static void naiveShuffle(int[] a, Random random) {
+    for (int i = 0; i < a.length; i++) {
+        swap(a, i, random.nextInt(a.length));      // any position, even ones already settled
+    }
+}
+```
+
+$$
+\text{paths} = n^n, \qquad \text{orders} = n!, \qquad \text{fair} \Rightarrow n! \text{ divides } n^n
+$$
+
+where:
+
+- $n^n$ counts the runs, because each of the $n$ steps picks one of $n$ positions, and every run is equally likely;
+- a fair shuffle must give each of the $n!$ orders the same number of runs, so $n!$ must divide $n^n$.
+
+Example: $n = 3$ gives $3^3 = 27$ runs and $3! = 6$ orders, and $27 / 6 = 4.5$. So it cannot be fair. The lab runs all 27 paths and counts:
+
+| Order | `[1,2,3]` | `[1,3,2]` | `[2,1,3]` | `[2,3,1]` | `[3,1,2]` | `[3,2,1]` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Runs out of 27 | 4 | 5 | 5 | 5 | 4 | 4 |
+| Probability | 0.148 | 0.185 | 0.185 | 0.185 | 0.148 | 0.148 |
+
+The order `[1, 3, 2]` comes up 25% more often than `[1, 2, 3]` ($5/4 = 1.25$). For $n \ge 3$ this never works out, because $n - 1$ divides $n!$ but shares no factor with $n^n$.
+
+### Level 3: expected cost with indicator variables (randomized quicksort)
+
+Quicksort picks a pivot, puts smaller values to its left, and recurses on both sides. With a **random** pivot no input is bad for every run, so we can talk about the *expected* number of comparisons on *every* input, including sorted ones.
+
+```java
+static int quicksort(int[] a, int lo, int hi, Random random) {
+    if (lo >= hi) return 0;
+    swap(a, lo + random.nextInt(hi - lo + 1), hi); // a random pivot, parked at the end
+    int store = lo;
+    for (int i = lo; i < hi; i++) {
+        if (a[i] < a[hi]) swap(a, i, store++);
+    }
+    swap(a, store, hi);                            // the pivot lands in its final place
+    return (hi - lo) + quicksort(a, lo, store - 1, random) + quicksort(a, store + 1, hi, random);
+}
+```
+
+The trick from CLRS Chapter 7 is to count each pair separately. Call the values in sorted order $z_1 < z_2 < \dots < z_n$. Two values are compared only when one of them is the pivot. Look at the group $z_i, z_{i+1}, \dots, z_j$: until a pivot is picked from inside this group, they all stay together on the same side. The first pivot picked from the group decides everything. If it is $z_i$ or $z_j$, the pair is compared; if it is anything in between, they are split apart and never meet. Each of the $j - i + 1$ values is equally likely to be first, so:
+
+$$
+E[C] = \sum_{i < j} P(z_i \text{ and } z_j \text{ are compared}) = \sum_{i=1}^{n} \sum_{j=i+1}^{n} \frac{2}{j - i + 1}
+$$
+
+where:
+
+- $C$ is the total number of comparisons;
+- the sum runs over every pair of ranks $i < j$, because each pair is compared at most once;
+- $j - i + 1$ is the size of the group from $z_i$ to $z_j$, and 2 of its members ($z_i$ and $z_j$) cause a comparison;
+- adding the per-pair probabilities is allowed by **linearity of expectation**, which holds even though the pairs are not independent.
+
+Example: $n = 4$. There are three pairs with $j - i = 1$, each contributing $\frac{2}{2} = 1$; two pairs with $j - i = 2$, each $\frac{2}{3}$; and one pair with $j - i = 3$, contributing $\frac{2}{4}$. The total is $3 + \frac{4}{3} + \frac{1}{2} = 4.833$.
+
+```java
+static double expectedComparisons(int n) {
+    double sum = 0;
+    for (int i = 1; i <= n; i++) {
+        for (int j = i + 1; j <= n; j++) sum += 2.0 / (j - i + 1);
+    }
+    return sum;
+}
+```
+
+The sum has a closed form with the *harmonic number* $H_n = 1 + \frac{1}{2} + \dots + \frac{1}{n} \approx \ln n + 0.577$:
+
+$$
+E[C] = 2(n+1)H_n - 4n \approx 2n \ln n
+$$
+
+where:
+
+- $H_n$ is the $n$-th harmonic number and $\ln$ is the natural logarithm;
+- "$\approx$" keeps only the largest term, which dominates for large $n$.
+
+Example 1: $n = 4$, $H_4 = 1 + 0.5 + 0.333 + 0.25 = 2.083$, so $2 \cdot 5 \cdot 2.083 - 16 = 20.833 - 16 = 4.833$, the same as the pair sum.
+
+Example 2: $n = 8$, $H_8 = 2.718$, so $2 \cdot 9 \cdot 2.718 - 32 = 16.92$. The lab sorts the already sorted list `[1..8]` 20,000 times and averages $16.92 \pm 0.15$ comparisons. A fixed last-element pivot would make $28$ every time.
+
+Example 3: $n = 10^6$. The exact value is about $24.8$ million and $2n\ln n = 2 \cdot 10^6 \cdot 13.8 \approx 27.6$ million, while the fixed pivot on sorted input needs $\frac{n(n-1)}{2} \approx 5 \times 10^{11}$, some 20,000 times more. Sedgewick and Wayne quote the same $\sim 2n \ln n \approx 1.39\, n \log_2 n$.
+
+### Level 4: Monte Carlo with a one-sided error (Freivalds' check)
+
+Someone hands you three $n \times n$ matrices and claims $A \cdot B = C$. Multiplying costs about $n^3$ steps. Rūsiņš Freivalds (1977) checks it in about $3n^2$: pick a random vector $r$ of 0s and 1s and compare $A(Br)$ with $Cr$. Each product of a matrix and a vector costs $n^2$.
+
+```java
+static boolean freivalds(long[][] a, long[][] b, long[][] c, Random random) {
+    long[] r = new long[a.length];
+    for (int i = 0; i < r.length; i++) r[i] = random.nextInt(2);   // a random 0/1 vector
+    return Arrays.equals(times(a, times(b, r)), times(c, r));
+}
+```
+
+If $AB = C$ the check always says yes. If not, it can be fooled, but not often:
+
+$$
+P(\text{fooled}) = P(Dr = 0) \le \frac{1}{2}, \qquad D = AB - C \ne 0
+$$
+
+where:
+
+- $D$ is the error matrix; it has at least one non-zero entry $d_{ij}$;
+- $r$ is the random 0/1 vector and $Dr$ is $D$ times $r$;
+- the check is fooled exactly when $Dr = 0$. Row $i$ of $Dr$ is $d_{ij} r_j$ plus terms that do not involve $r_j$, and at most one of the two values $r_j \in \lbrace 0, 1 \rbrace$ can make it zero.
+
+Example: $A = \begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}$, $B = \begin{pmatrix} 5 & 6 \\ 7 & 8 \end{pmatrix}$, so $AB = \begin{pmatrix} 19 & 22 \\ 43 & 50 \end{pmatrix}$. A wrong $C$ with 51 instead of 50 gives $D = \begin{pmatrix} 0 & 0 \\ 0 & -1 \end{pmatrix}$ and $Dr = (0, -r_2)$. Of the 4 vectors $r$, the two with $r_2 = 0$ fool the check: $P = 2/4 = 1/2$. The lab is fooled in $50\% \pm 3\%$ of 10,000 runs, and never rejects the right $C$. Repeating 10 times drives the error to $(1/2)^{10} \approx 0.001$; for $n = 1{,}000$ that costs $10 \times 3 \times 10^6 = 3 \times 10^7$ steps instead of $10^9$.
+
+**Where else randomness appears.** Treaps and skip lists stay balanced in expectation with random priorities or random heights. Universal hashing ([Hash Table](../hash-table/index.qmd)) picks the hash function at random so that no fixed input collides badly. Randomized selection ([Quickselect](../quickselect/index.qmd)) finds the median in expected linear time. Karger's algorithm finds a minimum cut by contracting random edges, and Miller–Rabin tests primality with a one-sided error like Freivalds'. The next two lessons, [Reservoir Sampling](../reservoir-sampling/index.qmd) and [Rejection Sampling](../rejection-sampling/index.qmd), are randomized algorithms for drawing samples.
+
+## Why it works and what it costs
+
+**Fisher–Yates is uniform.** Invariant: *after the step for position $i$, the cards in positions $i, i+1, \dots, n-1$ are a uniformly random ordered selection from the original cards, and positions $0..i-1$ hold the rest.*
+
+- *Before the first step* nothing is placed, so it holds trivially.
+- *The step for $i$* picks $j$ uniformly from $0..i$, which are exactly the cards not yet placed, and puts that card in position $i$. Every unplaced card is equally likely to land there, so the invariant extends by one position.
+- *After the last step* every position is placed, so each of the $n!$ orders has probability $\frac{1}{n} \cdot \frac{1}{n-1} \cdots 1 = \frac{1}{n!}$.
+
+The naive shuffle breaks the invariant: at step $i$ it may pick a position *before* $i$, a card that has already been "placed", which is like putting the slip back in the hat.
+
+**Randomized quicksort is always correct.** It is a Las Vegas algorithm: the pivot choice only changes the running time, never the sorted result. The expected cost holds for **every** input, because the randomness is inside the algorithm, not in the data.
+
+**Costs on this page:**
+
+| Algorithm | Kind | Time | Random numbers | Error |
+| --- | --- | --- | --- | --- |
+| `lasVegasFind` | Las Vegas | expected $1/p = 2$ grabs | one per grab | none |
+| `monteCarloFind` | Monte Carlo | at most $k$ grabs | at most $k$ | $(1-p)^k$ |
+| `fisherYates` | exact sampler | $n - 1$ swaps | $n - 1$ | none |
+| `quicksort` | Las Vegas | expected $2(n+1)H_n - 4n$ comparisons, worst $\frac{n(n-1)}{2}$ | one per call | none |
+| `freivalds`, $k$ rounds | Monte Carlo, one-sided | $3kn^2$ | $kn$ bits | at most $2^{-k}$ |
+
+The quicksort worst case is still possible, but every run must pick a bad pivot again and again; for $n = 8$ the lab's average stays within $0.15$ of the expectation over 20,000 runs.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Swapping each position with **any** position | For 3 cards, 27 runs on 6 orders: some orders have probability $5/27$, others $4/27$ | Pick $j$ from $0..i$ only: `random.nextInt(i + 1)` |
+| `random.nextInt(i)` instead of `nextInt(i + 1)` | No card can stay where it is; for 3 cards only 2 of the 6 orders ever appear | Include $i$. (Excluding it is Sattolo's algorithm, correct only when you want one big cycle) |
+| `(int) Math.random() * n` | Always 0, because the cast happens before the multiplication | `random.nextInt(n)` |
+| `Math.abs(random.nextInt()) % n` | A negative index once in $2^{32}$ calls, and a slight bias toward small values | `random.nextInt(n)`, which rejects the uneven remainder for you |
+| `new Random(42)` created inside the method | Every call returns the same "random" answer | Create one `Random` and reuse it; seed it only in tests |
+| A fixed pivot in quicksort | Sorted input costs $\frac{n(n-1)}{2}$: 28 comparisons for 8 values, a stack overflow for $10^5$ | Pick the pivot at random, or shuffle first |
+| Using `java.util.Random` for secrets | Its output can be predicted from a few values | `SecureRandom` for tokens and passwords |
+
+## Interview problems
+
+Each solution starts with the mathematics: what must be equally likely, and which invariant keeps it so.
+
+### 1. LeetCode 384: Shuffle an Array (Medium)
+
+**Problem.** Implement `Solution(int[] nums)` with `reset()`, which returns the original array, and `shuffle()`, which returns a uniformly random permutation. For `[1, 2, 3]`, each of the 6 orders must have probability $1/6$.
+
+**Math first.** The output must be a uniform permutation:
+
+$$
+P(\text{shuffle}() = \pi) = \frac{1}{n!} \quad \text{for every order } \pi
+$$
+
+where:
+
+- $\pi$ is any one of the possible orders of the $n$ values;
+- $n!$ is how many orders there are.
+
+Example: $n = 3$, so $n! = 6$ and every order needs probability $\frac{1}{3} \cdot \frac{1}{2} \cdot 1 = \frac{1}{6} \approx 0.167$. Fisher–Yates provides exactly this; the naive shuffle gives $0.148$ or $0.185$.
+
+**Idea.** Keep a private copy of the original. `reset` returns a copy of it; `shuffle` copies it and runs Fisher–Yates on the copy. LeetCode's class is called `Solution` and takes only `nums`; the lab passes a seeded `Random` so the run is repeatable.
+
+```java
+static final class ShuffleArray {
+    private final int[] original;
+    private final Random random;
+
+    ShuffleArray(int[] nums, Random random) {
+        original = nums.clone();
+        this.random = random;
+    }
+
+    int[] reset() {
+        return original.clone();
+    }
+
+    int[] shuffle() {
+        int[] copy = original.clone();
+        fisherYates(copy, random);
+        return copy;
+    }
+}
+```
+
+**Answer.** `shuffle()` on `[1, 2, 3]` returns each order about 1/6 of the time; `reset()` returns `[1, 2, 3]`. Each call is $O(n)$ time with $n - 1 = 2$ random numbers, and $O(n)$ space for the copy.
+
+### 2. LeetCode 380: Insert Delete GetRandom O(1) (Medium)
+
+**Problem.** Build a set with `insert(val)`, `remove(val)` and `getRandom()`, all in $O(1)$ average time; `getRandom` returns each present value with equal probability. Insert 1, 2, 3, then remove 1: `getRandom` must return 3 or 2, each half the time.
+
+**Math first.** A hash set can insert and remove in $O(1)$ but cannot pick a random element; an array can pick a random index in $O(1)$ but cannot remove from the middle. Use both, tied by an invariant:
+
+$$
+\text{index}(v) = i \iff A[i] = v, \qquad P(\text{getRandom}() = v) = \frac{1}{s}
+$$
+
+where:
+
+- $A[0..s-1]$ is the array of the $s$ present values, with no gaps;
+- $\text{index}$ is the hash map from a value to its position in $A$;
+- $P = \frac{1}{s}$ because a random index in $0..s-1$ is uniform and each value occupies exactly one index.
+
+Example: after inserting 1, 2, 3 we have $A = [1, 2, 3]$ and $\text{index} = \lbrace 1 \mapsto 0, 2 \mapsto 1, 3 \mapsto 2 \rbrace$. To remove 1, move the **last** value, 3, into the hole at index 0 and drop the end: $A = [3, 2]$, $\text{index} = \lbrace 3 \mapsto 0, 2 \mapsto 1 \rbrace$, $s = 2$, and $P(3) = P(2) = \frac{1}{2}$.
+
+**Idea.** In the code, `values` is the array $A$ and `indexOf` is the map. Removing the last element of an `ArrayList` shifts nothing, so it is $O(1)$. To remove a value from the middle, fill its hole with the last value and update that value's index.
+
+```java
+boolean insert(int val) {
+    if (indexOf.containsKey(val)) return false;
+    indexOf.put(val, values.size());
+    values.add(val);
+    return true;
+}
+
+boolean remove(int val) {
+    Integer hole = indexOf.remove(val);
+    if (hole == null) return false;
+    int last = values.remove(values.size() - 1);   // removing the end shifts nothing
+    if (hole < values.size()) {                     // val was not last: move last into the hole
+        values.set(hole, last);
+        indexOf.put(last, hole);
+    }
+    return true;
+}
+
+int getRandom() {
+    return values.get(random.nextInt(values.size()));
+}
+```
+
+**Answer.** The trace gives $A = [3, 2]$, and over 100,000 calls `getRandom` returns 3 in $50\% \pm 1\%$ of them. Every operation is $O(1)$ average time (one hash lookup and a constant number of array writes), with $O(s)$ space.
+
+### 3. LeetCode 381: Insert Delete GetRandom O(1) - Duplicates allowed (Hard)
+
+**Problem.** The same three operations on a **multiset**: values may repeat. `insert` returns `true` only if the value was absent; `remove` deletes one copy; `getRandom` returns a value with probability proportional to how many copies it has. Insert 1, 1, 2: `getRandom` returns 1 with probability $2/3$.
+
+**Math first.** Keep every copy as its own array entry, and map each value to the **set** of its positions:
+
+$$
+\text{positions}(v) = \lbrace i : A[i] = v \rbrace, \qquad P(\text{getRandom}() = v) = \frac{\lvert \text{positions}(v) \rvert}{s}
+$$
+
+where:
+
+- $A[0..s-1]$ holds all $s$ copies;
+- $\text{positions}(v)$ is the set of indices holding $v$, and $\lvert \cdot \rvert$ is its size, the number of copies;
+- a uniform random index lands on $v$ in exactly $\lvert \text{positions}(v) \rvert$ of the $s$ cases.
+
+Example: insert 1, 1, 2 gives $A = [1, 1, 2]$, $\text{positions}(1) = \lbrace 0, 1 \rbrace$, $\text{positions}(2) = \lbrace 2 \rbrace$, so $P(1) = 2/3 \approx 0.667$ and $P(2) = 1/3$. Remove one 1, say the copy at index 0: the last value, 2, moves into index 0, giving $A = [2, 1]$, $\text{positions}(2) = \lbrace 0 \rbrace$, $\text{positions}(1) = \lbrace 1 \rbrace$.
+
+**Idea.** Here `values` is $A$ and `positions` maps each value to its index set. The same hole-filling move as LeetCode 380 works, but the moved value's index is changed inside its *set*: remove the old end index, add the hole. The subtle case is when the moved value is `val` itself, and the code handles it because the hole is removed from the set first.
+
+```java
+boolean insert(int val) {
+    Set<Integer> at = positions.computeIfAbsent(val, k -> new HashSet<>());
+    at.add(values.size());
+    values.add(val);
+    return at.size() == 1;                          // true when val was absent before
+}
+
+boolean remove(int val) {
+    Set<Integer> at = positions.get(val);
+    if (at == null || at.isEmpty()) return false;
+    int hole = at.iterator().next();
+    at.remove(hole);
+    int last = values.remove(values.size() - 1);
+    if (hole < values.size()) {
+        values.set(hole, last);
+        positions.get(last).remove(values.size());  // its old index was the old end
+        positions.get(last).add(hole);
+    }
+    return true;
+}
+```
+
+**Answer.** `insert(1), insert(1), insert(2)` return `true, false, true`; `getRandom` returns 1 in $66.7\% \pm 1\%$ of 100,000 calls; after removing both 1s the array is `[2]` and $\text{positions}(2) = \lbrace 0 \rbrace$. Every operation is $O(1)$ average time, with $O(s)$ space.
+
+### 4. LeetCode 710: Random Pick with Blacklist (Hard)
+
+**Problem.** Given $n$ and a blacklist $B$ of distinct numbers in $[0, n)$, `pick()` must return a uniformly random number in $[0, n)$ that is **not** in $B$, calling the random generator as little as possible. Here $n$ can be $10^9$ and $\lvert B \rvert \le 10^5$. Example: $n = 7$, $B = \lbrace 2, 3, 5 \rbrace$; the white numbers are $0, 1, 4, 6$, each with probability $1/4$.
+
+**Math first.** There are $m = n - \lvert B \rvert$ white numbers. Draw one uniform $x \in [0, m)$ and map it to a white number through a one-to-one map $f$:
+
+$$
+f(x) =
+\begin{cases}
+x & \text{if } x \notin B \\
+\text{a distinct white number } w \ge m & \text{if } x \in B
+\end{cases}
+\qquad
+\lvert B \cap [0, m) \rvert = \lvert W \cap [m, n) \rvert
+$$
+
+where:
+
+- $m = n - \lvert B \rvert$ is the number of white numbers, and $W$ is the set of white numbers;
+- $[0, m)$ is the range we draw from, and $[m, n)$ is the top part we never draw from;
+- the equation says there are exactly enough white numbers in the top part to replace every black number in the bottom part, because the top part has $n - m = \lvert B \rvert$ numbers and all its black ones are the black numbers *not* in the bottom part.
+
+Example: $n = 7$, $B = \lbrace 2, 3, 5 \rbrace$, so $m = 7 - 3 = 4$. The bottom part $[0, 4)$ contains the black numbers 2 and 3; the top part $[4, 7)$ contains the white numbers 4 and 6. Both counts are 2, so $f$ maps $2 \mapsto 4$ and $3 \mapsto 6$. Drawing $x \in \lbrace 0, 1, 2, 3 \rbrace$ returns $0, 1, 4, 6$, each with probability $1/4$, with **one** random number per pick.
+
+**Idea.** In the constructor, walk a pointer `spare` up from $m$, skipping black numbers, and pair each black number below $m$ with the next white number above. `pick` is one draw and one map lookup. The alternative, *rejection* (draw from $[0, n)$ until white), needs $n / m$ draws on average: $7/4 = 1.75$ here, but $100{,}001$ when $n = 100{,}001$ and $\lvert B \rvert = 10^5$.
+
+```java
+BlacklistPicker(int n, int[] blacklist, Random random) {
+    this.random = random;
+    whiteCount = n - blacklist.length;
+    Set<Integer> black = new HashSet<>();
+    for (int b : blacklist) black.add(b);
+    int spare = whiteCount;                         // scans the top part [m, n) for white numbers
+    for (int b : blacklist) {
+        if (b >= whiteCount) continue;              // never drawn, so it needs no remap
+        while (black.contains(spare)) spare++;
+        remap.put(b, spare++);
+    }
+}
+
+int pick() {
+    int x = random.nextInt(whiteCount);
+    return remap.getOrDefault(x, x);
+}
+```
+
+**Answer.** For $n = 7$, $B = \lbrace 2, 3, 5 \rbrace$ the map is $\lbrace 2 \mapsto 4, 3 \mapsto 6 \rbrace$, and 100,000 picks return only $0, 1, 4, 6$, each $25\% \pm 1\%$ of the time. The constructor is $O(\lvert B \rvert)$ time and space, because `spare` moves up at most $\lvert B \rvert$ steps in total; each `pick` is $O(1)$ with exactly one random number.
+
+## Mathematical Abstraction
+
+A randomized algorithm is a function of the input $x$ and a random seed $\omega$. The two kinds differ in which quantity is random and which is guaranteed:
+
+$$
+\text{Las Vegas: } P\big(A(x, \omega) \text{ correct}\big) = 1, \; E_\omega[T(x, \omega)] \le f(n); \qquad
+\text{Monte Carlo: } T(x, \omega) \le f(n), \; P\big(A(x, \omega) \text{ wrong}\big) \le \delta
+$$
+
+where:
+
+- $A(x, \omega)$ is the algorithm's answer on input $x$ when its random choices are $\omega$;
+- $T(x, \omega)$ is its running time, and $f(n)$ is a bound that depends only on the input size $n$;
+- $E_\omega$ averages over the random choices only, so the bound holds for **every** input $x$;
+- $\delta$ is the error probability, which $k$ independent repetitions shrink to $\delta^k$ when the error is one-sided.
+
+Example: randomized quicksort is Las Vegas, with $E[T] = 2(n+1)H_n - 4n = 16.92$ comparisons for $n = 8$ on every input. Freivalds' check is Monte Carlo with $\delta = 1/2$, so $k = 10$ rounds give $\delta^{10} = 1/1024$. A fair sampler such as Fisher–Yates gives each of the $n!$ outcomes probability exactly $1/n!$: $1/6$ for $n = 3$, which is why a method with $3^3 = 27$ equally likely runs can never be fair.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 5, "Probabilistic Analysis and Randomized Algorithms" (indicator random variables, random permutations); Chapter 7, "Quicksort" (the randomized version and its analysis); Appendix C, "Counting and Probability" (the geometric distribution). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §2.3 "Quicksort" (shuffle first; about $2n \ln n$ compares on average): <https://algs4.cs.princeton.edu/23quicksort/>.
+- Ronald A. Fisher and Frank Yates, *Statistical Tables for Biological, Agricultural and Medical Research* (Oliver & Boyd, 1938); Richard Durstenfeld, "Algorithm 235: Random permutation", *Communications of the ACM* 7(7), 1964; Donald E. Knuth, *The Art of Computer Programming*, Volume 2, §3.4.2, Algorithm P.
+- Nicholas Metropolis and Stanisław Ulam, "The Monte Carlo Method", *Journal of the American Statistical Association* 44 (1949); László Babai, "Monte-Carlo algorithms in graph isomorphism testing", Université de Montréal technical report (1979), which introduced the name "Las Vegas".
+- Rūsiņš Freivalds, "Probabilistic machines can use less running time", *Information Processing 77* (IFIP Congress, 1977).
+- LeetCode: [384. Shuffle an Array](https://leetcode.com/problems/shuffle-an-array/), [380. Insert Delete GetRandom O(1)](https://leetcode.com/problems/insert-delete-getrandom-o1/), [381. Insert Delete GetRandom O(1) - Duplicates allowed](https://leetcode.com/problems/insert-delete-getrandom-o1-duplicates-allowed/), [710. Random Pick with Blacklist](https://leetcode.com/problems/random-pick-with-blacklist/).
+
+[← Randomisation, Design, and Special Domains](../groups/07-specialised-domains.qmd) · [Reservoir Sampling →](../reservoir-sampling/index.qmd)

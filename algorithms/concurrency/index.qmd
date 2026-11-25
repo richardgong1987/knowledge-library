@@ -1,64 +1,495 @@
 ---
 title: "Concurrency"
-description: "An original, understandable lesson on the Concurrency LeetCode topic with fully explained mathematics."
+description: "Threads in Java from the ground up: why x++ is a race (20 interleavings, 18 of them wrong), happens-before, synchronized, volatile and locks, Semaphore and CountDownLatch, deadlock and Coffman's four conditions, the dining philosophers broken by ordering the forks, and LeetCode 1114, 1115, 1117 and 1226 solved math-first."
 ---
 
-## What is the real challenge?
+Two threads running at the same time can each be correct and still produce a wrong answer together, because their steps interleave in ways nobody planned. Concurrency is the art of **forbidding the bad interleavings** while keeping the good ones. This lesson counts interleavings with real numbers, shows which Java tools forbid which ones and why, and then solves LeetCode's concurrency problems with those tools.
 
-**LeetCode 1114 — Print in Order; LeetCode 1188 — Design Bounded Blocking Queue.** Reason about overlapping operations, coordination, and shared-state correctness.
+All code is in [`ConcurrencyLab.java`](ConcurrencyLab.java). Run it from this folder with `java ConcurrencyLab.java`; it checks every number on this page and prints `OK`. Every check starts its threads, **joins** them, and only then looks at the result, so the outcome is the same on every run even though the scheduling is not. For the formal memory model behind this lesson, see the repository's [Java Memory Model](../../programming-languages/java/jvm/jmm/index.qmd) lessons.
 
-This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
+## The problem
 
-## The tempting solution
+Two threads each add 1 to a shared counter 10,000 times. The answer must be 20,000.
 
-Start three async workers and assume they will execute in source-code order. Scheduling and network delays make that assumption unsafe.
+```java
+// sketch: a data race; the total usually comes out below 20,000
+int[] count = {0};
+Runnable work = () -> { for (int i = 0; i < 10_000; i++) count[0]++; };
+```
 
-## The idea worth remembering
+Run it a few times and the total is often less than 20,000, and different on each run. Nothing crashes; updates silently vanish. The reason is that `count[0]++` is not one step but three, *read*, *add*, *write*, and the two threads' steps can interleave. Of the 20 ways to interleave just **one** increment from each thread, 18 lose an update. This lesson proves that count, then shows how to make every interleaving correct.
 
-Concurrency problems demand an ordering or atomicity contract. Identify the shared state and the legal transitions before choosing locks, semaphores or atomic operations.
+## Explain it like I'm ten
 
-## One mathematical expression — with every symbol explained
+::: {.callout-tip}
+Two children keep score on one whiteboard. Each time a child scores, she **reads** the number on the board, **adds one** in her head, and **writes** the new number. If both score at the same moment, both read 5, both think 6, and both write 6. One point is lost, and nobody did anything wrong on their own.
+
+The fix is a **talking stick**: only the child holding the stick may touch the board. Reading, adding and writing then happen as one unbroken turn. In Java the stick is a *lock*, and `synchronized` is the rule "hold the stick while you do this".
+
+Edsger Dijkstra set a famous puzzle about sharing as a student exam exercise in 1965, and Tony Hoare later gave it its well-known form: five philosophers sit at a round table with one fork between each pair, and each needs both neighbouring forks to eat. If every philosopher picks up the left fork at the same moment, all five wait forever for the right one. That is a **deadlock**, and the last interview problem solves it with a very simple rule.
+:::
+
+## From simple to advanced
+
+### Level 1: a race, counted
+
+Split `x++` into its three steps: read `x` into a private register, add 1 to the register, write the register back. Two threads A and B each perform these 3 steps in order, but the scheduler may interleave them in any way. An interleaving is fixed by choosing which 3 of the 6 time slots belong to A:
 
 $$
-hb=(po\cup sw)^+
+\#\text{interleavings} = \binom{6}{3} = \frac{6!}{3!\,3!} = 20, \qquad
+\#\text{interleavings of } k \text{ threads with } m \text{ steps} = \frac{(km)!}{(m!)^k}
 $$
 
-**Every symbol means:** hb is the happens-before relation; po is program order within one thread; sw is the synchronises-with relation created by correctly paired synchronisation operations; + denotes transitive closure. This JMM notation is applicable to Java's formal model, not a universal statement about every runtime.
+where:
 
-**Numerical substitution:** Thread A writes data=42 then performs a release/publish on a flag. Thread B acquires/observes that publication and then reads data. The write of 42 happens-before B's read along the established ordering chain; absent the correct synchronisation, seeing 42 is not guaranteed solely by source order.
+- $\binom{6}{3}$ ("6 choose 3") counts the ways to pick A's 3 slots out of 6; B gets the rest;
+- $k$ is the number of threads and $m$ the number of steps each, which must keep their own order;
+- $(km)!$ orders all steps, and dividing by $m!$ for each thread removes the orders that break a thread's own sequence.
 
-The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
+Example: of the 20 interleavings, the final value is 2 only if one thread's *read* comes after the other's *write*, which happens only for AAABBB and BBBAAA. The other **18** give 1: both threads read 0. Under the toy assumption that every interleaving is equally likely, the chance of the right answer is $2 / 20 = 10\%$. With $k = 3$ threads of 3 steps there are already $9! / (3!)^3 = 362{,}880 / 216 = 1{,}680$ interleavings, which is why testing alone cannot prove a concurrent program correct.
 
-## Why the method is justified
+The lab runs all 20 interleavings and counts the results:
 
-A correctly constructed synchronisation edge links the producer publication to consumer observation. Transitive program order carries preceding writes into the consumer's ordered view. The exact memory guarantees depend on the language runtime.
+```java
+static Map<Integer, Integer> finalValues() {
+    Map<Integer, Integer> counts = new TreeMap<>();
+    for (int mask = 0; mask < 1 << 6; mask++) {
+        if (Integer.bitCount(mask) != 3) continue;          // bit s set: step s belongs to thread A
+        int x = 0;
+        int[] register = new int[2], step = new int[2];
+        for (int s = 0; s < 6; s++) {
+            int t = (mask >> s & 1) == 1 ? 0 : 1;
+            switch (step[t]++) {
+                case 0 -> register[t] = x;                  // read the shared value
+                case 1 -> register[t]++;                    // add one in the thread's own register
+                default -> x = register[t];                 // write it back
+            }
+        }
+        counts.merge(x, 1, Integer::sum);
+    }
+    return counts;
+}
+```
 
-**Complexity or resource cost:** Depends on contention and primitive; asymptotic time alone does not describe lock scheduling, blocking, starvation or memory visibility.
+It returns $\lbrace 1 \mapsto 18, 2 \mapsto 2 \rbrace$. A **data race** is exactly this situation: two threads access the same variable, at least one writes, and nothing orders the accesses.
 
-## Executable example
+### Level 2: mutual exclusion with `synchronized`, and happens-before
 
-The following small example can be run directly in its own environment:
+`synchronized` on a method makes a thread take the object's lock before the body and release it after. Only one thread can hold the lock, so read-add-write becomes one indivisible step and the bad interleavings disappear.
 
-~~~js
-let release;
-const ready=new Promise(resolve=>{release=resolve;});
-const first=async()=>{ console.log('first'); release(); };
-const second=async()=>{ await ready; console.log('second'); };
-await Promise.all([second(),first()]); // always first then second
-~~~
+```java
+static final class SafeCounter {
+    private int value;
 
-Run the JavaScript with Node.js; it illustrates the precise toy case from the formula.
+    synchronized void increment() {
+        value++;
+    }
 
-## Which assumption makes it fail?
+    synchronized int get() {
+        return value;
+    }
+}
+```
 
-A local JavaScript Promise ordering example does not establish Java's shared-memory guarantees. Never use sleep() as a correctness mechanism; retries and scheduling can vary.
+```java
+static int countWithTwoThreads(int perThread) throws InterruptedException {
+    SafeCounter counter = new SafeCounter();
+    Runnable work = () -> {
+        for (int i = 0; i < perThread; i++) counter.increment();
+    };
+    Thread a = new Thread(work), b = new Thread(work);
+    a.start();
+    b.start();
+    a.join();                                               // everything a did happens-before join returns
+    b.join();
+    return counter.get();
+}
+```
 
-For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+A lock does a second, less visible job: it makes one thread's writes **visible** to the next. Without it, a CPU core may keep a value in a register or cache, and the compiler may reorder instructions. The Java Memory Model defines which writes a read is guaranteed to see through the **happens-before** order:
 
-## Source and interview practice
+$$
+\text{hb} = (\text{po} \cup \text{sw})^{+}
+$$
 
-- **Textbook relationship:** CLRS Chapter 26 (parallel algorithms); Java Memory Model requires the JLS, covered in the separate [JMM course](../../programming-languages/java/jvm/jmm/index.qmd).. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode/practice:** LeetCode 1114 — Print in Order; LeetCode 1188 — Design Bounded Blocking Queue — [problem or problem set](https://leetcode.com/problems/print-in-order/).
-- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+where:
 
-[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)
+- $\text{po}$, *program order*, orders the actions of one thread as written in its code;
+- $\text{sw}$, *synchronizes-with*, links an unlock of a lock to every later lock of the same lock, a `volatile` write to every later read of that variable, `Thread.start()` to the started thread's first action, and a thread's last action to a `join()` on it that returns;
+- $\cup$ joins the two relations, and $^{+}$ (transitive closure) chains them: if $a$ hb $b$ and $b$ hb $c$, then $a$ hb $c$;
+- if a write hb a read of the same variable, the read sees that write or a later one.
+
+Example: thread A's 10,000th `value++` is po-before A's last action, which sw-precedes `a.join()` returning in `main`, which is po-before `counter.get()`. So the write hb the read, and `main` sees it. With both threads joined, `countWithTwoThreads(10_000)` returns exactly $2 \times 10{,}000 = 20{,}000$ on every run. `java.util.concurrent.atomic.AtomicInteger.incrementAndGet()` gives the same result without a lock, using a hardware compare-and-set instruction.
+
+### Level 3: `volatile` for visibility
+
+Sometimes one thread only needs to **tell** another that something is ready. A `volatile` field is never cached across threads, and a write to it synchronizes-with every later read. That makes it a safe "flag":
+
+```java
+static final class Mailbox {
+    private int message;                                    // plain field
+    private volatile boolean ready;                         // the volatile write is the "send"
+
+    void send(int value) {
+        message = value;
+        ready = true;
+    }
+
+    int receive() {
+        while (!ready) Thread.onSpinWait();                 // without volatile this loop may never end
+        return message;                                     // guaranteed to see the value sent
+    }
+}
+```
+
+$$
+w(\text{message}) \xrightarrow{\text{po}} w(\text{ready}) \xrightarrow{\text{sw}} r(\text{ready}) \xrightarrow{\text{po}} r(\text{message})
+\;\Longrightarrow\; w(\text{message}) \xrightarrow{\text{hb}} r(\text{message})
+$$
+
+where:
+
+- $w(\cdot)$ and $r(\cdot)$ are a write and a read of the named field;
+- the arrows are the relations from Level 2, and chaining them gives happens-before.
+
+Example: `send(42)` writes `message = 42`, then `ready = true`. The receiver's loop eventually reads `ready == true`, so by the chain above it must read `message == 42`, never the old 0. The lab runs sender and receiver 100 times and always receives 42. `volatile` does **not** make `x++` safe: it orders single reads and writes, but read-add-write is still three steps that can interleave.
+
+### Level 4: coordinating threads with locks, semaphores and latches
+
+The `java.util.concurrent` package offers ready-made tools, each enforcing one rule:
+
+| Tool | Rule it enforces | Used in |
+| --- | --- | --- |
+| `ReentrantLock` | one holder at a time, like `synchronized`, plus `tryLock` with a timeout | LeetCode 1226 |
+| `Semaphore(k)` | at most $k$ permits handed out; `acquire` waits when none are left | LeetCode 1115, 1117 |
+| `CountDownLatch(n)` | `await` waits until `countDown` has been called $n$ times; one use only | LeetCode 1114 |
+| `AtomicInteger` | single-variable read-modify-write without a lock | Level 2 |
+
+A **semaphore** is a counter of permits. Its invariant bounds how many threads can be inside at once:
+
+$$
+P = k + R - A \ge 0, \qquad \text{inside} = A - R \le k
+$$
+
+where:
+
+- $k$ is the initial number of permits, and $P$ is the number available now;
+- $A$ counts completed `acquire` calls and $R$ counts `release` calls so far;
+- `acquire` blocks rather than make $P$ negative, so $A - R$, the number of threads that hold a permit, never exceeds $k$.
+
+Example: $k = 2$ permits and 5 threads. After 2 acquires, $P = 2 + 0 - 2 = 0$, so the third thread waits until someone releases. The lab lets 5 threads through a 2-permit gate 20 times and never sees more than 2 inside; with $k = 1$, a semaphore is a lock and the maximum is exactly 1.
+
+```java
+static int maxInside(int permits, int threads) throws InterruptedException {
+    Semaphore gate = new Semaphore(permits);
+    AtomicInteger inside = new AtomicInteger(), maxSeen = new AtomicInteger();
+    List<Thread> workers = new ArrayList<>();
+    for (int i = 0; i < threads; i++) {
+        Thread worker = new Thread(() -> {
+            gate.acquireUninterruptibly();
+            try {
+                maxSeen.accumulateAndGet(inside.incrementAndGet(), Math::max);
+                Thread.yield();
+                inside.decrementAndGet();
+            } finally {
+                gate.release();
+            }
+        });
+        workers.add(worker);
+        worker.start();
+    }
+    for (Thread worker : workers) worker.join();
+    return maxSeen.get();
+}
+```
+
+Always release in a `finally` block: a thread that throws while holding a permit or lock would otherwise keep it forever.
+
+### Level 5: deadlock, and how ordering prevents it
+
+Locks fix races but create a new danger. If thread 1 holds lock X and waits for Y, while thread 2 holds Y and waits for X, both wait forever. Coffman, Elphick and Shoshani (1971) showed that a deadlock needs **all four** of these conditions at once:
+
+1. **Mutual exclusion**: a resource can be held by only one thread.
+2. **Hold and wait**: a thread holds one resource while waiting for another.
+3. **No preemption**: a resource cannot be taken away; it is only released voluntarily.
+4. **Circular wait**: there is a cycle $t_1 \to t_2 \to \dots \to t_1$, each thread waiting for a resource the next one holds.
+
+Break any one and deadlock is impossible. The cheapest to break is circular wait: number the locks and **always acquire them in increasing order**.
+
+$$
+\text{every thread locks in increasing order} \;\Longrightarrow\; \text{no cycle } \ell_{1} < \ell_{2} < \dots < \ell_{k} < \ell_{1}
+$$
+
+where:
+
+- $\ell_i$ is the number of the lock that thread $t_i$ holds while it waits for the next lock;
+- a thread waits only for a lock **larger** than every lock it holds, so following the waits around a cycle would give $\ell_1 < \ell_2 < \dots < \ell_1$, which is impossible.
+
+Example: Alice's account has id 1 and Bob's id 2. A transfer from Alice to Bob and a transfer from Bob to Alice both lock account 1 first, then account 2. Whichever thread gets account 1 first finishes; the other waits holding **nothing**, so there is no cycle. The lab runs 10,000 transfers each way at the same time; both threads finish, and the total stays $1{,}000 + 1{,}000 = 2{,}000$.
+
+```java
+// sketch: deadlocks when two threads transfer in opposite directions
+synchronized (from) {
+    synchronized (to) { /* move the money */ }
+}
+```
+
+```java
+static void transfer(Account from, Account to, int amount) {
+    Account first = from.id < to.id ? from : to;            // always lock the lower id first,
+    Account second = from.id < to.id ? to : from;           // so no cycle of waiting threads can form
+    synchronized (first) {
+        synchronized (second) {
+            from.balance -= amount;
+            to.balance += amount;
+        }
+    }
+}
+```
+
+The other conditions can be broken too: `tryLock` with a timeout gives up and releases what it holds (breaking *hold and wait*), and a single global lock removes the need for a second lock at all, at the cost of all parallelism.
+
+## Why it works and what it costs
+
+**Correctness means an invariant holds in every reachable interleaving.** Testing samples a few of the $\frac{(km)!}{(m!)^k}$ interleavings; a proof must cover them all. The tools on this page shrink the set of reachable interleavings until every remaining one keeps the invariant:
+
+- `synchronized` and `ReentrantLock` turn a critical section into one indivisible step, so for the counter only the 2 "one whole increment, then the other" orders remain, and both give the right answer.
+- Happens-before edges (unlock → lock, volatile write → read, `start`, `join`, `countDown` → `await` returning) guarantee that the next thread **sees** the previous thread's writes.
+- Lock ordering removes every cycle of waiting, so the threads always make progress.
+
+**Costs.** Uncontended locking is cheap, typically tens of nanoseconds or less. Contention is what costs: while one thread holds a lock, others wait, so a critical section that takes time $c$ and is entered $n$ times serialises at least $n c$ of work. Amdahl's law states the limit: if a fraction $s$ of the work is serial, $p$ processors give a speed-up of at most
+
+$$
+S(p) = \frac{1}{s + (1 - s)/p}
+$$
+
+where:
+
+- $s$ is the serial fraction, the share of time spent inside critical sections or other unparallelisable work;
+- $p$ is the number of processors.
+
+Example: with $s = 0.1$ and $p = 8$, $S = 1 / (0.1 + 0.9/8) = 1 / 0.2125 \approx 4.7$, not 8; even with infinitely many processors $S < 1/s = 10$. Keep critical sections short.
+
+| Tool | Guarantees | Typical cost |
+| --- | --- | --- |
+| `synchronized` / `ReentrantLock` | mutual exclusion and visibility | cheap uncontended; waiting when contended |
+| `volatile` | visibility and ordering of single reads and writes | a memory fence per access |
+| `AtomicInteger` | one atomic read-modify-write | one compare-and-set, retried under contention |
+| `Semaphore(k)` | at most $k$ holders | like a lock |
+| `CountDownLatch(n)` | waiters proceed after $n$ events | one atomic decrement per event |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `count++` on a shared field | Lost updates: 18 of 20 interleavings of two increments are wrong | `synchronized`, a lock, or `AtomicInteger` |
+| `volatile int count; count++` | Still loses updates: `volatile` orders reads and writes but does not make three steps one | `AtomicInteger.incrementAndGet()` |
+| Spinning on a plain `boolean` flag | The loop may never see the change and runs forever | Make the flag `volatile`, or use a latch |
+| Reading a shared result before `join()` | Sometimes a stale or half-finished value | `join()` every thread first; it creates the happens-before edge |
+| Locking in different orders in different threads | Deadlock, typically rare and impossible to reproduce on demand | One global lock order, for example by id |
+| `lock()` without `unlock()` in `finally` | An exception leaves the lock held; every later thread waits forever | `lock(); try { ... } finally { unlock(); }` |
+| Calling `wait()` with `if` instead of `while` | Spurious wake-ups run the code when the condition is false | `while (!condition) wait();`, or a higher-level tool |
+| Checking results with `Thread.sleep` | Passes on a fast machine, fails on a busy CI server | Synchronise with `join`, latches or semaphores, never with timing |
+
+## Interview problems
+
+LeetCode has no Hard problem tagged Concurrency; these four are the classic ones, from Easy to the hardest Medium. Each starts with the ordering it must guarantee.
+
+### 1. LeetCode 1114: Print in Order (Easy)
+
+**Problem.** One `Foo` object is shared by three threads: thread A calls `first()`, B calls `second()` and C calls `third()`, in any order and at any time. The output must always be `firstsecondthird`.
+
+**Math first.** We need two happens-before edges, and a latch creates exactly one each:
+
+$$
+\text{print}_1 \xrightarrow{\text{hb}} \text{print}_2 \xrightarrow{\text{hb}} \text{print}_3, \qquad
+\text{countDown}() \xrightarrow{\text{sw}} \text{await}() \text{ returns}
+$$
+
+where:
+
+- $\text{print}_i$ is the $i$-th print action;
+- a `CountDownLatch(1)` lets `await()` return only after `countDown()`, and links the two by synchronizes-with.
+
+Example: the threads start in the worst order, C, B, A. C calls `third()` and blocks on `secondDone`. B calls `second()` and blocks on `firstDone`. A prints `first` and counts `firstDone` down to 0, which releases B; B prints `second` and counts `secondDone` down, which releases C; C prints `third`. Output: `firstsecondthird`.
+
+**Idea.** Two latches, one per edge. The thread that prints counts its latch down; the next thread awaits it.
+
+```java
+static final class Foo {
+    private final CountDownLatch firstDone = new CountDownLatch(1);
+    private final CountDownLatch secondDone = new CountDownLatch(1);
+
+    public void first(Runnable printFirst) throws InterruptedException {
+        printFirst.run();
+        firstDone.countDown();
+    }
+
+    public void second(Runnable printSecond) throws InterruptedException {
+        firstDone.await();
+        printSecond.run();
+        secondDone.countDown();
+    }
+
+    public void third(Runnable printThird) throws InterruptedException {
+        secondDone.await();
+        printThird.run();
+    }
+}
+```
+
+**Answer.** The lab starts the threads in the order C, B, A, joins them, and gets `firstsecondthird` in 100 out of 100 rounds. Each method does $O(1)$ work besides waiting, and the object holds 2 latches.
+
+### 2. LeetCode 1115: Print FooBar Alternately (Medium)
+
+**Problem.** `FooBar(n)` is shared by two threads: one calls `foo()`, which prints `foo` $n$ times, and the other calls `bar()`, which prints `bar` $n$ times. The output must be `foobar` repeated $n$ times. For $n = 2$: `foobarfoobar`.
+
+**Math first.** One **turn** is passed back and forth. Two semaphores hold it, and between them there is always exactly one permit:
+
+$$
+P_{\text{foo}} + P_{\text{bar}} + h = 1
+$$
+
+where:
+
+- $P_{\text{foo}}$ and $P_{\text{bar}}$ are the permits currently in the two semaphores, starting at 1 and 0;
+- $h$ is 1 while a thread holds the turn (between its `acquire` and its `release`) and 0 otherwise;
+- since the total is always 1, at most one thread prints at a time, and each `release` hands the turn to the **other** thread.
+
+Example: $n = 2$. Write the state as $(P_{\text{foo}}, P_{\text{bar}}, h)$; it starts at $(1, 0, 0)$. `foo` acquires, giving $(0, 0, 1)$, prints `foo`, and releases `barTurn`, giving $(0, 1, 0)$. `bar` acquires, giving $(0, 0, 1)$, prints `bar`, and releases `fooTurn`, back to $(1, 0, 0)$. The sum is 1 in every state. One more round gives `foobarfoobar`, after $2n = 4$ acquires.
+
+**Idea.** `foo` waits for `fooTurn` and gives `barTurn`; `bar` waits for `barTurn` and gives `fooTurn`.
+
+```java
+public void foo(Runnable printFoo) throws InterruptedException {
+    for (int i = 0; i < n; i++) {
+        fooTurn.acquire();
+        printFoo.run();
+        barTurn.release();                              // hand the turn to bar
+    }
+}
+
+public void bar(Runnable printBar) throws InterruptedException {
+    for (int i = 0; i < n; i++) {
+        barTurn.acquire();
+        printBar.run();
+        fooTurn.release();                              // hand the turn back to foo
+    }
+}
+```
+
+The two semaphores are fields, `fooTurn = new Semaphore(1)` and `barTurn = new Semaphore(0)`.
+
+**Answer.** `foobarfoobar` for $n = 2$, in every one of the lab's 20 rounds, even when the `bar` thread starts first. Each thread does $n$ acquires and $n$ releases: $O(n)$ time and $O(1)$ space.
+
+### 3. LeetCode 1117: Building H2O (Medium)
+
+**Problem.** Threads arrive as hydrogen (`hydrogen()`) or oxygen (`oxygen()`) atoms, in any order; there are $2n$ hydrogens and $n$ oxygens. Each atom prints its letter when it bonds. The output must split into groups of three, each with two `H` and one `O`. For the arrival order `OOHHHH`, a valid output is `HHOHHO`.
+
+**Math first.** Make every molecule print `H`, `H`, `O` in that order. Then every prefix of the output satisfies
+
+$$
+2o \le h \le 2o + 2
+$$
+
+where:
+
+- $h$ and $o$ are the numbers of `H` and `O` printed so far;
+- $h \le 2o + 2$: at most two hydrogens may get ahead of the oxygens, enforced by a semaphore `hydrogenSlots` with 2 permits that only an oxygen refills;
+- $2o \le h$: an oxygen may print only after two hydrogens of its molecule, enforced by `hydrogenReady`, from which the oxygen takes 2 permits at once.
+
+Example: after `HH`, $h = 2$, $o = 0$ and $0 \le 2 \le 2$. A third `H` would make $h = 3 > 2$, so it waits. After `HHO`, $h = 2$, $o = 1$, and the oxygen has refilled 2 slots, so the next two hydrogens may go: `HHOHHO`. Every block of three is a whole molecule.
+
+**Idea.** Hydrogen: take a slot, print, announce readiness. Oxygen: take two readiness permits, print, and give back two slots for the next molecule.
+
+```java
+static final class H2O {
+    private final Semaphore hydrogenSlots = new Semaphore(2);
+    private final Semaphore hydrogenReady = new Semaphore(0);
+
+    public void hydrogen(Runnable releaseHydrogen) throws InterruptedException {
+        hydrogenSlots.acquire();
+        releaseHydrogen.run();
+        hydrogenReady.release();
+    }
+
+    public void oxygen(Runnable releaseOxygen) throws InterruptedException {
+        hydrogenReady.acquire(2);                           // wait for this molecule's two hydrogens
+        releaseOxygen.run();
+        hydrogenSlots.release(2);                           // open the next molecule
+    }
+}
+```
+
+**Answer.** For `OOHHHH` the lab prints `HHOHHO` in 50 of 50 rounds. `acquire(2)` takes both permits in one step, so two waiting oxygens can never split a pair of hydrogens between them. Each atom does $O(1)$ work besides waiting, and the object holds 2 semaphores.
+
+### 4. LeetCode 1226: The Dining Philosophers (Medium)
+
+**Problem.** Five philosophers, numbered 0 to 4 around a table, share five forks, one between each pair of neighbours. `wantsToEat(philosopher, pickLeftFork, pickRightFork, eat, putLeftFork, putRightFork)` is called many times from five threads; implement it so that no fork is used by two philosophers at once and no philosopher waits forever. LeetCode numbers only the philosophers; here fork $i$ is philosopher $i$'s left fork, so the right fork is $(i + 1) \bmod 5$.
+
+**Math first.** The naive plan, "take the left fork, then the right", satisfies all four Coffman conditions: if all five take their left fork at once, each waits for the next one's fork, a cycle
+
+$$
+p_0 \to p_1 \to p_2 \to p_3 \to p_4 \to p_0, \qquad \text{fix: take } \min(i, (i+1) \bmod 5) \text{ first}
+$$
+
+where:
+
+- $p_i \to p_{i+1}$ means "$p_i$ waits for the fork held by $p_{i+1}$";
+- taking the lower-numbered fork first is Level 5's lock ordering, which makes a cycle impossible.
+
+Example: philosophers 0 to 3 take their left fork first ($\min(i, i+1) = i$), but philosopher 4 has forks 4 and $(4 + 1) \bmod 5 = 0$, so she reaches for fork **0** first, the same fork philosopher 0 wants first. One of them wins fork 0; the loser waits holding nothing, so the five waits can no longer close into a ring. By Level 5's argument some philosopher can always take both forks, eat and put them down, and the waiting unwinds.
+
+**Idea.** One `ReentrantLock` per fork. Lock the smaller-numbered fork, then the larger, run the five actions, and unlock in `finally`.
+
+```java
+public void wantsToEat(int philosopher, Runnable pickLeftFork, Runnable pickRightFork, Runnable eat,
+                       Runnable putLeftFork, Runnable putRightFork) throws InterruptedException {
+    int left = philosopher, right = (philosopher + 1) % 5;
+    ReentrantLock first = forks[Math.min(left, right)], second = forks[Math.max(left, right)];
+    first.lock();                                       // lower-numbered fork first: no circular wait
+    second.lock();
+    try {
+        pickLeftFork.run();
+        pickRightFork.run();
+        eat.run();
+        putLeftFork.run();
+        putRightFork.run();
+    } finally {
+        second.unlock();
+        first.unlock();
+    }
+}
+```
+
+**Answer.** In the lab, 5 philosophers each eat 60 times: all $5 \times 60 = 300$ meals finish within the 10-second deadlock guard, and no two neighbours are ever seen eating at the same time. Each call is $O(1)$ work besides waiting; the table holds 5 locks. At most 2 philosophers can eat at once, because 5 forks allow only $\lfloor 5/2 \rfloor = 2$ disjoint pairs.
+
+## Mathematical Abstraction
+
+A concurrent program is correct when its invariant holds in **every** interleaving the synchronisation allows, and the happens-before order decides which writes each read may see:
+
+$$
+\text{Safe} \iff \forall \sigma \in \mathcal{I}_{\text{allowed}} : \operatorname{Inv}(\sigma), \qquad
+\lvert \mathcal{I}_{\text{all}} \rvert = \frac{(km)!}{(m!)^k}, \qquad
+\text{hb} = (\text{po} \cup \text{sw})^{+}
+$$
+
+where:
+
+- $\sigma$ is one interleaving (one possible schedule) and $\operatorname{Inv}(\sigma)$ says the invariant holds along it;
+- $\mathcal{I}_{\text{all}}$ is the set of all interleavings of $k$ threads with $m$ steps each, and $\mathcal{I}_{\text{allowed}} \subseteq \mathcal{I}_{\text{all}}$ those that locks, semaphores and latches still permit;
+- $\text{hb}$ is the happens-before order of Level 2.
+
+Example: two unsynchronised increments have $\lvert \mathcal{I}_{\text{all}} \rvert = 6! / (3!)^2 = 20$ interleavings, and the invariant "the final value is 2" fails in 18 of them. With `synchronized`, each increment is one step, so $\mathcal{I}_{\text{allowed}}$ shrinks to the $2! / (1!)^2 = 2$ orders "A then B" and "B then A", and the invariant holds in both. Deadlock freedom is a second invariant, "the wait-for graph has no cycle", which lock ordering guarantees.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 26, "Parallel Algorithms" (fork-join parallelism and determinacy races). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Brian Goetz with Tim Peierls, Joshua Bloch, Joseph Bowbeer, David Holmes and Doug Lea, *Java Concurrency in Practice* (Addison-Wesley, 2006).
+- James Gosling and others, *The Java Language Specification*, Chapter 17, "Threads and Locks" (happens-before): <https://docs.oracle.com/javase/specs/jls/se21/html/jls-17.html>; and this repository's [Java Memory Model](../../programming-languages/java/jvm/jmm/index.qmd) lessons, especially [the formal model](../../programming-languages/java/jvm/jmm/02-formal-model.qmd), [volatile](../../programming-languages/java/jvm/jmm/03-volatile.qmd) and [locks](../../programming-languages/java/jvm/jmm/04-locks.qmd).
+- Edward G. Coffman, Melanie J. Elphick and Arie Shoshani, "System Deadlocks", *ACM Computing Surveys* 3(2), 67–78 (1971).
+- Edsger W. Dijkstra, the dining philosophers, first set as an exam exercise in 1965; C. A. R. Hoare gave the problem its philosophers form.
+- Gene M. Amdahl, "Validity of the single processor approach to achieving large scale computing capabilities", *AFIPS Conference Proceedings* 30, 483–485 (1967).
+- LeetCode: [1114. Print in Order](https://leetcode.com/problems/print-in-order/), [1115. Print FooBar Alternately](https://leetcode.com/problems/print-foobar-alternately/), [1117. Building H2O](https://leetcode.com/problems/building-h2o/), [1226. The Dining Philosophers](https://leetcode.com/problems/the-dining-philosophers/).
+
+[← Shell](../shell/index.qmd) · [Randomisation, Design, and Special Domains](../groups/07-specialised-domains.qmd)

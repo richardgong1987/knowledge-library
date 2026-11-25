@@ -1,61 +1,389 @@
 ---
 title: "Shell"
-description: "An original, understandable lesson on the Shell LeetCode topic with fully explained mathematics."
+description: "Bash pipelines as function composition: standard input, output and error, exit codes and pipefail, the grep, sed, awk, sort, uniq, tr, cut, head and tail toolbox with costs, and Tenth Line, Valid Phone Numbers, Word Frequency and Transpose File solved math-first with commands that run on both macOS and Linux."
 ---
 
-## What is the real challenge?
+The Unix shell solves text problems by **joining small programs together**. Each program reads lines, changes them in one simple way, and passes them on. A whole pipeline is then a composition of functions, and you can reason about it the same way: what does each stage do to the lines, how many lines come out, and what does it cost. LeetCode has four Shell problems, all solvable in one line once that idea is clear.
 
-**LeetCode 192 — Word Frequency.** Compose command-line utilities and streams as processing pipelines.
+All commands are in [`shell_lab.sh`](shell_lab.sh). Run it from this folder with `bash shell_lab.sh`; it creates small files in a temporary folder, runs exactly the commands shown on this page, compares their output and prints `OK`. Every command uses only POSIX features plus `sed -E`, so it behaves the same with the BSD tools on macOS and the GNU tools on Linux.
 
-This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
+## The problem
 
-## The tempting solution
+A server writes a log, one event per line:
 
-Build a large custom parser without first considering standard streaming transformations; or incorrectly count words across lines with only a raw line-based match.
+```text
+INFO start
+ERROR disk full
+INFO retry
+ERROR disk full
+WARN slow
+INFO done
+```
 
-## The idea worth remembering
+How many events of each level are there, most frequent first? The answer is `INFO 3`, `ERROR 2`, `WARN 1`.
 
-Shell pipelines compose a small sequence of operations, each with one precise responsibility: tokenise, normalise, count, sort.
+A Java program for this needs a class, a `main`, a file reader, a `HashMap`, a sort by value and a print loop: thirty lines, a compiler, and a test. The shell does it with five tools and four pipes, each tool doing one small step:
 
-## One mathematical expression — with every symbol explained
+```bash
+cut -d ' ' -f 1 log.txt | sort | uniq -c | sort -rn | awk '{ print $2, $1 }'
+```
+
+This lesson explains every piece of that line, then uses the same pieces on the four LeetCode problems.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Think of a **sandwich factory line**. The first worker slices bread and slides it along. The next one adds cheese. The next cuts each sandwich in half. Nobody does everything; each worker does one job and passes the tray to the right. To change the sandwich, you add or swap one worker; nobody else has to learn anything new.
+
+In the shell, each worker is a small program, the tray is a stream of text lines, and the `|` symbol, called a **pipe**, is the conveyor belt between two workers.
+
+Doug McIlroy at Bell Labs asked for exactly this in a 1964 memo: programs should connect "like garden hose", so you can screw in another segment when the data needs another kind of treatment. Ken Thompson added pipes to Unix in the early 1970s. In 1986, Jon Bentley's *Programming Pearls* column asked Donald Knuth to write a program that prints the most frequent words in a text; Knuth wrote a careful multi-page program, and McIlroy replied with a six-command pipeline that does the same job. LeetCode 192 is that problem.
+:::
+
+## From simple to advanced
+
+### Level 1: three streams and an exit code
+
+Every program starts with three open streams, numbered by the shell:
+
+| Number | Name | Default | Redirect with |
+| --- | --- | --- | --- |
+| 0 | standard input (stdin) | the keyboard | `< file` |
+| 1 | standard output (stdout) | the screen | `> file`, or a pipe into the next program |
+| 2 | standard error (stderr) | the screen | `2> file` |
+
+Results go to stdout; complaints go to stderr, so that an error message never sneaks into the data flowing down a pipe. When a program ends, it returns a small number, its **exit status**, which the shell stores in `$?`:
 
 $$
-F=F_4\circ F_3\circ F_2\circ F_1
+s \in \lbrace 0, 1, \dots, 255 \rbrace, \qquad s = 0 \iff \text{success}
 $$
 
-**Every symbol means:** F1..F4 are transformations applied to a text stream; the composition symbol ∘ means output of the rightmost operation becomes input to the next one. F is the combined pipeline.
+where:
 
-**Numerical substitution:** For text 'cat dog cat', tokenise to [cat,dog,cat], count to {cat:2,dog:1}, then sort by descending count to produce cat 2 followed by dog 1. Each stage has a clear independent purpose.
+- $s$ is the exit status of the command that just finished;
+- 0 means success, and every other value is a failure whose meaning the program documents.
 
-The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
+Example: `grep` returns $s = 0$ when it found at least one line, $s = 1$ when it found none, and $s = 2$ when something went wrong, such as a missing file. On the log above, counting the `ERROR` lines prints `2` and returns 0:
 
-## Why the method is justified
+```bash
+grep -c ERROR log.txt
+```
 
-If tokenisation preserves each word exactly once, normalisation maps equivalent spellings consistently, and counting increments once per token, the reported frequencies equal input occurrence counts.
+Searching for `FATAL` prints nothing and returns 1, which is "no match", not a crash:
 
-**Complexity or resource cost:** Typically O(B) input processing plus O(U log U) sorting of U distinct words, with B input bytes; implementation-specific buffering matters.
+```bash
+grep FATAL log.txt; echo "exit status: $?"
+```
 
-## Executable example
+A missing file returns 2, and its error message goes to stderr, which `2>` sends into a file instead of the screen:
 
-The following small example can be run directly in its own environment:
+```bash
+grep ERROR missing.txt 2> errors.txt; echo "exit status: $?"
+```
 
-~~~bash
-# POSIX-style illustration for ASCII word tokens only:
-tr -s '[:space:]' '\n' < words.txt | sort | uniq -c | sort -nr
-~~~
+### Level 2: a pipeline is function composition
 
-Run this command in a Unix-like shell with a words.txt file.
+Treat each command as a function from a list of lines to a list of lines. The pipe `f | g` feeds the output of $f$ into $g$, which is exactly **function composition**:
 
-## Which assumption makes it fail?
+$$
+(g \circ f)(x) = g(f(x)), \qquad f_1 \mid f_2 \mid \dots \mid f_n \;=\; f_n \circ \dots \circ f_2 \circ f_1
+$$
 
-A naive split on spaces does not handle arbitrary whitespace, punctuation, Unicode or quoted text. Define a word before designing the pipeline.
+where:
 
-For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+- $x$ is the input, a list of lines (a file, or stdin);
+- $f$ and $g$ are commands, viewed as functions on lists of lines;
+- $\circ$ means "after": $g \circ f$ applies $f$ first, then $g$, so the pipe reads left to right while the composition reads right to left.
 
-## Source and interview practice
+Example: the pipeline from the problem, applied to the 6-line log. Count the lines after each stage:
 
-- **Textbook relationship:** Shell is not a CLRS chapter; the composition and counting steps connect to basic algorithms and sorting.. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode/practice:** LeetCode 192 — Word Frequency — [problem or problem set](https://leetcode.com/problems/word-frequency/).
-- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+| Stage | What it does | Lines out | Output after this stage |
+| --- | --- | --- | --- |
+| `cut -d ' ' -f 1 log.txt` | keep field 1 of each line | 6 | INFO, ERROR, INFO, ERROR, WARN, INFO |
+| `sort` | sort the lines | 6 | ERROR, ERROR, INFO, INFO, INFO, WARN |
+| `uniq -c` | collapse **adjacent** repeats, with counts | 3 | 2 ERROR, 3 INFO, 1 WARN |
+| `sort -rn` | sort by the number, largest first | 3 | 3 INFO, 2 ERROR, 1 WARN |
+| `awk '{ print $2, $1 }'` | swap the two fields | 3 | INFO 3, ERROR 2, WARN 1 |
 
-[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)
+So $6 \to 6 \to 6 \to 3 \to 3 \to 3$ lines, and the final output is `INFO 3`, `ERROR 2`, `WARN 1`. The first `sort` is essential: `uniq` only merges repeats that sit **next to each other**.
+
+```bash
+cut -d ' ' -f 1 log.txt | sort | uniq -c | sort -rn | awk '{ print $2, $1 }'
+```
+
+All five programs run **at the same time**, connected by small buffers, so the pipeline starts producing output before the input has been read completely, except where a stage, like `sort`, must see everything first.
+
+### Level 3: the toolbox
+
+Most text problems use the same dozen tools. Several of them are the relational operations of the [Database](../database/index.qmd) lesson in another form:
+
+| Tool | Job | Like | Cost on $n$ lines |
+| --- | --- | --- | --- |
+| `grep PATTERN` | keep the lines that match | selection σ, `WHERE` | $O(n)$ time, $O(1)$ memory |
+| `cut -d ' ' -f 1` | keep some fields | projection π, `SELECT` | $O(n)$, $O(1)$ |
+| `sed -E 's/OLD/NEW/'` | rewrite each line | a map over lines | $O(n)$, $O(1)$ |
+| `tr 'a-z' 'A-Z'` | replace or delete single characters | a map over characters | $O(n)$, $O(1)$ |
+| `sort`, `sort -n`, `sort -r` | sort the lines | `ORDER BY` | $O(n \log n)$, $O(n)$ |
+| `uniq -c` | merge adjacent equal lines, counting them | `GROUP BY` on sorted input | $O(n)$, $O(1)$ |
+| `head -n k`, `tail -n k` | first or last $k$ lines | `LIMIT` | $O(k)$ for `head`, $O(n)$ for `tail` on a stream |
+| `awk '...'` | a small language with fields and tables | all of the above | $O(n)$, plus its tables |
+
+`sed -E` uses *extended* regular expressions, the same flavour on macOS and Linux. Parentheses capture parts of the line, and `\1`, `\2` paste them back. This turns `INFO start` into `start [INFO]`:
+
+```bash
+sed -E 's/^([A-Z]+) (.*)$/\2 [\1]/' log.txt | head -n 2
+```
+
+```text
+start [INFO]
+disk full [ERROR]
+```
+
+`tail -n 1` keeps the last line, and `tr` maps every lowercase letter to its uppercase partner, giving `INFO DONE`:
+
+```bash
+tail -n 1 log.txt | tr 'a-z' 'A-Z'
+```
+
+### Level 4: awk, a hash table on the command line
+
+`awk` reads one line at a time, splits it into fields `$1`, `$2`, …, and runs your code on it. `NR` is the line number and `NF` the number of fields. Its arrays are hash tables keyed by strings, so it can count without sorting first:
+
+```bash
+awk '{ count[$1]++ } END { for (level in count) print level, count[level] }' log.txt | sort
+```
+
+```text
+ERROR 2
+INFO 3
+WARN 1
+```
+
+The `END` block runs after the last line. `for (level in count)` visits the keys in no fixed order, which is why the output is piped through `sort`. Counting with a hash table costs
+
+$$
+T_{\text{awk}} = O(n), \qquad T_{\text{sort} \mid \text{uniq}} = O(n \log n)
+$$
+
+where:
+
+- $n$ is the number of input lines;
+- the awk version does one hash-table update per line ([Hash Table](../hash-table/index.qmd)), and needs memory for the $d$ distinct keys only;
+- the `sort | uniq -c` version must sort all $n$ lines first.
+
+Example: for $n = 10^6$ log lines with $d = 3$ levels, awk does about $10^6$ updates and keeps 3 counters, while `sort` does about $10^6 \times \log_2 10^6 \approx 2 \times 10^7$ comparisons and holds all the lines. For a 6-line file both are instant; the difference matters for big logs.
+
+### Level 5: exit status of a pipeline, `pipefail`, `&&` and `||`
+
+A pipeline returns the exit status of its **last** command, so a failure early in the pipe is hidden. Bash's `pipefail` option changes that:
+
+$$
+s(f_1 \mid \dots \mid f_n) =
+\begin{cases}
+s_n & \text{by default} \\
+s_j \text{ with } j = \max \lbrace i : s_i \ne 0 \rbrace, \text{ or } 0 \text{ if all } s_i = 0 & \text{with } \texttt{set -o pipefail}
+\end{cases}
+$$
+
+where:
+
+- $s_i$ is the exit status of the $i$-th command in the pipeline;
+- $j$ is the position of the last command that failed.
+
+Example: in `grep FATAL log.txt | sort`, `grep` finds nothing ($s_1 = 1$) and `sort` happily sorts zero lines ($s_2 = 0$). By default the pipeline reports $s_2 = 0$, "success"; with `pipefail` it reports $s_1 = 1$.
+
+```bash
+grep FATAL log.txt | sort; echo "exit status: $?"
+```
+
+```bash
+set -o pipefail; grep FATAL log.txt | sort; echo "exit status: $?"
+```
+
+The operators `&&` and `||` use exit statuses as booleans: `a && b` runs `b` only if `a` succeeded, and `a || b` runs `b` only if `a` failed. `grep -q` prints nothing and only sets the status, which makes it a clean test:
+
+```bash
+grep -q ERROR log.txt && echo "found errors" || echo "all clear"
+```
+
+## Why it works and what it costs
+
+**Why composition is safe.** Each tool reads only its own stdin and writes only its own stdout, so it cannot see or disturb any other stage. A pipeline's meaning is therefore exactly the composition $f_n \circ \dots \circ f_1$: you can test each stage alone, on a few lines, and the whole pipeline is correct when every stage is. The invariant to check at each stage is the *shape* of the lines: "one word per line", "sorted", "count, then word".
+
+**What a pipeline costs.** The stages run concurrently, so the time is roughly the sum of the stages' work, and the memory is the largest single stage's need:
+
+$$
+T = \sum_{i=1}^{n} T_i, \qquad M = \max_i M_i
+$$
+
+where:
+
+- $T_i$ and $M_i$ are the time and memory of stage $i$;
+- streaming tools (`grep`, `cut`, `sed`, `tr`, `uniq`) have $M_i = O(1)$; `sort` has $M_i = O(n)$, and spills to temporary files when the input is larger than memory.
+
+Example: the level-count pipeline on $n = 6$ lines does two sorts of at most 6 lines and three linear passes; on $n = 10^6$ lines the first `sort` dominates, about $2 \times 10^7$ comparisons, and every other stage is a single pass.
+
+| Pipeline on this page | Time | Memory |
+| --- | --- | --- |
+| `cut`, `sort`, `uniq -c`, `sort -rn`, `awk` in a pipeline | $O(n \log n)$ | $O(n)$ for `sort` |
+| `awk` counting with an array | $O(n)$ | $O(d)$ for $d$ distinct keys |
+| `sed -n '10p'` | $O(n)$, or stop early with `sed -n '10{p;q;}'` | $O(1)$ |
+| `grep -E` with an anchored pattern | $O(n)$ | $O(1)$ |
+| `awk` transpose | $O(rc)$ for $r$ rows and $c$ columns | $O(rc)$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `uniq -c` without sorting first | `a b a` on three lines gives `1 a`, `1 b`, `1 a` | Run `sort` before `uniq -c` |
+| `sort` on numbers without `-n` | `10` sorts before `9`, because `1` < `9` as text | `sort -n`, or `sort -rn` for largest first |
+| Missing `^` and `$` in a validation regex | `x123-456-7890` and `123-456-78901` pass | Anchor both ends |
+| `\d` in `grep -E` | Works in GNU grep, fails or differs elsewhere | `[0-9]` |
+| `sed -i` to edit in place | GNU wants `sed -i`, BSD wants `sed -i ''`: one of them breaks | Write to a new file, or use `-i.bak` on both |
+| Basic regex `\(` `\)` and `\{3\}` | Hard to read and easy to mistype | `sed -E` and `grep -E` with `( )` and `{3}` |
+| `set -e` with `grep` in a script | The script dies when nothing matches, because `grep` returned 1 | Test it in an `if grep ...; then` condition, which `set -e` does not treat as fatal |
+| Trusting a pipeline's status | `grep` failed but the pipeline reports 0 | `set -o pipefail` |
+| Reading `$0` or `$1` inside awk's `END` block | POSIX leaves them undefined there; some awks print nothing | Save what you need in a variable while reading lines (POSIX does keep `NF` and `NR`) |
+| `tr -s ' ' '\n'` on lines with leading spaces | An empty "word" is counted | Delete empty lines, or count with `awk`'s fields |
+
+## Interview problems
+
+LeetCode has four Shell problems and no Hard one; here they are from easiest to hardest. Each starts with the mathematics of what the pipeline must compute.
+
+### 1. LeetCode 195: Tenth Line (Easy)
+
+**Problem.** Print the tenth line of `file.txt`. If the file has fewer than 10 lines, print nothing. For a file whose lines are `line 1` to `line 12`, the answer is `line 10`.
+
+**Math first.** The file is a sequence of lines $\ell_1, \ell_2, \dots, \ell_N$, and the output is
+
+$$
+\text{out} =
+\begin{cases}
+\ell_{10} & \text{if } N \ge 10 \\
+\text{nothing} & \text{if } N < 10
+\end{cases}
+$$
+
+where:
+
+- $N$ is the number of lines in the file;
+- $\ell_{10}$ is the tenth line, counting from 1.
+
+Example: with $N = 12$ the output is `line 10`; with $N = 7$ there is no tenth line and the output is empty.
+
+**Idea.** `sed -n` turns off sed's automatic printing, and the command `10p` prints line 10 only. `awk 'NR == 10' file.txt` is the same in awk.
+
+```bash
+sed -n '10p' file.txt
+```
+
+**Answer.** `line 10` for the 12-line file, nothing for the 7-line file. $O(N)$ time, $O(1)$ memory; `sed -n '10{p;q;}'` quits after line 10 and reads only 10 lines.
+
+### 2. LeetCode 193: Valid Phone Numbers (Easy)
+
+**Problem.** `file.txt` holds one phone number per line. Print only the valid ones, in exactly one of two formats: `(xxx) xxx-xxxx` or `xxx-xxx-xxxx`, where each `x` is a digit. Example input: `987-123-4567`, `123 456 7890`, `(123) 456-7890`, `(12) 345-6789`, `555-0100`, `(555)123-4567`. Valid: the first and the third.
+
+**Math first.** The valid lines form a **regular language**: a union of two fixed shapes, written as one anchored regular expression:
+
+$$
+L = \underbrace{\text{(}D^3\text{) } D^3\text{-}D^4}_{\text{format 1}} \;\cup\; \underbrace{D^3\text{-}D^3\text{-}D^4}_{\text{format 2}}, \qquad \lvert L \rvert = 2 \times 10^{10}
+$$
+
+where:
+
+- $D$ is one digit, $0$ to $9$, and $D^3$ means exactly three digits in a row;
+- $\cup$ is "or": a line is valid if it has either shape;
+- the two shapes share the ending $D^3\text{-}D^4$, so the regex factors it out: `^(\([0-9]{3}\) |[0-9]{3}-)[0-9]{3}-[0-9]{4}$`;
+- $\lvert L \rvert$ counts the valid strings: $10^{10}$ digit choices for each of the two formats.
+
+Example: `987-123-4567` matches format 2. `(123) 456-7890` matches format 1. `123 456 7890` has spaces instead of hyphens; `(12) 345-6789` has only two digits in the brackets; `555-0100` is too short; `(555)123-4567` lacks the space after the bracket. So 2 of the 6 lines are printed.
+
+**Idea.** `grep -E` with the pattern anchored by `^` and `$`, so that the **whole** line must match. `\(` matches a literal bracket, while the bare `( | )` group means "either".
+
+```bash
+grep -E '^(\([0-9]{3}\) |[0-9]{3}-)[0-9]{3}-[0-9]{4}$' file.txt
+```
+
+**Answer.** `987-123-4567` and `(123) 456-7890`. Each line is checked in time proportional to its length, so the whole file is $O(\text{characters})$, with $O(1)$ memory.
+
+### 3. LeetCode 192: Word Frequency (Medium)
+
+**Problem.** `words.txt` contains lowercase words separated by one or more spaces. Print each word and its count, most frequent first; the counts are all different. For the lines `red blue red green`, `red  blue red` and `blue red`, the answer is `red 5`, `blue 3`, `green 1`.
+
+**Math first.** The answer is the word-count function, sorted by count:
+
+$$
+c(w) = \lvert \lbrace i : w_i = w \rbrace \rvert, \qquad \text{out} = \operatorname{sort}_{\downarrow c}\big(\lbrace (w, c(w)) : w \in W \rbrace\big)
+$$
+
+where:
+
+- $w_1, w_2, \dots, w_m$ are all the words of the file in order, and $W$ is the set of distinct words;
+- $c(w)$ counts the positions where the word $w$ occurs;
+- $\operatorname{sort}_{\downarrow c}$ orders the pairs by decreasing count.
+
+Example: the words are red, blue, red, green, red, blue, red, blue, red, so $m = 9$; $c(\text{red}) = 5$, $c(\text{blue}) = 3$, $c(\text{green}) = 1$; and $5 + 3 + 1 = 9$.
+
+**Idea.** The Level 2 pipeline with a different first stage: `tr -s ' ' '\n'` turns every run of spaces into a single newline, which puts one word on each line. Then sort, count adjacent repeats, sort by count, and print word before count. McIlroy's 1986 pipeline used the same middle: `sort | uniq -c | sort -rn`.
+
+```bash
+tr -s ' ' '\n' < words.txt | sort | uniq -c | sort -rn | awk '{ print $2, $1 }'
+```
+
+**Answer.** `red 5`, `blue 3`, `green 1`. Lines through the pipeline: 3 lines in, $m = 9$ words after `tr`, 9 after `sort`, $\lvert W \rvert = 3$ after `uniq -c`, 3 after the second sort and `awk`. Time $O(m \log m)$ for the first sort, memory $O(m)$. The awk array of Level 4 does it in $O(m)$ time with $O(\lvert W \rvert)$ memory.
+
+### 4. LeetCode 194: Transpose File (Medium)
+
+**Problem.** `file.txt` has $r$ rows and $c$ columns separated by single spaces, the same number of columns on every row. Print its transpose. Example: rows `name city age`, `ana leeds 9`, `ben cork 10` become `name ana ben`, `city leeds cork`, `age 9 10`.
+
+**Math first.** Transposing swaps the roles of rows and columns:
+
+$$
+T[j][i] = A[i][j], \qquad 1 \le i \le r, \; 1 \le j \le c, \qquad \text{output row } j = A[1][j] \; A[2][j] \; \cdots \; A[r][j]
+$$
+
+where:
+
+- $A[i][j]$ is field $j$ of input line $i$, which awk calls `$j` while it reads line `NR` $= i$;
+- $T$ is the transposed table, with $c$ rows and $r$ columns.
+
+Example: $r = c = 3$. Output row 2 collects field 2 of every line: $A[1][2] = \text{city}$, $A[2][2] = \text{leeds}$, $A[3][2] = \text{cork}$, giving `city leeds cork`.
+
+**Idea.** Build the output rows while reading: `row[j]` starts as field $j$ of line 1 and gets field $j$ of every later line appended with a space. Save the column count in `cols` (POSIX awk also keeps `NF` in `END`, but the variable states the intent), then print the $c$ built rows in the `END` block.
+
+```bash
+awk '{ for (i = 1; i <= NF; i++) row[i] = (NR == 1 ? $i : row[i] " " $i); cols = NF }
+     END { for (i = 1; i <= cols; i++) print row[i] }' file.txt
+```
+
+**Answer.** `name ana ben`, `city leeds cork`, `age 9 10`. Every field is read once and appended once: $O(rc)$ time, $3 \times 3 = 9$ appends here, and $O(rc)$ memory, because the whole table must be held until the last row arrives.
+
+## Mathematical Abstraction
+
+A shell pipeline is a composition of functions on sequences of lines. Its result is the composition, its exit status is a rule over the stages' statuses, and its cost adds up stage by stage:
+
+$$
+P = f_n \circ \dots \circ f_1, \qquad
+\lvert f_i(x) \rvert \le \lvert x \rvert \text{ for filters}, \qquad
+T(P) = \sum_i T_i, \qquad M(P) = \max_i M_i
+$$
+
+where:
+
+- $x$ is a sequence of lines and $\lvert x \rvert$ its length;
+- $f_i$ is the $i$-th command; a *filter* such as `grep`, `uniq`, `head` or `sed -n` never outputs more lines than it reads, while a splitter such as `tr ' ' '\n'` can output more;
+- $T_i$ and $M_i$ are the time and memory of stage $i$, as in the cost section.
+
+Example: for LeetCode 192 on the 3-line file, $\lvert x \rvert$ goes $3 \to 9$ through `tr` (a splitter), stays 9 through `sort`, drops to 3 through `uniq -c` (a filter that merges), and stays 3 through the second `sort` and `awk`. The time is dominated by `sort`, $O(m \log m)$ for $m = 9$ words, and the memory by `sort` too, $O(m)$. With `set -o pipefail`, the pipeline's status is the status of its last failing stage, so a failure in stage 1 is no longer hidden behind a successful `awk`.
+
+## References
+
+- M. Douglas McIlroy, memo of 11 October 1964 on coupling programs "like garden hose", reproduced by Dennis Ritchie: <https://www.bell-labs.com/usr/dmr/www/mdmpipe.html>.
+- Jon Bentley, Donald E. Knuth and M. Douglas McIlroy, "Programming pearls: A literate program", *Communications of the ACM* 29(6), 471–483 (June 1986): the word-frequency problem and McIlroy's pipeline.
+- Brian W. Kernighan and Rob Pike, *The Unix Programming Environment* (Prentice-Hall, 1984), chapters on filters and the shell.
+- Alfred V. Aho, Brian W. Kernighan and Peter J. Weinberger, *The AWK Programming Language* (Addison-Wesley, 1988; 2nd edition 2023).
+- The Open Group, *POSIX.1-2017 Shell and Utilities*: `grep`, `sed`, `awk`, `sort`, `uniq`, `tr`: <https://pubs.opengroup.org/onlinepubs/9699919799/>; GNU Bash manual, "Pipelines" (`pipefail`): <https://www.gnu.org/software/bash/manual/bash.html#Pipelines>.
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), does not cover the shell; Part II, "Sorting and Order Statistics", and Chapter 11, "Hash Tables", explain the costs of `sort` and of awk's arrays.
+- LeetCode: [195. Tenth Line](https://leetcode.com/problems/tenth-line/), [193. Valid Phone Numbers](https://leetcode.com/problems/valid-phone-numbers/), [192. Word Frequency](https://leetcode.com/problems/word-frequency/), [194. Transpose File](https://leetcode.com/problems/transpose-file/).
+
+[← Database](../database/index.qmd) · [Randomisation, Design, and Special Domains](../groups/07-specialised-domains.qmd) · [Concurrency →](../concurrency/index.qmd)

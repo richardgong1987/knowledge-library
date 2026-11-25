@@ -1,62 +1,466 @@
 ---
 title: "Database"
-description: "An original, understandable lesson on the Database LeetCode topic with fully explained mathematics."
+description: "SQL as relational algebra on tiny tables: selection σ, projection π, joins ⋈ with exact row counts, grouping, NULL and three-valued logic, ROW_NUMBER, RANK and DENSE_RANK, why a B-tree index needs about log_b n page reads, and Combine Two Tables, Second Highest Salary, Department Top Three Salaries and Trips and Users solved math-first."
 ---
 
-## What is the real challenge?
+LeetCode's Database problems are written in SQL. SQL describes **what** rows you want, and the database decides **how** to find them. Behind every query is a small algebra of table operations, invented by Edgar Codd in 1970, and once you can count the rows each operation produces, the hard problems become short. This lesson builds that algebra on tables of three to ten rows.
 
-**LeetCode 175 — Combine Two Tables.** Express relational queries and transformations over tables.
+All queries are in [`database_lab.py`](database_lab.py). Run it from this folder with `python3 database_lab.py`; it creates the tables below in Python's built-in `sqlite3`, runs exactly the SQL shown on this page, checks every result and prints `OK`. The queries are standard SQL that also runs on MySQL, which LeetCode uses.
 
-This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
+## The problem
 
-## The tempting solution
+A company keeps two tables:
 
-Fetch all Person and Address rows into application memory and match them with nested loops, even when the database can do the join efficiently.
+| Employee: `id` | `name` | `salary` | `departmentId` |
+| --- | --- | --- | --- |
+| 1 | Ana | 90 | 1 |
+| 2 | Ben | 85 | 1 |
+| 3 | Cara | 90 | 1 |
+| 4 | Dev | 70 | 1 |
+| 5 | Eli | 60 | 1 |
+| 6 | Fay | 80 | 2 |
+| 7 | Gus | 60 | 2 |
 
-## The idea worth remembering
+| Department: `id` | `name` |
+| --- | --- |
+| 1 | IT |
+| 2 | Sales |
 
-Relational algebra expresses queries as set/bag transformations. A LEFT JOIN keeps every person even if no matching address exists.
+The manager asks: *for each department, who earns one of the three highest **different** salaries?* In IT the three highest different salaries are 90, 85 and 70, so the answer is Ana, Cara, Ben and Dev, four people, because Ana and Cara tie. In Sales it is Fay and Gus.
 
-## One mathematical expression — with every symbol explained
+The obvious query, "sort by salary and take the first 3", is wrong twice: it ignores departments, and it cuts the tie at 90 in the wrong place. Written by hand in Java, the right answer needs grouping, sorting, de-duplicating and a join. In SQL it is one query of nine lines (interview problem 3), once you know the operations underneath.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+A table is a **box of index cards**, all with the same boxes to fill in: one card per employee, with a name, a salary and a department number.
+
+- **Select** (σ, the Greek letter sigma) means *pick out the cards that pass a test*: "salary above 80".
+- **Project** (π, pi) means *copy only some boxes from each card*: just the names.
+- **Join** (⋈, a bow tie) means *clip together cards from two boxes that share a number*, like matching each coat to the peg with the same number.
+- **Group** means *sort the cards into piles* (one pile per department) and write one summary card per pile: "IT: 5 people, top salary 90".
+
+Some boxes on a card are left **blank**: nobody knows the value. SQL calls a blank `NULL`. If you ask "is this blank box equal to Leeds?", the honest answer is *I don't know*, and SQL only keeps cards whose answer is a clear *yes*.
+
+Edgar F. Codd described tables this way in his 1970 paper "A Relational Model of Data for Large Shared Data Banks", and every SQL database since is built on his idea: you say which cards you want, not how to walk through the box.
+:::
+
+## From simple to advanced
+
+The lesson's other small tables:
+
+| Person: `personId` | `lastName` | `firstName` |
+| --- | --- | --- |
+| 1 | Lee | Ana |
+| 2 | Khan | Ben |
+| 3 | Diaz | Cara |
+
+| Address: `addressId` | `personId` | `city` | `state` |
+| --- | --- | --- | --- |
+| 1 | 2 | Leeds | England |
+| 2 | 3 | Cork | Munster |
+| 3 | 9 | Bath | England |
+
+Ana has no address, and address 3 belongs to a person 9 who is not in `Person`. Both oddities are on purpose.
+
+### Level 1: select rows, project columns
+
+A table is a **set of rows**, called a *relation*. Selection keeps the rows that pass a test; projection keeps some columns:
 
 $$
-R\ \leftouterjoin_{R.id=S.id}\ S
+\sigma_P(R) = \lbrace r \in R : P(r) \rbrace, \qquad \pi_{A}(R) = \lbrace r[A] : r \in R \rbrace
 $$
 
-**Every symbol means:** R is the Person relation; S is the Address relation; id is the join key; the left outer join retains every R row and fills missing S columns with NULL.
+where:
 
-**Numerical substitution:** Person has (id=1,Ann) and (id=2,Bob). Address has only (id=1,Tokyo). The left join returns (Ann,Tokyo) and (Bob,NULL), two rows. An inner join would return only Ann.
+- $R$ is a table and $r$ one of its rows;
+- $P$ is a condition on one row, such as $\text{state} = \text{England}$; it is the SQL `WHERE`;
+- $A$ is a list of column names, and $r[A]$ is the row cut down to those columns; it is the SQL `SELECT` list;
+- the sizes obey $\lvert \sigma_P(R) \rvert \le \lvert R \rvert$, because selection only removes rows.
 
-The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
+Example: $\sigma_{\text{state} = \text{England}}(\text{Address})$ keeps 2 of the 3 rows (Leeds and Bath), and $\pi_{\text{city}}$ of that is $\lbrace \text{Leeds}, \text{Bath} \rbrace$:
 
-## Why the method is justified
+```sql
+SELECT city
+FROM Address
+WHERE state = 'England';
+```
 
-For each left row, emit matching joined right rows if they exist; otherwise emit one unmatched left row with missing right fields. That matches the desired preservation invariant.
+SQL tables may hold duplicate rows, unlike mathematical sets; `SELECT DISTINCT` removes them.
 
-**Complexity or resource cost:** Execution depends on indexes, row counts and chosen join algorithm; a hash join can be O(|R|+|S|) expected, but avoid making universal engine-independent runtime claims.
+### Level 2: joins, with exact row counts
 
-## Executable example
+The **Cartesian product** pairs every row of $R$ with every row of $S$. A **join** is a product followed by a selection:
 
-The following small example can be run directly in its own environment:
+$$
+\lvert R \times S \rvert = \lvert R \rvert \cdot \lvert S \rvert, \qquad R \bowtie_\theta S = \sigma_\theta(R \times S)
+$$
 
-~~~sql
-SELECT p.firstName,p.lastName,a.city,a.state
+where:
+
+- $R \times S$ is the set of all pairs $(r, s)$, with $\lvert \cdot \rvert$ meaning "number of rows";
+- $\theta$ (theta) is the join condition, such as $r.\text{personId} = s.\text{personId}$;
+- $\bowtie_\theta$ is the join, the SQL `JOIN ... ON θ`.
+
+Example: Person has 3 rows and Address has 3, so $\lvert \text{Person} \times \text{Address} \rvert = 3 \times 3 = 9$ pairs. Of these 9, only 2 satisfy $\theta$: (Ben, Leeds) and (Cara, Cork). So the join has 2 rows.
+
+```sql
+SELECT COUNT(*)
+FROM Person, Address;
+```
+
+```sql
+SELECT p.firstName, a.city
 FROM Person AS p
-LEFT JOIN Address AS a ON p.personId = a.personId;
-~~~
+JOIN Address AS a ON a.personId = p.personId;
+```
 
-Run this SQL against tables with the stated columns.
+The inner join loses Ana, because nothing matches her. A **left join** keeps every row of the left table and fills the missing right side with `NULL`:
 
-## Which assumption makes it fail?
+$$
+\lvert R \bowtie^{\text{left}}_\theta S \rvert = \lvert R \bowtie_\theta S \rvert + \lvert \lbrace r \in R : \text{no } s \in S \text{ satisfies } \theta(r, s) \rbrace \rvert
+$$
 
-SQL joins use bag semantics unless DISTINCT is applied: a person with two addresses may produce two output rows. NULL does not behave like ordinary equality.
+where:
 
-For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+- $\bowtie^{\text{left}}_\theta$ is the SQL `LEFT JOIN ... ON θ`;
+- the second term counts left rows with no partner; each appears once, with `NULL` in every right-hand column.
 
-## Source and interview practice
+Example: $2 + 1 = 3$ rows: Ben with Leeds, Cara with Cork, and Ana with `NULL`, `NULL`. The Bath address is still dropped, because only the *left* side is protected. This is LeetCode 175, interview problem 1. A join can also *grow* the result: if one person had two addresses, they would appear twice, so $\lvert R \bowtie S \rvert$ can be anything from 0 to $\lvert R \rvert \cdot \lvert S \rvert$.
 
-- **Textbook relationship:** SQL is outside CLRS 4e core; relate joins to hash tables (Chapter 11) and sorting (Chapters 6–8).. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode/practice:** LeetCode 175 — Combine Two Tables — [problem or problem set](https://leetcode.com/problems/combine-two-tables/).
-- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+### Level 3: grouping and aggregates
 
-[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)
+Grouping sorts the rows into piles by a column and writes one summary row per pile. In relational algebra it is written $\gamma$ (gamma):
+
+$$
+\gamma_{g;\; f_1, f_2}(R) = \big\lbrace \big(v,\; f_1(R_v),\; f_2(R_v)\big) : v \in \pi_g(R) \big\rbrace, \qquad R_v = \sigma_{g = v}(R)
+$$
+
+where:
+
+- $g$ is the grouping column (SQL `GROUP BY g`), and $v$ ranges over its distinct values;
+- $R_v$ is the pile of rows with $g = v$;
+- $f_1, f_2$ are aggregate functions such as `COUNT`, `SUM`, `MAX`, `AVG`, each turning a pile into one number;
+- the result has exactly one row per distinct value of $g$.
+
+Example: grouping Employee by `departmentId` gives 2 piles. Pile 1 has 5 rows with top salary 90; pile 2 has 2 rows with top salary 80. So the result is $\lbrace (1, 5, 90), (2, 2, 80) \rbrace$, 2 rows.
+
+```sql
+SELECT departmentId, COUNT(*) AS staff, MAX(salary) AS top_salary
+FROM Employee
+GROUP BY departmentId;
+```
+
+`WHERE` filters rows **before** grouping; `HAVING` filters piles **after** it, for example `HAVING COUNT(*) >= 3` would keep only IT.
+
+### Level 4: NULL and three-valued logic
+
+`NULL` means "unknown". A comparison with an unknown value cannot be true or false, so SQL uses **three** truth values: TRUE, FALSE and UNKNOWN.
+
+| $a$ | $b$ | $a$ AND $b$ | $a$ OR $b$ | NOT $a$ |
+| --- | --- | --- | --- | --- |
+| TRUE | UNKNOWN | UNKNOWN | TRUE | FALSE |
+| FALSE | UNKNOWN | FALSE | UNKNOWN | TRUE |
+| UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN | UNKNOWN |
+
+$$
+\texttt{NULL} \;\theta\; x = \text{UNKNOWN}, \qquad \texttt{WHERE } P \text{ keeps } r \iff P(r) = \text{TRUE}
+$$
+
+where:
+
+- $\theta$ is any comparison: $=$, $\ne$, $<$, and so on, and $x$ is any value, even `NULL` itself;
+- `WHERE` throws away rows whose condition is FALSE **and** rows whose condition is UNKNOWN.
+
+Example 1: the left join of Level 2 has 3 rows. Keep those whose city is not Leeds. Cara's row gives $\text{Cork} \ne \text{Leeds} = $ TRUE and stays. Ben's gives FALSE. Ana's gives $\texttt{NULL} \ne \text{Leeds} = $ UNKNOWN, so it is dropped too: **1** row, not 2.
+
+```sql
+SELECT p.firstName, a.city
+FROM Person AS p
+LEFT JOIN Address AS a ON a.personId = p.personId
+WHERE a.city <> 'Leeds';
+```
+
+Example 2, the `NOT IN` trap. `personId NOT IN (2, 3, NULL)` means $id \ne 2 \land id \ne 3 \land id \ne \texttt{NULL}$. The last part is UNKNOWN for every row, so the whole condition is at best UNKNOWN and **no** row is returned, not even Ana (id 1). Without the `NULL`, Ana comes back.
+
+```sql
+SELECT firstName
+FROM Person
+WHERE personId NOT IN (2, 3, NULL);
+```
+
+Example 3: `COUNT(*)` counts rows, `COUNT(column)` counts non-`NULL` values. On the 3-row left join they give 3 and 2.
+
+```sql
+SELECT COUNT(*), COUNT(a.city)
+FROM Person AS p
+LEFT JOIN Address AS a ON a.personId = p.personId;
+```
+
+To test for `NULL`, write `IS NULL` or `IS NOT NULL`; `= NULL` is always UNKNOWN.
+
+### Level 5: numbering rows with window functions
+
+A **window function** computes a value for each row from a group of related rows, *without* collapsing them into one row as `GROUP BY` does. The three ways to number rows by salary differ only in how they treat ties:
+
+$$
+\operatorname{rank}(r) = 1 + \lvert \lbrace s : s.\text{salary} > r.\text{salary} \rbrace \rvert, \qquad
+\operatorname{dense}(r) = 1 + \lvert \lbrace s.\text{salary} : s.\text{salary} > r.\text{salary} \rbrace \rvert
+$$
+
+where:
+
+- $r$ and $s$ are rows in the same window (here, the same department);
+- $\operatorname{rank}$ counts the **rows** that earn more, so a tie leaves a gap after it;
+- $\operatorname{dense}$ counts the **distinct salaries** that are higher, so there are no gaps;
+- `ROW_NUMBER` simply numbers the rows $1, 2, 3, \dots$ and breaks ties arbitrarily.
+
+Example: IT salaries are $90, 90, 85, 70, 60$. For Ben (85), two rows earn more, so $\operatorname{rank} = 1 + 2 = 3$; but only one distinct salary (90) is higher, so $\operatorname{dense} = 1 + 1 = 2$.
+
+| Salary | 90 | 90 | 85 | 70 | 60 |
+| --- | --- | --- | --- | --- | --- |
+| `ROW_NUMBER` | 1 | 2 | 3 | 4 | 5 |
+| `RANK` | 1 | 1 | 3 | 4 | 5 |
+| `DENSE_RANK` | 1 | 1 | 2 | 3 | 4 |
+
+```sql
+SELECT name, salary,
+       ROW_NUMBER() OVER (ORDER BY salary DESC) AS by_row,
+       RANK()       OVER (ORDER BY salary DESC) AS by_rank,
+       DENSE_RANK() OVER (ORDER BY salary DESC) AS by_dense_rank
+FROM Employee
+WHERE departmentId = 1;
+```
+
+"The top three **different** salaries" is exactly $\operatorname{dense} \le 3$. Adding `PARTITION BY departmentId` inside `OVER (...)` restarts the numbering in every department.
+
+### Level 6: why an index makes a query fast
+
+Without help, `WHERE departmentId = 2` must read **every** row: a full scan, $n$ reads. An **index** is a sorted copy of one column with pointers back to the rows, stored as a **B-tree**: a tree whose nodes are disk pages holding many keys each, so it is very wide and very shallow.
+
+$$
+h = \lceil \log_b n \rceil
+$$
+
+where:
+
+- $h$ is the height of the B-tree, the number of pages read to find one key;
+- $b$ is the fan-out, how many children one page can point to; with 4 KB pages it is typically in the hundreds;
+- $n$ is the number of rows.
+
+Example: $n = 10^6$ rows and $b = 100$ give $h = \lceil \log_{100} 10^6 \rceil = \lceil 6 / 2 \rceil = 3$ page reads, since $100^3 = 10^6$. A full scan reads all $10^6$ rows; even binary search on a sorted array needs $\lceil \log_2 10^6 \rceil = 20$ steps, each possibly a separate page read.
+
+```sql
+CREATE INDEX idx_employee_department ON Employee(departmentId);
+```
+
+```sql
+EXPLAIN QUERY PLAN
+SELECT name FROM Employee WHERE departmentId = 2;
+```
+
+In SQLite the plan changes from `SCAN Employee` to `SEARCH Employee USING INDEX idx_employee_department (departmentId=?)`. The answer, Fay and Gus, is the same; only the work changes. Every insert and update must now maintain the index too, which is why you index the columns that real queries filter, join or sort on, and no others.
+
+## Why it works and what it costs
+
+**Why SQL can be trusted.** Each operator is a function from tables to tables, so a query is a composition of functions, and its result does not depend on the order in which the database chooses to evaluate it. That freedom is what lets the *query optimiser* reorder joins, push selections down before joins ($\sigma_P(R \bowtie S) = \sigma_P(R) \bowtie S$ when $P$ only mentions $R$'s columns), and pick an index, all without changing the answer.
+
+**What the operators cost**, counted on this page's tables, with $n = \lvert R \rvert$ and $m = \lvert S \rvert$:
+
+| Operator | Result size | Typical cost | On this page |
+| --- | --- | --- | --- |
+| $\sigma_P(R)$, full scan | $\le n$ | $n$ row reads | 3 reads, 2 rows kept |
+| $\sigma_P(R)$, B-tree index | $\le n$ | $\lceil \log_b n \rceil$ + matching rows | 3 page reads for $n = 10^6$, $b = 100$ |
+| $R \times S$ | $nm$ | $nm$ | $3 \times 3 = 9$ |
+| $R \bowtie S$, hash join | $0$ to $nm$ | $n + m$ + output | 2 rows |
+| $R \bowtie S$, nested loops | $0$ to $nm$ | $nm$ comparisons | 9 comparisons |
+| $\gamma$, by hashing | one row per group | $n$ | 7 rows into 2 groups |
+| window `DENSE_RANK` | $n$ | sort each partition: $O(n \log n)$ | 7 rows ranked |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Inner `JOIN` when every left row must appear | People without an address vanish: 2 rows instead of 3 | `LEFT JOIN` |
+| A condition on the right table in `WHERE` after a `LEFT JOIN` | The `NULL` rows fail the test and the left join silently becomes an inner join | Put that condition in the `ON` clause |
+| `x = NULL` | Never TRUE, so nothing matches | `x IS NULL` |
+| `NOT IN (subquery)` when the subquery can return `NULL` | Zero rows, with no error | `NOT EXISTS`, or filter `NULL` out of the subquery |
+| `ORDER BY salary DESC LIMIT 3` for "top three salaries" | Ignores departments and splits ties | `DENSE_RANK() OVER (PARTITION BY ...)` and `<= 3` |
+| `RANK` where distinct values are meant | After a tie at 90, the 85 gets rank 3 and the 70 is lost | `DENSE_RANK` |
+| `LIMIT 1 OFFSET 1` without `DISTINCT` | With salaries 100, 100 the "second highest" is 100 | `SELECT DISTINCT salary` first |
+| Returning no row when the answer is missing | LeetCode 176 expects one row holding `NULL` | Wrap the query in an outer `SELECT (...)` |
+| Integer division for a rate: `SUM(...) / COUNT(*)` | $1 / 3 = 0$ in many databases | Use `AVG` of `0.0`/`1.0`, or multiply by `1.0` |
+
+## Interview problems
+
+Each solution starts with the relational algebra and the row counts; the SQL follows from it.
+
+### 1. LeetCode 175: Combine Two Tables (Easy)
+
+**Problem.** Given `Person(personId, lastName, firstName)` and `Address(addressId, personId, city, state)`, report `firstName, lastName, city, state` for **every** person, with `NULL` city and state when there is no address.
+
+**Math first.** Every person must appear exactly once (each has at most one address), so the answer is a left join followed by a projection:
+
+$$
+\pi_{\text{firstName}, \text{lastName}, \text{city}, \text{state}}\big(\text{Person} \bowtie^{\text{left}}_{\text{personId}} \text{Address}\big), \qquad \text{rows} = \lvert \text{Person} \rvert
+$$
+
+where:
+
+- $\bowtie^{\text{left}}_{\text{personId}}$ is a left join on equal `personId`, keeping every person;
+- the row count equals $\lvert \text{Person} \rvert$ when every person has at most one address.
+
+Example: 2 people match (Ben with Leeds, Cara with Cork) and 1 does not (Ana), so there are $2 + 1 = 3 = \lvert \text{Person} \rvert$ rows. The Bath address, whose person 9 does not exist, is not shown.
+
+**Idea.** `LEFT JOIN` with the person on the left.
+
+```sql
+SELECT p.firstName, p.lastName, a.city, a.state
+FROM Person AS p
+LEFT JOIN Address AS a ON a.personId = p.personId;
+```
+
+**Answer.** `(Ana, Lee, NULL, NULL)`, `(Ben, Khan, Leeds, England)`, `(Cara, Diaz, Cork, Munster)`. A hash join reads each table once: $O(n + m)$ for $n$ people and $m$ addresses, here $3 + 3 = 6$ row reads.
+
+### 2. LeetCode 176: Second Highest Salary (Medium)
+
+**Problem.** From `Employee(id, salary)`, return the second highest **distinct** salary as a column named `SecondHighestSalary`, or `NULL` if there is none.
+
+**Math first.** Remove duplicates, sort in descending order, skip one, take one:
+
+$$
+D = \pi_{\text{salary}}(\text{Employee}) \text{ as a set}, \qquad \text{answer} =
+\begin{cases}
+\text{the 2nd largest element of } D & \text{if } \lvert D \rvert \ge 2 \\
+\texttt{NULL} & \text{if } \lvert D \rvert < 2
+\end{cases}
+$$
+
+where:
+
+- $D$ is the set of distinct salaries;
+- "as a set" means duplicates count once, which is SQL `DISTINCT`.
+
+Example: the salaries $90, 85, 90, 70, 60, 80, 60$ give $D = \lbrace 90, 85, 80, 70, 60 \rbrace$, so the answer is **85**. With salaries $100, 100$ only, $D = \lbrace 100 \rbrace$ has one element, so the answer is `NULL`.
+
+**Idea.** `DISTINCT`, `ORDER BY ... DESC`, `LIMIT 1 OFFSET 1`. A subquery that finds no row has the value `NULL`, so wrapping it in an outer `SELECT` always returns exactly one row.
+
+```sql
+SELECT (
+    SELECT DISTINCT salary
+    FROM Employee
+    ORDER BY salary DESC
+    LIMIT 1 OFFSET 1
+) AS SecondHighestSalary;
+```
+
+**Answer.** 85 on the Employee table above; `NULL` on a table whose only salary is 100. Sorting costs $O(n \log n)$ for $n$ rows; with an index on `salary`, the database can read the two largest distinct values from the end of the B-tree in about $\lceil \log_b n \rceil$ page reads.
+
+### 3. LeetCode 185: Department Top Three Salaries (Hard)
+
+**Problem.** Given `Employee(id, name, salary, departmentId)` and `Department(id, name)`, list `Department, Employee, Salary` for every employee whose salary is among the **top three unique salaries** of their department. LeetCode 184, Department Highest Salary, is the same question for the top one.
+
+**Math first.** Rank salaries densely within each department, keep ranks up to 3, and join the department name:
+
+$$
+\text{answer} = \pi_{\text{Department}, \text{Employee}, \text{Salary}}\Big(\sigma_{\operatorname{dense} \le 3}\big(\omega(\text{Employee})\big) \bowtie_{\text{departmentId} = \text{id}} \text{Department}\Big)
+$$
+
+where:
+
+- $\omega$ adds the column $\operatorname{dense}$ = `DENSE_RANK() OVER (PARTITION BY departmentId ORDER BY salary DESC)`, computed per department as in Level 5;
+- $\sigma_{\operatorname{dense} \le 3}$ keeps everyone whose salary is one of the 3 highest distinct salaries in their department;
+- $\bowtie$ attaches the department name, and $\pi$ keeps the three output columns.
+
+Example: IT has salaries $90, 90, 85, 70, 60$ with dense ranks $1, 1, 2, 3, 4$; four rows have rank at most 3 (Ana, Cara, Ben, Dev) and Eli (60, rank 4) is dropped. Sales has $80, 60$ with ranks $1, 2$; both stay. The result has $4 + 2 = 6$ rows out of 7. With $\operatorname{dense} = 1$ instead, the result is LeetCode 184's answer: Ana, Cara and Fay.
+
+**Idea.** Compute the rank in a subquery, because a window function's result cannot be used in the same query's `WHERE`; then filter and join outside.
+
+```sql
+SELECT d.name AS Department, e.name AS Employee, e.salary AS Salary
+FROM (
+    SELECT name, salary, departmentId,
+           DENSE_RANK() OVER (PARTITION BY departmentId ORDER BY salary DESC) AS salary_rank
+    FROM Employee
+) AS e
+JOIN Department AS d ON d.id = e.departmentId
+WHERE e.salary_rank <= 3;
+```
+
+**Answer.** `(IT, Ana, 90)`, `(IT, Cara, 90)`, `(IT, Ben, 85)`, `(IT, Dev, 70)`, `(Sales, Fay, 80)`, `(Sales, Gus, 60)`; replacing `<= 3` by `= 1` gives LeetCode 184's three rows. The window sorts each department: $O(n \log n)$ for $n$ employees, plus a hash join with the $k$ departments, $O(n + k)$. Before window functions existed, the usual answer was a correlated subquery counting the distinct higher salaries, $O(n^2)$: $7 \times 7 = 49$ comparisons here, $10^{10}$ for $10^5$ employees.
+
+### 4. LeetCode 262: Trips and Users (Hard)
+
+**Problem.** `Trips(id, client_id, driver_id, city_id, status, request_at)` has status `'completed'`, `'cancelled_by_driver'` or `'cancelled_by_client'`. `Users(users_id, banned, role)` has `banned` equal to `'Yes'` or `'No'`. For each day from `2013-10-01` to `2013-10-03` that has trips, report the **cancellation rate** among trips whose client **and** driver are both unbanned, as `Day` and `Cancellation Rate`, rounded to two decimals.
+
+| Trips: `id` | `client_id` | `driver_id` | `status` | `request_at` |
+| --- | --- | --- | --- | --- |
+| 1 | 1 | 10 | completed | 2013-10-01 |
+| 2 | 2 (banned) | 11 | cancelled_by_driver | 2013-10-01 |
+| 3 | 3 | 12 (banned) | completed | 2013-10-01 |
+| 4 | 3 | 10 | cancelled_by_client | 2013-10-01 |
+| 5 | 1 | 11 | completed | 2013-10-02 |
+| 6 | 3 | 11 | completed | 2013-10-02 |
+| 7 | 1 | 10 | cancelled_by_driver | 2013-10-03 |
+| 8 | 3 | 11 | completed | 2013-10-03 |
+| 9 | 1 | 10 | completed | 2013-10-03 |
+| 10 | 1 | 10 | cancelled_by_client | 2013-10-04 |
+
+**Math first.** Join `Users` twice, once as the client and once as the driver, filter, then group by day and average a 0/1 indicator:
+
+$$
+\operatorname{rate}(d) = \frac{1}{\lvert T_d \rvert} \sum_{t \in T_d} [\,t.\text{status} \ne \text{completed}\,], \qquad
+T_d = \sigma_{\text{day} = d \;\land\; \lnot\text{banned}(\text{client}) \;\land\; \lnot\text{banned}(\text{driver})}(\text{Trips})
+$$
+
+where:
+
+- $d$ is a day in the range, and $T_d$ is the set of valid trips on day $d$;
+- $[\,\cdot\,]$ is 1 when the condition is true and 0 otherwise, so the sum counts cancellations;
+- dividing by $\lvert T_d \rvert$ makes it an average, which SQL's `AVG` computes directly.
+
+Example: on 10-01, trip 2 has a banned client and trip 3 a banned driver, so $T_d = \lbrace 1, 4 \rbrace$, with 1 cancellation: $1/2 = 0.50$. On 10-02, $T_d = \lbrace 5, 6 \rbrace$ with no cancellations: $0/2 = 0.00$. On 10-03, $T_d = \lbrace 7, 8, 9 \rbrace$ with 1 cancellation: $1/3 = 0.333$, rounded to $0.33$. Trip 10 is outside the date range.
+
+**Idea.** Put the "not banned" tests in the two `JOIN ... ON` clauses, so a banned user removes the trip. Average `0.0` or `1.0`, never integers, so the division is not truncated; then round.
+
+```sql
+SELECT t.request_at AS Day,
+       ROUND(AVG(CASE WHEN t.status = 'completed' THEN 0.0 ELSE 1.0 END), 2) AS "Cancellation Rate"
+FROM Trips AS t
+JOIN Users AS c ON c.users_id = t.client_id AND c.banned = 'No'
+JOIN Users AS d ON d.users_id = t.driver_id AND d.banned = 'No'
+WHERE t.request_at BETWEEN '2013-10-01' AND '2013-10-03'
+GROUP BY t.request_at;
+```
+
+**Answer.** `(2013-10-01, 0.50)`, `(2013-10-02, 0.00)`, `(2013-10-03, 0.33)`. With hash joins the query reads `Trips` once and `Users` twice: $O(t + u)$ for $t$ trips and $u$ users, plus one pass to group, here $10 + 2 \times 6 = 22$ row reads. `BETWEEN` on the `'YYYY-MM-DD'` strings works because that format sorts in date order.
+
+## Mathematical Abstraction
+
+A SQL query is a composition of relational operators, each a function from tables to tables, and its result size can be bounded operator by operator:
+
+$$
+Q = \pi_A \circ \sigma_P \circ \gamma_{g; f} \circ (R \bowtie_\theta S), \qquad
+0 \le \lvert R \bowtie_\theta S \rvert \le \lvert R \rvert \cdot \lvert S \rvert, \quad
+\lvert \sigma_P(X) \rvert \le \lvert X \rvert, \quad
+\lvert \gamma_{g; f}(X) \rvert = \lvert \pi_g(X) \rvert
+$$
+
+where:
+
+- $\circ$ is function composition, read right to left: join first, then group, then filter the groups, then project;
+- $\pi$, $\sigma$, $\gamma$ and $\bowtie$ are projection, selection, grouping and join from Levels 1 to 3;
+- the inequalities bound the rows each step can produce, and $\lvert \pi_g(X) \rvert$ is the number of distinct groups.
+
+Example: for LeetCode 262, $\lvert \text{Trips} \rvert = 10$ and $\lvert \text{Users} \rvert = 6$. Joining clients and drivers with the "not banned" tests keeps 8 trips (all but 2 and 3); the date filter keeps 7 (dropping trip 10); grouping by day gives $\lvert \pi_{\text{day}} \rvert = 3$ rows; the projection keeps 2 columns. With NULLs, every $P$ is evaluated in three-valued logic and only TRUE rows survive; with an index, each selection costs about $\lceil \log_b n \rceil$ page reads instead of $n$: 3 instead of $10^6$ for $b = 100$.
+
+## References
+
+- Edgar F. Codd, "A Relational Model of Data for Large Shared Data Banks", *Communications of the ACM* 13(6), 377–387 (1970).
+- Rudolf Bayer and Edward McCreight, "Organization and Maintenance of Large Ordered Indexes", *Acta Informatica* 1(3), 173–189 (1972): the B-tree.
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 18, "B-Trees". CLRS does not cover SQL or relational algebra. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §6.2 "B-trees": <https://algs4.cs.princeton.edu/62btree/>.
+- SQLite documentation: "EXPLAIN QUERY PLAN" <https://www.sqlite.org/eqp.html> and "Window Functions" <https://www.sqlite.org/windowfunctions.html>; Python's `sqlite3` module <https://docs.python.org/3/library/sqlite3.html>.
+- LeetCode: [175. Combine Two Tables](https://leetcode.com/problems/combine-two-tables/), [176. Second Highest Salary](https://leetcode.com/problems/second-highest-salary/), [184. Department Highest Salary](https://leetcode.com/problems/department-highest-salary/), [185. Department Top Three Salaries](https://leetcode.com/problems/department-top-three-salaries/), [262. Trips and Users](https://leetcode.com/problems/trips-and-users/).
+
+[← Interactive](../interactive/index.qmd) · [Randomisation, Design, and Special Domains](../groups/07-specialised-domains.qmd) · [Shell →](../shell/index.qmd)
