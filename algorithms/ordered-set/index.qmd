@@ -1,69 +1,517 @@
 ---
 title: "Ordered Set"
-description: "Understand Ordered Set from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a bus timetable to java.util.TreeSet: floor, ceiling, higher, lower and range views, why sorted arrays and plain trees are not enough, red-black trees and their 2·log2(n+1) height bound, the other ordered sets (AVL, skip lists, B-trees, multisets), and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+An ordered set keeps distinct keys **in sorted order** while keys come and go, and it answers "what is the nearest key to $x$?" in about $\log_2 n$ steps. This lesson starts with a sorted array, shows why it is not enough, builds the tree that `java.util.TreeSet` really uses, and finishes with three interview problems that are short only because an ordered set does the hard part.
 
-**LeetCode 220 — Contains Duplicate III.** A unique-key set maintaining a comparison order.
+All code is in [`OrderedSetLab.java`](OrderedSetLab.java). Run it from this folder with `java OrderedSetLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+Buses leave a stop at minutes 10, 20, 30, 40 and 50. A passenger arrives at minute 33 and asks two questions:
 
-Check every pair of values within k index positions and a value-difference bound.
+- "When is the **next** bus?" The answer is 40.
+- "Which bus did I **just miss**?" The answer is 30.
 
-### The one insight to remember
+The timetable also changes all day: a bus at minute 35 is added, the bus at minute 20 is cancelled. A big city has $n = 1{,}000{,}000$ departures. How fast can each structure do the two jobs?
 
-Maintain only recent values in an ordered structure so you can ask for the smallest value at least x−t and compare it with x+t.
+| Structure | "Next bus at or after 33" | "Add a bus at 35" |
+| --- | --- | --- |
+| `HashSet` | no order, so check all 1,000,000 keys | about 1 step |
+| Sorted array | binary search, 20 steps | shift up to 1,000,000 keys right |
+| Balanced tree (`TreeSet`) | at most 39 steps | at most 39 steps plus at most 2 rotations |
 
-## Build the mathematical meaning from a small example
+A hash set is fast at "is 35 there?" but useless for "what is *near* 35?". A sorted array is fast at "near" but slow to change. An ordered set is fast at both.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Children line up in the playground **from shortest to tallest**. The teacher asks: "Who is the shortest child at least 130 cm tall?" Because the line is sorted, you can jump to the middle, see whether that child is too short or tall enough, and throw away half the line each time. That is **binary search**.
+
+But when a new child arrives, everybody taller has to shuffle one place back to make room. With a long line, that takes ages.
+
+So the children stand in a **tree** instead: one child in front, the shorter ones somewhere to the left, the taller ones somewhere to the right, and the same rule again below each child. A new child walks down, "left or right?", and simply stands in the empty spot at the bottom. Nobody else moves.
+
+The danger is a tree that grows lopsided, all the way to one side, which is just a long line again. A **red-black tree** stops that with two colours of ribbon and a few rules. Robert Sedgewick and Kevin Wayne explain the trick in their book *Algorithms*: a red link is only glue that lets two children share one spot, and if you squash every glued pair together, every path from the top to the bottom has exactly the same length. A tree that is perfectly even underneath cannot grow lopsided.
+:::
+
+## From simple to advanced
+
+### Level 1: a sorted array and binary search
+
+An ordered set answers four "neighbour" questions about a query value $x$:
 
 $$
-x-t\leq y\leq x+t
+\begin{aligned}
+\operatorname{floor}(x) &= \max\lbrace s \in S : s \le x \rbrace, &\qquad \operatorname{lower}(x) &= \max\lbrace s \in S : s < x \rbrace, \\
+\operatorname{ceiling}(x) &= \min\lbrace s \in S : s \ge x \rbrace, &\qquad \operatorname{higher}(x) &= \min\lbrace s \in S : s > x \rbrace
+\end{aligned}
 $$
 
-**What each symbol means:** x is the current integer; y is an earlier value in the active window; t is the maximum allowed absolute value difference.
+where:
 
-**Substitute actual values:** If x=9 and t=2, only y in [7,11] qualify by value; y=10 qualifies, while y=12 does not. Index distance imposes a second independent condition.
+- $S$ is the set of stored keys and $x$ is any query value, stored or not;
+- $\lbrace s \in S : s \le x \rbrace$ means "all stored keys that are at most $x$";
+- floor and ceiling may return $x$ itself; lower and higher must return a *different* key;
+- if the set in braces is empty there is no answer, and Java returns `null`.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: $S = \lbrace 10, 20, 30, 40, 50 \rbrace$.
 
-## Design the algorithm in ordinary English
+- $x = 33$: $\operatorname{floor}(33) = \max\lbrace 10, 20, 30 \rbrace = 30$ and $\operatorname{ceiling}(33) = \min\lbrace 40, 50 \rbrace = 40$.
+- $x = 30$: $\operatorname{floor}(30) = \operatorname{ceiling}(30) = 30$, but $\operatorname{lower}(30) = 20$ and $\operatorname{higher}(30) = 40$.
+- $x = 55$: $\lbrace s \ge 55 \rbrace$ is empty, so $\operatorname{ceiling}(55)$ does not exist.
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+If the keys sit in a sorted array, the ceiling is the first index whose key is at least $x$:
 
-**Correctness argument (the invariant):** Before processing index i, the set contains exactly the allowed earlier indices. A lower-bound search finds the only first candidate needing comparison.
+```java
+static int ceilingIndex(int[] sorted, int x) {   // first index whose key is >= x
+    int lo = 0, hi = sorted.length;
+    while (lo < hi) {
+        int mid = (lo + hi) >>> 1;
+        if (sorted[mid] < x) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;                                     // sorted.length when every key is < x
+}
+```
 
-## Code you can run
+Trace for $x = 33$ in `[10, 20, 30, 40, 50]`: `mid = 2` holds 30, too small, so `lo = 3`; `mid = 4` holds 50, big enough, so `hi = 4`; `mid = 3` holds 40, so `hi = 3`. Now `lo == hi == 3`, and `sorted[3] = 40`. Each step halves the range, so the number of steps is
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `lowerBound`. Its use can be reduced to:
+$$
+\text{steps} = \lceil \log_2 (n + 1) \rceil
+$$
 
-~~~js
-import { lowerBound } from '../examples/patterns.mjs';
+where:
 
-console.log(lowerBound([1,3,6,10],7));
-~~~
+- $n$ is the number of keys;
+- $\log_2$ asks "how many times can I halve this?";
+- $\lceil \cdot \rceil$ rounds up to a whole number of steps.
 
-Save the snippet inside the `algorithms/ordered-set/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+Example: $n = 5$ gives $\lceil \log_2 6 \rceil = \lceil 2.585 \rceil = 3$ steps, exactly the three steps in the trace. For $n = 1{,}000{,}000$ it is $\lceil 19.93 \rceil = 20$ steps.
 
-## Why it works, and how expensive it is
+**The weak spot is change.** To insert $x$, every key from position $i$ = `ceilingIndex(x)` onwards moves one place right, so an insert shifts $n - i$ keys. Inserting 35 shifts $5 - 3 = 2$ keys (40 and 50); inserting 5 shifts all 5. On a million keys an insert shifts 500,000 keys on average. A sorted array is a perfect ordered set only for data that rarely changes.
 
-Before processing index i, the set contains exactly the allowed earlier indices. A lower-bound search finds the only first candidate needing comparison.
+### Level 2: the ordered-set operations in Java
 
-**Time and space:** O(n log k) with a balanced tree of at most k active values, where n is input length.
+Java names these questions in the interfaces `NavigableSet` and `NavigableMap`, implemented by `TreeSet` and `TreeMap`:
 
-**Common mistake or limitation:** JavaScript Set preserves insertion order, not sorted key order. You need a balanced tree or sorted substitute for true logarithmic predecessor/successor search.
+| Method | Returns | On $\lbrace 10, 20, 30, 40, 50 \rbrace$ |
+| --- | --- | --- |
+| `floor(x)`, `ceiling(x)` | nearest key $\le x$, nearest key $\ge x$ | `floor(33) = 30`, `ceiling(33) = 40` |
+| `lower(x)`, `higher(x)` | nearest key $< x$, nearest key $> x$ | `lower(30) = 20`, `higher(30) = 40` |
+| `first()`, `last()` | smallest and largest key | 10 and 50 |
+| `pollFirst()`, `pollLast()` | remove and return the smallest or largest | 10, leaving 4 keys |
+| `headSet(b)` | keys $< b$ | `headSet(30) = [10, 20]` |
+| `tailSet(a)` | keys $\ge a$ | `tailSet(30) = [30, 40, 50]` |
+| `subSet(a, b)` | keys with $a \le s < b$ | `subSet(20, 40) = [20, 30]` |
+| `descendingSet()` | the same keys, largest first | `[50, 40, 30, 20, 10]` |
 
-## Try to explain it in an interview
+`TreeMap` has the same questions for keys, such as `floorKey`, `ceilingEntry` and `subMap`. The lab checks the table:
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+```java
+static void navigableSetDemo() {
+    TreeSet<Integer> buses = new TreeSet<>(List.of(10, 20, 30, 40, 50));
+    check(buses.ceiling(33) == 40 && buses.floor(33) == 30, "nearest keys around 33");
+    check(buses.ceiling(30) == 30 && buses.higher(30) == 40, "ceiling may return x itself, higher may not");
+    check(buses.floor(30) == 30 && buses.lower(30) == 20, "floor may return x itself, lower may not");
+    check(buses.ceiling(55) == null && buses.lower(10) == null, "no answer is null, not an exception");
+    check(buses.subSet(20, 40).equals(Set.of(20, 30)), "subSet(a, b) is [a, b)");
+    check(buses.headSet(30).equals(Set.of(10, 20)), "headSet(b) is everything below b");
+    check(buses.tailSet(30).equals(Set.of(30, 40, 50)), "tailSet(a) is everything from a up");
+}
+```
 
-## Reading and practice
+The views are **half-open**, $[a, b)$, like array indices. That makes counting a range a subtraction of two **ranks**:
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapters 12–13 (search trees and balancing). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 220 — Contains Duplicate III. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+$$
+\big\lvert \lbrace s \in S : a \le s < b \rbrace \big\rvert = \operatorname{rank}(b) - \operatorname{rank}(a), \qquad \operatorname{rank}(x) = \big\lvert \lbrace s \in S : s < x \rbrace \big\rvert
+$$
+
+where:
+
+- $\lvert \cdot \rvert$ is the number of elements in a set;
+- $\operatorname{rank}(x)$ is how many stored keys are smaller than $x$, which is `headSet(x).size()`;
+- the keys in $[a, b)$ are those below $b$ minus those below $a$.
+
+Example: $\operatorname{rank}(40) = \lvert \lbrace 10, 20, 30 \rbrace \rvert = 3$ and $\operatorname{rank}(20) = \lvert \lbrace 10 \rbrace \rvert = 1$, so $[20, 40)$ holds $3 - 1 = 2$ keys, namely 20 and 30. One warning: Java's `headSet(x).size()` walks the view one key at a time, so it costs $O(k)$ for $k$ keys, not $O(\log n)$. A tree that also stores subtree sizes, the *order-statistic tree* of CLRS Chapter 17, answers rank in $O(\log n)$.
+
+### Level 3: a binary search tree makes inserts cheap
+
+A **binary search tree** stores each key in a node, with every smaller key somewhere in its left subtree and every larger key somewhere in its right subtree. Inserting walks down "left or right?" and hangs a new leaf at the bottom; no other key moves. Here are the keys 30, 10, 50, 20, 40, inserted in that order:
+
+```text
+        30
+       /  \
+     10    50
+       \   /
+       20 40
+```
+
+```java
+static Node insert(Node node, int key) {
+    if (node == null) return new Node(key);
+    if (key < node.key) node.left = insert(node.left, key);
+    else if (key > node.key) node.right = insert(node.right, key);
+    return node;
+}
+
+static Integer ceiling(Node node, int x) {
+    Integer best = null;
+    while (node != null) {
+        if (node.key == x) return x;
+        if (node.key > x) { best = node.key; node = node.left; }   // a candidate; look for a smaller one
+        else node = node.right;                                    // too small; only bigger keys can help
+    }
+    return best;
+}
+```
+
+Trace for $x = 33$: 30 is too small, go right; 50 is a candidate, remember it and go left; 40 is a smaller candidate, remember it and go left; the left child is empty, so the answer is **40** after 3 comparisons. `floor` is the mirror image.
+
+Every operation walks one path, so its cost is the number of **levels** $L$, the keys on the longest path from the root down. The insertion order decides $L$:
+
+$$
+\lceil \log_2 (n + 1) \rceil \;\le\; L \;\le\; n
+$$
+
+where:
+
+- $n$ is the number of keys;
+- the lower bound is a perfectly bushy tree, which doubles its capacity with each level;
+- the upper bound is a "tree" that is really a chain, one key per level.
+
+Example: $n = 7$. Inserting 4, 2, 6, 1, 3, 5, 7 gives the bushy tree with $L = \lceil \log_2 8 \rceil = 3$. Inserting 1, 2, 3, 4, 5, 6, 7 in increasing order makes every key the right child of the previous one, so $L = 7$. For a million keys arriving in sorted order, which happens all the time with timestamps and IDs, that is 1,000,000 levels instead of 20. The [Binary Search Tree](../binary-search-tree/index.qmd) lesson covers search, insert and delete in detail. This lesson needs a tree that **cannot** become a chain.
+
+### Level 4: red-black trees keep the height logarithmic
+
+A **red-black tree** is a binary search tree whose nodes are coloured red or black and obey five rules (CLRS Chapter 13):
+
+1. Every node is red or black.
+2. The root is black.
+3. Every empty child pointer counts as a black leaf, called NIL.
+4. A red node has no red child: **no two reds in a row**.
+5. Every path from a node down to a NIL leaf passes **the same number of black nodes**.
+
+Rule 5 makes the black nodes perfectly balanced. Rule 4 lets the red nodes at most double a path. Together they bound the height:
+
+$$
+n \;\ge\; 2^{b} - 1 \;\ge\; 2^{L/2} - 1 \quad\Longrightarrow\quad L \;\le\; 2 \log_2 (n + 1)
+$$
+
+where:
+
+- $n$ is the number of keys;
+- $b$ is the number of black keys on every path from the root down to a NIL leaf, the same for all paths by rule 5;
+- $L$ is the number of keys on the longest such path, the most comparisons a search can make;
+- $n \ge 2^b - 1$ holds because even with no red nodes at all, $b$ full levels of black keys hold $2^b - 1$ keys;
+- $b \ge L/2$ holds because the path starts black (rule 2) and reds never sit next to each other (rule 4), so at least half of its keys are black.
+
+Example: $n = 1{,}000{,}000$ keys give $L \le 2 \log_2 1{,}000{,}001 = 2 \times 19.93 = 39.86$, so a search never makes more than **39** comparisons, however the keys arrived. For $n = 7$ the bound is $2 \log_2 8 = 6$.
+
+**The shortest correct insertion code** is Robert Sedgewick's *left-leaning* red-black tree (2008). It adds one rule, "red links lean left", which removes half of the cases. A new key always arrives as a red leaf. On the way back up, three local repairs restore the rules:
+
+```java
+static Node put(Node h, int key) {
+    if (h == null) { Node fresh = new Node(key); fresh.red = true; return fresh; }
+    if (key < h.key) h.left = put(h.left, key);
+    else if (key > h.key) h.right = put(h.right, key);
+    if (isRed(h.right) && !isRed(h.left)) h = rotateLeft(h);      // a red link leans right: turn it left
+    if (isRed(h.left) && isRed(h.left.left)) h = rotateRight(h);  // two reds in a row: lift the middle one
+    if (isRed(h.left) && isRed(h.right)) flipColors(h);           // a node with two red links: split it
+    return h;
+}
+```
+
+A **rotation** turns one link around without breaking the search order. Before, the order is $A < h < B < x < C$; after, it is still $A < h < B < x < C$:
+
+```text
+     h                       x
+    / \                     / \
+   A   x       rotate      h   C
+      / \      left →     / \
+     B   C               A   B
+```
+
+```java
+static Node rotateLeft(Node h) {
+    Node x = h.right;
+    h.right = x.left;
+    x.left = h;
+    x.red = h.red;
+    h.red = true;
+    return x;
+}
+```
+
+`rotateRight` is the mirror image. `flipColors` turns a black node with two red children into a red node with two black children, which pushes the extra red one level up:
+
+```java
+static void flipColors(Node h) {
+    h.red = true;
+    h.left.red = false;
+    h.right.red = false;
+}
+```
+
+After inserting 10, 20, 30, 40, 50 (sorted order, the worst case for a plain tree), the lab finds this tree:
+
+```text
+             40 black
+            /        \
+       20 red        50 black
+       /     \
+  10 black  30 black
+```
+
+Every path from 40 down to a NIL leaf passes exactly 2 black keys (40 and 10, 40 and 30, or 40 and 50), so rule 5 holds, and there are only 3 levels. Pushed further, the lab inserts the keys 1 to 1,000,000 in increasing order. A plain tree would be a chain of 1,000,000 levels; the red-black tree has **20**, which is the best possible. With 100,000 random keys it has 23 levels, against a best possible $\lceil \log_2 100{,}001 \rceil = 17$ and a guaranteed maximum of $2 \log_2 100{,}001 = 33.2$.
+
+`java.util.TreeMap`, and `TreeSet`, which is a `TreeMap` with dummy values, uses the classic red-black tree of CLRS instead. Its documentation says it guarantees $\log n$ time for `containsKey`, `get`, `put` and `remove`, with algorithms adapted from CLRS. The classic version allows red right children, so its shapes differ, but it obeys the same five rules and the same height bound. Its repairs are cheap too: an insertion needs at most 2 rotations, a deletion at most 3.
+
+### Level 5: the other ordered sets, and multisets
+
+Red-black trees are not the only way to keep keys sorted. All of these answer floor and ceiling in about $\log n$ steps; they differ in how they stay balanced:
+
+| Structure | How it stays balanced | Height for $n = 10^6$ | Where you meet it |
+| --- | --- | --- | --- |
+| Sorted array | it never changes shape | 20 binary-search steps, but inserts shift keys | `Arrays.binarySearch`, read-only data |
+| Plain binary search tree | it does not | 20 to 1,000,000 levels | random input only |
+| AVL tree (Adelson-Velsky and Landis, 1962) | the two subtrees' heights differ by at most 1 | at most $1.44 \log_2 n \approx 28$ | read-heavy in-memory indexes |
+| Red-black tree (Bayer, 1972; Guibas and Sedgewick, 1978) | the five colour rules | at most $2 \log_2 (n+1) \approx 39$ | `TreeMap`, `TreeSet`, the tree bins inside `HashMap` |
+| Skip list (Pugh, 1990) | coin flips decide how tall each key is | about $\log_2 n$ levels on average | `ConcurrentSkipListSet`, a thread-safe ordered set |
+| B-tree (Bayer and McCreight, 1972) | all leaves at the same depth, many keys per node | 3 levels with 100 children per node | databases and file systems |
+
+The B-tree row is worth a number: if each node has 100 children, three levels reach $100^3 = 1{,}000{,}000$ keys, so a database finds one row among a million with about 3 disk reads.
+
+**Multisets.** A `TreeSet` silently drops duplicates: adding 5 twice keeps one 5. When values can repeat, store how many times each one occurs:
+
+$$
+c : S \to \lbrace 1, 2, 3, \dots \rbrace, \qquad \text{size} = \sum_{s \in S} c(s)
+$$
+
+where:
+
+- $S$ is the set of distinct values, kept sorted as the keys of a `TreeMap`;
+- $c(s)$ is how many copies of $s$ are stored, the map's value;
+- a value whose count falls to 0 must leave the map, or `firstKey` would report a value that is gone.
+
+Example: adding 5, 5, 7 gives $c(5) = 2$ and $c(7) = 1$, so the size is $2 + 1 = 3$. Removing one 5 and one 7 leaves $c(5) = 1$, and 7 disappears from the keys.
+
+```java
+static void add(TreeMap<Integer, Integer> counts, int x) {
+    counts.merge(x, 1, Integer::sum);
+}
+
+static void removeOne(TreeMap<Integer, Integer> counts, int x) {
+    if (counts.merge(x, -1, Integer::sum) == 0) counts.remove(x);
+}
+```
+
+A `TreeMap` from interval start to interval end is the other workhorse: it stores **non-overlapping intervals** sorted by start, and `floorEntry(x)` finds the only interval that could contain $x$. Interview problems 1 and 3 below are built on it.
+
+## Why it works and what it costs
+
+**Why the ceiling walk is correct.** The invariant is: *the answer is either `best` or a key in the subtree still being searched.*
+
+- *At the start*, `best` is `null` and the subtree is the whole tree, so it holds.
+- *If `node.key > x`*, the node is a candidate. Every key in its right subtree is larger still, so none of them can be the *smallest* key $\ge x$. Remembering the node and going left keeps the invariant.
+- *If `node.key < x`*, the node and its entire left subtree are below $x$, so none of them qualifies. Going right keeps the invariant.
+- *When the subtree is empty*, the only possibility left is `best`.
+
+**Why rotations are safe.** The in-order sequence $A, h, B, x, C$ is the same before and after a rotation, so a rotation never breaks the search-tree order. It only changes which key is higher up.
+
+**Why the height stays small.** This is the bound from Level 4: $n \ge 2^{L/2} - 1$. Each repair (one rotation or one colour flip) touches a constant number of pointers, and an insertion performs at most one set of repairs per level, so an insertion costs $O(\log n)$.
+
+**Costs**, with $n = 10^6$ keys:
+
+| Operation | `HashSet` | Sorted array | `TreeSet` (red-black) |
+| --- | --- | --- | --- |
+| `contains` | $O(1)$ average, about 1 step | $O(\log n)$, 20 steps | $O(\log n)$, at most 39 steps |
+| `add` / `remove` | $O(1)$ average | $O(n)$, about 500,000 shifts | $O(\log n)$, at most 39 steps plus 2 or 3 rotations |
+| `floor` / `ceiling` | $O(n)$, 1,000,000 checks | $O(\log n)$ | $O(\log n)$ |
+| visit all keys in order | sort first, $O(n \log n)$ | $O(n)$ | $O(n)$ |
+| memory per key | one node and a share of the table | one array cell | one node with key, value, three links and a colour |
+
+Choose a `HashSet` when you only ask "is it there?", a sorted array when the keys never change, and an ordered set whenever you ask "what is nearest?" or "what lies between $a$ and $b$?" while keys keep changing.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `int c = set.ceiling(x);` when no key is $\ge x$ | `NullPointerException` while unboxing `null` | Keep the result as `Integer` and test for `null` first |
+| Comparing two `Integer` results with `==` | Works for 100, fails for 1000, because Java caches only $-128$ to $127$ | `Objects.equals(a, b)`, or compare `int` values |
+| Using `TreeSet` when values repeat | Duplicates vanish, so counts and sizes are wrong | A `TreeMap` from value to count (Level 5) |
+| A comparator that only compares lengths | `"cat"` and `"dog"` count as equal, so one silently disappears | Break ties: `Comparator.comparing(String::length).thenComparing(Comparator.naturalOrder())` |
+| Comparator `(a, b) -> a - b` | For $-2 \times 10^9$ and $2 \times 10^9$ the difference overflows and sorts them backwards | `Integer.compare(a, b)` |
+| Computing $x - t$ or $x + t$ in `int` (LeetCode 220) | Overflow near $\pm 2^{31}$ gives wrong answers | Do the arithmetic in `long` |
+| Calling `headSet(x).size()` inside a loop | Each call walks $k$ keys, so the loop becomes quadratic | An order-statistic tree, or a [Fenwick tree](../binary-indexed-tree/index.qmd) over compressed values |
+| Changing a field that the comparator reads after inserting | The key is in the wrong place and can no longer be found or removed | Use immutable keys; remove, change, then re-insert |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the right neighbour question is written down, the ordered set answers it in $O(\log n)$.
+
+### 1. LeetCode 729: My Calendar I (Medium)
+
+**Problem.** Book events as half-open intervals $[s, e)$. A booking succeeds only if it overlaps no earlier booking. For `book(10, 20)`, `book(15, 25)`, `book(20, 30)` the answers are `true`, `false`, `true`: $[15, 25)$ overlaps $[10, 20)$, but $[20, 30)$ only touches it.
+
+**Math first.** Two half-open intervals overlap exactly when each starts before the other ends:
+
+$$
+[s, e) \cap [a, b) \ne \varnothing \iff s < b \;\land\; a < e
+$$
+
+where:
+
+- $[s, e)$ is the new booking and $[a, b)$ an existing one; $e$ itself is not included, so touching is allowed;
+- $\land$ means "and", and $\varnothing$ is the empty set.
+
+Because stored bookings never overlap each other, only two of them can clash with $[s, e)$: the one starting at or before $s$, which is $\operatorname{floor}(s)$, and the one starting at or after $s$, which is $\operatorname{ceiling}(s)$. So the booking is free exactly when $\operatorname{end}(\operatorname{floor}(s)) \le s$ and $e \le \operatorname{ceiling}(s)$, treating a missing neighbour as no clash.
+
+Example: after booking $[10, 20)$, the request $[15, 25)$ has $\operatorname{floor}(15) = 10$, whose end is $20 > 15$, so it clashes. The request $[20, 30)$ has $\operatorname{floor}(20) = 10$ with end $20 \le 20$, and no ceiling, so it is free.
+
+**Idea.** Store bookings in a `TreeMap` from start to end. Look at the two neighbours of the new start, reject if either runs into the new event, otherwise insert.
+
+```java
+static final class MyCalendar {
+    final TreeMap<Integer, Integer> booked = new TreeMap<>();     // start -> end
+
+    boolean book(int start, int end) {
+        Map.Entry<Integer, Integer> before = booked.floorEntry(start);
+        Integer after = booked.ceilingKey(start);
+        if (before != null && before.getValue() > start) return false; // the earlier event runs into us
+        if (after != null && after < end) return false;                // we run into the later event
+        booked.put(start, end);
+        return true;
+    }
+}
+```
+
+**Answer.** `true`, `false`, `true` for the example. Afterwards `book(5, 11)` is `false` (it runs into 10) and `book(5, 10)` is `true` (it ends exactly as 10 starts). Each booking is two lookups and one insert, $O(\log n)$; for LeetCode's limit of 1,000 bookings that is about $\log_2 1{,}000 \approx 10$ comparisons per lookup. Memory is $O(n)$.
+
+### 2. LeetCode 220: Contains Duplicate III (Hard)
+
+**Problem.** Given `nums`, `indexDiff` $k$ and `valueDiff` $t$, is there a pair $i \ne j$ with $\lvert i - j \rvert \le k$ and $\lvert \text{nums}[i] - \text{nums}[j] \rvert \le t$? For `[1, 9, 5, 12]` with $k = 2$, $t = 3$ the answer is `true`: 9 and 12 are 2 positions apart and differ by 3.
+
+**Math first.** Scan left to right. When we reach $x_i$, the partners it may pair with are the previous $k$ values, the **window** $W_i$. A partner exists exactly when the smallest window value $\ge x_i - t$ is also $\le x_i + t$:
+
+$$
+\exists\, y \in W_i : \lvert x_i - y \rvert \le t \iff c_i \ne \text{none} \;\land\; c_i \le x_i + t, \qquad c_i = \operatorname{ceiling}_{W_i}(x_i - t)
+$$
+
+where:
+
+- $x_i$ is `nums[i]`, and $W_i = \lbrace x_j : i - k \le j < i \rbrace$ is the set of the previous $k$ values;
+- $\exists$ means "there exists";
+- $c_i$ is the smallest window value that is at least $x_i - t$; if even that one exceeds $x_i + t$, every larger value does too.
+
+Example: `[1, 9, 5, 12]`, $k = 2$, $t = 3$.
+
+- $i = 0$, $x = 1$: the window is empty.
+- $i = 1$, $x = 9$: $W = \lbrace 1 \rbrace$, $\operatorname{ceiling}(9 - 3 = 6)$ does not exist.
+- $i = 2$, $x = 5$: $W = \lbrace 1, 9 \rbrace$, $\operatorname{ceiling}(2) = 9$, but $9 > 5 + 3 = 8$. Then 1 leaves the window.
+- $i = 3$, $x = 12$: $W = \lbrace 9, 5 \rbrace$, $\operatorname{ceiling}(9) = 9 \le 15$. **True**.
+
+**Idea.** Keep the window in a `TreeSet`. For each value ask one ceiling question, then add the value and drop the one that is now $k + 1$ positions back. Equal values never need two copies: if a value repeated inside the window, $\lvert x - y \rvert = 0 \le t$ would already have returned `true`.
+
+```java
+static boolean containsNearbyAlmostDuplicate(int[] nums, int indexDiff, int valueDiff) {
+    TreeSet<Long> window = new TreeSet<>();        // the last indexDiff values; long avoids overflow
+    for (int i = 0; i < nums.length; i++) {
+        long x = nums[i];
+        Long nearest = window.ceiling(x - valueDiff);              // smallest value >= x - t
+        if (nearest != null && nearest <= x + valueDiff) return true;
+        window.add(x);
+        if (i >= indexDiff) window.remove((long) nums[i - indexDiff]);
+    }
+    return false;
+}
+```
+
+**Answer.** `true` for the example, and `false` for the same array with $k = 1$, $t = 2$ (neighbours differ by 8, 4 and 7). The `long` matters: LeetCode allows values up to $10^9$ and $t$ up to $10^9$, and $10^9 + 10^9 = 2 \times 10^9$ is larger than the `int` maximum $2{,}147{,}483{,}647$. Each step is one ceiling, one add and one remove on a set of at most $k$ keys: $O(n \log k)$ time and $O(k)$ space. For $n = k = 10^5$ that is about $10^5 \times 17 \approx 1.7$ million comparisons. A bucket version, with buckets of width $t + 1$ so that $\lfloor x / (t+1) \rfloor$ names a bucket, reaches $O(n)$: two values in the same bucket always match, and only the two neighbouring buckets need checking.
+
+### 3. LeetCode 715: Range Module (Hard)
+
+**Problem.** Track a set of real numbers made of half-open ranges, with `addRange(left, right)`, `removeRange(left, right)` and `queryRange(left, right)`, which asks whether *every* number in $[\text{left}, \text{right})$ is tracked. After `addRange(10, 20)` and `removeRange(14, 16)`, the queries `(10, 14)`, `(13, 15)` and `(16, 17)` answer `true`, `false`, `true`.
+
+**Math first.** Store the tracked numbers as sorted, disjoint, non-touching intervals $[s_1, e_1), [s_2, e_2), \dots$ with $e_j < s_{j+1}$. Then a query is covered only if one stored interval covers it all, and that interval can only be the floor of the left end:
+
+$$
+\text{query}(l, r) = \text{true} \iff [l, r) \subseteq [s, e) \text{ for } s = \operatorname{floor}(l), \text{ that is } e \ge r
+$$
+
+where:
+
+- $[l, r)$ is the queried range;
+- $s = \operatorname{floor}(l)$ is the last stored start at or before $l$, and $e$ is its end;
+- $\subseteq$ means "is contained in"; intervals after $s$ start after $l$, and two stored intervals never touch, so no union of several intervals could cover $[l, r)$ either.
+
+Example: after the add and the remove, the stored intervals are $[10, 14)$ and $[16, 20)$.
+
+- $(10, 14)$: $\operatorname{floor}(10) = 10$ with end $14 \ge 14$, so **true**.
+- $(13, 15)$: $\operatorname{floor}(13) = 10$ with end $14 < 15$, so **false**; the number 14.5 is missing.
+- $(16, 17)$: $\operatorname{floor}(16) = 16$ with end $20 \ge 17$, so **true**.
+
+**Idea.** `addRange` stretches $[l, r)$ to swallow any interval that overlaps or touches it, deletes everything inside, and stores one merged interval. `removeRange` first saves the pieces of the boundary intervals that stick out on either side, then deletes everything that starts inside $[l, r)$. `subMap(...).clear()` deletes a whole run of keys at once.
+
+```java
+static final class RangeModule {
+    final TreeMap<Integer, Integer> ranges = new TreeMap<>();     // start -> end, sorted, disjoint, not touching
+
+    void addRange(int left, int right) {
+        Map.Entry<Integer, Integer> e = ranges.floorEntry(left);
+        if (e != null && e.getValue() >= left) { left = e.getKey(); right = Math.max(right, e.getValue()); }
+        e = ranges.floorEntry(right);
+        if (e != null && e.getValue() > right) right = e.getValue();
+        ranges.subMap(left, true, right, true).clear();             // swallow everything in [left, right]
+        ranges.put(left, right);
+    }
+```
+
+```java
+void removeRange(int left, int right) {
+    Map.Entry<Integer, Integer> e = ranges.floorEntry(right);
+    if (e != null && e.getValue() > right) ranges.put(right, e.getValue()); // keep the piece after right
+    e = ranges.floorEntry(left);
+    if (e != null && e.getValue() > left) ranges.put(e.getKey(), left);     // keep the piece before left
+    ranges.subMap(left, true, right, false).clear();
+}
+
+boolean queryRange(int left, int right) {
+    Map.Entry<Integer, Integer> e = ranges.floorEntry(left);
+    return e != null && e.getValue() >= right;
+}
+```
+
+**Answer.** Trace: `addRange(10, 20)` stores $\lbrace 10 \to 20 \rbrace$. `removeRange(14, 16)`: the floor of 16 is $[10, 20)$, which sticks out past 16, so $[16, 20)$ is saved; the floor of 14 is still $[10, 20)$, which sticks out before 14, so it is cut to $[10, 14)$; nothing starts inside $[14, 16)$. The result is $\lbrace 10 \to 14, 16 \to 20 \rbrace$ and the queries give `true`, `false`, `true`. Adding $[14, 16)$ back merges everything into $\lbrace 10 \to 20 \rbrace$, because touching intervals are swallowed. Every call does a constant number of floor lookups plus the deletions; each call creates at most 2 intervals and each interval is deleted at most once, so all deletions together cost no more than all creations. That is $O(\log n)$ amortised per call, for $n$ stored intervals, and $O(n)$ memory.
+
+## Mathematical Abstraction
+
+An ordered set is a set of keys from a totally ordered universe, together with nearest-neighbour questions, stored in a tree whose height is guaranteed to be logarithmic:
+
+$$
+\operatorname{floor}(x) = \max\lbrace s \in S : s \le x \rbrace, \qquad
+\operatorname{ceiling}(x) = \min\lbrace s \in S : s \ge x \rbrace, \qquad
+L \le 2 \log_2 (n + 1)
+$$
+
+where:
+
+- $S$ is the set of $n$ stored keys and $x$ any query value;
+- floor and ceiling are the nearest stored keys below and above $x$, either of which may not exist;
+- $L$ is the number of keys on the longest root-to-leaf path of a red-black tree, so every operation costs $O(L) = O(\log n)$.
+
+Example: for $S = \lbrace 10, 20, 30, 40, 50 \rbrace$ and $x = 33$, $\operatorname{floor}(33) = 30$ and $\operatorname{ceiling}(33) = 40$, the "bus just missed" and the "next bus". With $n = 10^6$ keys, $L \le 2 \times 19.93 = 39.86$, so each of these questions, and each insert or delete, takes at most 39 comparisons, where a `HashSet` would scan a million keys and a sorted array would shift half a million.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 12, "Binary Search Trees"; Chapter 13, "Red-Black Trees" (properties, rotations, insertion, deletion and the height bound); Chapter 17, "Augmenting Data Structures" (order-statistic trees and interval trees); Chapter 18, "B-Trees". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition: §3.1 "Symbol Tables" (the ordered symbol-table API with floor, ceiling and rank), <https://algs4.cs.princeton.edu/31elementary/>, and §3.3 "Balanced Search Trees" (2-3 trees and left-leaning red-black trees), <https://algs4.cs.princeton.edu/33balanced/>.
+- Robert Sedgewick, "Left-leaning Red-Black Trees" (2008): <https://sedgewick.io/wp-content/themes/sedgewick/papers/2008LLRB.pdf>.
+- Leo J. Guibas and Robert Sedgewick, "A Dichromatic Framework for Balanced Trees", 19th Annual Symposium on Foundations of Computer Science (1978), pages 8–21.
+- Rudolf Bayer, "Symmetric binary B-Trees: Data structure and maintenance algorithms", *Acta Informatica* 1 (1972), 290–306.
+- William Pugh, "Skip lists: a probabilistic alternative to balanced trees", *Communications of the ACM* 33(6) (1990), 668–676.
+- Java SE documentation: [`TreeMap`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/TreeMap.html) (red-black tree, guaranteed $\log n$ operations, algorithms adapted from CLRS), [`NavigableSet`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/NavigableSet.html) and [`ConcurrentSkipListSet`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/concurrent/ConcurrentSkipListSet.html).
+- LeetCode: [729. My Calendar I](https://leetcode.com/problems/my-calendar-i/), [220. Contains Duplicate III](https://leetcode.com/problems/contains-duplicate-iii/), [715. Range Module](https://leetcode.com/problems/range-module/).
+
+[← Heap (Priority Queue)](../heap-priority-queue/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Tree →](../tree/index.qmd)

@@ -1,69 +1,666 @@
 ---
 title: "Hash Table"
-description: "Understand Hash Table from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From school lockers to java.util.HashMap: hash functions, every way to handle a collision (linked-list chains, red-black-tree bins, linear, quadratic and double-hash probing, Robin Hood, cuckoo), load factor, resizing, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A hash table finds a value by its key in about one step, however many keys it holds. This lesson builds one from nothing, meets the unavoidable problem of **collisions**, compares every standard way to solve them, and then opens up `java.util.HashMap` to see which solutions Java actually uses.
 
-**LeetCode 1 — Two Sum.** A key-to-slot mapping supporting expected efficient lookups.
+All code is in [`HashTableLab.java`](HashTableLab.java). Run it from this folder with `java HashTableLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A school club has 30 members. Each member has a six-digit student ID, from `000000` to `999999`. The club secretary wants to type an ID and see the member's name **instantly**.
 
-Compare each pair until the sum matches. With n=1,000, a quadratic scan can examine roughly 500,000 pairs.
+- A plain list of 30 names means checking up to 30 entries per lookup.
+- A sorted list allows binary search: about $\log_2 30 \approx 5$ checks.
+- We want **about 1 check**, and we do not want a million-entry array for 30 people.
 
-### The one insight to remember
+## Explain it like I'm ten
 
-Instead of asking whether any earlier value works by rescanning, remember numbers already seen. Lookup the missing complement.
+::: {.callout-tip}
+Imagine a corridor with **8 lockers**, numbered 0 to 7. To decide where your bag goes, you use a rule: *divide your student number by 8 and take the remainder.* Student 10 gets locker 2, student 22 gets locker 6. To find your bag later you do the same sum and walk straight to the right locker. No searching.
 
-## Build the mathematical meaning from a small example
+That rule is the **hash function**, and the lockers are the **table**.
+
+But student 31 and student 15 both get locker 7. That is a **collision**. There are two families of fixes:
+
+- **Hang a chain of hooks inside the locker**, so several bags can share it. That is *chaining*.
+- **Walk to the next empty locker** and leave your bag there. That is *open addressing*.
+
+Collisions happen much sooner than you would guess. In a class of just 23 children, there is a better than even chance that two share a birthday, even though there are 365 days. Hash tables face the same surprise.
+
+Aditya Bhargava's *Grokking Algorithms* opens its hash-table chapter in a grocery store. Looking a price up in a book is slow. A hash table is like a cashier who simply *knows* every price.
+:::
+
+## From simple to advanced
+
+### Level 1: one locker per possible key
+
+The simplest table is an array with one slot for **every possible key**. This is called *direct addressing*. Lookup is `table[id]`, exactly one step.
 
 $$
-b=t-a
+\text{used fraction} = \frac{n}{U}
 $$
 
-**What each symbol means:** t is the required target sum, a is the current value, and b is the complement we need to find in the lookup table.
+where:
 
-**Substitute actual values:** For [2,7,11,15] with target t=9, the first value a=2 needs b=9-2=7. When 7 is encountered, the table already contains 2, so the matching pair is (2,7).
+- $n$ is the number of keys actually stored (the club members);
+- $U$ is the size of the key universe: how many different keys could ever appear;
+- the fraction is the share of the array that holds something.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: $n = 30$ members and $U = 1{,}000{,}000$ possible IDs. The used fraction is $30 / 1{,}000{,}000 = 0.00003$, or 0.003%. We would buy a million lockers to use thirty. Direct addressing only makes sense when $U$ is small, for example an array of 26 counters for the letters `a` to `z`.
 
-## Design the algorithm in ordinary English
+### Level 2: a hash function, and why collisions are certain
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+A **hash function** squeezes the big universe into a small table of $m$ slots:
 
-**Correctness argument (the invariant):** Before examining index i, the table contains exactly earlier indices. If complement t-a[i] is present, the returned indices are distinct and add to the target.
+$$
+h : U \to \lbrace 0, 1, \dots, m - 1 \rbrace, \qquad h(k) = k \bmod m
+$$
 
-## Code you can run
+where:
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `containsDuplicate`. Its use can be reduced to:
+- $k$ is a key, here a student ID;
+- $m$ is the number of slots in the table;
+- $k \bmod m$ is the remainder after dividing $k$ by $m$;
+- $h(k)$ is the slot, also called the *bucket*, where key $k$ belongs.
 
-~~~js
-import { containsDuplicate } from '../examples/patterns.mjs';
+Example: with $m = 8$ and the six IDs $10, 22, 31, 4, 15, 28$:
 
-console.log(containsDuplicate([1,2,2]));
-~~~
+| Key $k$ | $k \bmod 8$ | Slot $h(k)$ |
+| --- | --- | --- |
+| 10 | $10 - 8 = 2$ | 2 |
+| 22 | $22 - 16 = 6$ | 6 |
+| 31 | $31 - 24 = 7$ | 7 |
+| 4 | $4$ | 4 |
+| 15 | $15 - 8 = 7$ | **7** (collides with 31) |
+| 28 | $28 - 24 = 4$ | **4** (collides with 4) |
 
-Save the snippet inside the `algorithms/hash-table/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+Six keys and eight slots, yet two collisions already. That is no bad luck. The chance of **no** collision at all, when each key lands in a uniformly random slot, is
 
-## Why it works, and how expensive it is
+$$
+P(\text{no collision}) = \prod_{i=0}^{n-1} \frac{m - i}{m} = \frac{m}{m} \cdot \frac{m-1}{m} \cdot \dots \cdot \frac{m-n+1}{m}
+$$
 
-Before examining index i, the table contains exactly earlier indices. If complement t-a[i] is present, the returned indices are distinct and add to the target.
+where:
 
-**Time and space:** Expected O(n) time and O(n) space, where n is element count; collision behaviour affects worst-case performance.
+- $n$ is the number of keys inserted;
+- $m$ is the number of slots;
+- $\prod_{i=0}^{n-1}$ means "multiply the following factor for $i = 0, 1, \dots, n-1$";
+- $\frac{m-i}{m}$ is the chance that key number $i+1$ avoids the $i$ slots already taken.
 
-**Common mistake or limitation:** Insert after checking the complement so one value cannot accidentally reuse itself. For duplicates, retain one valid index rather than confusing equal values with equal positions.
+Example 1, our lockers, $n = 6$, $m = 8$:
 
-## Try to explain it in an interview
+$$
+\frac{8 \cdot 7 \cdot 6 \cdot 5 \cdot 4 \cdot 3}{8^6} = \frac{20{,}160}{262{,}144} \approx 0.0769
+$$
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+So a collision happens with probability $1 - 0.0769 = 0.9231$, about **92%**.
 
-## Reading and practice
+Example 2, the birthday paradox, $n = 23$ children, $m = 365$ days: the product is $0.4927$, so the chance that two share a birthday is $1 - 0.4927 = 0.5073$, just over **50%**.
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 11 (hash tables), especially hashing and collision handling. [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 1 — Two Sum. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+The lab computes both numbers:
+
+```java
+static double noCollisionProbability(int n, int m) {
+    double p = 1;
+    for (int i = 0; i < n; i++) p *= (double) (m - i) / m;
+    return p;
+}
+```
+
+If $n > m$ a collision is **certain**: 9 keys cannot fit into 8 slots one each (the *pigeonhole principle*). So every real hash table needs a collision strategy. The rest of this lesson is about choosing one.
+
+### Level 3: every way to handle a collision
+
+| Strategy | Where colliding keys go | Typical cost at load $\alpha$ | Used by |
+| --- | --- | --- | --- |
+| Separate chaining, linked list | a linked list hanging from the bucket | $1 + \alpha$ probes | `java.util.HashMap` for small buckets |
+| Chaining, list becomes a red-black tree | a balanced tree once a bucket is crowded | $O(\log b)$ for a bucket of $b$ keys | `java.util.HashMap` since Java 8 |
+| Linear probing | the next free slot: $h, h+1, h+2, \dots$ | fast when $\alpha \le 0.5$, slow near 1 | `IdentityHashMap`, `ThreadLocal`'s maps |
+| Quadratic probing | jumps that grow: $h, h+1, h+3, h+6, \dots$ | avoids long runs of neighbours | many textbook and C libraries |
+| Double hashing | jumps of size $h_2(k)$, different per key | close to ideal random probing | textbooks, some databases |
+| Robin Hood hashing | linear probing, but the key that has travelled farthest gets the slot | same average, much smaller worst case | Rust's `HashMap` until 2019 |
+| Cuckoo hashing | one of two possible slots; an insert may evict the current owner | lookup is at most 2 probes | network switches, research systems |
+
+The **load factor** links them all:
+
+$$
+\alpha = \frac{n}{m}
+$$
+
+where:
+
+- $\alpha$ (alpha) is the load factor, the average number of keys per slot;
+- $n$ is the number of stored keys;
+- $m$ is the number of slots.
+
+Example: after inserting our six IDs into 8 slots, $\alpha = 6 / 8 = 0.75$. That is exactly the point where `java.util.HashMap` decides to grow (Level 5).
+
+#### 3a. Separate chaining with linked lists
+
+Each bucket holds the head of a linked list. A new key goes to the front of its bucket's list; a lookup walks only that one list.
+
+```java
+static final class Node {
+    final int key;
+    String value;
+    Node next;
+
+    Node(int key, String value, Node next) {
+        this.key = key;
+        this.value = value;
+        this.next = next;
+    }
+}
+
+Node[] buckets = new Node[8];
+int size;
+
+int index(int key) {
+    return Math.floorMod(key, buckets.length);
+}
+```
+
+`Math.floorMod` matters: in Java, `-3 % 8` is `-3`, which is not a valid index, while `Math.floorMod(-3, 8)` is `5`.
+
+```java
+void put(int key, String value) {
+    for (Node n = buckets[index(key)]; n != null; n = n.next) {
+        if (n.key == key) { n.value = value; return; }
+    }
+    buckets[index(key)] = new Node(key, value, buckets[index(key)]); // add at the front of the chain
+    if (++size > 0.75 * buckets.length) resize();
+}
+
+String get(int key) {
+    for (Node n = buckets[index(key)]; n != null; n = n.next) {
+        if (n.key == key) return n.value;
+    }
+    return null; // absent, exactly like java.util.Map.get
+}
+```
+
+After inserting $10, 22, 31, 4, 15, 28$:
+
+```text
+bucket 0: —
+bucket 1: —
+bucket 2: 10
+bucket 3: —
+bucket 4: 28 → 4
+bucket 5: —
+bucket 6: 22
+bucket 7: 15 → 31
+```
+
+A lookup for 15 computes $h(15) = 7$ and walks the chain at bucket 7: it finds 15 at once. A lookup for 31 needs 2 steps. A lookup for a missing key, such as 39 (also bucket 7), walks the whole chain and stops at the end.
+
+With uniform hashing the average chain length is $\alpha$, which gives these expected costs:
+
+$$
+E[\text{probes, miss}] = 1 + \alpha, \qquad E[\text{probes, hit}] \approx 1 + \frac{\alpha}{2}
+$$
+
+where:
+
+- $E[\cdot]$ means "the average over all possible random placements";
+- "probes" counts the bucket computation (the 1) plus the list nodes examined;
+- "miss" is a search for an absent key, which must walk a whole chain of average length $\alpha$;
+- "hit" is a search for a present key, which on average stops halfway along its chain.
+
+Example: at $\alpha = 0.75$ a miss costs about $1 + 0.75 = 1.75$ probes and a hit about $1 + 0.375 = 1.375$ probes. Both are about one step, as long as $\alpha$ stays small.
+
+#### 3b. Open addressing with linear probing
+
+Open addressing stores every key **directly in the array**, with no lists. When the home slot is taken, try the next one:
+
+$$
+h(k, i) = (h(k) + i) \bmod m, \qquad i = 0, 1, 2, \dots
+$$
+
+where:
+
+- $h(k)$ is the home slot from Level 2;
+- $i$ is the attempt number: $i = 0$ is the home slot, $i = 1$ the next one, and so on;
+- $\bmod\, m$ wraps around from the last slot back to slot 0.
+
+Example with $m = 8$, inserting $10, 22, 31, 4, 15, 28$ in that order:
+
+- 10 → slot 2, 22 → slot 6, 31 → slot 7, 4 → slot 4.
+- 15: home $h(15) = 7$ is full. Try $(7 + 1) \bmod 8 = 0$, which is free, so 15 goes to slot **0**.
+- 28: home $h(28) = 4$ is full. Try $(4 + 1) \bmod 8 = 5$, which is free, so 28 goes to slot **5**.
+
+```text
+slot:  0    1    2    3    4    5    6    7
+key :  15   —    10   —    4    28   22   31
+```
+
+```java
+int probe(int key, int i) {
+    return Math.floorMod(key + i, keys.length);
+}
+```
+
+```java
+String get(int key) {
+    for (int i = 0; i < keys.length; i++) {
+        int slot = probe(key, i);
+        if (keys[slot] == null) return null; // an unused slot ends every probe sequence
+        if (!tombstone[slot] && keys[slot] == key) return values[slot];
+    }
+    return null;
+}
+```
+
+**Why deletion needs a tombstone.** A search stops at the first *never-used* slot. Suppose we delete 31 by simply emptying slot 7. A search for 15 starts at its home, slot 7, finds it empty, and stops: "15 is not here". That is wrong, because 15 sits in slot 0. So deletion leaves a **tombstone**, a marker that means "something was here; keep probing":
+
+```java
+void remove(int key) {
+    for (int i = 0; i < keys.length; i++) {
+        int slot = probe(key, i);
+        if (keys[slot] == null) return;
+        if (!tombstone[slot] && keys[slot] == key) { tombstone[slot] = true; values[slot] = null; return; }
+    }
+}
+```
+
+`put` walks the same probe sequence and stops at the first never-used slot, or at the key's own slot if the key is already there:
+
+```java
+void put(int key, String value) {
+    for (int i = 0; i < keys.length; i++) {
+        int slot = probe(key, i);
+        if (keys[slot] == null || keys[slot] == key) { // a free slot, or this key's own slot
+            keys[slot] = key;
+            values[slot] = value;
+            tombstone[slot] = false;
+            return;
+        }
+    }
+    throw new IllegalStateException("table is full");
+}
+```
+
+This simple version never reuses a tombstone for a different key, so tombstones pile up over time. Real tables reuse them, and clear them all out when they resize.
+
+**The price of linear probing is clustering.** Full slots clump together into runs, and any key that lands in a run must walk to its end, which makes the run longer still. Knuth analysed this in 1963, in a memo he later called his first analysis of an algorithm:
+
+$$
+E[\text{probes, miss}] \approx \frac{1}{2}\left(1 + \frac{1}{(1 - \alpha)^2}\right), \qquad
+E[\text{probes, hit}] \approx \frac{1}{2}\left(1 + \frac{1}{1 - \alpha}\right)
+$$
+
+where:
+
+- $\alpha$ is the load factor, which must stay below 1 because every key needs its own slot;
+- $(1 - \alpha)$ is the fraction of slots still free;
+- the squared term in the miss formula is the cost of clustering, and it explodes as free space runs out.
+
+Example: compare a half-full table with a three-quarters-full one.
+
+| Load $\alpha$ | Miss: $\frac{1}{2}(1 + 1/(1-\alpha)^2)$ | Hit: $\frac{1}{2}(1 + 1/(1-\alpha))$ |
+| --- | --- | --- |
+| 0.50 | $\frac{1}{2}(1 + 4) = 2.5$ | $\frac{1}{2}(1 + 2) = 1.5$ |
+| 0.75 | $\frac{1}{2}(1 + 16) = 8.5$ | $\frac{1}{2}(1 + 4) = 2.5$ |
+| 0.90 | $\frac{1}{2}(1 + 100) = 50.5$ | $\frac{1}{2}(1 + 10) = 5.5$ |
+
+Going from half full to 90% full makes a miss 20 times slower. This is why `IdentityHashMap`, which uses linear probing, keeps its load at most $2/3$.
+
+#### 3c. Quadratic probing and double hashing
+
+Both break up clusters by jumping instead of stepping.
+
+**Quadratic probing** with triangular numbers:
+
+$$
+h(k, i) = \left(h(k) + \frac{i(i+1)}{2}\right) \bmod m
+$$
+
+where:
+
+- $\frac{i(i+1)}{2}$ is the $i$-th triangular number: $0, 1, 3, 6, 10, 15, 21, 28, \dots$;
+- $m$ is a power of two, which guarantees that the first $m$ probes visit every slot exactly once.
+
+Example: home slot 7, $m = 8$. The offsets $0, 1, 3, 6, 10, 15, 21, 28$ give slots $7, 0, 2, 5, 1, 6, 4, 3$. That is all 8 slots, each once.
+
+**Double hashing** uses a second hash function for the step size, so two keys with the same home slot still follow different paths:
+
+$$
+h(k, i) = \big(h_1(k) + i \cdot h_2(k)\big) \bmod m, \qquad h_1(k) = k \bmod m, \quad h_2(k) = 1 + (k \bmod (m - 1))
+$$
+
+where:
+
+- $h_1(k)$ is the home slot;
+- $h_2(k)$ is the step size, which is at least 1, so a probe always moves;
+- $m$ is prime, so every step size shares no factor with $m$ and the probes reach every slot.
+
+Example: $m = 11$, key $k = 15$. Then $h_1 = 15 \bmod 11 = 4$ and $h_2 = 1 + (15 \bmod 10) = 6$. The probes are $4$, $(4 + 6) \bmod 11 = 10$, $(4 + 12) \bmod 11 = 5$, and so on. Key 26 has the same home, $26 \bmod 11 = 4$, but steps by $1 + 6 = 7$, so the two keys separate immediately.
+
+```java
+static int quadraticSlot(int home, int i, int m) {   // m must be a power of two
+    return (home + i * (i + 1) / 2) % m;
+}
+
+static int doubleHashSlot(int key, int i, int m) {   // m must be prime
+    int h1 = Math.floorMod(key, m);
+    int h2 = 1 + Math.floorMod(key, m - 1);           // never 0, so the probe always moves
+    return (h1 + i * h2) % m;
+}
+```
+
+With good double hashing, each probe behaves almost like a fresh random slot (*uniform hashing*). Then CLRS proves:
+
+$$
+E[\text{probes, miss}] \le \frac{1}{1 - \alpha}, \qquad E[\text{probes, hit}] \le \frac{1}{\alpha} \ln \frac{1}{1 - \alpha}
+$$
+
+where:
+
+- $\frac{1}{1-\alpha}$ comes from each probe finding a free slot with probability at least $1 - \alpha$;
+- $\ln$ is the natural logarithm.
+
+Example: at $\alpha = 0.75$ a miss costs at most $1 / 0.25 = 4$ probes, compared with 8.5 for linear probing. A hit costs at most $\frac{1}{0.75} \ln 4 = 1.333 \times 1.386 \approx 1.85$ probes.
+
+#### 3d. Robin Hood and cuckoo hashing
+
+**Robin Hood hashing** (Pedro Celis, 1986) is linear probing with one rule: *take from the rich, give to the poor*. Each key remembers its **distance** from its home slot. When a key being inserted has travelled farther than the key sitting in a slot, they swap, and the displaced key continues probing. The average is unchanged, but nobody ends up very far from home. With 15 at distance 1 and a newcomer at distance 3 competing for one slot, the newcomer wins and 15 moves on. Rust's standard `HashMap` used this design until Rust 1.36 (2019).
+
+**Cuckoo hashing** (Pagh and Rodler, 2001) gives each key exactly **two** possible slots, $h_1(k)$ and $h_2(k)$. A lookup checks those two and nothing else, so the worst case is 2 probes. An insert that finds both slots full evicts one occupant, like a cuckoo chick pushing an egg out of the nest. The evicted key moves to its other slot, possibly evicting another. If the chain of evictions loops, the table is rebuilt with new hash functions. The trade-off is that the table must stay under half full when there are two choices.
+
+### Level 4: inside `java.util.HashMap`
+
+Java combines chaining with three engineering tricks. All the numbers below come from the OpenJDK source.
+
+**Trick 1: a power-of-two table and a bit mask.** The capacity $m$ is always a power of two (16 by default), so `k mod m` can be computed as a bitwise AND:
+
+$$
+\text{index} = (m - 1) \,\&\, \text{hash}
+$$
+
+where:
+
+- $m - 1$ in binary is all ones; for $m = 16$ it is `1111`;
+- $\&$ is bitwise AND, which keeps only the lowest $\log_2 m$ bits of the hash.
+
+**Trick 2: spread the high bits down first.** A mask of `1111` only ever looks at the lowest 4 bits. Two keys that differ only in their high bits would always collide. So `HashMap` first mixes the high half of the 32-bit hash code into the low half:
+
+$$
+\text{hash} = h \oplus (h \gg 16)
+$$
+
+where:
+
+- $h$ is the key's `hashCode()`;
+- $h \gg 16$ shifts $h$ right by 16 bits (Java's `>>>`), bringing the top 16 bits down;
+- $\oplus$ is exclusive or (Java's `^`).
+
+```java
+static int spread(Object key) {
+    int h = key.hashCode();
+    return h ^ (h >>> 16);                            // mix the high bits into the low bits
+}
+
+static int bucketIndex(Object key, int capacity) {   // capacity is a power of two
+    return (capacity - 1) & spread(key);
+}
+```
+
+Example: Java's `String.hashCode` is $s_0 \cdot 31^{n-1} + s_1 \cdot 31^{n-2} + \dots + s_{n-1}$. For `"cat"` the character codes are $c = 99$, $a = 97$, $t = 116$:
+
+- $h = 99 \cdot 31^2 + 97 \cdot 31 + 116 = 95{,}139 + 3{,}007 + 116 = 98{,}262$;
+- $h \gg 16 = 1$, because $65{,}536 \le 98{,}262 < 131{,}072$;
+- $\text{hash} = 98{,}262 \oplus 1 = 98{,}263$;
+- $\text{index} = 15 \,\&\, 98{,}263 = 98{,}263 \bmod 16 = 7$.
+
+So `"cat"` lives in bucket 7 of a new `HashMap`.
+
+**Trick 3: crowded buckets become red-black trees.** Chains are fine when they are short. But someone can deliberately choose keys that collide. In 2011, Alexander Klink and Julian Wälde showed that web servers in many languages could be frozen this way. Java strings are easy targets: `"Aa"` and `"BB"` have the same hash code,
+
+$$
+\texttt{"Aa"}: 65 \cdot 31 + 97 = 2112, \qquad \texttt{"BB"}: 66 \cdot 31 + 66 = 2112
+$$
+
+where 65, 97 and 66 are the character codes of `A`, `a` and `B`. Gluing $j$ such blocks together gives $2^{j}$ different strings that all share one hash code. For $j = 10$ that is $2^{10} = 1{,}024$ keys in one bucket. A linked list needs up to 1,024 comparisons to search it. Java 8 ([JEP 180](https://openjdk.org/jeps/180)) therefore turns a bucket into a **red-black tree**, a self-balancing binary search tree, once it holds 8 entries (`TREEIFY_THRESHOLD`), provided the table already has at least 64 buckets (`MIN_TREEIFY_CAPACITY`). Below 64 buckets it simply resizes instead. A tree that shrinks to 6 entries (`UNTREEIFY_THRESHOLD`) turns back into a list. The gap between 8 and 6 stops a bucket from flipping back and forth.
+
+A red-black tree keeps its height at most $2 \log_2(b + 1)$ for $b$ keys:
+
+$$
+\text{worst comparisons} \le 2 \log_2(b + 1)
+$$
+
+where $b$ is the number of keys in the bucket. Example: for $b = 1{,}024$ colliding keys, $2 \log_2 1{,}025 \approx 2 \times 10.0 = 20$ comparisons instead of 1,024.
+
+### Level 5: growing the table
+
+Every strategy gets slow as $\alpha$ grows, so a table **resizes**: it allocates double the slots and re-inserts everything. `HashMap` resizes when $n > 0.75\,m$. Our chained table does the same:
+
+```java
+void resize() {
+    Node[] old = buckets;
+    buckets = new Node[old.length * 2];
+    size = 0;
+    for (Node head : old) {
+        for (Node n = head; n != null; n = n.next) put(n.key, n.value);
+    }
+}
+```
+
+One resize costs $n$ moves, which sounds expensive. But resizes get rarer as the table grows, so the **total** stays small:
+
+$$
+\text{total moves} = \sum_{j} n_j \le 2n
+$$
+
+where:
+
+- $n_j$ is the number of keys moved by the $j$-th resize;
+- each resize moves about twice as many keys as the one before, so the sum is a geometric series bounded by twice its last term, which is at most $n$.
+
+Example: insert $n = 100$ keys starting from 8 slots with a 0.75 threshold. Resizes happen when the table reaches 7, 13, 25, 49 and 97 keys, moving $7 + 13 + 25 + 49 + 97 = 191$ keys in total, and $191 \le 2 \times 100 = 200$. Adding the 100 ordinary inserts gives 291 placements, an average of $2.91$ per key. That is constant, so each insert costs $O(1)$ **amortised**, meaning averaged over the whole sequence.
+
+## Why it works and what it costs
+
+**Correctness of chaining.** The invariant is: *every stored key $k$ is in the list at `buckets[h(k)]`.*
+
+- *Initially* all lists are empty, so it holds.
+- *`put` maintains it*: a new key goes into the list at `index(key)`, which is $h(k)$.
+- *`resize` maintains it*: it rebuilds from scratch with `put`, using the new $m$.
+- *Therefore `get` is correct*: if $k$ is stored, it is in that one list, so walking that list finds it; if it is not in that list, it is not stored anywhere.
+
+**Correctness of linear probing.** The invariant is: *for every stored key $k$ in slot $s$, every slot on the way from $h(k)$ to $s$ is full or a tombstone.* A search may therefore stop at the first never-used slot. Emptying a slot outright would break the invariant for any key that walked past it, which is the tombstone argument in Level 3b.
+
+**Costs:**
+
+| Operation | Chaining, average | Chaining, worst | Linear probing, average | Linear probing, worst |
+| --- | --- | --- | --- | --- |
+| `get` / `put` / `remove` | $O(1 + \alpha)$ | $O(n)$ list, $O(\log n)$ tree bin | $O\!\left(\frac{1}{(1-\alpha)^2}\right)$ | $O(n)$ |
+| `resize` | $O(n)$ once, $O(1)$ amortised | same | same | same |
+| memory | array + one node per key | | one array, good cache use | |
+
+The "average" columns assume the hash function spreads keys evenly. A poor `hashCode`, such as `return 1;`, puts every key in one bucket and gives the worst case every time.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Override `equals` but not `hashCode` | Two equal keys land in different buckets, so `get` returns `null` for a key you just put | Equal objects must have equal hash codes: override both, or use a `record` |
+| Change a field used by `hashCode` after inserting the key | The entry is stranded in its old bucket and can never be found | Use immutable keys (`String`, `Integer`, records) |
+| `key % m` with a negative key | `ArrayIndexOutOfBoundsException`, because `-3 % 8 == -3` | `Math.floorMod(key, m)`, or a power-of-two mask |
+| Emptying a slot on delete in open addressing | Keys after it in the probe sequence become unfindable | Tombstones, or shift later keys back |
+| Letting open addressing fill up | Inserts crawl as $\alpha \to 1$, then fail | Resize at a fixed load, such as $2/3$ |
+| Relying on `HashMap` iteration order | Order changes after a resize or between Java versions | `LinkedHashMap` for insertion order, `TreeMap` for sorted order |
+| Sharing a `HashMap` between threads | Lost updates or corrupted buckets | `ConcurrentHashMap` |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 128: Longest Consecutive Sequence (Medium)
+
+**Problem.** Given an unsorted array, return the length of the longest run of consecutive integers, in $O(n)$ time. For `[100, 4, 200, 1, 3, 2]` the answer is 4, from the run $1, 2, 3, 4$.
+
+**Math first.** Let $S$ be the set of values. A run is $s, s+1, \dots, s + \ell - 1$, all in $S$. A number $s$ **starts** a run exactly when its predecessor is missing:
+
+$$
+\text{start}(s) \iff s \in S \land (s - 1) \notin S, \qquad L(s) = \max\lbrace \ell : s, s+1, \dots, s+\ell-1 \in S \rbrace
+$$
+
+where:
+
+- $\land$ means "and" and $\notin$ means "is not in";
+- $L(s)$ is the length of the run that begins at $s$;
+- the answer is the largest $L(s)$ over all starts $s$.
+
+Example: $S = \lbrace 100, 4, 200, 1, 3, 2 \rbrace$. The starts are 100 (99 is absent), 200 (199 is absent) and 1 (0 is absent); 4, 3 and 2 are not starts. Their lengths are $L(100) = 1$, $L(200) = 1$ and $L(1) = 4$. The maximum is **4**.
+
+**Idea.** Put everything in a `HashSet`. Count forward only from starts. Every number is then counted once inside some run, so the total work is linear, not quadratic.
+
+```java
+static int longestConsecutive(int[] nums) {
+    Set<Integer> seen = new HashSet<>();
+    for (int x : nums) seen.add(x);
+    int best = 0;
+    for (int start : seen) {
+        if (seen.contains(start - 1)) continue;       // start is not the first number of its run
+        int length = 1;
+        while (seen.contains(start + length)) length++;
+        best = Math.max(best, length);
+    }
+    return best;
+}
+```
+
+**Answer.** `longestConsecutive([100, 4, 200, 1, 3, 2]) = 4`. Each number is checked once as a possible start and stepped over at most once inside a run, so there are at most $2n$ set lookups: $O(n)$ time and $O(n)$ space. For $n = 6$ that is at most 12 lookups.
+
+### 2. LeetCode 560: Subarray Sum Equals K (Medium)
+
+**Problem.** Count the contiguous subarrays whose sum is exactly $k$. Values may be negative. For `[1, 2, 3]` and $k = 3$ the answer is 2: `[1, 2]` and `[3]`.
+
+**Math first.** Use prefix sums $P_0 = 0$ and $P_j = a_1 + \dots + a_j$. The sum of the subarray from position $i + 1$ to $j$ is a difference of two prefixes:
+
+$$
+a_{i+1} + \dots + a_j = P_j - P_i = k \iff P_i = P_j - k
+$$
+
+where:
+
+- $P_j$ is the running total after $j$ elements;
+- $i < j$ marks where the subarray starts (just after $i$);
+- $\iff$ means "exactly when".
+
+So the count is $\sum_j \#\lbrace i < j : P_i = P_j - k \rbrace$: for each end $j$, count the earlier prefixes equal to $P_j - k$.
+
+Example: `[1, 2, 3]`, $k = 3$, gives prefixes $P = 0, 1, 3, 6$.
+
+- $j = 1$, $P_1 = 1$: need $1 - 3 = -2$, seen 0 times.
+- $j = 2$, $P_2 = 3$: need $0$, seen once ($P_0$), so `[1, 2]`.
+- $j = 3$, $P_3 = 6$: need $3$, seen once ($P_2$), so `[3]`.
+
+The total is $0 + 1 + 1 = 2$.
+
+**Idea.** A hash map from prefix value to how many times it has occurred answers "how many earlier $P_i$ equal $x$?" in $O(1)$. A sliding window does not work here, because negative numbers mean a longer window can have a smaller sum.
+
+```java
+static int subarraySum(int[] nums, int k) {
+    Map<Integer, Integer> prefixCount = new HashMap<>(Map.of(0, 1));
+    int prefix = 0, count = 0;
+    for (int x : nums) {
+        prefix += x;
+        count += prefixCount.getOrDefault(prefix - k, 0);
+        prefixCount.merge(prefix, 1, Integer::sum);
+    }
+    return count;
+}
+```
+
+**Answer.** `subarraySum([1, 2, 3], 3) = 2`, and `subarraySum([1, -1, 0], 0) = 3` (the subarrays `[1, -1]`, `[0]` and `[1, -1, 0]`). The `Map.of(0, 1)` seed is the empty prefix $P_0 = 0$; without it, subarrays starting at index 0 are missed. $O(n)$ time, $O(n)$ space.
+
+### 3. LeetCode 149: Max Points on a Line (Hard)
+
+**Problem.** Given $n \le 300$ distinct points, return the largest number on one straight line. For $(1,1), (3,2), (5,3), (4,1), (2,3), (1,4)$ the answer is 4.
+
+**Math first.** Fix an anchor point $p$. Another point $q$ lies on a particular line through $p$ exactly when the direction from $p$ to $q$ is the same. Floating-point slopes are risky (`0.1 + 0.2 != 0.3`), so name each direction by a **reduced integer fraction**:
+
+$$
+\text{dir}(p, q) = \left( \frac{\Delta x}{g}, \frac{\Delta y}{g} \right), \qquad g = \gcd(\lvert \Delta x \rvert, \lvert \Delta y \rvert)
+$$
+
+where:
+
+- $\Delta x = q_x - p_x$ and $\Delta y = q_y - p_y$;
+- $\gcd$ is the greatest common divisor, so dividing by $g$ gives the smallest whole-number step along the line;
+- the sign is fixed so that $\Delta x > 0$, or $\Delta x = 0$ and $\Delta y > 0$; this makes $(2, -2)$ and $(-2, 2)$ the same direction.
+
+Example: anchor $p = (3, 2)$.
+
+- $q = (4, 1)$: $\Delta = (1, -1)$, $g = 1$, direction $(1, -1)$.
+- $q = (2, 3)$: $\Delta = (-1, 1)$; flipping the sign gives $(1, -1)$.
+- $q = (1, 4)$: $\Delta = (-2, 2)$, $g = 2$, giving $(-1, 1)$, then flipped to $(1, -1)$.
+
+Three points share direction $(1, -1)$, so with the anchor that is $3 + 1 = \mathbf{4}$ points on the line $x + y = 5$.
+
+**Idea.** For each anchor, count directions in a hash map. The largest count plus 1 (the anchor itself) is the best line through that anchor, and the answer is the best over all anchors.
+
+```java
+static int maxPoints(int[][] points) {
+    int best = 0;
+    for (int i = 0; i < points.length; i++) {
+        Map<String, Integer> directions = new HashMap<>();
+        int most = 0;
+        for (int j = i + 1; j < points.length; j++) {
+            int dx = points[j][0] - points[i][0], dy = points[j][1] - points[i][1];
+            int g = gcd(Math.abs(dx), Math.abs(dy));
+            dx /= g;
+            dy /= g;
+            if (dx < 0 || (dx == 0 && dy < 0)) { dx = -dx; dy = -dy; } // one name per direction
+            most = Math.max(most, directions.merge(dx + "/" + dy, 1, Integer::sum));
+        }
+        best = Math.max(best, most + 1);
+    }
+    return best;
+}
+
+static int gcd(int a, int b) {
+    return b == 0 ? a : gcd(b, a % b);
+}
+```
+
+**Answer.** 4 for the example above, and 1 for a single point. Only pairs with $j > i$ are examined, which is $\frac{n(n-1)}{2}$ pairs. For $n = 300$ that is $\frac{300 \times 299}{2} = 44{,}850$ gcd computations: $O(n^2 \log C)$ time, where $C$ bounds the coordinates, and $O(n)$ extra space per anchor.
+
+## Mathematical Abstraction
+
+A hash table is a function from a huge key universe into a small array, plus a rule for sharing slots:
+
+$$
+h : U \to \lbrace 0, \dots, m - 1 \rbrace, \qquad \alpha = \frac{n}{m}, \qquad
+E[\text{miss}] =
+\begin{cases}
+1 + \alpha & \text{chaining} \\[2pt]
+\le \dfrac{1}{1 - \alpha} & \text{double hashing} \\[6pt]
+\approx \dfrac{1}{2}\left(1 + \dfrac{1}{(1-\alpha)^2}\right) & \text{linear probing}
+\end{cases}
+$$
+
+where:
+
+- $U$ is the key universe, $m$ the number of slots and $n$ the number of stored keys;
+- $h$ maps every key to a slot, and $\alpha$ is the load factor;
+- $E[\text{miss}]$ is the expected number of probes for an unsuccessful search.
+
+Example: at $\alpha = 0.75$ the three cases give $1.75$, at most $4$, and $8.5$ probes. That is why chaining tolerates $0.75$ (Java's `HashMap`), while linear probing wants $2/3$ or less (Java's `IdentityHashMap`). Collisions are unavoidable: 6 keys in 8 slots collide with probability $92\%$. So the real design choices are which collision rule to use, when to resize ($O(1)$ amortised, because total moves are at most $2n$), and how to survive deliberate collisions (red-black-tree bins, at most about $2 \log_2 b$ comparisons).
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 11, "Hash Tables": chaining, hash functions, open addressing and their analysis. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §3.4 "Hash Tables", with Java implementations of separate chaining and linear probing: <https://algs4.cs.princeton.edu/34hash/>.
+- Donald E. Knuth, "Notes on 'Open' Addressing" (1963), the first analysis of linear probing, typeset by Helmut Prodinger: <https://www.cs.auckland.ac.nz/~mcw/Teaching/refs/hashing/knuth-OALP.pdf>; and *The Art of Computer Programming*, Volume 3, §6.4.
+- Aditya Bhargava, *Grokking Algorithms* (Manning), Chapter 5, "Hash tables": <https://livebook.manning.com/book/grokking-algorithms/chapter-5>.
+- OpenJDK `java.util.HashMap` source (`hash`, `TREEIFY_THRESHOLD`, `MIN_TREEIFY_CAPACITY`): <https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/HashMap.java>; and JEP 180, "Handle Frequent HashMap Collisions with Balanced Trees": <https://openjdk.org/jeps/180>.
+- Pedro Celis, *Robin Hood Hashing*, PhD thesis, University of Waterloo (1986).
+- Rasmus Pagh and Flemming Friche Rodler, "Cuckoo Hashing", *Journal of Algorithms* 51 (2004); first presented at ESA 2001.
+- Rust 1.36.0 release notes, replacing `HashMap` with `hashbrown`: <https://github.com/rust-lang/rust/blob/master/RELEASES.md>.
+- LeetCode: [128. Longest Consecutive Sequence](https://leetcode.com/problems/longest-consecutive-sequence/), [560. Subarray Sum Equals K](https://leetcode.com/problems/subarray-sum-equals-k/), [149. Max Points on a Line](https://leetcode.com/problems/max-points-on-a-line/).
+
+[← String](../string/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Matrix →](../matrix/index.qmd)

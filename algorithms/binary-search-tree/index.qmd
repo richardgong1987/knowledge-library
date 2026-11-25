@@ -1,69 +1,498 @@
 ---
 title: "Binary Search Tree"
-description: "Understand Binary Search Tree from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a higher-or-lower game to java.util.TreeMap: the BST rule, search, insert, in-order traversal, floor and ceiling, Hibbard deletion with its three cases, why shape decides speed, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A binary search tree (BST) keeps numbers in sorted order **and** lets you add or remove one without shifting everything else. This lesson builds one from a single node, adds search, insertion, sorted listing, nearest-key queries and deletion, and then shows why the order of insertion can make it fast or painfully slow.
 
-**LeetCode 98 — Validate Binary Search Tree.** A binary tree governed by an ordered-key invariant.
+All code is in [`BinarySearchTreeLab.java`](BinarySearchTreeLab.java). Run it from this folder with `java BinarySearchTreeLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A small library labels its shelves with numbers. Today it holds shelves 50, 30, 80, 20, 40, 70, 90 and 60, and shelves are added and removed all day. The librarian asks three kinds of question:
 
-Compare a node only with its immediate children; this can accept an invalid descendant in the wrong subtree.
+- Is shelf 60 here?
+- List every shelf in order.
+- Which shelf is the **closest one at or below** 65?
 
-### The one insight to remember
+The obvious structures each fail one question:
 
-A valid BST node must satisfy bounds inherited from ALL ancestors. Propagate an allowed interval down the tree.
+- An **unsorted list** answers "is 60 here?" by checking all 8 shelves, and $n$ shelves in general.
+- A **sorted array** finds 60 with binary search in about $\log_2 8 = 3$ steps, but adding shelf 55 shifts every larger number one place right. With a million shelves that can be a million moves.
+- A **hash table** finds 60 in about one step, but it has no order, so "closest at or below 65" means checking every key.
 
-## Build the mathematical meaning from a small example
+We want all three: fast search, cheap insertion and deletion, **and** order.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Play *higher or lower*. I think of a number; you guess 50; I say "higher". You never look at anything below 50 again. One answer threw away half the possibilities.
+
+A binary search tree is that game frozen into a path through a forest. At every fork stands a signpost with a number. **If your number is smaller, go left; if it is bigger, go right.** To find 60 you read 50 (go right), 80 (go left), 70 (go left), and there is 60. Every step skips a whole part of the forest you never have to walk through.
+
+To plant a new signpost you walk the same way until the path stops, and plant it there. To pull one out, you sometimes have to move a neighbour into its place so that the left-smaller, right-bigger rule still holds everywhere.
+
+There is one danger. If the signposts were planted in sorted order, 1, then 2, then 3, every sign says "go right" and the forest is just one long line. Then you walk past every sign, and the game is no better than checking a list.
+
+Sedgewick and Wayne introduce the BST with the same promise this lesson makes: it combines the easy insertion of a linked list with the fast search of a sorted array.
+:::
+
+## From simple to advanced
+
+### Level 1: the rule
+
+A BST is a binary tree whose nodes hold keys, with one rule that must hold **at every node**:
 
 $$
-low<key(v)<high
+\max L(v) \;<\; k(v) \;<\; \min R(v)
 $$
 
-**What each symbol means:** v is the current node, key(v) its stored value, and low/high are constraints inherited from ancestors. Here duplicates are disallowed.
+where:
 
-**Substitute actual values:** For root 5 and left child 3, the left subtree has high=5. If node 6 occurs under node 3, it is greater than 3 but violates high=5, so the tree is invalid.
+- $v$ is any node of the tree;
+- $k(v)$ is the key stored at $v$;
+- $L(v)$ is the set of **all** keys in $v$'s left subtree, not only its left child, and $R(v)$ is the same for the right subtree;
+- $\max$ of an empty set counts as $-\infty$ and $\min$ of an empty set as $+\infty$, so a leaf always passes.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: inserting $50, 30, 80, 20, 40, 70, 90, 60$ in that order builds this tree.
 
-## Design the algorithm in ordinary English
+```text
+            50
+          /    \
+        30      80
+       /  \    /  \
+     20   40  70   90
+             /
+           60
+```
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+- At the root, $L(50) = \lbrace 30, 20, 40 \rbrace$ with maximum 40, and $R(50) = \lbrace 80, 70, 90, 60 \rbrace$ with minimum 60. Check: $40 < 50 < 60$.
+- At node 80, $L(80) = \lbrace 70, 60 \rbrace$ with maximum 70, and $R(80) = \lbrace 90 \rbrace$. Check: $70 < 80 < 90$.
 
-**Correctness argument (the invariant):** At every recursive step the value lies inside all ancestor-imposed bounds; new child bounds add the current key. Thus all subtree keys obey the global BST property.
+This lesson allows no duplicate keys; inserting a key that is already there changes nothing. A node is just a key and two links:
 
-## Code you can run
+```java
+static final class Node {
+    int key;
+    Node left, right;
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `lowerBound`. Its use can be reduced to:
+    Node(int key, Node left, Node right) {
+        this.key = key;
+        this.left = left;
+        this.right = right;
+    }
+}
+```
 
-~~~js
-import { lowerBound } from '../examples/patterns.mjs';
+### Level 2: search
 
-console.log(lowerBound([2,3,5,7],5));
-~~~
+Compare with the current key. Equal: found. Smaller: the rule says the key can only be on the left. Bigger: only on the right. A missing child means the key is absent.
 
-Save the snippet inside the `algorithms/binary-search-tree/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+$$
+C_{\text{hit}}(x) = d(x) + 1 \;\le\; h + 1
+$$
 
-## Why it works, and how expensive it is
+where:
 
-At every recursive step the value lies inside all ancestor-imposed bounds; new child bounds add the current key. Thus all subtree keys obey the global BST property.
+- $C_{\text{hit}}(x)$ is the number of key comparisons needed to find key $x$;
+- $d(x)$ is the **depth** of $x$: the number of edges from the root down to it;
+- $h$ is the **height** of the tree: the largest depth of any node.
 
-**Time and space:** O(n) time; O(h) call stack, where n is nodes and h height. A balanced tree gives h≈log₂n but an unbalanced one can have h=n.
+Example: in the tree above, $h = 3$.
 
-**Common mistake or limitation:** Only checking parent versus child misses cross-generation violations. Also decide a duplicate policy explicitly.
+- Search 30: $d = 1$, so $1 + 1 = 2$ comparisons (50, then 30).
+- Search 60: $d = 3$, so $3 + 1 = 4$ comparisons (50, 80, 70, 60). This is the worst hit, $h + 1 = 4$.
+- Search 65, which is missing: 50, 80, 70, 60, then the right child of 60 is empty. That is 4 comparisons and the answer "absent".
 
-## Try to explain it in an interview
+```java
+static Node search(Node node, int key) {
+    while (node != null && node.key != key) {
+        node = key < node.key ? node.left : node.right;
+    }
+    return node; // null when the key is absent
+}
+```
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+### Level 3: insert
 
-## Reading and practice
+Search for the new key. The search falls off the tree at an empty link, and that link is exactly where the key belongs, as a new leaf. Nothing else moves.
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 12 (BSTs) and Chapter 13 (balanced red-black trees). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 98 — Validate Binary Search Tree. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+Example: insert 65. The path is $50 \to 80 \to 70 \to 60$, and the right link of 60 is empty, so 65 becomes the right child of 60. The cost is the same as a missing search: at most $h + 1 = 3 + 1 = 4$ comparisons, then one new node. Compare that with a sorted array, where inserting 65 would shift 70, 80 and 90.
+
+```java
+static Node insert(Node node, int key) {
+    if (node == null) return new Node(key, null, null);
+    if (key < node.key) node.left = insert(node.left, key);
+    else if (key > node.key) node.right = insert(node.right, key);
+    return node; // a duplicate key changes nothing
+}
+```
+
+The assignment `node.left = insert(node.left, key)` is what hangs the new leaf: the call that reaches the empty link returns the new node, and its parent stores it. The same keys inserted in a **different order** give a different tree, which matters a lot in Level 7.
+
+### Level 4: in-order traversal lists the keys sorted
+
+Visit the left subtree, then the node, then the right subtree:
+
+$$
+\operatorname{inorder}(v) = \operatorname{inorder}(\operatorname{left}(v)) \;\Vert\; (k(v)) \;\Vert\; \operatorname{inorder}(\operatorname{right}(v)), \qquad \operatorname{inorder}(\varnothing) = ()
+$$
+
+where:
+
+- $\operatorname{inorder}(v)$ is the list of keys in the subtree rooted at $v$;
+- $\Vert$ joins two lists end to end;
+- $(k(v))$ is a list holding one key, and $()$ is the empty list for an empty subtree $\varnothing$.
+
+Example, bottom-up on our tree:
+
+- $\operatorname{inorder}(30) = (20) \Vert (30) \Vert (40) = (20, 30, 40)$;
+- $\operatorname{inorder}(70) = (60) \Vert (70) \Vert () = (60, 70)$, so $\operatorname{inorder}(80) = (60, 70, 80, 90)$;
+- $\operatorname{inorder}(50) = (20, 30, 40) \Vert (50) \Vert (60, 70, 80, 90) = (20, 30, 40, 50, 60, 70, 80, 90)$.
+
+Sorted, because the rule puts everything on the left below $k(v)$ and everything on the right above it.
+
+```java
+static void inOrder(Node node, List<Integer> out) {
+    if (node == null) return;
+    inOrder(node.left, out);
+    out.add(node.key);
+    inOrder(node.right, out);
+}
+```
+
+Every node is visited once, so listing $n$ keys costs $O(n)$. Inserting $n$ keys and then reading them in order is a sorting method called *tree sort*.
+
+### Level 5: floor and ceiling, the nearest keys
+
+The librarian's third question has a name:
+
+$$
+\operatorname{floor}(x) = \max \lbrace k \in S : k \le x \rbrace, \qquad \operatorname{ceiling}(x) = \min \lbrace k \in S : k \ge x \rbrace
+$$
+
+where:
+
+- $S$ is the set of keys in the tree;
+- $x$ is the query, which need not be in $S$;
+- if the set inside the braces is empty, there is no answer, and the code returns `null`.
+
+Example: $x = 65$ and $S = \lbrace 20, 30, 40, 50, 60, 70, 80, 90 \rbrace$. The keys $\le 65$ are $20, \dots, 60$, with maximum **60**. The keys $\ge 65$ are $70, 80, 90$, with minimum **70**. The floor of 10 does not exist, because nothing is $\le 10$.
+
+The search walk finds the floor. A key at most $x$ is a candidate, so remember it and go right to look for a bigger one; a key above $x$ is useless, so go left. For 65: 50 is a candidate (go right), 80 is too big (go left), 70 is too big (go left), 60 is a better candidate (go right), and the link is empty. The answer is 60, after 4 comparisons.
+
+```java
+static Integer floor(Node node, int x) {
+    Integer best = null;
+    while (node != null) {
+        if (node.key == x) return x;
+        if (node.key < x) { best = node.key; node = node.right; } // a candidate; look for a bigger one
+        else node = node.left;
+    }
+    return best;
+}
+```
+
+`ceiling` is the mirror image: swap `<` for `>` and left for right. The lab checks both. A hash table cannot answer these questions without scanning every key; this is the reason ordered structures exist.
+
+### Level 6: delete, in three cases
+
+Removing a key must keep the rule true everywhere. There are three cases, depending on how many children the node has. Thomas Hibbard described the hard case in 1962: replace the node by its **in-order successor**, the next bigger key.
+
+$$
+\operatorname{succ}(v) = \min R(v)
+$$
+
+where:
+
+- $\operatorname{succ}(v)$ is the smallest key that is larger than $k(v)$, used when $v$ has two children;
+- $R(v)$ is the set of keys in $v$'s right subtree, and its minimum is found by going right once, then left as far as possible.
+
+Example: for the root 50, $R(50) = \lbrace 80, 70, 90, 60 \rbrace$, so $\operatorname{succ}(50) = 60$: go right to 80, then left to 70, then left to 60, which has no left child.
+
+```java
+static Node min(Node node) {
+    while (node.left != null) node = node.left;
+    return node;
+}
+```
+
+Deleting 20, then 70, then 50 shows the three cases in turn:
+
+```text
+case 1: delete 20      case 2: delete 70        case 3: delete 50
+(a leaf)               (one child, 60)          (two children)
+
+       50                     50                       60
+      /  \                   /  \                     /  \
+    30    80               30    80                 30    80
+      \   / \                \   / \                  \     \
+      40 70  90              40 60  90                40     90
+         /
+        60
+```
+
+- **Case 1, a leaf:** remove it. 20 simply disappears.
+- **Case 2, one child:** the child takes the node's place. 70 has only the left child 60, so 60 moves up under 80. Everything under 70 was already between 50 and 80, so the rule still holds.
+- **Case 3, two children:** copy the successor's key into the node, then delete the successor from the right subtree. 50 becomes 60, and the old 60 is removed. The successor has **no left child** (anything there would be smaller than the minimum), so removing it is always case 1 or 2.
+
+The full deletion is LeetCode 450 in the interview section.
+
+### Level 7: the shape decides the speed
+
+Every operation so far walks one path from the root, so it costs $O(h)$. The height depends on the insertion order, and it can be anywhere between two extremes:
+
+$$
+\lceil \log_2(n + 1) \rceil - 1 \;\le\; h \;\le\; n - 1
+$$
+
+where:
+
+- $n$ is the number of keys;
+- $h$ is the height, counted in edges;
+- $\lceil \cdot \rceil$ rounds up; the left bound is a perfectly filled tree, where level $d$ holds $2^d$ nodes;
+- the right bound is a single path, where every node has one child.
+
+Example: $n = 7$. The lower bound is $\lceil \log_2 8 \rceil - 1 = 3 - 1 = 2$ and the upper bound is $7 - 1 = 6$. Both happen with the same seven keys:
+
+```text
+insert 4, 2, 6, 1, 3, 5, 7          insert 1, 2, 3, 4, 5, 6, 7
+height 2                            height 6
+
+          4                          1
+        /   \                         \
+       2     6                         2
+      / \   / \                         \
+     1   3 5   7                         3
+                                          \
+                                           ... down to 7
+```
+
+Searching for 7 takes 3 comparisons on the left and 7 on the right. For a million sorted keys the right-hand tree needs up to 1,000,000 comparisons, and the recursion in `insert` would overflow Java's stack long before that.
+
+```java
+static int height(Node node) {
+    if (node == null) return -1; // so that a single node has height 0
+    return 1 + Math.max(height(node.left), height(node.right));
+}
+```
+
+**Random order is usually fine.** If the keys arrive in random order, Sedgewick and Wayne prove that a search needs on average
+
+$$
+\bar{C}(n) \approx 2 \ln n \approx 1.39 \log_2 n
+$$
+
+where:
+
+- $\bar{C}(n)$ is the average number of comparisons for a search in a BST built from $n$ keys inserted in random order;
+- $\ln$ is the natural logarithm, and $1.39 \approx 2 \ln 2$ converts it to $\log_2$.
+
+Example: $n = 1{,}000{,}000$ gives $2 \ln 10^6 = 2 \times 13.82 = 27.6$ comparisons on average, compared with $\log_2 10^6 \approx 19.9$ for a perfect tree and 1,000,000 for a path.
+
+**Self-balancing trees remove the danger.** Real data is often sorted or nearly sorted (timestamps, IDs), so libraries never trust the insertion order. A *red-black tree* recolours and rotates nodes after each insert and delete so that $h \le 2 \log_2(n + 1)$. For $n = 1{,}000{,}000$ that is $2 \log_2 1{,}000{,}001 \approx 39.9$, whatever the order. Java's `TreeMap` and `TreeSet` are red-black trees with exactly the operations of this lesson: `get`, `put`, `remove`, `floorKey`, `ceilingKey`, and in-order iteration. The [Ordered Set](../ordered-set/index.qmd) lesson covers them. AVL trees, treaps and splay trees are other balanced variants.
+
+## Why it works and what it costs
+
+**Search is correct.** Suppose $x < k(v)$. The rule says every key in $R(v)$ is bigger than $k(v)$, hence bigger than $x$, so $x$ cannot be in the right subtree. Discarding it loses nothing. The case $x > k(v)$ is the mirror image. So if $x$ is in the tree, the search path reaches it; if the path ends at an empty link, $x$ is nowhere.
+
+**Insert keeps the rule.** The new key travels down the search path. At each ancestor $a$ on that path it went left exactly when it was smaller than $k(a)$, so it lands on the correct side of every ancestor. Nodes off the path are untouched.
+
+**Delete keeps the rule.** Cases 1 and 2 remove a node and lift its only subtree, whose keys were already on the correct side of every ancestor. In case 3, let $s = \min R(v)$. Every key in $L(v)$ is below $k(v)$, which is below $s$; every other key in $R(v)$ is above $s$, because $s$ is the minimum. So $s$ fits at $v$.
+
+**In-order is sorted**, by induction on the number of nodes. An empty tree gives the empty list. For a larger tree, the left list is sorted and below $k(v)$, the right list is sorted and above $k(v)$, so joining them around $k(v)$ is sorted.
+
+**Costs**, counted on the example and for a million keys:
+
+| Operation | Cost | Our tree ($n = 8$, $h = 3$) | $n = 10^6$, random order | $n = 10^6$, sorted order |
+| --- | --- | --- | --- | --- |
+| search, insert, delete | $O(h)$ | at most 4 comparisons | about 28 on average | up to $10^6$ |
+| floor, ceiling, min, max | $O(h)$ | at most 4 comparisons | about 28 | up to $10^6$ |
+| in-order listing | $O(n)$ | 8 visits | $10^6$ visits | $10^6$ visits |
+| memory | one node per key | 8 nodes | $10^6$ nodes | $10^6$ nodes |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Validating only "left child < node < right child" | The tree 5, 4, 6 with 3 under 6 passes, although 3 is right of 5 | Pass down an allowed interval $(\ell, u)$, as in LeetCode 98 |
+| Using `Integer.MIN_VALUE` and `Integer.MAX_VALUE` as the outer bounds | A node holding $-2^{31}$ is wrongly rejected | Use `long` bounds, or `null` for "no bound" |
+| Calling `insert(node.left, key)` without assigning the result | The new node is created and immediately lost | Write `node.left = insert(node.left, key)` |
+| Copying the successor's key in case 3 but not deleting the successor | The key now appears twice | Follow the copy with `node.right = delete(node.right, node.key)` |
+| Inserting sorted or nearly sorted data into a plain BST | Height $n - 1$, every operation $O(n)$, then `StackOverflowError` from recursion | Use `TreeMap`/`TreeSet`, or shuffle the input first |
+| No clear rule for duplicate keys | Some duplicates go left and some right, and searches miss them | Choose one policy: ignore duplicates, or keep a count in the node |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 98: Validate Binary Search Tree (Medium)
+
+**Problem.** Given the root of a binary tree, decide whether it is a valid BST, with strictly smaller keys on the left and strictly larger keys on the right. The tree with root 5, left child 4, and right child 6 whose children are 3 and 7 is **not** valid.
+
+**Math first.** Each node inherits an open interval from its ancestors, and must lie inside it:
+
+$$
+\operatorname{valid}(v, \ell, u) = \big(\ell < k(v) < u\big) \land \operatorname{valid}(\operatorname{left}(v), \ell, k(v)) \land \operatorname{valid}(\operatorname{right}(v), k(v), u)
+$$
+
+where:
+
+- $\ell$ and $u$ are the lower and upper bounds collected on the way down, both excluded;
+- going left replaces the upper bound by $k(v)$, and going right replaces the lower bound by $k(v)$;
+- $\operatorname{valid}(\varnothing, \ell, u)$ is true, and the root starts with $(-\infty, +\infty)$.
+
+Example: the tree from the problem.
+
+- Root 5 in $(-\infty, +\infty)$: fine. Node 4 in $(-\infty, 5)$: fine. Node 6 in $(5, +\infty)$: fine.
+- Node 3, left of 6, gets $(5, 6)$. Is $5 < 3$? No. **Invalid.**
+
+Every parent-child pair looked fine ($4 < 5$, $6 > 5$, $3 < 6$, $7 > 6$); only the interval catches the problem.
+
+**Idea.** Recurse with the interval. Use `long` bounds so that keys equal to `Integer.MIN_VALUE` or `Integer.MAX_VALUE` still fit strictly inside.
+
+```java
+static boolean isValid(Node node, long low, long high) {
+    if (node == null) return true;
+    if (node.key <= low || node.key >= high) return false;
+    return isValid(node.left, low, node.key) && isValid(node.right, node.key, high);
+}
+```
+
+**Answer.** `isValid(root, Long.MIN_VALUE, Long.MAX_VALUE)` is `false` for the example and `true` for the balanced tree of 1 to 7. Each node is checked once: $O(n)$ time, and $O(h)$ stack space for the recursion. For $n = 7$ that is at most 7 checks. An equivalent method checks that the in-order listing is strictly increasing.
+
+### 2. LeetCode 450: Delete Node in a BST (Medium)
+
+**Problem.** Delete the node with a given key from a BST and return the new root, in $O(h)$ time. Deleting 50 from the tree with keys 30, 40, 50, 60, 80, 90 (root 50, as in Level 6 after the first two deletions) makes 60 the new root.
+
+**Math first.** Write the deletion of key $x$ from the subtree at $v$ as a function:
+
+$$
+\operatorname{del}(v, x) =
+\begin{cases}
+\varnothing & v = \varnothing \\
+v \text{ with left} \leftarrow \operatorname{del}(\operatorname{left}(v), x) & x < k(v) \\
+v \text{ with right} \leftarrow \operatorname{del}(\operatorname{right}(v), x) & x > k(v) \\
+\operatorname{right}(v) & x = k(v),\ \operatorname{left}(v) = \varnothing \\
+\operatorname{left}(v) & x = k(v),\ \operatorname{right}(v) = \varnothing \\
+v \text{ with } k \leftarrow s,\ \text{right} \leftarrow \operatorname{del}(\operatorname{right}(v), s) & \text{otherwise, where } s = \min R(v)
+\end{cases}
+$$
+
+where:
+
+- $\varnothing$ is an empty subtree, so deleting a missing key changes nothing;
+- the second and third lines search, exactly as in Level 2;
+- the fourth and fifth lines are cases 1 and 2 (a leaf has both children empty and falls into the fourth line);
+- the last line is case 3, with $s$ the in-order successor.
+
+Example: $\operatorname{del}(50, 50)$. Both children exist, so $s = \min R(50) = \min \lbrace 80, 60, 90 \rbrace = 60$. The root's key becomes 60, then $\operatorname{del}(80, 60)$ goes left to the leaf 60 and returns $\varnothing$. The in-order listing is now $30, 40, 60, 80, 90$.
+
+**Idea.** The code is the formula line by line. The recursive calls return the new root of each subtree, and the parent stores it, so no parent pointers are needed.
+
+```java
+static Node delete(Node node, int key) {
+    if (node == null) return null;                         // key not found
+    if (key < node.key) node.left = delete(node.left, key);
+    else if (key > node.key) node.right = delete(node.right, key);
+    else if (node.left == null) return node.right;         // case 1 or 2: no left child
+    else if (node.right == null) return node.left;         // case 2: only a left child
+    else {                                                 // case 3: two children
+        node.key = min(node.right).key;                    // copy the successor up
+        node.right = delete(node.right, node.key);         // then remove the successor below
+    }
+    return node;
+}
+```
+
+**Answer.** Deleting 20, 70 and 50 from the Level 1 tree leaves root 60 and in-order $30, 40, 60, 80, 90$, still a valid BST. One walk down to the key, plus one walk down to the successor: $O(h)$ time and $O(h)$ stack. Deleting 50 visits 50, then 80 and 60 to find the successor, then 80 and 60 again to remove it: 5 node visits in a tree of height 2.
+
+### 3. LeetCode 1373: Maximum Sum BST in Binary Tree (Hard)
+
+**Problem.** A binary tree, not necessarily a BST, has integer keys. Among all subtrees that are valid BSTs, return the largest key sum; the empty tree counts, with sum 0. For the tree below the answer is 24.
+
+```text
+          5
+        /   \
+       4     8
+      / \   / \
+     3   6 7   9
+```
+
+**Math first.** A subtree is a BST exactly when both children are BSTs and the node fits between them. Each subtree reports four numbers to its parent:
+
+$$
+\operatorname{bst}(v) \iff \operatorname{bst}(L) \land \operatorname{bst}(R) \land \max(L) < k(v) < \min(R), \qquad \operatorname{sum}(v) = \operatorname{sum}(L) + k(v) + \operatorname{sum}(R)
+$$
+
+where:
+
+- $L$ and $R$ are $v$'s left and right subtrees;
+- $\max(L)$ is the largest key in $L$ and $\min(R)$ the smallest key in $R$, with $-\infty$ and $+\infty$ for an empty subtree;
+- $\operatorname{sum}(v)$ is the total of all keys in $v$'s subtree;
+- the answer is $\max\big(0, \max \lbrace \operatorname{sum}(v) : \operatorname{bst}(v) \rbrace\big)$.
+
+Example, bottom-up:
+
+- Leaves 3, 6, 7, 9 are BSTs with sums 3, 6, 7, 9.
+- Node 4: $\max(L) = 3 < 4 < 6 = \min(R)$, a BST with sum $3 + 4 + 6 = 13$.
+- Node 8: $7 < 8 < 9$, a BST with sum $7 + 8 + 9 = 24$.
+- Node 5: $\max(L) = 6$, and $6 < 5$ is false. Not a BST, even though both children are.
+
+The largest BST sum is $\max(3, 6, 7, 9, 13, 24) = $ **24**.
+
+**Idea.** One post-order pass: children first, then the node. Return a small record with the four facts; checking the whole subtree again at every node would cost $O(n^2)$.
+
+```java
+record Summary(boolean isBst, int min, int max, int sum) {}
+
+static int bestSum;
+
+static Summary summarize(Node node) {
+    if (node == null) return new Summary(true, Integer.MAX_VALUE, Integer.MIN_VALUE, 0);
+    Summary left = summarize(node.left), right = summarize(node.right);
+    if (left.isBst() && right.isBst() && left.max() < node.key && node.key < right.min()) {
+        int sum = left.sum() + node.key + right.sum();
+        bestSum = Math.max(bestSum, sum);
+        return new Summary(true, Math.min(left.min(), node.key), Math.max(right.max(), node.key), sum);
+    }
+    return new Summary(false, 0, 0, 0); // min, max and sum are never read once a subtree fails
+}
+
+static int maxSumBST(Node root) {
+    bestSum = 0; // the empty tree is a BST with sum 0
+    summarize(root);
+    return bestSum;
+}
+```
+
+The empty subtree reports $\min = +\infty$ and $\max = -\infty$ (as `Integer.MAX_VALUE` and `Integer.MIN_VALUE`), so every leaf passes the test.
+
+**Answer.** 24 for the example. For the tree $-4$ with children $-2$ and $-5$ every BST sum is negative, so the answer is the empty tree's **0**. Each node is summarised once with constant work: $O(n)$ time and $O(h)$ stack. For the 7-node example that is 7 summaries; for LeetCode's limit of 40,000 nodes, 40,000.
+
+## Mathematical Abstraction
+
+A binary search tree is a binary tree with one ordering rule at every node, and every operation follows one root-to-leaf path:
+
+$$
+\forall v : \max L(v) < k(v) < \min R(v), \qquad \text{cost} = O(h), \qquad \lceil \log_2(n + 1) \rceil - 1 \le h \le n - 1
+$$
+
+where:
+
+- $v$ ranges over all nodes, $k(v)$ is its key, and $L(v)$, $R(v)$ are the key sets of its left and right subtrees;
+- $h$ is the height in edges and $n$ the number of keys;
+- "cost" is the number of steps for search, insert, delete, floor and ceiling.
+
+Example: the keys 1 to 7 give $h = 2$ when inserted as $4, 2, 6, 1, 3, 5, 7$ and $h = 6$ when inserted in sorted order; the bounds are $\lceil \log_2 8 \rceil - 1 = 2$ and $7 - 1 = 6$. For a million keys the gap is about 20 versus 1,000,000 steps, which is why production code uses a self-balancing tree such as the red-black `TreeMap`, with height at most $2 \log_2(n + 1) \approx 40$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 12, "Binary Search Trees" (12.1 what a BST is, 12.2 querying, 12.3 insertion and deletion), and Chapter 13, "Red-Black Trees".
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §3.2 "Binary Search Trees" (floor, ceiling, Hibbard deletion, and the $2 \ln N$ average): <https://algs4.cs.princeton.edu/32bst/>; and §3.3 "Balanced Search Trees": <https://algs4.cs.princeton.edu/33balanced/>.
+- Thomas N. Hibbard, "Some Combinatorial Properties of Certain Trees With Applications to Searching and Sorting", *Journal of the ACM* 9(1):13–28 (1962), the early analysis of BSTs and the successor deletion.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 3, *Sorting and Searching*, §6.2.2 "Binary Tree Searching".
+- OpenJDK `java.util.TreeMap` (a red-black tree with `floorKey` and `ceilingKey`): <https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/TreeMap.html>.
+- LeetCode: [98. Validate Binary Search Tree](https://leetcode.com/problems/validate-binary-search-tree/), [450. Delete Node in a BST](https://leetcode.com/problems/delete-node-in-a-bst/), [1373. Maximum Sum BST in Binary Tree](https://leetcode.com/problems/maximum-sum-bst-in-binary-tree/).
+
+[← Binary Tree](../binary-tree/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Trie →](../trie/index.qmd)

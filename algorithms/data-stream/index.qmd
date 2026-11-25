@@ -1,61 +1,424 @@
 ---
 title: "Data Stream"
-description: "Understand Data Stream from a real problem, a worked numerical example, a proof invariant and original code."
+description: "Answering questions about data that never stops arriving: one-pass running mean, Welford's variance and why the textbook formula fails, sliding windows, top-k with a heap, sketches, and hard interview problems (two-heap median, disjoint intervals) solved math-first."
 ---
 
-## Start with one concrete problem
+A data stream is a sequence that arrives one value at a time and may never end: sensor readings, clicks, prices, log lines. We cannot store it all and we cannot go back. Instead we keep a small **state** and update it as each value arrives. This lesson builds that state for the mean, the spread, a window, the top $k$ and the median, and shows where the obvious formulas break.
 
-**LeetCode 295 — Find Median from Data Stream.** An online sequence whose state is updated as new items arrive.
+All code is in [`DataStreamLab.java`](DataStreamLab.java). Run it from this folder with `java DataStreamLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
-
-Keep all received values, resort the entire list after every insertion.
-
-### The one insight to remember
-
-An online algorithm preserves a compact state between arrivals. Two heaps can keep the smaller half and larger half so the median is available without full sorting.
-
-## Build the mathematical meaning from a small example
+A weather station sends one temperature reading per second. The first eight readings, in °C, are
 
 $$
-|\,|L|-|R|\,|\leq1
+x = 2,\ 4,\ 4,\ 4,\ 5,\ 5,\ 7,\ 9
 $$
 
-**What each symbol means:** L is the multiset in the lower max-heap and R the upper min-heap; |L| and |R| are their sizes. The outer absolute value means the size difference is at most one.
+where $x_t$ is the reading at second $t$. Example: $x_1 = 2$ and $x_8 = 9$.
 
-**Substitute actual values:** After receiving 2,9,5, the lower heap can contain {2,5} and upper {9}. Their sizes are 2 and 1, differing by 1, and the median is max(L)=5.
+After **every** reading the display must show the average so far, the spread (standard deviation), the average of the last 3 readings and the median.
 
-Do not move to implementation until you can explain this example without reading the formula.
+The obvious method keeps every reading and recomputes from scratch. Recomputing the mean after reading $n$ costs $n$ additions, so after a million readings (about 11.6 days) the total is $1 + 2 + \dots + 10^6 = \frac{10^6 \times (10^6 + 1)}{2} \approx 5 \times 10^{11}$ additions, and the memory grows forever. We want **constant work and constant memory per reading** wherever that is possible.
 
-## Design the algorithm in ordinary English
+## Explain it like I'm ten
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+::: {.callout-tip}
+A teacher marks tests as children hand them in, one at a time. She does not keep a pile of papers. She keeps a **sticky note** with two numbers: *how many tests so far* and *the average so far*. When a new test arrives she nudges the average a little toward the new score and rubs out the old number. The note never gets longer, however many children there are.
 
-**Correctness argument (the invariant):** Maintain all lower values ≤ all upper values and keep size difference at most one. The middle element(s) are then exactly the heap root(s).
+That sticky note is the **state** of a streaming algorithm. Each new value updates it; the value itself is thrown away.
 
-## Code you can run
+For the **middle** score (the median) a sticky note is not enough. Picture two piles of cards. The left pile holds the smaller half of the scores with its biggest card on top; the right pile holds the bigger half with its smallest card on top. Keep the piles the same height (the left may have one extra), and the middle score is always sitting on top of a pile.
 
-This example is best understood as a tiny state transformation. Implement the operation described above in JavaScript or Java, and check each reference or invariant after every step; the exact code is deliberately not replaced by a large framework.
+Donald Knuth's *The Art of Computer Programming*, Volume 2, teaches the sticky-note trick for the spread, which B. P. Welford published in 1962. It is Level 2 of this lesson.
+:::
 
-## Why it works, and how expensive it is
+## From simple to advanced
 
-Maintain all lower values ≤ all upper values and keep size difference at most one. The middle element(s) are then exactly the heap root(s).
+### Level 1: the running mean
 
-**Time and space:** O(log n) per insertion and O(1) median read using two heaps; n is number of observed values.
+The mean of the first $n$ readings can be updated from the previous mean, without the old readings:
 
-**Common mistake or limitation:** For streaming data, an algorithm that needs the entire final sequence before answering is an offline algorithm, not a truly online one.
+$$
+\mu_n = \mu_{n-1} + \frac{x_n - \mu_{n-1}}{n}, \qquad \mu_0 = 0
+$$
 
-## Try to explain it in an interview
+where:
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+- $\mu_n$ (mu) is the mean of the first $n$ readings;
+- $x_n$ is the new reading;
+- $x_n - \mu_{n-1}$ is how far the new reading is from the old mean;
+- dividing by $n$ moves the mean only a fraction of that distance, because the new reading is just one of $n$.
 
-## Reading and practice
+Example on our stream:
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 6 (heaps), Chapter 9 (order statistics) and Chapter 27 (online algorithms). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 295 — Find Median from Data Stream. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+| $n$ | $x_n$ | $\mu_n = \mu_{n-1} + (x_n - \mu_{n-1}) / n$ |
+| --- | --- | --- |
+| 1 | 2 | $0 + (2 - 0)/1 = 2$ |
+| 2 | 4 | $2 + (4 - 2)/2 = 3$ |
+| 3 | 4 | $3 + (4 - 3)/3 = 3.3333$ |
+| 4 | 4 | $3.3333 + (4 - 3.3333)/4 = 3.5$ |
+| 5 | 5 | $3.5 + (5 - 3.5)/5 = 3.8$ |
+| 6 | 5 | $3.8 + (5 - 3.8)/6 = 4$ |
+| 7 | 7 | $4 + (7 - 4)/7 = 4.4286$ |
+| 8 | 9 | $4.4286 + (9 - 4.4286)/8 = 5$ |
+
+Check: $(2 + 4 + 4 + 4 + 5 + 5 + 7 + 9)/8 = 40/8 = 5$. The state is one number plus the count.
+
+```java
+static double[] runningMeans(double[] stream) {
+    double[] means = new double[stream.length];
+    double mean = 0;
+    for (int n = 1; n <= stream.length; n++) {
+        mean += (stream[n - 1] - mean) / n;   // nudge the old mean toward the new value
+        means[n - 1] = mean;
+    }
+    return means;
+}
+```
+
+The lab stores every mean only so it can check them; a real stream would print each one and keep just `mean` and `n`. Keeping a running **sum** and dividing also works, but the sum can overflow an `int` or lose precision as a `double`, while the mean stays the size of the readings.
+
+### Level 2: the running variance, and a formula that lies
+
+The **population variance** is the average squared distance from the mean, and the standard deviation is its square root:
+
+$$
+\sigma^2 = \frac{1}{n} \sum_{i=1}^{n} (x_i - \mu_n)^2
+$$
+
+where:
+
+- $\sigma^2$ (sigma squared) is the variance and $\sigma$ the standard deviation;
+- $\sum_{i=1}^{n}$ adds over all $n$ readings;
+- $(x_i - \mu_n)^2$ is the squared distance of reading $i$ from the final mean.
+
+Example: with $\mu_8 = 5$ the squared distances are $9, 1, 1, 1, 0, 0, 4, 16$, which add to 32. So $\sigma^2 = 32 / 8 = 4$ and $\sigma = 2$ °C.
+
+That formula needs $\mu_n$ before it can start, so it takes two passes. Algebra offers a one-pass version, "the mean of the squares minus the square of the mean", $\sigma^2 = \overline{x^2} - \mu^2$:
+
+```java
+static double naiveVariance(double[] xs) {
+    double sum = 0, sumOfSquares = 0;
+    for (double x : xs) { sum += x; sumOfSquares += x * x; }
+    double mean = sum / xs.length;
+    return sumOfSquares / xs.length - mean * mean;
+}
+```
+
+It is correct algebra and bad arithmetic. Take four readings near one billion, $10^9 + 4$, $10^9 + 7$, $10^9 + 13$, $10^9 + 16$. Their true variance is $\frac{36 + 9 + 9 + 36}{4} = 22.5$. But each square is about $10^{18}$, and a `double` keeps only about 16 significant digits: near $10^{18}$, neighbouring doubles are **128 apart**. Subtracting two such huge, nearly equal numbers leaves only rounding error, and `naiveVariance` returns $-128$. A *negative* variance. On the small values $4, 7, 13, 16$ the same code returns the right 22.5.
+
+**Welford's method** carries $M_2$, the running sum of squared distances from the current mean, and corrects it with two small distances:
+
+$$
+M_{2,n} = M_{2,n-1} + (x_n - \mu_{n-1})(x_n - \mu_n), \qquad \sigma^2 = \frac{M_{2,n}}{n}, \qquad s^2 = \frac{M_{2,n}}{n - 1}
+$$
+
+where:
+
+- $M_{2,n}$ is $\sum_{i=1}^{n} (x_i - \mu_n)^2$, kept up to date without the old readings;
+- $x_n - \mu_{n-1}$ is the distance from the **old** mean and $x_n - \mu_n$ the distance from the **new** mean;
+- $\sigma^2$ is the population variance and $s^2$ the sample variance, which divides by $n - 1$.
+
+Example on our stream, using the means from Level 1:
+
+| $n$ | $x_n$ | $(x_n - \mu_{n-1})(x_n - \mu_n)$ | $M_{2,n}$ |
+| --- | --- | --- | --- |
+| 1 | 2 | $(2 - 0)(2 - 2) = 0$ | 0 |
+| 2 | 4 | $(4 - 2)(4 - 3) = 2$ | 2 |
+| 3 | 4 | $(4 - 3)(4 - 3.3333) = 0.6667$ | 2.6667 |
+| 4 | 4 | $(0.6667)(0.5) = 0.3333$ | 3 |
+| 5 | 5 | $(1.5)(1.2) = 1.8$ | 4.8 |
+| 6 | 5 | $(1.2)(1) = 1.2$ | 6 |
+| 7 | 7 | $(3)(2.5714) = 7.7143$ | 13.7143 |
+| 8 | 9 | $(4.5714)(4) = 18.2857$ | 32 |
+
+So $\sigma^2 = 32 / 8 = 4$, matching the two-pass answer, and $s^2 = 32 / 7 \approx 4.571$. Every number involved is a small distance, so nothing huge is subtracted: on the four readings near one billion, Welford returns exactly 22.5.
+
+```java
+static final class RunningStats {
+    long n;
+    double mean, m2;   // m2 = sum of squared distances from the current mean
+
+    void add(double x) {
+        n++;
+        double delta = x - mean;   // distance from the OLD mean
+        mean += delta / n;
+        m2 += delta * (x - mean);  // times the distance from the NEW mean
+    }
+
+    double populationVariance() { return m2 / n; }
+
+    double sampleVariance() { return m2 / (n - 1); }
+}
+```
+
+### Level 3: a sliding window
+
+"The average of the **last 3** readings" forgets old data on purpose. Keep the last $k$ values in a queue and a running sum; each step adds the newcomer and subtracts the value that falls out:
+
+$$
+S_n = S_{n-1} + x_n - x_{n-k}, \qquad \text{window mean} = \frac{S_n}{\min(n, k)}
+$$
+
+where:
+
+- $S_n$ is the sum of the last $k$ readings after reading $n$;
+- $x_{n-k}$ is the reading that leaves the window (taken as 0 while $n \le k$);
+- $\min(n, k)$ is the window size, smaller than $k$ only at the start.
+
+Example with $k = 3$: after 7 readings the window is $5, 5, 7$, so $S_7 = 17$ and the mean is $17/3 \approx 5.67$. Reading 8 is $9$ and the value leaving is $x_5 = 5$, so $S_8 = 17 + 9 - 5 = 21$ and the mean is $21 / 3 = 7$.
+
+```java
+double next(int x) {
+    window.add(x);
+    sum += x;
+    if (window.size() > k) sum -= window.poll();   // the oldest value leaves the window
+    return (double) sum / window.size();
+}
+```
+
+The memory is $k$ values, not $n$. This trick needs an **undo**: subtraction undoes addition. Products undo with division, which Interview problem 1 uses. The maximum has no undo, so a window maximum needs the [monotonic queue](../monotonic-queue/index.qmd) instead.
+
+### Level 4: the top $k$ with a small heap
+
+"What is the 3rd hottest reading so far?" needs more than one number, but not the whole stream. Keep only the $k$ largest values in a **min-heap** (see [heap](../heap-priority-queue/index.qmd)). Its top is the smallest of the top $k$, which is exactly the $k$-th largest. A new value enters; if the heap grows to $k + 1$, the smallest leaves, because it cannot be in the top $k$.
+
+$$
+\text{memory} = k, \qquad \text{comparisons} \approx n \log_2 k
+$$
+
+where:
+
+- $n$ is the number of readings so far and $k$ the rank we track;
+- $\log_2 k$ is the height of a heap of $k$ values, the cost of one insert or removal.
+
+Example: $k = 3$ on our stream. After $2, 4, 4$ the heap is $\lbrace 2, 4, 4 \rbrace$. The next 4 pushes out the 2. Then the 5s push out two 4s, 7 pushes out the last 4 and 9 pushes out a 5, leaving $\lbrace 5, 7, 9 \rbrace$: the 3rd largest is **5**, from 3 stored values instead of 8. At scale, $n = 10^6$ and $k = 10$ cost about $10^6 \times \log_2 10 \approx 3.3$ million comparisons, while a single sort of everything costs about $10^6 \times \log_2 10^6 \approx 20$ million.
+
+```java
+int add(int x) {
+    topK.add(x);
+    if (topK.size() > k) topK.poll();   // the smallest of k + 1 values cannot be in the top k
+    return topK.peek();
+}
+```
+
+Interview problem 2 puts **two** heaps back to back to track the median.
+
+### Level 5: when the exact answer does not fit, sketch it
+
+Some questions have no small exact state. "How often has each of a billion different user IDs appeared?" needs a counter per ID. Streaming systems answer approximately, with a **sketch**: a small, fixed-size summary with a guaranteed error.
+
+The **Count-Min sketch** (Cormode and Muthukrishnan, 2005) is a grid of counters with $d$ rows of $w$ counters and one hash function per row. Each arriving item adds 1 to one counter in every row; the estimate for an item is the **smallest** of its $d$ counters. Collisions only ever add, so it never underestimates, and with the right grid size it rarely overestimates by much:
+
+$$
+w = \left\lceil \frac{e}{\varepsilon} \right\rceil, \qquad d = \left\lceil \ln \frac{1}{\delta} \right\rceil, \qquad \hat{f} \le f + \varepsilon N \ \text{with probability at least } 1 - \delta
+$$
+
+where:
+
+- $f$ is an item's true count and $\hat{f}$ the sketch's estimate, with $\hat{f} \ge f$ always;
+- $N$ is the total number of items seen;
+- $\varepsilon$ (epsilon) is the allowed error as a fraction of $N$, and $\delta$ (delta) the allowed chance of exceeding it;
+- $e \approx 2.718$ and $\lceil \cdot \rceil$ rounds up.
+
+Example: $\varepsilon = 0.001$ and $\delta = 0.01$ give $w = \lceil 2718.3 \rceil = 2{,}719$ and $d = \lceil \ln 100 \rceil = \lceil 4.605 \rceil = 5$, so $5 \times 2{,}719 = 13{,}595$ counters, however many distinct IDs there are. After $N = 10^6$ events, each estimate is at most $0.001 \times 10^6 = 1{,}000$ too high, with 99% probability.
+
+A second classic is **reservoir sampling**: keep a uniform random sample of $k$ items from a stream of unknown length by keeping item $i$ with probability $k / i$. For $k = 1$ and $n = 4$, item 2 survives with probability $\frac{1}{2} \cdot \frac{2}{3} \cdot \frac{3}{4} = \frac{1}{4}$, the same as every other item. It has its own lesson, [reservoir sampling](../reservoir-sampling/index.qmd).
+
+## Why it works and what it costs
+
+**The running mean is exact.** Multiply the definition of the mean by $n$: $n\mu_n = (n - 1)\mu_{n-1} + x_n$. Divide by $n$ and rearrange: $\mu_n = \mu_{n-1} + (x_n - \mu_{n-1})/n$. Nothing is approximated; only the order of arithmetic changed.
+
+**Welford is exact too.** Write $M_{2,n} = \sum_{i \le n} x_i^2 - n\mu_n^2$. Then the change is $M_{2,n} - M_{2,n-1} = x_n^2 - n\mu_n^2 + (n-1)\mu_{n-1}^2$. Expand $(x_n - \mu_{n-1})(x_n - \mu_n)$ and replace $x_n$ by $n\mu_n - (n-1)\mu_{n-1}$ inside the cross terms; the $\mu_{n-1}\mu_n$ terms cancel and exactly $x_n^2 - n\mu_n^2 + (n-1)\mu_{n-1}^2$ remains. So by induction $M_{2,n}$ always equals the true sum of squared distances. The difference from the naive formula is only *how* the computer gets there: Welford multiplies small distances, the naive formula subtracts two huge, nearly equal numbers.
+
+**The window is exact** because every value is added once and subtracted once, after exactly $k$ later arrivals. **The top-$k$ heap is exact** by this invariant: *the heap holds the $k$ largest values seen so far.* A new value either belongs in the top $k$ (and the evicted minimum no longer does) or is itself the minimum and is evicted at once.
+
+**Costs per reading, on our stream:**
+
+| State | Memory | Time per reading | Our stream ($n = 8$) |
+| --- | --- | --- | --- |
+| running mean | 2 numbers | $O(1)$ | 8 updates in total |
+| Welford mean and variance | 3 numbers | $O(1)$ | 8 updates, $M_2 = 32$ |
+| window of $k$ | $k$ values | $O(1)$ | 3 stored values |
+| top $k$ heap | $k$ values | $O(\log k)$ | 3 stored values |
+| two-heap median (Interview 2) | all $n$ values | $O(\log n)$ | 8 stored values |
+| Count-Min sketch | $w \cdot d$ counters | $O(d)$ | fixed size, approximate |
+
+The exact median is the expensive one: in the worst case it must remember every value, because any one of them might become the middle later.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Variance as "mean of squares minus square of mean" | Garbage, even negative, variance on large values such as timestamps or prices | Welford's update |
+| Integer division in `sum / n` | Averages are truncated: $7 / 2 = 3$ | Cast to `double` before dividing |
+| Running `int` sum | Overflow after about $2.1 \times 10^9$ | Use `long`, or the running-mean update |
+| Mixing $n$ and $n - 1$ | Variance off by a factor $n/(n-1)$, large for small $n$ | Population $M_2/n$, sample $M_2/(n-1)$, and say which |
+| Two-heap median: adding straight to the smaller heap | The halves overlap, so the tops are not the middle | Pass every value through the other heap first |
+| `(a + b) / 2` with `int` heap tops | Overflow for large values, and $3/2 = 1$ | Divide by `2.0`, or use `long` |
+| Window product with a zero in it | Division by zero later | Reset the prefix products at each zero (Interview 1) |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 1352: Product of the Last K Numbers (Medium)
+
+**Problem.** Design a stream with `add(num)` for $0 \le$ `num` $\le 100$, and `getProduct(k)`, the product of the last $k$ numbers. Example: add $3, 0, 2, 5, 4$; then `getProduct(2)` $= 20$, `getProduct(3)` $= 40$, `getProduct(4)` $= 0$; add $8$; `getProduct(2)` $= 32$.
+
+**Math first.** Products undo with division, like sums undo with subtraction in Level 3. Keep prefix products **since the last zero**:
+
+$$
+P_0 = 1, \quad P_j = P_{j-1} \cdot x_j, \qquad \text{product of the last } k =
+\begin{cases}
+P_L / P_{L-k} & \text{if } k < L + 1 \text{, i.e. no zero inside} \\
+0 & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $x_j$ is the $j$-th number after the most recent zero, and $L$ is how many there are;
+- $P_j$ is the product $x_1 \cdots x_j$, so the list $P_0, \dots, P_L$ has $L + 1$ entries;
+- if $k \ge L + 1$, the last $k$ numbers reach back past the zero, so the product is 0.
+
+Example: after $3, 0, 2, 5, 4$ the zero wiped the list, leaving $P = 1, 2, 10, 40$ ($L = 3$). Then `getProduct(2)` $= 40 / 2 = 20$ (that is $5 \times 4$), `getProduct(3)` $= 40 / 1 = 40$, and `getProduct(4)`: $4 \ge 4$, so 0. Adding 8 appends $40 \times 8 = 320$, and `getProduct(2)` $= 320 / 10 = 32$.
+
+**Idea.** A zero would make every later prefix 0 and every later division impossible, so a zero simply clears the list back to $[1]$. A query that reaches past the start of the list must include that zero.
+
+```java
+static final class ProductOfNumbers {
+    final List<Integer> prefix = new ArrayList<>(List.of(1));   // prefix products since the last zero
+
+    void add(int x) {
+        if (x == 0) { prefix.clear(); prefix.add(1); }   // every window that contains the zero is 0
+        else prefix.add(prefix.get(prefix.size() - 1) * x);
+    }
+
+    int getProduct(int k) {
+        int n = prefix.size();
+        return k >= n ? 0 : prefix.get(n - 1) / prefix.get(n - 1 - k);
+    }
+}
+```
+
+**Answer.** $20, 40, 0$, then $32$. Both operations are $O(1)$; memory is $O(n)$ prefix products. LeetCode guarantees that every product of consecutive numbers fits in an `int`, which covers every prefix since the last zero.
+
+### 2. LeetCode 295: Find Median from Data Stream (Hard)
+
+**Problem.** Design `addNum(num)` and `findMedian()`, the median of all numbers so far (the mean of the two middle ones when the count is even). Example: add $5, 15, 1, 3$, asking for the median after each: $5, 10, 5, 4$.
+
+**Math first.** Split the numbers into a lower half $L$ (a max-heap) and an upper half $U$ (a min-heap), and keep two invariants:
+
+$$
+\max L \le \min U, \qquad \lvert L \rvert - \lvert U \rvert \in \lbrace 0, 1 \rbrace, \qquad
+\text{median} =
+\begin{cases}
+\max L & \text{if } \lvert L \rvert > \lvert U \rvert \\[2pt]
+\dfrac{\max L + \min U}{2} & \text{if } \lvert L \rvert = \lvert U \rvert
+\end{cases}
+$$
+
+where:
+
+- $L$ holds the smaller half and $U$ the larger half of everything seen;
+- $\max L$ and $\min U$ are the heap tops, each readable in $O(1)$;
+- $\lvert L \rvert$ is the size of $L$; the lower half may hold one extra value when the count is odd.
+
+Example: each new value goes into $L$, the top of $L$ moves to $U$, and if $U$ is now bigger its top moves back.
+
+| Add | $L$ after | $U$ after | Sizes | Median |
+| --- | --- | --- | --- | --- |
+| 5 | $\lbrace 5 \rbrace$ | $\lbrace \rbrace$ | 1, 0 | $\max L = 5$ |
+| 15 | $\lbrace 5 \rbrace$ | $\lbrace 15 \rbrace$ | 1, 1 | $(5 + 15)/2 = 10$ |
+| 1 | $\lbrace 1, 5 \rbrace$ | $\lbrace 15 \rbrace$ | 2, 1 | $\max L = 5$ |
+| 3 | $\lbrace 1, 3 \rbrace$ | $\lbrace 5, 15 \rbrace$ | 2, 2 | $(3 + 5)/2 = 4$ |
+
+Check the last row: sorted, the values are $1, 3, 5, 15$, and the middle two average to $(3 + 5)/2 = 4$.
+
+**Idea.** Routing every value through $L$ and then $U$ keeps the halves in order: whatever moves up is the largest of the lower side, so it never belongs below anything left behind. The final step only fixes the sizes.
+
+```java
+static final class MedianFinder {
+    final PriorityQueue<Integer> lower = new PriorityQueue<>(Comparator.reverseOrder());   // max-heap
+    final PriorityQueue<Integer> upper = new PriorityQueue<>();                            // min-heap
+
+    void addNum(int x) {
+        lower.add(x);
+        upper.add(lower.poll());                                    // the largest low value moves up
+        if (upper.size() > lower.size()) lower.add(upper.poll());   // lower may hold one extra
+    }
+
+    double findMedian() {
+        return lower.size() > upper.size() ? lower.peek() : (lower.peek() + upper.peek()) / 2.0;
+    }
+}
+```
+
+**Answer.** Medians $5, 10, 5, 4$, ending with $L = \lbrace 1, 3 \rbrace$ and $U = \lbrace 5, 15 \rbrace$. Each `addNum` does at most 3 heap insertions and 2 removals, each $O(\log n)$: for $n = 10^6$ values a heap is about $\log_2 10^6 \approx 20$ levels deep, so one `addNum` walks at most about $5 \times 20 = 100$ levels. `findMedian` is $O(1)$. Memory is $O(n)$, every value seen.
+
+**Follow-up.** If all values lie in $0..100$, replace the heaps by 101 counters and walk them to the middle: $O(1)$ memory in $n$ and at most 101 steps per query.
+
+### 3. LeetCode 352: Data Stream as Disjoint Intervals (Hard)
+
+**Problem.** Numbers arrive one at a time; `getIntervals()` returns the numbers seen so far as sorted, disjoint intervals of consecutive integers. Example: add $1, 3, 7, 2, 6$; the final answer is $[1, 3], [6, 7]$.
+
+**Math first.** The state is a set $\mathcal{I}$ of disjoint intervals with a gap between every two. A new value $x$ merges with every interval it touches or lies inside:
+
+$$
+I_{\text{new}} = [x, x] \cup \bigcup \lbrace [a, b] \in \mathcal{I} : a - 1 \le x \le b + 1 \rbrace
+$$
+
+where:
+
+- $[a, b]$ means all integers from $a$ to $b$;
+- $a - 1 \le x \le b + 1$ says $x$ is inside $[a, b]$ or right next to it;
+- because neighbouring intervals have a gap, at most two qualify: the one starting at or before $x$, and the one starting at $x + 1$.
+
+Example: after $1, 3, 7$ we have $\mathcal{I} = \lbrace [1,1], [3,3], [7,7] \rbrace$. Adding $x = 2$: $[1,1]$ qualifies ($0 \le 2 \le 2$) and $[3,3]$ qualifies ($2 \le 2 \le 4$), so they merge into $[1, 3]$. Adding $6$: only $[7,7]$ qualifies ($6 \le 6 \le 8$), giving $[6, 7]$.
+
+**Idea.** Store the intervals in a `TreeMap` from start to end (see [ordered set](../ordered-set/index.qmd)). `floorEntry(x)` finds the interval starting at or before $x$; the interval starting at `end + 1` is found directly by key.
+
+```java
+void addNum(int value) {
+    int start = value, end = value;
+    Map.Entry<Integer, Integer> left = intervals.floorEntry(value);
+    if (left != null && left.getValue() >= value - 1) {   // the interval on the left touches or covers value
+        start = left.getKey();
+        end = Math.max(end, left.getValue());
+    }
+    Integer rightEnd = intervals.remove(end + 1);          // an interval starting just after end
+    if (rightEnd != null) end = rightEnd;
+    intervals.put(start, end);
+}
+```
+
+**Answer.** $[1, 3], [6, 7]$. Adding a repeat such as 2 changes nothing, adding 5 extends $[6, 7]$ to $[5, 7]$, and then 4 bridges everything into $[1, 7]$. With $k$ intervals stored, `addNum` is $O(\log k)$ and `getIntervals` is $O(k)$; memory is $O(k)$, never more than the number of distinct values. This is the follow-up LeetCode asks about: when there are many merges, $k$ stays far below $n$.
+
+## Mathematical Abstraction
+
+Every streaming algorithm is a small state, an update rule and an answer read from the state:
+
+$$
+S_t = U(S_{t-1}, x_t), \qquad a_t = A(S_t), \qquad \lvert S_t \rvert \ll t
+$$
+
+where:
+
+- $x_t$ is the value arriving at time $t$, seen once and then discarded;
+- $S_t$ is the state after it, $U$ the update rule and $A$ the rule that reads the answer;
+- $\lvert S_t \rvert \ll t$ says the state is much smaller than the stream so far.
+
+Example: for Welford, $S = (n, \mu, M_2)$. From $S_7 = (7, 4.4286, 13.7143)$ and $x_8 = 9$: $n = 8$, $\mu = 4.4286 + (9 - 4.4286)/8 = 5$, and $M_2 = 13.7143 + (9 - 4.4286)(9 - 5) = 32$, so $A(S_8) = 32 / 8 = 4$, the variance. Three numbers summarise eight readings, or eight billion. When no small exact state exists, as for the median or for counts of a billion IDs, we either pay $O(n)$ memory (two heaps) or accept a bounded error (a sketch).
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 27, "Online Algorithms"; Chapter 6, "Heapsort" (§6.5 Priority queues); Chapter 9, "Medians and Order Statistics".
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §2.4 "Priority Queues", including heap-based top-$k$ over a stream: <https://algs4.cs.princeton.edu/24pq/>.
+- B. P. Welford, "Note on a Method for Calculating Corrected Sums of Squares and Products", *Technometrics* 4 (1962), 419–420.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 2, *Seminumerical Algorithms*, 3rd edition (1997), §4.2.2, which presents Welford's recurrence.
+- Graham Cormode and S. Muthukrishnan, "An Improved Data Stream Summary: The Count-Min Sketch and its Applications", *Journal of Algorithms* 55(1) (2005), 58–75.
+- LeetCode: [1352. Product of the Last K Numbers](https://leetcode.com/problems/product-of-the-last-k-numbers/), [295. Find Median from Data Stream](https://leetcode.com/problems/find-median-from-data-stream/), [352. Data Stream as Disjoint Intervals](https://leetcode.com/problems/data-stream-as-disjoint-intervals/).
+
+[← Graph Theory](../graph-theory/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Iterator →](../iterator/index.qmd)

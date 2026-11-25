@@ -28,8 +28,15 @@ jobs:
         run: node --test system-design/microservices/examples/shop-lab.test.mjs
       - name: Verify LeetCode algorithm taxonomy
         run: node --test algorithms/check-catalog.test.mjs
-      - name: Verify depth and numeric explanations in all 73 algorithms lessons
+      - name: Verify every algorithms lesson (structure, worked formulas, code taken from its lab)
         run: node --test algorithms/check-depth.test.mjs
+      - name: Install Java 25 for the algorithm labs
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Run every algorithm lab (Java, SQL and Bash) and require OK
+        run: node --test algorithms/check-labs.test.mjs
       - name: Test original executable algorithm examples
         run: node --test algorithms/examples/patterns.test.mjs
       - name: Test AI mathematics examples

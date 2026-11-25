@@ -1,69 +1,410 @@
 ---
 title: "Heap (Priority Queue)"
-description: "Understand Heap (Priority Queue) from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a hospital waiting room to java.util.PriorityQueue: a complete binary tree stored in an array, parent and child index arithmetic, sift-up and sift-down traces, bottom-up heapify in O(n) with the counting proof, comparators, top-k with a size-k heap, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A priority queue always hands you the **most urgent** item next, not the oldest. A binary heap delivers that with a clever trick: a tree drawn level by level and stored in a plain array, where every parent is at most its children. Adding or removing an item touches only one path from the root to a leaf, about $\log_2 n$ steps. This lesson builds a heap from the index arithmetic up, traces every swap, proves that building a heap from scratch costs only $O(n)$, and then uses Java's `PriorityQueue` for top-$k$ selection and three interview problems.
 
-**LeetCode 215 — Kth Largest Element in an Array.** A priority-based structure supporting efficient minimum or maximum extraction.
+All code is in [`HeapPriorityQueueLab.java`](HeapPriorityQueueLab.java). Run it from this folder with `java HeapPriorityQueueLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A hospital emergency room assigns each arriving patient an urgency number, where 1 is the most urgent. Patients arrive with urgencies $5, 1, 9, 3$, then more keep coming, and the doctor repeatedly asks "who is the most urgent patient now?"
 
-Sort every element even though only the k-th rank is needed, or rescan the full array for each extracted maximum.
+- An unsorted list: arriving is $O(1)$, but finding and removing the most urgent costs a full scan, $O(n)$.
+- A sorted list: the most urgent is at the front, but each arrival must be inserted in order, $O(n)$ shifts.
+- A binary heap: **both** operations cost $O(\log n)$. With $n = 1{,}000{,}000$ waiting items that is about 20 steps instead of a million.
 
-### The one insight to remember
+## Explain it like I'm ten
 
-A heap stores a partial order: the root is extreme, although sibling subtrees are not globally sorted.
+::: {.callout-tip}
+Think of a club where every boss must be **older** than the people directly under them. The oldest person is therefore always at the very top. That is the heap rule, turned upside down for a min-heap: every parent is *smaller* than its children, so the smallest number is always at the root.
 
-## Build the mathematical meaning from a small example
+When a new member joins, they start at the bottom. If they are older than their boss, they swap places, and keep swapping upwards until the rule holds again. That is **sift-up**. When the top person leaves, the newest member at the bottom is moved into the empty top seat, then swaps downwards with the older of their two helpers until the rule holds. That is **sift-down**.
+
+A hospital triage desk works the same way: the most urgent patient is seen first, however long the others have waited. J. W. J. Williams invented the array heap in 1964 (*Algorithm 232: Heapsort*), and Robert W. Floyd showed the same year (*Algorithm 245: Treesort 3*) how to turn a whole array into a heap from the bottom up, the trick in Level 4.
+:::
+
+## From simple to advanced
+
+### Level 1: a complete binary tree in an array
+
+Draw a binary tree level by level, left to right, with no gaps except at the end of the last level. That is a **complete** binary tree. Number the nodes in that reading order, starting at 0, and store node $i$ in `a[i]`. No links are needed, because family relations are arithmetic:
 
 $$
-key(parent(v))\leq key(v)
+\operatorname{parent}(i) = \left\lfloor \frac{i - 1}{2} \right\rfloor, \qquad \operatorname{left}(i) = 2i + 1, \qquad \operatorname{right}(i) = 2i + 2, \qquad h = \lfloor \log_2 n \rfloor
 $$
 
-**What each symbol means:** For a min-heap, key(v) is a node's priority and parent(v) its direct parent; each parent key is at most its child key.
+where:
 
-**Substitute actual values:** Values [2,7,3] form a valid min-heap with root 2 and children 7 and 3, because 2≤7 and 2≤3; children need not be ordered relative to each other.
+- $i$ is a node's index in the array, with the root at 0;
+- $\lfloor \cdot \rfloor$ rounds down, which is what Java's integer division does for non-negative numbers;
+- $n$ is the number of nodes and $h$ the height of the tree, the number of edges from the root to the deepest leaf.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: node $i = 4$ has parent $\lfloor 3/2 \rfloor = 1$ and children $2 \times 4 + 1 = 9$ and $2 \times 4 + 2 = 10$. The root's children are 1 and 2, and both have parent $\lfloor 0/2 \rfloor = \lfloor 1/2 \rfloor = 0$. A heap of $n = 10$ nodes has height $\lfloor \log_2 10 \rfloor = 3$.
 
-## Design the algorithm in ordinary English
+```java
+static int parent(int i) {
+    return (i - 1) / 2;
+}
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+static int left(int i) {
+    return 2 * i + 1;
+}
 
-**Correctness argument (the invariant):** After insertion or root removal, sift up/down fixes each violated parent-child relation along one tree path, restoring the heap invariant.
+static int right(int i) {
+    return 2 * i + 2;
+}
+```
 
-## Code you can run
+A **min-heap** adds one rule, the *heap property*: $a[\operatorname{parent}(i)] \le a[i]$ for every $i \ge 1$. So the minimum is always `a[0]`. The array `[1, 3, 2, 7, 4, 5]` is a min-heap:
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `quickselect`. Its use can be reduced to:
+```text
+        1
+      /   \
+     3     2
+    / \   /
+   7   4 5
+```
 
-~~~js
-import { quickselect } from '../examples/patterns.mjs';
+A **max-heap** reverses the rule, putting the maximum at the root. A heap is *not* sorted: 3 sits above 7 and 4, yet it is larger than 2 on the other side, and the two children of a node can be in either order. The lab's heap class starts like this:
 
-console.log(quickselect([8,2,7,1,9],2));
-~~~
+```java
+static final class MinHeap {
+    int[] a;
+    int size;
+    int swaps;                                     // counted so the lab can check the analysis
+```
 
-Save the snippet inside the `algorithms/heap-priority-queue/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+### Level 2: insert with sift-up
 
-## Why it works, and how expensive it is
+Put the new value in the first free slot, `a[size]`, which keeps the tree complete. It may be smaller than its parent, so swap it upwards until it is not:
 
-After insertion or root removal, sift up/down fixes each violated parent-child relation along one tree path, restoring the heap invariant.
+$$
+\text{while } i > 0 \text{ and } a[i] < a[\operatorname{parent}(i)]: \quad \operatorname{swap}(i, \operatorname{parent}(i)), \;\; i \leftarrow \operatorname{parent}(i)
+$$
 
-**Time and space:** O(log n) insertion and removal on a binary heap, O(1) peek, O(n) heap construction; n is heap size.
+where:
 
-**Common mistake or limitation:** The entire heap array is NOT sorted. Searching for an arbitrary item may still require O(n) scans.
+- $i$ starts at the new value's slot;
+- each swap moves the value one level up, so there are at most $h = \lfloor \log_2 n \rfloor$ swaps;
+- only the values on one root-to-leaf path change.
 
-## Try to explain it in an interview
+Example: insert 0 into `[1, 3, 2, 7, 4, 5]`. It goes to index 6, whose parent is $\lfloor 5/2 \rfloor = 2$, holding 2. Since $0 < 2$, swap: 0 is now at index 2. Its parent is index 0, holding 1. Since $0 < 1$, swap: 0 reaches the root. The heap is `[0, 3, 1, 7, 4, 5, 2]`, after **2** swaps, and $2 \le \lfloor \log_2 7 \rfloor = 2$.
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+```java
+    void offer(int x) {
+        if (size == a.length) a = Arrays.copyOf(a, 2 * size);
+        a[size] = x;
+        siftUp(size++);
+    }
 
-## Reading and practice
+    void siftUp(int i) {
+        while (i > 0 && a[i] < a[parent(i)]) {     // smaller than its parent: move up
+            swap(i, parent(i));
+            i = parent(i);
+        }
+    }
+```
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 6 (heaps and priority queues) and Chapter 9 (selection). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 215 — Kth Largest Element in an Array. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+### Level 3: remove the minimum with sift-down
+
+The minimum is `a[0]`. Removing it leaves a hole at the root. Fill it with the **last** element, which keeps the tree complete, then let that element sink: swap it with its **smaller** child while it is larger than that child.
+
+$$
+c = \arg\min \lbrace a[\operatorname{left}(i)], a[\operatorname{right}(i)] \rbrace, \qquad \text{swap } i \text{ and } c \text{ while } a[i] > a[c]
+$$
+
+where:
+
+- $c$ is the index of the smaller child (ignoring a right child that does not exist);
+- swapping with the **smaller** child is essential: that child becomes the parent of the other, so it must be the smaller one;
+- each swap moves down one level, so there are at most $h$ swaps.
+
+Example: poll from `[0, 3, 1, 7, 4, 5, 2]`. Return 0, and move the last element, 2, to the root: `[2, 3, 1, 7, 4, 5]`. The children of index 0 hold 3 and 1; the smaller is 1 at index 2, and $2 > 1$, so swap: `[1, 3, 2, 7, 4, 5]`. Index 2 has one child, 5 at index 5, and $2 \le 5$, so stop. **One** swap, and we are back to the Level 1 heap.
+
+```java
+    int poll() {
+        if (size == 0) throw new NoSuchElementException("heap is empty");
+        int min = a[0];
+        a[0] = a[--size];                          // the last leaf fills the hole at the root
+        siftDown(0);
+        return min;
+    }
+
+    void siftDown(int i) {
+        while (left(i) < size) {
+            int child = left(i);
+            if (child + 1 < size && a[child + 1] < a[child]) child++;   // the smaller child
+            if (a[i] <= a[child]) return;
+            swap(i, child);
+            i = child;
+        }
+    }
+```
+
+Polling everything from a heap returns the values in sorted order: `1, 2, 3, 4, 5, 7`. That is **heapsort**, $O(n \log n)$; CLRS Chapter 6 does it in place with a max-heap.
+
+### Level 4: build a heap in O(n), bottom up
+
+Inserting $n$ values one at a time can cost $\sum \lfloor \log_2 i \rfloor$ swaps, about $n \log_2 n$. Floyd's method is faster: put all values into the array as they are, then sift **down** every node that has children, from the last such node back to the root. Leaves, half of all nodes, need no work, and the nodes that sink far are few.
+
+```java
+    MinHeap(int[] values) {                        // Level 4: bottom-up heapify
+        a = values.clone();
+        size = a.length;
+        for (int i = size / 2 - 1; i >= 0; i--) siftDown(i);
+    }
+```
+
+A node of height $k$ (it can sink at most $k$ levels) costs at most $k$ swaps, and there are at most $\lceil n / 2^{k+1} \rceil$ such nodes:
+
+$$
+\text{swaps} \le \sum_{k=0}^{h} \left\lceil \frac{n}{2^{k+1}} \right\rceil k \;\approx\; \frac{n}{2} \sum_{k=0}^{\infty} \frac{k}{2^{k}} = \frac{n}{2} \times 2 = n
+$$
+
+where:
+
+- $k$ is a node's height above the leaves;
+- $\lceil n / 2^{k+1} \rceil$ bounds how many nodes have height $k$: about half the nodes are leaves ($k = 0$), a quarter have $k = 1$, and so on;
+- $\sum_{k \ge 0} k / 2^k = \frac{1}{2} + \frac{2}{4} + \frac{3}{8} + \dots = 2$ is a standard series.
+
+Example: $n = 15$ values in descending order, $15, 14, \dots, 1$, the worst case for a min-heap. The tree is perfect with height 3: 8 leaves ($k = 0$), 4 nodes with $k = 1$, 2 with $k = 2$ and the root with $k = 3$. Every node sinks all the way, so heapify makes $8 \times 0 + 4 \times 1 + 2 \times 2 + 1 \times 3 = 11$ swaps, within $n = 15$. Inserting the same values one by one makes every value rise to the root: $2 \times 1 + 4 \times 2 + 8 \times 3 = 34$ swaps. In fact the heights of all nodes add up to exactly $n$ minus the number of 1 bits in $n$; for $15 = 1111_2$ that is $15 - 4 = 11$. The lab checks this for every $n$ up to 2,000.
+
+`new PriorityQueue<>(collection)` uses this bottom-up `heapify` internally.
+
+### Level 5: `java.util.PriorityQueue` and comparators
+
+Java's `PriorityQueue<E>` is a binary min-heap in a resizable array: `offer` and `poll` are $O(\log n)$, `peek` is $O(1)$. A **comparator** decides what "smallest" means:
+
+```java
+PriorityQueue<Integer> min = new PriorityQueue<>(List.of(5, 1, 9, 3));
+PriorityQueue<Integer> max = new PriorityQueue<>(Collections.reverseOrder());
+max.addAll(List.of(5, 1, 9, 3));
+```
+
+```java
+PriorityQueue<int[]> byFirst = new PriorityQueue<>(Comparator.comparingInt(p -> p[0]));
+```
+
+`min.peek()` is 1 and `max.peek()` is 9; `byFirst` orders pairs by their first number. A comparator returns a negative number when its first argument should come first. The shortcut `(x, y) -> x - y` is a trap, because subtraction can overflow:
+
+$$
+m - 1 = -2^{31} - 1 \equiv 2^{31} - 1 \pmod{2^{32}}
+$$
+
+where:
+
+- $m = -2^{31} = -2{,}147{,}483{,}648$ is `Integer.MIN_VALUE`, the smallest `int`;
+- Java `int` arithmetic wraps around modulo $2^{32}$, so one below the smallest value is the largest, $2{,}147{,}483{,}647$;
+- a positive result tells the heap that `MIN_VALUE` is **larger** than 1.
+
+Example: with `(x, y) -> x - y`, a queue holding 1 and `Integer.MIN_VALUE` reports 1 as its minimum, which is wrong. `Integer::compare` gives the right answer. Two more facts: iterating over a `PriorityQueue`, or printing it, shows the **array** order, not sorted order; and `remove(Object)` or `contains` costs $O(n)$, because a heap cannot search.
+
+### Level 6: top-$k$ with a heap of size $k$
+
+To find the $k$ largest of $n$ values, keep a **min**-heap of at most $k$ values. Each new value goes in; if the heap grows to $k + 1$, the smallest is thrown out. The survivors are the $k$ largest so far, and the root is the $k$-th largest:
+
+$$
+\text{time} = O(n \log k), \qquad \text{space} = O(k)
+$$
+
+where:
+
+- $n$ is the number of values processed, which may arrive as an endless stream;
+- $k$ is how many of the largest values to keep;
+- each value costs one `offer` and at most one `poll` on a heap of size at most $k + 1$.
+
+Example: values $5, 1, 9, 3, 7, 6$ with $k = 3$. The heap goes $\lbrace 5 \rbrace$, $\lbrace 1, 5 \rbrace$, $\lbrace 1, 5, 9 \rbrace$, then $3$ enters and the smallest, 1, leaves: $\lbrace 3, 5, 9 \rbrace$; $7$ pushes out 3: $\lbrace 5, 7, 9 \rbrace$; $6$ pushes out 5: $\lbrace 6, 7, 9 \rbrace$. The root, **6**, is the 3rd largest. For $n = 10^6$ and $k = 10$, each step costs about $\log_2 10 \approx 3.3$ levels instead of $\log_2 10^6 \approx 20$ for a heap of everything.
+
+```java
+static int kthLargest(int[] values, int k) {
+    PriorityQueue<Integer> largest = new PriorityQueue<>();    // a min-heap of at most k values
+    for (int v : values) {
+        largest.offer(v);
+        if (largest.size() > k) largest.poll();    // drop the smallest of the k + 1
+    }
+    return largest.peek();
+}
+```
+
+It feels backwards, a **min**-heap to keep the **largest**, but the heap's job is to expose the weakest member, the one to throw out. When all values are known in advance, quickselect finds the $k$-th largest in $O(n)$ average time; see the [Quickselect](../quickselect/index.qmd) lesson.
+
+## Why it works and what it costs
+
+**The heap property is restored after every operation.** Sift-up: before each step, the only pair that may break the rule is the moving value and its parent; swapping fixes that pair and can only create a problem one level higher, which the loop checks next. At the root, nothing is left to check. Sift-down: before each step, the only possible violation is between the moving value and its children; swapping with the smaller child makes that child a valid parent of both, and the possible violation moves one level down. At a leaf, nothing is left. Since a valid heap's minimum is at the root, `peek` and `poll` are correct.
+
+**Heapify is correct** by induction from the bottom: when `siftDown(i)` runs, both subtrees of $i$ are already heaps, because their roots have larger indices and were processed earlier (leaves are heaps on their own). Sifting $i$ down then makes the subtree at $i$ a heap.
+
+**Costs**, for a heap of $n$ elements:
+
+| Operation | Binary heap | Sorted array | Unsorted array |
+| --- | --- | --- | --- |
+| `peek` the minimum | $O(1)$ | $O(1)$ | $O(n)$ |
+| `offer` | $O(\log n)$ | $O(n)$ | $O(1)$ |
+| `poll` the minimum | $O(\log n)$ | $O(1)$ from the end | $O(n)$ |
+| build from $n$ values | $O(n)$ bottom-up | $O(n \log n)$ | $O(1)$ |
+| search or remove an arbitrary value | $O(n)$ | $O(\log n)$ search, $O(n)$ remove | $O(n)$ |
+
+For $n = 7$ the height is $\lfloor \log_2 7 \rfloor = 2$, matching the 2 swaps of the Level 2 example.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Comparator `(x, y) -> x - y` | Wrong order once values are near `Integer.MIN_VALUE` or `MAX_VALUE` | `Integer::compare`, `Comparator.comparingInt`, `Collections.reverseOrder()` |
+| Expecting a `PriorityQueue` to iterate or print in sorted order | `[1, 3, 2, 7, 4, 5]` instead of `[1, 2, 3, 4, 5, 7]` | `poll()` repeatedly, or sort a copy |
+| Sift-down swapping with the left child always | The heap property breaks when the right child is smaller | Swap with the **smaller** child |
+| Using a max-heap to keep the top $k$ largest | $O(n \log n)$ and $O(n)$ memory | A min-heap capped at $k$ elements |
+| Changing an element's priority while it is inside the heap | It is never re-sifted, so `poll` returns the wrong element | Remove and re-insert, or insert a new entry and skip stale ones on `poll` |
+| `parent(i) = i / 2` with a 0-based array | Wrong parents: node 2's parent becomes 1 | $\lfloor (i - 1)/2 \rfloor$ for 0-based; $\lfloor i/2 \rfloor$ only for 1-based |
+| Building with $n$ inserts when all values are known | $O(n \log n)$ instead of $O(n)$ | Floyd's bottom-up heapify, or `new PriorityQueue<>(collection)` |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 1642: Furthest Building You Can Reach (Medium)
+
+**Problem.** You walk from building 0 along `heights`. Going down is free; going up by $d$ costs either $d$ bricks or one ladder. Return the furthest building index you can reach. For `heights = [4, 2, 7, 6, 9, 14, 12]`, 5 bricks and 1 ladder, the answer is 4.
+
+**Math first.** Let $c_1, c_2, \dots$ be the upward climbs met so far. Ladders should cover the **largest** climbs, so with $L$ ladders the bricks needed are
+
+$$
+\text{bricks needed} = \sum_t c_t - \big(\text{sum of the } L \text{ largest } c_t\big), \qquad \text{reachable} \iff \text{bricks needed} \le B
+$$
+
+where:
+
+- $c_t > 0$ is the height of the $t$-th upward step;
+- $L$ is the number of ladders and $B$ the number of bricks;
+- the climbs not among the $L$ largest are paid in bricks.
+
+Example: the climbs are $2 \to 7$: $c_1 = 5$; $6 \to 9$: $c_2 = 3$; $9 \to 14$: $c_3 = 5$. Up to building 4 (height 9), bricks needed $= (5 + 3) - 5 = 3 \le 5$: reachable. Up to building 5, bricks needed $= (5 + 3 + 5) - 5 = 8 > 5$: not reachable. So the answer is **4**.
+
+**Idea.** Keep the climbs assigned to ladders in a min-heap of size at most $L$ (Level 6 with $k = L$). When it overflows, the smallest climb in it is the cheapest to pay in bricks.
+
+```java
+static int furthestBuilding(int[] heights, int bricks, int ladders) {
+    PriorityQueue<Integer> ladderClimbs = new PriorityQueue<>();   // the largest climbs, smallest on top
+    for (int i = 0; i + 1 < heights.length; i++) {
+        int climb = heights[i + 1] - heights[i];
+        if (climb <= 0) continue;
+        ladderClimbs.offer(climb);
+        if (ladderClimbs.size() > ladders) bricks -= ladderClimbs.poll();  // the smallest climb costs bricks
+        if (bricks < 0) return i;
+    }
+    return heights.length - 1;
+}
+```
+
+**Answer.** 4 for the example; 7 for `[4, 12, 2, 7, 3, 18, 20, 3, 19]` with 10 bricks and 2 ladders; 3 for `[14, 3, 19, 3]` with 17 bricks and no ladder. For $n$ buildings: $O(n \log L)$ time and $O(L)$ space.
+
+### 2. LeetCode 23: Merge k Sorted Lists (Hard)
+
+**Problem.** Merge $k$ sorted linked lists into one sorted list. For `[[1,4,5], [1,3,4], [2,6]]` the answer is `[1,1,2,3,4,4,5,6]`.
+
+**Math first.** The next node of the output is always the smallest of the $k$ current list heads:
+
+$$
+\text{next} = \arg\min_{1 \le j \le k} \operatorname{head}_j, \qquad \text{time} = O(N \log k)
+$$
+
+where:
+
+- $\operatorname{head}_j$ is the first unused node of list $j$;
+- $N$ is the total number of nodes in all lists;
+- a min-heap of the $k$ heads gives the $\arg\min$ in $O(\log k)$, and each node enters and leaves it exactly once.
+
+Example: $k = 3$ heads $1, 1, 2$. Take a 1, and its successor 4 joins: heads $1, 2, 4$. Take 1, then 3 joins: $2, 3, 4$. Continuing gives $1, 1, 2, 3, 4, 4, 5, 6$, with $N = 8$ polls on a heap of at most 3. Scanning all $k$ heads each time instead costs $N \cdot k$ comparisons. With LeetCode's limits, $N = k = 10^4$, that is $10^8$, against about $10^4 \times \log_2 10^4 \approx 1.3 \times 10^5$ heap steps.
+
+**Idea.** Put every non-empty head into a `PriorityQueue` ordered by value. Poll the smallest, attach it to the output (a dummy-head list, as in the [Linked List](../linked-list/index.qmd) lesson), and offer its successor.
+
+```java
+static ListNode mergeKLists(ListNode[] lists) {
+    PriorityQueue<ListNode> heads = new PriorityQueue<>(Comparator.comparingInt(n -> n.val));
+    for (ListNode head : lists) {
+        if (head != null) heads.offer(head);
+    }
+    ListNode dummy = new ListNode(0, null), tail = dummy;
+    while (!heads.isEmpty()) {
+        ListNode smallest = heads.poll();
+        tail = tail.next = smallest;
+        if (smallest.next != null) heads.offer(smallest.next);  // its list's new head joins the heap
+    }
+    return dummy.next;
+}
+```
+
+**Answer.** `[1,1,2,3,4,4,5,6]`, and `null` for an empty array or an array of empty lists. $O(N \log k)$ time and $O(k)$ extra space; no node is copied. Merging the lists in pairs, like merge sort, achieves the same $O(N \log k)$ without a heap.
+
+### 3. LeetCode 502: IPO (Hard)
+
+**Problem.** You start with capital $w$ and may finish at most $k$ projects. Project $i$ needs capital $c_i$ to start and adds profit $p_i \ge 0$ to your capital. Maximise the final capital. For $k = 2$, $w = 0$, profits `[1, 2, 3]` and capital `[0, 1, 1]`, the answer is 4.
+
+**Math first.** Because profits are never negative, capital never falls, so the set of affordable projects only grows. The best move is always the most profitable affordable project:
+
+$$
+w_{t+1} = w_t + \max \lbrace\, p_i : c_i \le w_t,\; i \text{ not yet done} \,\rbrace, \qquad t = 0, 1, \dots, k - 1
+$$
+
+where:
+
+- $w_t$ is the capital after $t$ projects, with $w_0 = w$;
+- the maximum runs over projects you can afford now; if there are none, stop early;
+- **exchange argument:** if an optimal plan picked a smaller profit now, swapping in the larger one leaves at least as much capital at every later step, so it can still afford everything the plan does.
+
+Example: $w_0 = 0$. Only project 0 ($c = 0$) is affordable, so $w_1 = 0 + 1 = 1$. Now projects 1 and 2 ($c = 1$) are affordable, with profits 2 and 3; take 3: $w_2 = 1 + 3 = $ **4**.
+
+**Idea.** Sort the projects by required capital. Keep a **max**-heap of the profits of projects that have become affordable. Each round, move every newly affordable project into the heap, then take the largest profit.
+
+```java
+static int findMaximizedCapital(int k, int w, int[] profits, int[] capital) {
+    int n = profits.length;
+    Integer[] byCapital = new Integer[n];
+    for (int i = 0; i < n; i++) byCapital[i] = i;
+    Arrays.sort(byCapital, Comparator.comparingInt(i -> capital[i]));
+    PriorityQueue<Integer> affordable = new PriorityQueue<>(Collections.reverseOrder());  // largest profit on top
+    int next = 0;
+    for (int round = 0; round < k; round++) {
+        while (next < n && capital[byCapital[next]] <= w) affordable.offer(profits[byCapital[next++]]);
+        if (affordable.isEmpty()) break;           // nothing left that we can afford
+        w += affordable.poll();
+    }
+    return w;
+}
+```
+
+**Answer.** 4 for the example; 6 for $k = 3$, profits `[1, 2, 3]`, capital `[0, 1, 2]` (take $1$, then $2$, then $3$); 0 when the only project needs capital 1 and you have 0. Sorting costs $O(n \log n)$ and each project enters and leaves the heap at most once: $O(n \log n + k \log n)$ time, $O(n)$ space.
+
+## Mathematical Abstraction
+
+A binary heap is a complete binary tree laid out in an array, ordered along every root-to-leaf path:
+
+$$
+a[\lfloor (i - 1)/2 \rfloor] \le a[i] \;\; \text{for } 1 \le i < n, \qquad
+\text{cost} =
+\begin{cases}
+O(1) & \text{peek} \\
+O(\log n) & \text{offer, poll: at most } \lfloor \log_2 n \rfloor \text{ swaps} \\
+O(n) & \text{bottom-up build: at most } n \text{ swaps}
+\end{cases}
+$$
+
+where:
+
+- $a$ is the array and $n$ the number of elements;
+- $\lfloor (i - 1)/2 \rfloor$ is the parent of index $i$, so the inequality is the min-heap property;
+- the costs count swaps along a single path, or summed over all nodes for the build.
+
+Example: in `[1, 3, 2, 7, 4, 5]`, index 4 holds 4 and its parent $\lfloor 3/2 \rfloor = 1$ holds $3 \le 4$; every other pair checks the same way, so the minimum 1 sits at the root. Inserting 0 takes $2 = \lfloor \log_2 7 \rfloor$ swaps, and heapifying 15 descending values takes $11 \le 15$ swaps.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 6, "Heapsort": 6.1 "Heaps", 6.2 "Maintaining the heap property", 6.3 "Building a heap", 6.4 "The heapsort algorithm", 6.5 "Priority queues". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §2.4 "Priority Queues" (binary heaps, heapsort, `MinPQ` in Java): <https://algs4.cs.princeton.edu/24pq/>.
+- J. W. J. Williams, "Algorithm 232: Heapsort", *Communications of the ACM* 7(6), 1964, pp. 347–348; Robert W. Floyd, "Algorithm 245: Treesort 3", *Communications of the ACM* 7(12), 1964, p. 701.
+- OpenJDK `java.util.PriorityQueue` (`heapify`, `siftUp`, `siftDown`): <https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/PriorityQueue.java>.
+- LeetCode: [1642. Furthest Building You Can Reach](https://leetcode.com/problems/furthest-building-you-can-reach/), [23. Merge k Sorted Lists](https://leetcode.com/problems/merge-k-sorted-lists/), [502. IPO](https://leetcode.com/problems/ipo/).
+
+[← Queue](../queue/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Ordered Set →](../ordered-set/index.qmd)

@@ -1,69 +1,498 @@
 ---
 title: "Tree"
-description: "Understand Tree from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From family trees to rerooting: root, parent, leaf, depth, height and subtree, why n nodes always have n − 1 edges, parent arrays and child lists, answers that flow up from the leaves, the rerooting trick that answers for every root in O(n), and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A tree is the shape of a family tree, a company chart or the folders on your computer: one top, branches spreading downwards, and no loops. This lesson names every part, proves the one counting fact everything rests on ($n$ nodes always have $n - 1$ edges), shows how to store a tree in plain arrays, and finishes with **rerooting**, a trick that answers a question for all $n$ possible roots in the time it takes to answer it for one.
 
-**LeetCode 104 — Maximum Depth of Binary Tree.** A connected, acyclic graph supporting hierarchical reasoning.
+All code is in [`TreeLab.java`](TreeLab.java). Run it from this folder with `java TreeLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A small company has 7 people, numbered 0 to 6. Person 0 is the boss. People 1, 2 and 3 report to 0; people 4 and 5 report to 1; person 6 reports to 3.
 
-Try to enumerate every path to a leaf and recount shared prefixes separately.
+```text
+          0
+        / | \
+       1  2  3
+      / \     \
+     4   5     6
+```
 
-### The one insight to remember
+We want to answer three questions:
 
-A rooted tree decomposes naturally into subtrees. Its height depends only on the children's heights.
+- How many levels does the chart have?
+- How many people does each manager look after, counting themselves?
+- The company will put a meeting room at **one** person's desk. For every person $v$, what is the total number of reporting lines everyone else must walk to reach $v$?
 
-## Build the mathematical meaning from a small example
+The obvious answer to the last question is to walk from every person to every other person. That is $7 \times 7 = 49$ steps here, which is fine. A company of 30,000 people needs $30{,}000^2 = 900{,}000{,}000$ steps, which is not. By the end of this lesson we will answer it with two walks over the chart, about $60{,}000$ steps.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Draw your family tree upside down, with great-grandma at the top. Now give every person a piece of string tied to **their own parent**.
+
+How many strings are there? Everybody holds exactly one string, except great-grandma, who has no parent above her. So a family of 7 people has exactly **6 strings**. That little count is the most important fact about trees: $n$ people, $n - 1$ strings.
+
+The family words become the tree words:
+
+- great-grandma is the **root**, the only person with no string going up;
+- your mum is your **parent**, you are her **child**, and your brother is your **sibling**;
+- someone with no children is a **leaf**;
+- your **depth** is how many strings you climb to reach great-grandma;
+- the **height** is the longest climb from the top down to a leaf;
+- a **subtree** is one person together with all of their children, grandchildren, and so on.
+
+There are no loops: if you could follow strings round in a circle, someone would be their own great-grandparent.
+
+Computer scientists draw trees upside down, with the root at the top, because we read from top to bottom. The name "tree" for these shapes goes back to Arthur Cayley, who counted them in an 1857 paper in the *Philosophical Magazine*.
+:::
+
+## From simple to advanced
+
+### Level 1: the words, and depth by climbing
+
+In the company chart:
+
+| Word | In the chart |
+| --- | --- |
+| root | 0 |
+| parent of 4 | 1 |
+| children of 1 | 4 and 5 |
+| siblings | 1, 2 and 3; also 4 and 5 |
+| leaves | 2, 4, 5 and 6 |
+| ancestors of 6 | 3 and 0 |
+| subtree of 1 | $\lbrace 1, 4, 5 \rbrace$ |
+
+The simplest way to store a rooted tree is the **parent array**: one number per node, `parent[v]`, with $-1$ for the root. Our chart is `{-1, 0, 0, 0, 1, 1, 3}`: 7 numbers, nothing else.
+
+Depth is defined by climbing:
 
 $$
-h(v)=1+\max_{u\in children(v)} h(u)
+\operatorname{depth}(v) =
+\begin{cases}
+0 & v \text{ is the root} \\
+\operatorname{depth}(\operatorname{parent}(v)) + 1 & \text{otherwise}
+\end{cases}
 $$
 
-**What each symbol means:** h(v) is the number of nodes on a longest downward path starting at node v; children(v) is the set of immediate children; an empty child's height is zero.
+where:
 
-**Substitute actual values:** If a node has child subtree heights 2 and 4, then h(v)=1+max(2,4)=5. A leaf has no children, so its height is 1.
+- $v$ is any node;
+- $\operatorname{parent}(v)$ is the node directly above $v$;
+- the depth counts edges, so the root has depth 0.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: $\operatorname{depth}(6) = \operatorname{depth}(3) + 1 = (\operatorname{depth}(0) + 1) + 1 = 0 + 1 + 1 = 2$.
 
-## Design the algorithm in ordinary English
+```java
+static int depth(int[] parent, int v) {
+    int steps = 0;
+    while (parent[v] != -1) {   // only the root has no parent
+        v = parent[v];
+        steps++;
+    }
+    return steps;
+}
+```
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+### Level 2: from "who is my parent?" to "who are my children?"
 
-**Correctness argument (the invariant):** Every downward path from v begins at v and then enters exactly one child subtree, so the longest is obtained by choosing the maximum child height.
+The parent array is perfect for climbing **up**, but poor for walking **down**: to find the children of 1, you must scan all 7 entries. So we also build **child lists**:
 
-## Code you can run
+$$
+\operatorname{children}(v) = \lbrace c : \operatorname{parent}(c) = v \rbrace, \qquad \sum_{v} \lvert \operatorname{children}(v) \rvert = n - 1
+$$
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `componentsDFS`. Its use can be reduced to:
+where:
 
-~~~js
-import { componentsDFS } from '../examples/patterns.mjs';
+- $\operatorname{children}(v)$ is the set of nodes whose parent is $v$;
+- $\lvert \cdot \rvert$ means "how many";
+- $n$ is the number of nodes, and the sum is over all of them;
+- the sum is $n - 1$ because every node except the root appears in exactly one parent's list.
 
-console.log(componentsDFS([[1],[0],[]]));
-~~~
+Example: the list sizes are $3, 2, 0, 1, 0, 0, 0$ for nodes 0 to 6, and $3 + 2 + 0 + 1 + 0 + 0 + 0 = 6 = 7 - 1$. Storing them costs 7 list heads plus 6 entries, so 13 cells, against 7 cells for the parent array.
 
-Save the snippet inside the `algorithms/tree/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+```java
+static List<List<Integer>> childLists(int[] parent) {
+    List<List<Integer>> children = new ArrayList<>();
+    for (int v = 0; v < parent.length; v++) children.add(new ArrayList<>());
+    for (int v = 0; v < parent.length; v++) {
+        if (parent[v] != -1) children.get(parent[v]).add(v);
+    }
+    return children;
+}
+```
 
-## Why it works, and how expensive it is
+**Left-child, right-sibling.** CLRS (§10.3) shows a third layout that needs exactly **two** pointers per node, however many children it has: a pointer to the *first child* and a pointer to the *next sibling*. Reading our child lists in order:
 
-Every downward path from v begins at v and then enters exactly one child subtree, so the longest is obtained by choosing the maximum child height.
+| Node | First child | Next sibling |
+| --- | --- | --- |
+| 0 | 1 | none |
+| 1 | 4 | 2 |
+| 2 | none | 3 |
+| 3 | 6 | none |
+| 4 | none | 5 |
+| 5, 6 | none | none |
 
-**Time and space:** O(n) time because each node is visited once; O(h) recursion stack where h is tree depth.
+To visit the children of 0, start at its first child 1, then follow next-sibling links: 1, 2, 3. That is $2n = 14$ pointer fields for our 7 nodes, and a manager with 1,000 reports costs no more per node than one with 2. It also shows that **any** rooted tree can be stored as a binary tree (first child = left, next sibling = right), which the next lesson builds on.
 
-**Common mistake or limitation:** Height measured in edges differs by one from height measured in nodes. State your convention before comparing solutions.
+### Level 3: a tree is a connected graph with no cycle
 
-## Try to explain it in an interview
+Often a tree arrives without a root, as a plain list of undirected edges: `{0,1}, {0,2}, {0,3}, {1,4}, {1,5}, {3,6}`. Mathematicians call this a *free tree*: a graph that is **connected** (you can get from anywhere to anywhere) and **acyclic** (no loops). For a graph on $n$ nodes, any two of these three facts imply the third:
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+1. it is connected;
+2. it has no cycle;
+3. it has exactly $n - 1$ edges.
 
-## Reading and practice
+$$
+\lvert E \rvert = \lvert V \rvert - 1
+$$
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 (rooted-tree representation) and Appendix B (trees). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 104 — Maximum Depth of Binary Tree. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+where:
+
+- $V$ is the set of nodes (vertices) and $E$ the set of edges;
+- $\lvert V \rvert = n$ and $\lvert E \rvert$ are their sizes.
+
+Example: $\lvert V \rvert = 7$ and $\lvert E \rvert = 6 = 7 - 1$. Add a seventh edge $\lbrace 2, 3 \rbrace$ and the path $0 \to 2 \to 3 \to 0$ becomes a cycle. Remove the edge $\lbrace 0, 3 \rbrace$ instead, leaving 5 edges, and nodes 3 and 6 are cut off. One edge too many makes a loop; one too few breaks the tree apart.
+
+So to test whether an edge list is a tree (LeetCode 261, "Graph Valid Tree"), count the edges and check that one walk reaches everybody:
+
+```java
+static boolean isTree(int n, int[][] edges) {
+    if (edges.length != n - 1) return false;      // a tree on n nodes has exactly n - 1 edges
+    List<List<Integer>> adj = adjacency(n, edges);
+    boolean[] seen = new boolean[n];
+    Deque<Integer> stack = new ArrayDeque<>(List.of(0));
+    seen[0] = true;
+    int reached = 1;
+    while (!stack.isEmpty()) {
+        for (int next : adj.get(stack.pop())) {
+            if (!seen[next]) { seen[next] = true; reached++; stack.push(next); }
+        }
+    }
+    return reached == n;                          // connected with n - 1 edges, so no cycle
+}
+```
+
+The counting check alone is not enough: a triangle $0, 1, 2$ plus a path $3, 4, 5, 6$ also has 6 edges, but the walk from 0 reaches only 3 nodes. The helper `adjacency` stores every edge twice, once from each end:
+
+```java
+static List<List<Integer>> adjacency(int n, int[][] edges) {
+    List<List<Integer>> adj = new ArrayList<>();
+    for (int v = 0; v < n; v++) adj.add(new ArrayList<>());
+    for (int[] edge : edges) {
+        adj.get(edge[0]).add(edge[1]);
+        adj.get(edge[1]).add(edge[0]);
+    }
+    return adj;
+}
+```
+
+Any node of a free tree can be chosen as the root. Choosing one turns every edge into a parent-child pair, pointing away from the root.
+
+### Level 4: answers that flow up from the leaves
+
+Most questions about a tree are answered **bottom-up**: ask every child for its answer, then combine. Height and subtree size are the two classic examples:
+
+$$
+\operatorname{height}(v) =
+\begin{cases}
+0 & v \text{ is a leaf} \\
+1 + \max\limits_{c \in \operatorname{children}(v)} \operatorname{height}(c) & \text{otherwise}
+\end{cases}
+\qquad
+\operatorname{size}(v) = 1 + \sum_{c \in \operatorname{children}(v)} \operatorname{size}(c)
+$$
+
+where:
+
+- $\operatorname{height}(v)$ is the number of edges on the longest path from $v$ down to a leaf;
+- $\operatorname{size}(v)$ is the number of nodes in the subtree of $v$, counting $v$ itself;
+- $c$ runs over the children of $v$.
+
+Example, from the leaves upwards:
+
+- leaves: $\operatorname{height} = 0$ and $\operatorname{size} = 1$ for 2, 4, 5 and 6;
+- node 1: $\operatorname{height} = 1 + \max(0, 0) = 1$, $\operatorname{size} = 1 + 1 + 1 = 3$;
+- node 3: $\operatorname{height} = 1 + 0 = 1$, $\operatorname{size} = 1 + 1 = 2$;
+- node 0: $\operatorname{height} = 1 + \max(1, 0, 1) = 2$, $\operatorname{size} = 1 + 3 + 1 + 2 = 7$.
+
+So the chart has height 2, which means 3 levels.
+
+```java
+static int height(List<List<Integer>> children, int v) {
+    int tallestChild = -1;                        // a leaf has no child, so it gets height 0
+    for (int child : children.get(v)) tallestChild = Math.max(tallestChild, height(children, child));
+    return tallestChild + 1;
+}
+```
+
+When the tree is a free edge list, there are no child lists. Every neighbour of $v$ is a child **except the one we came from**, so the recursion carries a `parent` argument:
+
+```java
+static int subtreeSizes(List<List<Integer>> adj, int v, int parent, int[] size) {
+    size[v] = 1;
+    for (int next : adj.get(v)) {
+        if (next != parent) size[v] += subtreeSizes(adj, next, v, size);   // never walk back up
+    }
+    return size[v];
+}
+```
+
+Rooted at 0, this fills `size = {7, 3, 1, 2, 1, 1, 1}`. Without the `next != parent` test, node 1 would walk back to 0, which would walk to 1 again, forever.
+
+### Level 5: rerooting, every root for the price of two walks
+
+Back to the meeting room. Let $S(v)$ be the sum of distances from $v$ to everybody. Computing it from scratch for one root takes a walk over the whole tree. Two ideas make all $n$ answers cheap.
+
+**Idea 1: count by edges, not by people.** The path from the root down to a person $u$ uses the edge above $v$ exactly when $u$ is inside $v$'s subtree. So that edge is used by $\operatorname{size}(v)$ paths:
+
+$$
+S(r) = \sum_{u} \operatorname{dist}(r, u) = \sum_{v \ne r} \operatorname{size}(v)
+$$
+
+where:
+
+- $r$ is the root;
+- $\operatorname{dist}(r, u)$ is the number of edges on the path between $r$ and $u$;
+- the right-hand sum runs over every node $v$ except the root, and counts the edge from $v$ up to its parent once for each path that uses it.
+
+Example: $S(0) = \operatorname{size}(1) + \dots + \operatorname{size}(6) = 3 + 1 + 2 + 1 + 1 + 1 = 9$. Checking directly: three people are 1 step from 0 and three are 2 steps away, so $3 \cdot 1 + 3 \cdot 2 = 9$.
+
+**Idea 2: move the meeting room one desk.** Move it from $p$ to its child $c$. The $\operatorname{size}(c)$ people in $c$'s subtree each walk **one step less**. Everybody else, $n - \operatorname{size}(c)$ people, walks **one step more**:
+
+$$
+S(c) = S(p) - \operatorname{size}(c) + \big(n - \operatorname{size}(c)\big)
+$$
+
+where:
+
+- $p$ is a node whose answer is already known and $c$ is one of its children (sizes measured with 0 as the root);
+- $n$ is the total number of nodes.
+
+Example: $S(1) = 9 - 3 + (7 - 3) = 10$. Then from 1 to its child 4: $S(4) = 10 - 1 + (7 - 1) = 15$. All seven answers:
+
+| $v$ | $S(\text{parent})$ | $\operatorname{size}(v)$ | $S(v)$ |
+| --- | --- | --- | --- |
+| 0 | — | 7 | 9 (Idea 1) |
+| 1 | 9 | 3 | $9 - 3 + 4 = 10$ |
+| 2 | 9 | 1 | $9 - 1 + 6 = 14$ |
+| 3 | 9 | 2 | $9 - 2 + 5 = 12$ |
+| 4 | 10 | 1 | $10 - 1 + 6 = 15$ |
+| 5 | 10 | 1 | $10 - 1 + 6 = 15$ |
+| 6 | 12 | 1 | $12 - 1 + 6 = 17$ |
+
+Person 0 is the best place for the meeting room, with a total of 9 steps. The second walk pushes answers from parents down to children:
+
+```java
+static void reroot(List<List<Integer>> adj, int v, int parent, int[] size, int[] answer) {
+    int n = adj.size();
+    for (int child : adj.get(v)) {
+        if (child == parent) continue;
+        answer[child] = answer[v] - size[child] + (n - size[child]);
+        reroot(adj, child, v, size, answer);
+    }
+}
+```
+
+This pattern is called **rerooting**: one bottom-up walk to collect subtree facts, then one top-down walk that moves the root across each edge with an $O(1)$ correction. Interview problem 3 puts it together.
+
+## Why it works and what it costs
+
+**Why $n$ nodes give $n - 1$ edges.** The string argument proves it for a rooted tree: every node except the root has exactly one edge to its parent. For a free tree, use induction on $n$:
+
+- *Base:* one node, zero edges.
+- *Every tree with $n \ge 2$ nodes has a leaf.* Take a longest path $u_0, u_1, \dots, u_k$. If the end $u_k$ had a neighbour besides $u_{k-1}$, that neighbour is either on the path, which closes a cycle, or off it, which makes a longer path. Both are impossible, so $u_k$ has exactly one neighbour: it is a leaf.
+- *Step:* remove that leaf and its single edge. No path between two other nodes passed through a dead end, so the rest is still connected, and removing things cannot create a cycle. By induction the rest has $(n - 1) - 1$ edges; adding the leaf back gives $n - 1$.
+
+On the chart: remove the leaves 2, 4, 5, 6, then 1 and 3, which have become leaves. Six removals take away six edges and leave node 0 alone with none. So the chart had $0 + 6 = 6$ edges.
+
+**Why rerooting is correct.** The invariant of the second walk is: *when `reroot` reaches $c$, `answer[parent]` is already final.* It holds for the root by Idea 1, and each step applies Idea 2, which only uses the parent's final answer and $\operatorname{size}(c)$ from the first walk. That size is still the right number: cutting the edge between $p$ and $c$ splits the tree into $c$'s side, with $\operatorname{size}(c)$ nodes, and $p$'s side, with the rest, and only those two groups matter when the room crosses that edge.
+
+**Costs.**
+
+| Task | Parent array | Child lists | Adjacency lists |
+| --- | --- | --- | --- |
+| parent of $v$ | $O(1)$ | $O(n)$ scan | needs a rooted walk first |
+| children of $v$ | $O(n)$ scan | $O(\deg v)$ | $O(\deg v)$, skipping the parent |
+| memory for the chart | 7 cells | 7 heads + 6 entries | 7 heads + $2 \times 6 = 12$ entries |
+
+Every walk in Levels 3 to 5 visits each node once and reads each adjacency entry once: $7 + 12 = 19$ steps per walk on the chart, $O(n)$ in general. Brute force for the meeting room runs one walk **per root**, $O(n^2)$: 49 node visits for 7 people, 900 million for 30,000.
+
+The recursion is as deep as the tree is tall. A tree shaped like a long path makes it $n$ calls deep, which can overflow Java's call stack for very deep trees. Then use an explicit stack, as `isTree` does, or process the nodes in breadth-first order and then in reverse.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Walking an undirected adjacency list without remembering the parent | Infinite recursion and `StackOverflowError` | Pass `parent` and skip it, or keep a `seen` array |
+| Mixing height in edges with depth in nodes | Answers off by one: the chart has height 2 but LeetCode 559 expects 3 | Decide which you count; LeetCode's "maximum depth" counts nodes |
+| Assuming each edge `{a, b}` means "a is the parent of b" | Wrong subtree sizes when the input lists edges in either direction | Build an undirected adjacency list and root it yourself |
+| Treating "$n - 1$ edges" as proof of a tree | A cycle plus a separate path passes the test | Also check that one walk reaches all $n$ nodes |
+| Recomputing from every root | $O(n^2)$: 900 million steps for $n = 30{,}000$, time limit exceeded | Reroot: one walk up, one walk down |
+| Forgetting $n = 1$ in leaf peeling | A single node has degree 0, never 1, so it is never reported | Return `[0]` when $n = 1$ |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 559: Maximum Depth of N-ary Tree (Easy)
+
+**Problem.** Given the root of a tree where every node has a list of children, return its maximum depth: the number of **nodes** on the longest path from the root down to a leaf. For the company chart the answer is 3, for example along $0 \to 1 \to 4$.
+
+**Math first.** Count nodes bottom-up, with an empty tree counting 0:
+
+$$
+D(v) = 1 + \max\Big(\lbrace 0 \rbrace \cup \lbrace D(c) : c \in \operatorname{children}(v) \rbrace\Big), \qquad D(\text{empty}) = 0
+$$
+
+where:
+
+- $D(v)$ is the number of nodes on the longest downward path starting at $v$;
+- the extra $\lbrace 0 \rbrace$ makes a leaf, which has no children, come out as $1 + 0 = 1$;
+- $D(v) = \operatorname{height}(v) + 1$, because a path of $h$ edges has $h + 1$ nodes.
+
+Example: $D(4) = D(5) = D(2) = D(6) = 1$. Then $D(1) = 1 + \max(1, 1) = 2$ and $D(3) = 1 + 1 = 2$, so $D(0) = 1 + \max(2, 1, 2) = 3$.
+
+**Idea.** This is Level 4's height with one added, because LeetCode counts nodes rather than edges. Ask every child for its depth, keep the largest, and add 1 for yourself.
+
+```java
+static final class Node {
+    final int val;
+    final List<Node> children;
+
+    Node(int val, Node... children) {
+        this.val = val;
+        this.children = List.of(children);
+    }
+}
+
+static int maxDepth(Node root) {
+    if (root == null) return 0;
+    int deepestChild = 0;
+    for (Node child : root.children) deepestChild = Math.max(deepestChild, maxDepth(child));
+    return deepestChild + 1;                      // LeetCode counts nodes, not edges
+}
+```
+
+**Answer.** `maxDepth(chart) = 3`, and `maxDepth(null) = 0`. Each node is visited once: $O(n)$ time, and $O(h)$ stack space for height $h$. On the chart that is 7 calls, at most 3 nested at once.
+
+### 2. LeetCode 310: Minimum Height Trees (Medium)
+
+**Problem.** A tree of $n$ nodes is given as an undirected edge list. Return every node that, chosen as the root, gives the smallest possible height. For the chart the answer is `[0]`. For $n = 6$ with edges `[[3,0],[3,1],[3,2],[3,4],[5,4]]` it is `[3, 4]`.
+
+**Math first.** Rooted at $r$, the height is the distance to the farthest node, called the *eccentricity* $e(r)$. Let $d$ be the *diameter*, the number of edges on a longest path. Then
+
+$$
+e(r) = \max_{u} \operatorname{dist}(r, u), \qquad \min_{r} e(r) = \left\lceil \frac{d}{2} \right\rceil
+$$
+
+where:
+
+- $\operatorname{dist}(r, u)$ is the number of edges between $r$ and $u$;
+- $\lceil x \rceil$ rounds $x$ up to a whole number;
+- the minimum is reached exactly at the middle node of a longest path, or at its two middle nodes when $d$ is odd.
+
+The reason: some longest path has its two ends $d$ edges apart, so any root is at least $\lceil d/2 \rceil$ from one of them; the middle of that path achieves it.
+
+Example: on the chart, a longest path is $4 - 1 - 0 - 3 - 6$, so $d = 4$ and $\lceil 4/2 \rceil = 2$, reached at the middle node 0. The heights for every root are:
+
+| Root $r$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| $e(r)$ | 2 | 3 | 3 | 3 | 4 | 4 | 4 |
+
+In the second example a longest path is $0 - 3 - 4 - 5$, so $d = 3$, $\lceil 3/2 \rceil = 2$, and both middle nodes 3 and 4 qualify.
+
+**Idea.** Peel the tree like an onion. Removing **all** current leaves at once shortens every longest path by one node at each end, so its middle stays the middle. When at most 2 nodes remain, they are the middle. Track degrees so that a node becomes a leaf exactly when its degree drops to 1.
+
+```java
+static List<Integer> findMinHeightTrees(int n, int[][] edges) {
+    if (n == 1) return List.of(0);
+    List<List<Integer>> adj = adjacency(n, edges);
+    int[] degree = new int[n];
+    List<Integer> leaves = new ArrayList<>();
+    for (int v = 0; v < n; v++) {
+        degree[v] = adj.get(v).size();
+        if (degree[v] == 1) leaves.add(v);
+    }
+    int remaining = n;
+    while (remaining > 2) {
+        remaining -= leaves.size();
+        List<Integer> nextLeaves = new ArrayList<>();
+        for (int leaf : leaves) {
+            for (int next : adj.get(leaf)) {
+                if (--degree[next] == 1) nextLeaves.add(next);
+            }
+        }
+        leaves = nextLeaves;
+    }
+    return leaves;
+}
+```
+
+**Answer.** On the chart, round 1 peels the leaves $\lbrace 2, 4, 5, 6 \rbrace$, leaving $7 - 4 = 3$ nodes; nodes 1 and 3 drop to degree 1. Round 2 peels $\lbrace 1, 3 \rbrace$, leaving $3 - 2 = 1$ node. The answer is `[0]`, matching the table. Every node is peeled once and every adjacency entry is read once: $O(n)$ time and space, here 7 nodes and 12 entries.
+
+### 3. LeetCode 834: Sum of Distances in Tree (Hard)
+
+**Problem.** A tree of $n \le 3 \times 10^4$ nodes is given as an edge list. Return, for every node, the sum of its distances to all other nodes. For the chart the answer is `[9, 10, 14, 12, 15, 15, 17]`. LeetCode's own example, $n = 6$ with edges `[[0,1],[0,2],[2,3],[2,4],[2,5]]`, gives `[8, 12, 6, 10, 10, 10]`.
+
+**Math first.** Both rerooting ideas from Level 5, with node 0 as the first root:
+
+$$
+S(0) = \sum_{v \ne 0} \operatorname{size}(v), \qquad S(c) = S(p) + n - 2\,\operatorname{size}(c)
+$$
+
+where:
+
+- $\operatorname{size}(v)$ is the subtree size of $v$ when the tree is rooted at 0;
+- $p$ is the parent of $c$ in that rooting;
+- $n - 2\,\operatorname{size}(c)$ is the Level 5 correction $-\operatorname{size}(c) + (n - \operatorname{size}(c))$, written in one piece.
+
+Example, with sizes $7, 3, 1, 2, 1, 1, 1$ and $n = 7$:
+
+- $S(0) = 3 + 1 + 2 + 1 + 1 + 1 = 9$;
+- $S(1) = 9 + 7 - 6 = 10$, $S(2) = 9 + 7 - 2 = 14$, $S(3) = 9 + 7 - 4 = 12$;
+- $S(4) = S(5) = 10 + 7 - 2 = 15$, and $S(6) = 12 + 7 - 2 = 17$.
+
+**Idea.** The first walk, bottom-up, fills the subtree sizes (Level 4's `subtreeSizes`), and their sum gives the root's answer. The second walk, top-down, moves the root across each edge with the $O(1)$ correction (Level 5's `reroot`).
+
+```java
+static int[] sumOfDistancesInTree(int n, int[][] edges) {
+    List<List<Integer>> adj = adjacency(n, edges);
+    int[] size = new int[n], answer = new int[n];
+    subtreeSizes(adj, 0, -1, size);
+    for (int v = 1; v < n; v++) answer[0] += size[v];   // the edge above v lies on size[v] paths from 0
+    reroot(adj, 0, -1, size, answer);
+    return answer;
+}
+```
+
+**Answer.** `[9, 10, 14, 12, 15, 15, 17]` for the chart, and `[8, 12, 6, 10, 10, 10]` for LeetCode's example; the lab checks every value against a breadth-first search from each node. Two walks of $O(n)$ each, plus $O(n)$ memory for the adjacency lists, sizes and answers. For $n = 30{,}000$ that is about $2 \times 30{,}000 = 60{,}000$ node visits, against $900{,}000{,}000$ for a search from every node.
+
+## Mathematical Abstraction
+
+A tree is the smallest connected graph: exactly enough edges to join its nodes, and not one more. Facts about it can be moved from one root to the next across a single edge:
+
+$$
+T = (V, E) \text{ is a tree} \iff T \text{ is connected and } \lvert E \rvert = \lvert V \rvert - 1,
+\qquad
+S(c) = S(p) + \lvert V \rvert - 2\,\operatorname{size}(c)
+$$
+
+where:
+
+- $V$ is the set of nodes and $E$ the set of edges;
+- "connected" means every node can reach every other along edges;
+- $S(v)$ is the sum of distances from $v$ to all nodes, $p$ and $c$ are a parent and child, and $\operatorname{size}(c)$ is the number of nodes in $c$'s subtree.
+
+Example: the company chart has $\lvert V \rvert = 7$ and $\lvert E \rvert = 6 = 7 - 1$, and every node is reachable from 0, so it is a tree. Moving the meeting room from 0 to 3 changes the total from $S(0) = 9$ to $S(3) = 9 + 7 - 2 \times 2 = 12$: the 2 people in 3's subtree walk one step less and the other 5 walk one step more, a net change of $5 - 2 = 3$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): §10.3 "Representing rooted trees" (parent pointers and the left-child, right-sibling representation); Appendix B.5 "Trees" (free trees, rooted trees, and the equivalent properties of trees); Chapter 20, "Elementary Graph Algorithms", for the breadth-first and depth-first searches used here. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §4.1 "Undirected Graphs", which defines trees as connected acyclic graphs and gives the Java adjacency-list graph: <https://algs4.cs.princeton.edu/41graph/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 1, §2.3 "Trees".
+- Arthur Cayley, "On the theory of the analytical forms called trees", *Philosophical Magazine* 13 (1857), 172–176.
+- LeetCode: [559. Maximum Depth of N-ary Tree](https://leetcode.com/problems/maximum-depth-of-n-ary-tree/), [310. Minimum Height Trees](https://leetcode.com/problems/minimum-height-trees/), [834. Sum of Distances in Tree](https://leetcode.com/problems/sum-of-distances-in-tree/), and [261. Graph Valid Tree](https://leetcode.com/problems/graph-valid-tree/) (premium).
+
+[← Ordered Set](../ordered-set/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Binary Tree →](../binary-tree/index.qmd)

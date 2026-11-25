@@ -1,69 +1,397 @@
 ---
 title: "Queue"
-description: "Understand Queue from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a lunch line to ArrayDeque: first in, first out, why shifting an array is too slow, the circular buffer and its (head + size) mod capacity arithmetic, Java's Queue methods, the Josephus circle, a queue built from two stacks with an amortised proof, deques, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A queue is a line: items join at the **back** and leave from the **front**, so the first in is the first out. Printers, web servers, keyboard buffers and breadth-first search all rely on it. This lesson shows why the obvious array version is slow, fixes it with a circular buffer, tours Java's `Queue` interface, proves that a queue made from two stacks is still fast on average, and finishes with a hard problem that needs a queue open at both ends.
 
-**LeetCode 102 — Binary Tree Level Order Traversal.** A first-in-first-out abstract data type.
+All code is in [`QueueLab.java`](QueueLab.java). Run it from this folder with `java QueueLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A school printer receives jobs from five pupils in the order Ada, Ben, Cat, Dan, Eve, and must print them in exactly that order, while new jobs keep arriving.
 
-Repeatedly traverse the whole tree just to retrieve depth 0, then depth 1, then depth 2.
+- Storing the jobs in an array and removing the front by shifting everyone else forward costs $n - 1$ moves per job: $4 + 3 + 2 + 1 + 0 = 10$ moves for five jobs, and about $n^2 / 2$ for $n$ jobs.
+- Not shifting, and just moving a "front" index forward, leaves dead slots behind; the jobs creep to the right and fall off the end of the array.
+- A **circular buffer** reuses the freed slots by wrapping around to index 0. Joining and leaving are then one write and one index update each: $O(1)$.
 
-### The one insight to remember
+## Explain it like I'm ten
 
-A queue holds the exploration frontier. Nodes discovered earlier are processed earlier, naturally producing breadth-first order.
+::: {.callout-tip}
+At the ice-cream van, children join the **back** of the line and are served from the **front**. Nobody pushes in, and nobody is served before someone who arrived earlier. That is first in, first out.
 
-## Build the mathematical meaning from a small example
+Now imagine the children sit on numbered chairs around a **round table** with 5 chairs. A sign says "the line starts at chair 3". When the child on chair 3 is served, the sign just changes to "starts at chair 4": nobody has to get up and move. After chair 4 comes chair 0 again, because the table is round. That is a circular buffer, and the sign is the `head` index.
+
+Children also play *hot potato* in a circle: pass the potato along, and whoever holds it when the music stops leaves the circle. Moving the potato from the front of a queue to its back is one `poll` and one `offer`. The ancient puzzle of who is left last is the *Josephus problem*; Sedgewick and Wayne solve it with a queue in *Algorithms* (§1.3, `Josephus.java`), and Graham, Knuth and Patashnik open *Concrete Mathematics* (§1.3) with its mathematics.
+:::
+
+## From simple to advanced
+
+### Level 1: first in, first out, and why shifting is slow
+
+A queue has two operations: **offer** (join at the back) and **poll** (leave from the front). They obey
 
 $$
-d(v)=d(parent(v))+1
+\text{if } x \text{ is offered before } y, \text{ then } x \text{ is polled before } y
 $$
 
-**What each symbol means:** d(v) is the number of edges from the root to node v; parent(v) is the node directly above v in the tree.
+where:
 
-**Substitute actual values:** A root has depth 0. Each child has depth 0+1=1, and a grandchild has depth 1+1=2. A FIFO queue processes depth-1 nodes before depth-2 nodes.
+- $x$ and $y$ are any two items in the queue;
+- "before" refers to time, so the queue preserves arrival order.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: offer Ada, Ben, Cat; poll gives Ada; offer Dan; poll, poll gives Ben, Cat; Dan is still waiting.
 
-## Design the algorithm in ordinary English
+With a plain array whose front is always index 0, each poll shifts every remaining item one place to the left. Draining $n$ items costs
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+$$
+\text{shifts} = \sum_{r=1}^{n} (r - 1) = \frac{n(n - 1)}{2}
+$$
 
-**Correctness argument (the invariant):** When a node at depth d is removed, all earlier-discovered nodes of smaller depth have already been removed. Enqueuing children at depth d+1 preserves this order.
+where:
 
-## Code you can run
+- $r$ is the number of items in the queue at the moment of a poll;
+- that poll shifts the $r - 1$ items behind the front.
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `bfsDistances`. Its use can be reduced to:
+Example: draining 5 printer jobs costs $4 + 3 + 2 + 1 + 0 = 10 = \frac{5 \times 4}{2}$ shifts. For 100,000 jobs it is about 5 billion. The fix must avoid moving the items at all.
 
-~~~js
-import { bfsDistances } from '../examples/patterns.mjs';
+### Level 2: the circular buffer
 
-console.log(bfsDistances([[1,2],[],[]],0));
-~~~
+Keep the items in an array of fixed **capacity** $c$, together with two numbers: `head`, the slot of the front item, and `size`, how many items there are. The array is treated as a ring, so index $c - 1$ is followed by index 0:
 
-Save the snippet inside the `algorithms/queue/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+$$
+\operatorname{slot}(i) = (\text{head} + i) \bmod c, \qquad \text{back slot for the next offer} = (\text{head} + \text{size}) \bmod c
+$$
 
-## Why it works, and how expensive it is
+where:
 
-When a node at depth d is removed, all earlier-discovered nodes of smaller depth have already been removed. Enqueuing children at depth d+1 preserves this order.
+- $c$ is the capacity, the length of the array;
+- $i$ counts positions in the queue from the front, $0 \le i < \text{size}$;
+- $\bmod c$ wraps an index that runs past the end back to the start;
+- a poll does $\text{head} \leftarrow (\text{head} + 1) \bmod c$ and $\text{size} \leftarrow \text{size} - 1$; nothing is moved.
 
-**Time and space:** O(n) traversal time and up to O(w) queue space where n is node count and w is maximum width of a level.
+Example: capacity $c = 5$. Offer 1, 2, 3 and poll all three, so `head = 3` and `size = 0`. Now offer 10, 20 and 30. They go to slots $(3 + 0) \bmod 5 = 3$, $(3 + 1) \bmod 5 = 4$ and $(3 + 2) \bmod 5 = 0$: the queue has **wrapped around**. The rear item is at $(3 + 3 - 1) \bmod 5 = 0$, and the next offer, 40, goes to $(3 + 3) \bmod 5 = 1$.
 
-**Common mistake or limitation:** Using array.shift() in JavaScript can create unnecessary element moves; an array with a head index is a simple O(1)-amortised dequeue representation.
+```text
+slot :  0    1    2    3    4
+item :  30   40   —    10   20
+             ↑         ↑
+           rear      head = 3
+```
 
-## Try to explain it in an interview
+```java
+static final class CircularQueue {
+    final int[] items;
+    int head, size;                                // the front element is items[head]
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+    CircularQueue(int capacity) {
+        items = new int[capacity];
+    }
 
-## Reading and practice
+    boolean enQueue(int value) {
+        if (size == items.length) return false;    // full
+        items[(head + size) % items.length] = value;
+        size++;
+        return true;
+    }
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 §10.1 (queues) and Chapter 20 §20.2 (BFS). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 102 — Binary Tree Level Order Traversal. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+    boolean deQueue() {
+        if (size == 0) return false;
+        head = (head + 1) % items.length;          // the old front slot is simply reused later
+        size--;
+        return true;
+    }
+```
+
+Storing `size`, rather than a second `tail` index, avoids the classic ambiguity: with only `head` and `tail`, "full" and "empty" both look like `head == tail`. The class continues in Interview problem 2, where it is exactly LeetCode 622.
+
+`java.util.ArrayDeque` is this same ring buffer, except that it grows instead of refusing: when full it allocates a bigger array (about double while small, then 50% more, per its source) and copies the items across in queue order. Its index arithmetic avoids `%` by wrapping with a comparison, which is faster.
+
+### Level 3: Java's `Queue` interface, and the Josephus circle
+
+`java.util.Queue` offers each operation in two flavours:
+
+| Operation | Throws an exception on failure | Returns a special value on failure |
+| --- | --- | --- |
+| join at the back | `add(e)` | `offer(e)`: `false` if a bounded queue is full |
+| leave from the front | `remove()` | `poll()`: `null` if empty |
+| look at the front | `element()` | `peek()`: `null` if empty |
+
+Use `Queue<Integer> q = new ArrayDeque<>()`. `LinkedList` also implements `Queue`, but it allocates a node per item and, unlike `ArrayDeque`, accepts `null`, which makes a `null` from `poll()` ambiguous. `PriorityQueue` implements `Queue` too, yet it is **not** first in, first out: it serves the smallest item first, which is the subject of the [next lesson](../heap-priority-queue/index.qmd).
+
+A queue is a natural model for a circle of children. In the Josephus game, $n$ children stand in a circle and every $k$-th child leaves; who is last? Moving the front child to the back $k - 1$ times passes the potato, and the next `poll` removes the $k$-th child. The answer also has a closed recurrence:
+
+$$
+J(1) = 0, \qquad J(m) = \big(J(m - 1) + k\big) \bmod m
+$$
+
+where:
+
+- $J(m)$ is the position, counted from 0, of the survivor among $m$ children when counting starts at position 0;
+- removing one child leaves a circle of $m - 1$ that starts $k$ places further on, hence the $+k$ and the wrap-around $\bmod m$;
+- the survivor's number, counting from 1, is $J(n) + 1$.
+
+Example: $n = 5$, $k = 2$. Then $J(2) = (0 + 2) \bmod 2 = 0$, $J(3) = (0 + 2) \bmod 3 = 2$, $J(4) = (2 + 2) \bmod 4 = 0$ and $J(5) = (0 + 2) \bmod 5 = 2$, so child $2 + 1 = 3$ survives. The queue agrees: children leave in the order 2, 4, 1, 5, and 3 remains.
+
+```java
+static int josephus(int n, int k) {
+    Queue<Integer> circle = new ArrayDeque<>();
+    for (int i = 1; i <= n; i++) circle.offer(i);
+    while (circle.size() > 1) {
+        for (int i = 1; i < k; i++) circle.offer(circle.poll());  // front child moves to the back
+        circle.poll();                                            // the k-th child leaves
+    }
+    return circle.peek();
+}
+```
+
+The simulation costs $O(nk)$ queue operations; the recurrence costs $O(n)$.
+
+### Level 4: a queue made of two stacks
+
+A queue can be built from two stacks, an **inbox** and an **outbox**. Offers push onto the inbox. A poll pops from the outbox; if the outbox is empty, first pour the whole inbox into it, which reverses the order and puts the oldest item on top.
+
+A single poll can be slow: pouring $n$ items costs $n$ moves. But each item is poured **at most once** in its life, so over a whole sequence the cost is small. Counting the stack operations each item ever takes part in:
+
+$$
+\text{total stack operations} \le \underbrace{1}_{\text{push to inbox}} + \underbrace{2}_{\text{pop inbox, push outbox}} + \underbrace{1}_{\text{pop outbox}} = 4 \text{ per item}
+$$
+
+where:
+
+- each of the three phases happens at most once per item, because items only ever travel inbox → outbox → out;
+- so $m$ items cost at most $4m$ stack operations however offers and polls are interleaved, which is $O(1)$ **amortised** per queue operation.
+
+Example: offer 1, 2, 3; poll; offer 4; poll three times.
+
+| Step | Inbox (top on the right) | Outbox (top on the right) | Moves | Returns |
+| --- | --- | --- | --- | --- |
+| offer 1, 2, 3 | 1 2 3 | | | |
+| poll | | 3 2 1 → 3 2 | 3 | 1 |
+| offer 4 | 4 | 3 2 | | |
+| poll, poll | 4 | | 0 | 2, 3 |
+| poll | | 4 → empty | 1 | 4 |
+
+4 moves for 4 items. The total is $4$ pushes $+ \, 4$ final pops $+ \, 2 \times 4$ for the moves $= 16 = 4 \times 4$ stack operations. The code is Interview problem 1.
+
+### Level 5: deques, and keeping only useful candidates
+
+A **deque** (double-ended queue, said "deck") allows adding and removing at **both** ends: `offerFirst`, `offerLast`, `pollFirst`, `pollLast`, all $O(1)$ in an `ArrayDeque`. One deque can act as a stack (one end) or a queue (both ends).
+
+Its most powerful use is a **monotonic deque**: a queue of candidates from which hopeless ones are thrown out of the back. Suppose we want, for each position $j$, an earlier index $i$ whose value $P_i$ is as small as possible, with $i$ as late as possible. If $i_1 < i_2$ and $P_{i_1} \ge P_{i_2}$, then $i_1$ is **dominated**:
+
+$$
+i_1 < i_2 \;\land\; P_{i_1} \ge P_{i_2} \;\Rightarrow\; i_2 \text{ is at least as good as } i_1 \text{ for every later } j
+$$
+
+where:
+
+- $P_i$ is a value attached to index $i$, for example a prefix sum;
+- $\land$ means "and"; "at least as good" means its value is no larger and it is closer to $j$;
+- so the deque only ever needs indices whose values strictly increase from front to back.
+
+Example: values $P = (0, 2, 1, 3)$. When index 2 ($P_2 = 1$) arrives, index 1 ($P_1 = 2 \ge 1$) is dominated and leaves from the back; the deque goes from $[0, 1]$ to $[0, 2]$. Each index enters once and leaves at most once, so processing $n$ indices costs $O(n)$ in total. Interview problem 3 uses exactly this; the [Monotonic Queue](../monotonic-queue/index.qmd) lesson develops it further.
+
+## Why it works and what it costs
+
+**Circular buffer invariant.** *The items, front to back, are in slots $\operatorname{slot}(0), \dots, \operatorname{slot}(\text{size} - 1)$, and $0 \le \text{size} \le c$.* An offer writes to $\operatorname{slot}(\text{size})$ and then increases size, so the new item becomes the last one. A poll advances head by one, so old position $i + 1$ becomes new position $i$. Both keep the invariant, and neither moves any stored item.
+
+**Two-stack queue invariant.** *The queue, front to back, is the outbox from top to bottom followed by the inbox from bottom to top.* Pushing to the inbox appends at the back. Popping the outbox removes the front. Pouring, done only when the outbox is empty, reverses the inbox so its bottom (the oldest) ends on top; the reading order is unchanged.
+
+**Costs:**
+
+| Operation | Shifting array | Circular buffer / `ArrayDeque` | Linked list | Two stacks |
+| --- | --- | --- | --- | --- |
+| offer | $O(1)$ amortised | $O(1)$ amortised | $O(1)$ | $O(1)$ |
+| poll | $O(n)$ | $O(1)$ | $O(1)$ | $O(1)$ amortised, $O(n)$ worst |
+| peek | $O(1)$ | $O(1)$ | $O(1)$ | $O(1)$ amortised |
+| memory per item | one slot | one slot (plus spare capacity) | node + reference + header | one slot |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Only `head` and `tail` indices, no `size` | Cannot tell a full ring from an empty one | Keep `size`, or leave one slot always empty |
+| Forgetting `% capacity` on one index | `ArrayIndexOutOfBoundsException` after the first wrap | Compute every slot as `(head + i) % capacity` |
+| Rear computed as `(head + size) % c` | Points one past the last item | The last item is at `(head + size - 1) % c` |
+| Using `remove()` and catching the exception as normal flow | Slow and noisy code | `poll()` and test for `null` |
+| `Queue<Integer> q = new PriorityQueue<>()` expecting FIFO | Items come out sorted, not in arrival order | `ArrayDeque` for FIFO |
+| Pouring the inbox into a **non-empty** outbox | Newer items overtake older ones | Pour only when the outbox is empty |
+| `int` prefix sums in LeetCode 862 | Overflow with $10^5$ values up to $10^5$ in size | Use `long` |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 232: Implement Queue using Stacks (Easy)
+
+**Problem.** Implement `push`, `pop`, `peek` and `empty` of a FIFO queue using only stack operations. After `push(1)`, `push(2)`: `peek()` is 1, `pop()` is 1, and `empty()` is false.
+
+**Math first.** From Level 4, each item is moved at most once, so for $m$ items
+
+$$
+\text{stack operations} \le 4m, \qquad \text{amortised cost per queue operation} = O(1)
+$$
+
+where:
+
+- $m$ is the number of items ever pushed;
+- the 4 counts push to inbox, pop from inbox, push to outbox and pop from outbox.
+
+Example: the Level 4 sequence pushes 4 items and moves each exactly once: $4 + 4 + 2 \times 4 = 16 = 4 \times 4$ operations.
+
+**Idea.** Push to the inbox. To pop or peek, make sure the outbox is non-empty, refilling it from the inbox only when it is empty, then use its top.
+
+```java
+static final class MyQueue {
+    final Deque<Integer> inbox = new ArrayDeque<>(), outbox = new ArrayDeque<>();
+    int moved;                                     // elements carried from inbox to outbox so far
+
+    void push(int x) {
+        inbox.push(x);
+    }
+
+    int pop() {
+        peek();                                    // makes sure the oldest element is on top of outbox
+        return outbox.pop();
+    }
+
+    int peek() {
+        if (outbox.isEmpty()) {
+            while (!inbox.isEmpty()) {             // reversing a stack puts the oldest on top
+                outbox.push(inbox.pop());
+                moved++;
+            }
+        }
+        return outbox.peek();
+    }
+
+    boolean empty() {
+        return inbox.isEmpty() && outbox.isEmpty();
+    }
+}
+```
+
+**Answer.** For the Level 4 sequence the pops return 1, 2, 3, 4 and `moved` ends at 4. Every operation is $O(1)$ amortised, a single `pop` can be $O(n)$, and the space is $O(n)$. The `moved` counter exists only so the lab can check the count.
+
+### 2. LeetCode 622: Design Circular Queue (Medium)
+
+**Problem.** Implement a fixed-capacity ring buffer with `enQueue`, `deQueue`, `Front`, `Rear`, `isEmpty` and `isFull`, where failed operations return `false` or $-1$. With capacity 3: `enQueue(1)`, `enQueue(2)`, `enQueue(3)` succeed, `enQueue(4)` fails, `Rear()` is 3, `isFull()` is true, `deQueue()` succeeds, `enQueue(4)` succeeds, and `Rear()` is 4.
+
+**Math first.** With head $h$, size $s$ and capacity $c$:
+
+$$
+\text{front} = h, \qquad \text{rear} = (h + s - 1) \bmod c, \qquad \text{empty} \iff s = 0, \qquad \text{full} \iff s = c
+$$
+
+where:
+
+- $h$ is the slot of the front item and $s$ the number of items;
+- the rear is the last occupied slot, one before the next free slot $(h + s) \bmod c$;
+- $c$ is the array length.
+
+Example: capacity $c = 3$. After three offers, $h = 0$, $s = 3$: rear $= (0 + 3 - 1) \bmod 3 = 2$, holding 3, and $s = c$ means full. `deQueue` makes $h = 1$, $s = 2$. `enQueue(4)` writes to $(1 + 2) \bmod 3 = 0$, wrapping around. Now rear $= (1 + 3 - 1) \bmod 3 = 0$, holding **4**.
+
+**Idea.** The `CircularQueue` from Level 2 already has `enQueue` and `deQueue`; the remaining methods read the formulas directly. LeetCode's `Front` and `Rear` are written `front` and `rear` here, following Java naming.
+
+```java
+    int front() {
+        return size == 0 ? -1 : items[head];
+    }
+
+    int rear() {
+        return size == 0 ? -1 : items[(head + size - 1) % items.length];
+    }
+
+    boolean isEmpty() {
+        return size == 0;
+    }
+
+    boolean isFull() {
+        return size == items.length;
+    }
+}
+```
+
+**Answer.** `true, true, true, false, 3, true, true, true, 4`, as required; after that `front()` is 2. On an empty queue `front()` and `rear()` return $-1$ and `deQueue()` returns `false`. Every operation is $O(1)$ time, with $O(c)$ space.
+
+### 3. LeetCode 862: Shortest Subarray with Sum at Least K (Hard)
+
+**Problem.** Return the length of the shortest non-empty contiguous subarray with sum at least $k$, or $-1$. Values can be **negative**. For `[2, -1, 2]` and $k = 3$ the answer is 3; for `[1, 2]` and $k = 4$ it is $-1$.
+
+**Math first.** With prefix sums $P_0 = 0$ and $P_j = a_1 + \dots + a_j$, the subarray after index $i$ up to $j$ has sum $P_j - P_i$:
+
+$$
+\text{answer} = \min \lbrace\, j - i : 0 \le i < j \le n,\; P_j - P_i \ge k \,\rbrace
+$$
+
+where:
+
+- $n$ is the array length and $a_1, \dots, a_n$ its values;
+- $i$ is a candidate start and $j$ an end;
+- two pruning rules keep this linear, using a deque of starts with increasing $P$:
+  - **front:** if $P_j - P_{i} \ge k$ for the front start $i$, record $j - i$ and drop $i$; any later $j$ would only give a longer subarray for it;
+  - **back:** if $P_{\text{back}} \ge P_j$, drop the back; $j$ is a later start with a smaller or equal prefix (Level 5).
+
+Negative values are why a plain sliding window fails: extending a window can make its sum smaller, so "shrink while the sum is large enough" loses answers.
+
+Example: `[2, -1, 2]`, $k = 3$, so $P = (0, 2, 1, 3)$.
+
+| $j$ | $P_j$ | Front check | Back check | Deque of starts |
+| --- | --- | --- | --- | --- |
+| 0 | 0 | | | [0] |
+| 1 | 2 | $2 - 0 = 2 < 3$ | $P_0 = 0 < 2$, keep | [0, 1] |
+| 2 | 1 | $1 - 0 = 1 < 3$ | $P_1 = 2 \ge 1$, drop 1 | [0, 2] |
+| 3 | 3 | $3 - 0 = 3 \ge 3$: length $3 - 0 = 3$, drop 0; $3 - 1 = 2 < 3$ | $P_2 = 1 < 3$, keep | [2, 3] |
+
+The answer is **3**: the whole array, $2 - 1 + 2 = 3$.
+
+**Idea.** One pass over $j = 0..n$: first pop from the front while the window is long enough in sum (recording lengths), then pop from the back while dominated, then add $j$ at the back.
+
+```java
+static int shortestSubarray(int[] nums, int k) {
+    int n = nums.length, best = n + 1;
+    long[] prefix = new long[n + 1];
+    for (int i = 0; i < n; i++) prefix[i + 1] = prefix[i] + nums[i];
+    Deque<Integer> starts = new ArrayDeque<>();    // candidate starts; their prefix sums increase
+    for (int j = 0; j <= n; j++) {
+        while (!starts.isEmpty() && prefix[j] - prefix[starts.peekFirst()] >= k) {
+            best = Math.min(best, j - starts.pollFirst());   // no later end can do better for this start
+        }
+        while (!starts.isEmpty() && prefix[starts.peekLast()] >= prefix[j]) {
+            starts.pollLast();                     // j starts later with a smaller or equal prefix
+        }
+        starts.offerLast(j);
+    }
+    return best <= n ? best : -1;
+}
+```
+
+**Answer.** 3 for `[2, -1, 2]`; 1 for `[1]` with $k = 1$; $-1$ for `[1, 2]` with $k = 4$; and 3 for `[84, -37, 32, 40, 95]` with $k = 167$, from $32 + 40 + 95 = 167$. Each of the $n + 1$ indices enters and leaves the deque at most once: $O(n)$ time and $O(n)$ space.
+
+## Mathematical Abstraction
+
+A queue is an order-preserving buffer, and the circular buffer realises it with modular arithmetic so that no item ever moves:
+
+$$
+\operatorname{poll}(\operatorname{offer}(\dots \operatorname{offer}(\varnothing, x_1) \dots, x_m)) = x_1, \qquad
+\operatorname{slot}(i) = (h + i) \bmod c, \quad 0 \le i < s \le c
+$$
+
+where:
+
+- $\varnothing$ is the empty queue and $x_1, \dots, x_m$ are offered in that order, so the first offered is the first polled;
+- $h$ is the head slot, $s$ the size and $c$ the capacity of the ring;
+- $\operatorname{slot}(i)$ is where the $i$-th item from the front lives.
+
+Example: with $c = 5$, $h = 3$ and items 10, 20, 30, the slots are $3, 4, (3 + 2) \bmod 5 = 0$; a poll returns 10 and sets $h = 4$ without moving 20 or 30. Built from two stacks instead, the same queue costs at most $4m$ stack operations for $m$ items: $O(1)$ amortised.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 10, Section 10.1, "Simple array-based data structures: arrays, matrices, stacks, queues" (the wrap-around array queue), and Chapter 16, "Amortized Analysis" (aggregate and accounting methods). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.3 "Bags, Queues, and Stacks" (FIFO queues, resizing arrays, and `Josephus.java`): <https://algs4.cs.princeton.edu/13stacks/>.
+- Ronald L. Graham, Donald E. Knuth and Oren Patashnik, *Concrete Mathematics*, 2nd edition (Addison-Wesley, 1994), §1.3 "The Josephus Problem".
+- `java.util.Queue` and `java.util.ArrayDeque` documentation: <https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Queue.html>.
+- LeetCode: [232. Implement Queue using Stacks](https://leetcode.com/problems/implement-queue-using-stacks/), [622. Design Circular Queue](https://leetcode.com/problems/design-circular-queue/), [862. Shortest Subarray with Sum at Least K](https://leetcode.com/problems/shortest-subarray-with-sum-at-least-k/).
+
+[← Stack](../stack/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Heap (Priority Queue) →](../heap-priority-queue/index.qmd)

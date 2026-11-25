@@ -1,52 +1,160 @@
 ---
 title: "Data Structures and Representations"
-description: "A connected learning path through 17 worked algorithms topics."
+description: "The seventeen ways of storing data that every algorithm stands on, from arrays and hash tables to heaps, trees and graphs, with a reading order, a which-tool-when table and a cheat sheet of formulas with worked numbers."
 ---
 
-## What you are really learning
+## What this group is about
 
-Represent information so the operation you need becomes cheap.
+Imagine tidying a bedroom. Socks go in a drawer with numbered sections, so "section 3" is found at once. Books go in a pile, and you always take the top one. Friends queue at the door and come in the order they arrived. Your family tree hangs on the wall, and a map of your town shows which streets join which.
 
-The goal is not to learn 17 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+Each of those is a **data structure**: a way of arranging things so that one particular question becomes quick to answer. No single arrangement is best at everything. A numbered drawer finds section 3 instantly but is slow to squeeze a new section into the middle; a pile is perfect for "the most recent one" and useless for "the oldest one". Choosing an algorithm almost always starts with choosing the structure that makes its key operation cheap.
 
-## Begin with a small example
+Every lesson in this group follows the same path: a tiny real problem, a child-level picture, levels from simple to advanced with the math worked out on real numbers, the proof and the costs, common mistakes, and hard interview problems solved math-first. Every lesson's Java lab runs with `java <Name>Lab.java` and checks every number on its page.
 
-In a map, we can ask which bucket key 12 belongs to.
+## Reading order, from simple to advanced
+
+**Stage 1: things in a row.**
+
+1. [Array](../array/index.qmd): one block of memory, $O(1)$ indexing by arithmetic, $O(n)$ shifting, and `ArrayList`'s 1.5x growth.
+2. [String](../string/index.qmd): characters as numbers, UTF-16 surrogate pairs, immutability, `StringBuilder`, and counting arrays.
+3. [Hash Table](../hash-table/index.qmd): squeezing huge keys into a small array, and every way of handling collisions.
+4. [Matrix](../matrix/index.qmd): grids in memory, traversal orders, rotation by two flips, and 2D prefix sums.
+
+**Stage 2: things joined by links.**
+
+5. [Linked List](../linked-list/index.qmd): $O(1)$ relinking, reversal, the dummy head, and Floyd's cycle detection.
+6. [Doubly-Linked List](../doubly-linked-list/index.qmd): links both ways, sentinels, $O(1)$ removal, and the LRU and LFU caches.
+
+**Stage 3: access only at the ends, or by priority.**
+
+7. [Stack](../stack/index.qmd): last in, first out; brackets, expression evaluation, and Catalan numbers.
+8. [Queue](../queue/index.qmd): first in, first out; the circular buffer, two-stack queues, and deques.
+9. [Heap (Priority Queue)](../heap-priority-queue/index.qmd): the smallest item first; sift-up, sift-down, $O(n)$ heapify, and top-$k$.
+
+**Stage 4: order and hierarchy.**
+
+10. [Ordered Set](../ordered-set/index.qmd): keys kept in sorted order, with floor, ceiling and range queries (`TreeSet`, `TreeMap`).
+11. [Tree](../tree/index.qmd): connected and without cycles; roots, parents, depth, and recursion over subtrees.
+12. [Binary Tree](../binary-tree/index.qmd): at most two children; the traversal orders and their recursive structure.
+13. [Binary Search Tree](../binary-search-tree/index.qmd): left smaller, right larger; search, insert and delete along one path.
+14. [Trie](../trie/index.qmd): a tree of characters in which words sharing a prefix share a path.
+
+**Stage 5: networks and flowing data.**
+
+15. [Graph Theory](../graph-theory/index.qmd): vertices and edges, how to store them, and what connectivity means.
+16. [Data Stream](../data-stream/index.qmd): answering questions about values that arrive one at a time, with bounded memory.
+17. [Iterator](../iterator/index.qmd): visiting the elements of any structure one by one, lazily, through `hasNext` and `next`.
+
+## Which tool when
+
+| If the problem says… | Reach for… | Because… |
+| --- | --- | --- |
+| "the element at position $i$" | [Array](../array/index.qmd) | the address is $b + i \cdot s$, one step |
+| "have I seen this before?", "how many times?" | [Hash Table](../hash-table/index.qmd) (`HashSet`, `HashMap`) | expected $O(1)$ lookup at load factor $\alpha \le 0.75$ |
+| "anagram", "only lowercase letters" | a counting array `int[26]` ([String](../string/index.qmd)) | direct addressing with index `c - 'a'` |
+| "grid", "sum of a rectangle" | [Matrix](../matrix/index.qmd) with 2D prefix sums | inclusion–exclusion answers each rectangle in 4 lookups |
+| "insert or delete next to a node I already hold" | [Linked List](../linked-list/index.qmd) | two link writes instead of shifting |
+| "cycle", "middle", "$k$-th from the end" without extra memory | fast and slow pointers ([Linked List](../linked-list/index.qmd)) | speeds 1 and 2 meet or measure the list in one pass |
+| "least recently used", "move to front", "evict" | hash map + [Doubly-Linked List](../doubly-linked-list/index.qmd) | a node you hold unlinks in $O(1)$ |
+| "matching brackets", "undo", "most recent unfinished" | [Stack](../stack/index.qmd) (`ArrayDeque`) | last in, first out keeps the latest open item on top |
+| "in arrival order", "level by level", "fewest steps" | [Queue](../queue/index.qmd) (`ArrayDeque`) | first in, first out processes items in the order found |
+| "repeatedly take the smallest or largest", "top $k$", "merge $k$ sorted" | [Heap](../heap-priority-queue/index.qmd) (`PriorityQueue`) | $O(\log n)$ insert and remove-min |
+| "next larger key", "floor", "ceiling", "all keys between" | [Ordered Set](../ordered-set/index.qmd) (`TreeMap`) | a balanced search tree keeps keys sorted under updates |
+| "hierarchy", "subtree", "ancestor" | [Tree](../tree/index.qmd), [Binary Tree](../binary-tree/index.qmd) | each subtree is a smaller problem of the same kind |
+| "sorted data that changes", "validate the ordering" | [Binary Search Tree](../binary-search-tree/index.qmd) | the left < node < right invariant guides every search |
+| "prefix", "autocomplete", "dictionary of words" | [Trie](../trie/index.qmd) | lookup costs the word's length, not the dictionary's size |
+| "connections", "routes", "dependencies" | [Graph Theory](../graph-theory/index.qmd) | vertices and edges model any relationship |
+| "numbers arrive one by one", "running median" | [Data Stream](../data-stream/index.qmd) | keep a small summary instead of all the data |
+| "flatten", "peek ahead", "walk lazily" | [Iterator](../iterator/index.qmd) | one element at a time, without building a copy |
+
+## Cost at a glance
+
+| Structure | Access by position | Search by value | Insert | Delete | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Array / `ArrayList` | $O(1)$ | $O(n)$ | $O(n)$; append $O(1)$ amortised | $O(n)$ | fastest scans (cache) |
+| Linked list | $O(n)$ | $O(n)$ | $O(1)$ at a held node | $O(1)$ doubly, at a held node | extra reference per node |
+| Hash table | | $O(1)$ expected | $O(1)$ expected | $O(1)$ expected | no order |
+| Stack, queue | top or front only, $O(1)$ | | $O(1)$ | $O(1)$ | access restricted to the ends |
+| Binary heap | minimum only, $O(1)$ | $O(n)$ | $O(\log n)$ | min $O(\log n)$ | build in $O(n)$ |
+| Balanced search tree | $O(\log n)$ by rank, with augmentation | $O(\log n)$ | $O(\log n)$ | $O(\log n)$ | keeps sorted order |
+| Trie | | $O(L)$ for a word of length $L$ | $O(L)$ | $O(L)$ | shares prefixes |
+
+## Cheat sheet: the formulas of this group
+
+**Array address.**
 
 $$
-h(k)=k\bmod m
+\operatorname{addr}(i) = b + i \cdot s
 $$
 
-**What the symbols mean:** h(k) is the bucket index for key k; m is the positive bucket count; mod means remainder.
+where $b$ is the address of element 0, $i$ the index and $s$ the size of one element in bytes. Example: an `int` array ($s = 4$) at $b = 1000$ keeps element 3 at $1000 + 3 \times 4 = 1012$.
 
-**Substitute actual numbers:** With m=5, key 12 maps to 12 mod 5 = 2. Key 17 also maps to bucket 2, so the structure needs collision handling. This matters more than memorising the word hash.
+**Row-major grid index.**
 
-This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+$$
+k = i \cdot C + j, \qquad i = \lfloor k / C \rfloor, \quad j = k \bmod C
+$$
 
-## The chapters in this family
+where $(i, j)$ is the row and column, $C$ the number of columns and $k$ the position in a flat array. Example: in a $3 \times 4$ grid, cell $(2, 1)$ is at $k = 2 \times 4 + 1 = 9$, and back again $\lfloor 9/4 \rfloor = 2$, $9 \bmod 4 = 1$.
 
-1. **[Array](../array/index.qmd)** — An indexed sequence with constant-time positional access.
-2. **[String](../string/index.qmd)** — An ordered sequence of characters used in parsing and matching.
-3. **[Hash Table](../hash-table/index.qmd)** — A key-to-slot mapping supporting expected efficient lookups.
-4. **[Matrix](../matrix/index.qmd)** — A two-dimensional indexed collection used in grids and linear algebra.
-5. **[Linked List](../linked-list/index.qmd)** — A sequence represented by nodes with successor references.
-6. **[Doubly-Linked List](../doubly-linked-list/index.qmd)** — A linked sequence with predecessor and successor pointers.
-7. **[Stack](../stack/index.qmd)** — A last-in-first-out abstract data type.
-8. **[Queue](../queue/index.qmd)** — A first-in-first-out abstract data type.
-9. **[Heap (Priority Queue)](../heap-priority-queue/index.qmd)** — A priority-based structure supporting efficient minimum or maximum extraction.
-10. **[Ordered Set](../ordered-set/index.qmd)** — A unique-key set maintaining a comparison order.
-11. **[Tree](../tree/index.qmd)** — A connected, acyclic graph supporting hierarchical reasoning.
-12. **[Binary Tree](../binary-tree/index.qmd)** — A rooted tree in which each node has at most two children.
-13. **[Binary Search Tree](../binary-search-tree/index.qmd)** — A binary tree governed by an ordered-key invariant.
-14. **[Trie](../trie/index.qmd)** — A prefix-sharing tree for strings and sequences.
-15. **[Graph Theory](../graph-theory/index.qmd)** — Vertices and edges model general relationships and connectivity.
-16. **[Data Stream](../data-stream/index.qmd)** — An online sequence whose state is updated as new items arrive.
-17. **[Iterator](../iterator/index.qmd)** — A stateful abstraction for visiting elements in sequence.
+**Hash table load and chaining cost.**
 
-## Practice method
+$$
+\alpha = \frac{n}{m}, \qquad E[\text{probes, miss}] = 1 + \alpha
+$$
 
-Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
+where $n$ is the number of keys, $m$ the number of buckets, $\alpha$ the load factor, and $E$ an average over random hashing. Example: 6 keys in 8 buckets give $\alpha = 0.75$, so an unsuccessful search costs about $1.75$ probes, which is when `HashMap` doubles its table.
 
-The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
+**Amortised growth of a dynamic array.**
+
+$$
+\text{total copies} = \sum_j c_j \le 3n \quad \text{(growth factor 1.5)}
+$$
+
+where $c_j$ is the capacity at the $j$-th resize and $n$ the number of appends. Example: 50 appends to an `ArrayList`-style array resize at $10, 15, 22, 33, 49$, copying $129 \le 150$ elements, under 3 per append.
+
+**Circular buffer slot.**
+
+$$
+\operatorname{slot}(i) = (h + i) \bmod c
+$$
+
+where $h$ is the slot of the front item, $i$ the position counted from the front and $c$ the capacity. Example: with $h = 3$ and $c = 5$, the third item ($i = 2$) is in slot $(3 + 2) \bmod 5 = 0$: the queue has wrapped around.
+
+**Heap index arithmetic.**
+
+$$
+\operatorname{parent}(i) = \left\lfloor \frac{i - 1}{2} \right\rfloor, \qquad \operatorname{children}(i) = 2i + 1,\; 2i + 2, \qquad h = \lfloor \log_2 n \rfloor
+$$
+
+where $i$ is a 0-based array index, $n$ the number of elements and $h$ the height, which bounds the swaps of one insert or remove. Example: node 4 has parent 1 and children 9 and 10; a heap of $n = 1{,}000{,}000$ has height 19, so an insert makes at most 19 swaps.
+
+**Floyd's cycle meeting point.**
+
+$$
+\mu = k\lambda - a
+$$
+
+where $\mu$ is the distance from the head to the cycle start, $\lambda$ the cycle length, $a$ how far past the cycle start the slow and fast pointers meet, and $k \ge 1$ a whole number of laps. Example: with $\mu = 4$ and $\lambda = 6$ they meet $a = 2$ nodes into the cycle, and $1 \times 6 - 2 = 4$: walking 4 more steps from the meeting point reaches the cycle start.
+
+**Catalan numbers (stack orders, balanced brackets).**
+
+$$
+C_n = \frac{1}{n + 1} \binom{2n}{n}
+$$
+
+where $n$ is the number of pushes (or bracket pairs) and $\binom{2n}{n}$ counts arrangements of $n$ pushes and $n$ pops. Example: $C_3 = \frac{20}{4} = 5$ pop orders of $1, 2, 3$ are possible; $3, 1, 2$ is the one that is not.
+
+**Trees and graphs.**
+
+$$
+\lvert E \rvert = \lvert V \rvert - 1 \text{ for a tree}, \qquad \sum_{v \in V} \deg(v) = 2 \lvert E \rvert \text{ for any graph}
+$$
+
+where $V$ is the set of vertices, $E$ the set of edges, $\lvert \cdot \rvert$ counts elements, and $\deg(v)$ is the number of edges touching $v$. Example: a tree with 15 nodes has exactly 14 edges, so its degrees add up to $2 \times 14 = 28$; a triangle has 3 edges and degrees $2 + 2 + 2 = 6 = 2 \times 3$.
+
+## How to study this group
+
+Read one lesson at a time. Before running its lab, redo one worked example with pencil and paper: compute the address, trace the sift-down, follow the two pointers round the cycle. Then run `java <Name>Lab.java` and check that your numbers match. Finally, try one interview problem with the code hidden, starting from the **Math first** formula. If two structures seem to fit a problem, compare the operation the problem repeats most often with the "Cost at a glance" table; the [algorithm selection guide](../guides/choose-a-pattern.qmd) helps when the choice is between techniques rather than structures.
 
 [← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

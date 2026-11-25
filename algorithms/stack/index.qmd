@@ -1,69 +1,403 @@
 ---
 title: "Stack"
-description: "Understand Stack from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a pile of plates to ArrayDeque: last in, first out, an array-backed stack, why Java's legacy Stack class is avoided, which pop orders are possible (Catalan numbers), bracket matching, postfix and infix evaluation, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A stack lets you add and remove items at one end only, the **top**. The last item in is the first item out. That rule sounds limiting, yet it is exactly what you need whenever work must be finished in the reverse order it was started: closing brackets, undoing edits, returning from function calls and evaluating formulas. This lesson builds a stack from an array, counts what a stack can and cannot do, and then evaluates arithmetic expressions with one.
 
-**LeetCode 20 — Valid Parentheses.** A last-in-first-out abstract data type.
+All code is in [`StackLab.java`](StackLab.java). Run it from this folder with `java StackLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A text editor must check that the brackets in `([]{})` match, and reject `([)]`.
 
-Try to match each closing bracket with an arbitrary opening bracket somewhere earlier; nested order makes this wrong.
+- Counting is not enough. `([)]` has one `(` and one `)`, one `[` and one `]`, yet it is wrong, because `)` arrives while `[` is still open.
+- What matters is **which bracket was opened most recently and not yet closed**. When a closer arrives, it must match that one.
+- "The most recent unfinished thing" is precisely what a stack keeps on top. Push every opener; at every closer, pop and compare. One pass, $O(n)$.
 
-### The one insight to remember
+## Explain it like I'm ten
 
-The latest unmatched opening bracket is the only one that can be closed next: this is last-in, first-out.
+::: {.callout-tip}
+In a school canteen, clean plates sit in a spring-loaded pile. The dinner lady puts each new plate on **top**, and you can only take a plate from the top. The plate that went on last comes off first. You cannot pull one out of the middle without the whole pile falling over.
 
-## Build the mathematical meaning from a small example
+A stack is also how you get dressed and undressed. You put on socks, then shoes. To undo it you must take off the shoes first, then the socks: undoing happens in reverse order. Brackets work the same way: whatever you opened last, you must close first.
+
+In the 1950s, Klaus Samelson and Friedrich L. Bauer used exactly this idea to teach early computers to read arithmetic formulas. They called the pile the *Keller*, German for "cellar": things go down into the cellar and come back up in reverse order. Bauer received the IEEE Computer Pioneer Award in 1988 for this "stack principle". Sedgewick and Wayne's *Algorithms* shows a lovely use of it, Dijkstra's two-stack algorithm for evaluating formulas, which appears in Level 5.
+:::
+
+## From simple to advanced
+
+### Level 1: a stack is an array and a counter
+
+Keep the items in an array and count them with `size`. The top is `items[size - 1]`. Push writes at `items[size]` and increases `size`; pop decreases `size` and reads `items[size]`. Nothing ever shifts.
 
 $$
-\operatorname{pop}(\operatorname{push}(S,x))=(S,x)
+\operatorname{pop}(\operatorname{push}(S, x)) = (S, x), \qquad \operatorname{top}(\operatorname{push}(S, x)) = x
 $$
 
-**What each symbol means:** S is the existing stack; push adds item x; pop returns the original stack S and the last pushed item x.
+where:
 
-**Substitute actual values:** Scan '([])': push '(' then '['. The ']' pops '[', then ')' pops '('; the stack becomes empty, so the string is balanced. For '([)]', ')' arrives while '[' is on top, so reject.
+- $S$ is a stack and $x$ a value;
+- $\operatorname{push}(S, x)$ is the stack $S$ with $x$ on top;
+- $\operatorname{pop}$ returns the stack without its top, together with the removed value; these two equations are the whole definition of last in, first out.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: push 1, 2, 3; pop gives **3**; push 4; then pop, pop gives **4**, **2**; the stack now holds just 1, with `size = 1`.
 
-## Design the algorithm in ordinary English
+```java
+static final class IntStack {
+    int[] items = new int[4];
+    int size;
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+    void push(int x) {
+        if (size == items.length) items = Arrays.copyOf(items, 2 * size);  // amortised O(1)
+        items[size++] = x;
+    }
 
-**Correctness argument (the invariant):** The stack records exactly the unmatched opening brackets in order. Every valid closing symbol must match the top, therefore each step preserves correctly nested pairs.
+    int pop() {
+        if (size == 0) throw new NoSuchElementException("stack is empty");
+        return items[--size];
+    }
 
-## Code you can run
+    int peek() {
+        if (size == 0) throw new NoSuchElementException("stack is empty");
+        return items[size - 1];
+    }
+}
+```
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `nextGreater`. Its use can be reduced to:
+When the array is full it doubles: $4 \to 8 \to 16$. As in the [Array](../array/index.qmd) lesson, the copies add up to fewer than $2n$ over $n$ pushes, so each push is $O(1)$ amortised. A stack can also be a linked list with pushes and pops at the head, which never copies but allocates one node per item.
 
-~~~js
-import { nextGreater } from '../examples/patterns.mjs';
+Your program already runs on a stack: the **call stack**. Each method call pushes a frame holding its local variables, and each `return` pops it. Infinite recursion keeps pushing until Java throws `StackOverflowError`.
 
-console.log(nextGreater([2,1,3]));
-~~~
+### Level 2: Java's stack is `ArrayDeque`
 
-Save the snippet inside the `algorithms/stack/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+Java's standard choice is `Deque<Integer> stack = new ArrayDeque<>()`, a resizable circular array (see the [Queue](../queue/index.qmd) lesson). The `java.util.Stack` Javadoc itself says that the `Deque` interface "should be used in preference to this class".
 
-## Why it works, and how expensive it is
+| Stack operation | `ArrayDeque` method | Equivalent `Deque` method | On an empty stack |
+| --- | --- | --- | --- |
+| push $x$ | `push(x)` | `addFirst(x)` | |
+| pop | `pop()` | `removeFirst()` | throws `NoSuchElementException` |
+| top | `peek()` | `peekFirst()` | returns `null` |
+| is it empty? | `isEmpty()` | | |
 
-The stack records exactly the unmatched opening brackets in order. Every valid closing symbol must match the top, therefore each step preserves correctly nested pairs.
+Why not `java.util.Stack`?
 
-**Time and space:** O(n) time and O(n) worst-case stack space for n characters.
+- It extends `Vector`, so every method is `synchronized`, which costs time in single-threaded code.
+- It inherits `get(i)`, `add(i, x)` and `remove(i)`, so code can reach into the middle and break the stack discipline.
+- It iterates **bottom to top**: after pushing 1, 2, 3, `new ArrayList<>(stack)` is `[1, 2, 3]`. An `ArrayDeque` used as a stack iterates **top to bottom**, giving `[3, 2, 1]`. Code that prints or copies a stack behaves differently depending on which class was used.
 
-**Common mistake or limitation:** Equal counts of '(' and ')' are not enough: ')(' has equal counts but is invalid.
+`ArrayDeque` also refuses `null` elements, which is helpful, because `peek()` uses `null` to mean "empty".
 
-## Try to explain it in an interview
+### Level 3: which orders can a stack produce?
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+Push the numbers $1, 2, \dots, n$ in order, popping whenever you like and writing each popped number down. Not every order is possible. With $n = 3$, the order $3, 1, 2$ is impossible: to pop 3 first, both 1 and 2 must already be on the stack, with 2 above 1, so 2 must come out before 1. The number of possible orders is the **Catalan number**
 
-## Reading and practice
+$$
+C_n = \frac{1}{n + 1} \binom{2n}{n}
+$$
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 §10.1 (stack operations). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 20 — Valid Parentheses. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+where:
+
+- $n$ is how many numbers are pushed;
+- $\binom{2n}{n}$ is "$2n$ choose $n$", the number of ways to arrange $n$ pushes and $n$ pops in a row;
+- the factor $\frac{1}{n+1}$ keeps only the arrangements that never pop from an empty stack.
+
+Example: for $n = 3$, $C_3 = \frac{1}{4} \binom{6}{3} = \frac{20}{4} = 5$. The five orders are $123$, $132$, $213$, $231$, $321$; the sixth permutation, $312$, is the impossible one. For $n = 4$, $C_4 = \frac{70}{5} = 14$ of the $24$ permutations, and for $n = 5$, $C_5 = \frac{252}{6} = 42$ of $120$. The lab tries every permutation and counts exactly 5, 14 and 42.
+
+To test one order, simulate it: push until the wanted number has been pushed, then the top must be that number.
+
+```java
+static boolean canProduce(int[] popOrder) {
+    Deque<Integer> stack = new ArrayDeque<>();
+    int next = 1;
+    for (int wanted : popOrder) {
+        while (next <= wanted) stack.push(next++); // push until wanted is on the stack
+        if (stack.pop() != wanted) return false;   // wanted is buried under a later number
+    }
+    return true;
+}
+```
+
+The same Catalan numbers count balanced bracket strings with $n$ pairs (push is `(`, pop is `)`), which is the link to the next level.
+
+### Level 4: brackets, the stack as a list of unfinished business
+
+Scan the string. For every opener, push the closer it will need. For every closer, pop: it must be exactly the closer owed most recently. At the end, nothing may be owed.
+
+$$
+\operatorname{valid}(s) \iff \text{every closer } s_j \text{ equals the top of the stack at time } j, \text{ and the stack is empty after } s_{n-1}
+$$
+
+where:
+
+- $s_0, \dots, s_{n-1}$ are the characters;
+- the stack holds the closers owed for the openers still unclosed, the most recent on top;
+- "empty at the end" rules out leftovers such as `((`.
+
+Example: `([]{})`.
+
+| Read | Action | Stack (top on the right) |
+| --- | --- | --- |
+| `(` | push `)` | `)` |
+| `[` | push `]` | `) ]` |
+| `]` | pop `]`, matches | `)` |
+| `{` | push `}` | `) }` |
+| `}` | pop `}`, matches | `)` |
+| `)` | pop `)`, matches | empty: **valid** |
+
+For `([)]`, the third character `)` pops `]`: mismatch, so it is **invalid** at once. For `)`, the stack is empty when a closer arrives: invalid.
+
+```java
+static boolean isValid(String s) {
+    Deque<Character> owed = new ArrayDeque<>();
+    for (char c : s.toCharArray()) {
+        if (c == '(') owed.push(')');
+        else if (c == '[') owed.push(']');
+        else if (c == '{') owed.push('}');
+        else if (owed.isEmpty() || owed.pop() != c) return false;
+    }
+    return owed.isEmpty();
+}
+```
+
+This is LeetCode 20, Valid Parentheses. Pushing the expected **closer** rather than the opener saves a lookup table when comparing.
+
+### Level 5: evaluating expressions
+
+In **postfix** notation (also called reverse Polish notation, RPN), each operator comes after its two operands: $(2 + 1) \times 3$ is written `2 1 + 3 *`. No brackets and no precedence rules are needed. A stack evaluates it in one pass:
+
+$$
+\text{number } v: \; \operatorname{push}(v), \qquad \text{operator } \circ: \; b \leftarrow \operatorname{pop},\; a \leftarrow \operatorname{pop},\; \operatorname{push}(a \circ b)
+$$
+
+where:
+
+- $\circ$ is one of $+$, $-$, $\times$, $\div$;
+- $b$ is popped **first**, because it was pushed last: it is the right operand;
+- at the end, the only value left on the stack is the answer.
+
+Example: `2 1 + 3 *`. Push 2, push 1; `+` pops 1 and 2 and pushes $2 + 1 = 3$; push 3; `*` pops 3 and 3 and pushes $3 \times 3 = 9$. The answer is **9**. And `4 13 5 / +` gives $13 \div 5 = 2$ (integer division), then $4 + 2 = 6$.
+
+```java
+static int evalRPN(String[] tokens) {
+    Deque<Integer> stack = new ArrayDeque<>();
+    for (String t : tokens) {
+        switch (t) {
+            case "+" -> stack.push(stack.pop() + stack.pop());
+            case "*" -> stack.push(stack.pop() * stack.pop());
+            case "-" -> {
+                int right = stack.pop(), left = stack.pop();   // popped in reverse order
+                stack.push(left - right);
+            }
+            case "/" -> {
+                int right = stack.pop(), left = stack.pop();
+                stack.push(left / right);
+            }
+            default -> stack.push(Integer.parseInt(t));
+        }
+    }
+    return stack.pop();
+}
+```
+
+This is LeetCode 150. For `+` and `*` the order does not matter; for `-` and `/` it does: `10 3 -` is $10 - 3 = 7$, not $3 - 10$.
+
+Ordinary **infix** formulas need a second stack. Dijkstra's two-stack algorithm, as presented by Sedgewick and Wayne for fully bracketed formulas, pushes numbers onto a value stack and operators onto an operator stack, ignores `(`, and at every `)` pops one operator and two values and pushes the result. For `(1 + ((2 + 3) * (4 * 5)))` the four `)` compute $2 + 3 = 5$, then $4 \times 5 = 20$, then $5 \times 20 = 100$, then $1 + 100 = 101$. Real calculators add precedence rules on top (Dijkstra's *shunting-yard* algorithm); Interview problem 3 handles the common special case of `+`, `-` and brackets with a single stack.
+
+## Why it works and what it costs
+
+**Bracket matching is correct.** The invariant is: *after reading $s_0 \dots s_{j-1}$, the stack holds, from bottom to top, the closers needed by the unclosed openers, in the order they were opened.* A new opener adds its closer on top, which keeps the order. A closer is correct exactly when it closes the most recently opened bracket, which is the top. If every closer matched and the stack ends empty, every opener was closed in the right order, so the string is balanced; any mismatch or leftover proves it is not.
+
+**Postfix evaluation is correct** by induction on the length of the expression: a postfix expression is either a single number, which is pushed, or "$E_1 \; E_2 \; \circ$". Evaluating $E_1$ leaves its value on the stack, evaluating $E_2$ leaves its value above that, and $\circ$ pops both and pushes $E_1 \circ E_2$.
+
+**Costs**, for $n$ operations or characters:
+
+| Operation | Array stack / `ArrayDeque` | Linked-list stack |
+| --- | --- | --- |
+| push | $O(1)$ amortised (copies when full) | $O(1)$, one new node |
+| pop, peek, isEmpty | $O(1)$ | $O(1)$ |
+| search for a value | $O(n)$ | $O(n)$ |
+| bracket check, postfix evaluation | $O(n)$ time, $O(n)$ space | same |
+| memory per element | one slot | one node: value + reference + header |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `pop()` or `peek()` on an empty stack | `NoSuchElementException` or `NullPointerException` | Check `isEmpty()` first, especially when a closer arrives |
+| Forgetting the final emptiness check | `((` is accepted as valid | Return `stack.isEmpty()` at the end |
+| Using `java.util.Stack` | Slower synchronised calls; printing shows bottom-to-top order | `Deque<Integer> stack = new ArrayDeque<>()` |
+| Popping operands in the wrong order | `10 3 -` gives $-7$ | The first pop is the **right** operand |
+| Comparing `Integer`s from two stacks with `==` | Works for small numbers, fails above 127 (boxed objects) | Use `equals`, or unbox to `int` first |
+| Pushing `null` into an `ArrayDeque` | `NullPointerException` | Use a sentinel value, or a different structure |
+| Very deep recursion | `StackOverflowError` | Replace the recursion with an explicit `ArrayDeque` stack |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 155: Min Stack (Medium)
+
+**Problem.** Design a stack with `push`, `pop`, `top` and `getMin`, every operation in $O(1)$. After `push(-2)`, `push(0)`, `push(-3)`: `getMin()` is $-3$; then after `pop()`, `top()` is 0 and `getMin()` is $-2$.
+
+**Math first.** Store with each element the minimum of everything at or below it:
+
+$$
+m_1 = x_1, \qquad m_i = \min(m_{i-1}, x_i) \text{ for } i \ge 2, \qquad \text{minimum of the stack} = m_t
+$$
+
+where:
+
+- $x_i$ is the $i$-th element from the bottom, and $t$ is the index of the top element;
+- $m_i$ is the minimum of $x_1, \dots, x_i$;
+- popping the top removes $x_t$ and $m_t$ together, so the new top's $m$ is already correct: nothing has to be recomputed.
+
+Example: pushing $-2, 0, -3$ stores the pairs $(-2, -2)$, $(0, \min(-2, 0) = -2)$, $(-3, \min(-2, -3) = -3)$. `getMin` reads $-3$. After one pop the top pair is $(0, -2)$: top is 0 and the minimum is $-2$.
+
+**Idea.** One stack of pairs `{value, minimum}`. Every operation touches only the top.
+
+```java
+static final class MinStack {
+    final Deque<int[]> stack = new ArrayDeque<>();   // {value, smallest value at or below it}
+
+    void push(int x) {
+        int min = stack.isEmpty() ? x : Math.min(x, stack.peek()[1]);
+        stack.push(new int[] {x, min});
+    }
+
+    void pop() {
+        stack.pop();
+    }
+
+    int top() {
+        return stack.peek()[0];
+    }
+
+    int getMin() {
+        return stack.peek()[1];
+    }
+}
+```
+
+**Answer.** $-3$, then $0$ and $-2$, as in the example; pushing 1 twice and popping once still reports 1. $O(1)$ per operation and $O(n)$ space. A variant saves memory by pushing onto a second "minimums" stack only when $x \le$ the current minimum.
+
+### 2. LeetCode 735: Asteroid Collision (Medium)
+
+**Problem.** Asteroids move along a line; the sign is the direction (positive is right) and the absolute value is the size. When two meet, the smaller explodes; equal sizes both explode. Return the survivors. For `[5, 10, -5]` the answer is `[5, 10]`; `[8, -8]` gives `[]`; `[10, 2, -5]` gives `[10]`.
+
+**Math first.** Only a right-mover followed by a left-mover can meet. A row of asteroids is **stable** when no such pair is adjacent:
+
+$$
+\operatorname{stable}(s) \iff \neg \exists i : s_i > 0 > s_{i+1}, \qquad \text{collision}(x, y) =
+\begin{cases}
+x \text{ survives} & x > \lvert y \rvert \\
+y \text{ survives} & x < \lvert y \rvert \\
+\text{neither} & x = \lvert y \rvert
+\end{cases}
+$$
+
+where:
+
+- $s_i$ is the $i$-th surviving asteroid, and $\neg \exists$ means "there is no";
+- $x > 0$ is the right-mover on the left and $y < 0$ the left-mover on the right;
+- a stable row therefore looks like "all left-movers, then all right-movers".
+
+Example: `[10, 2, -5]`. The survivors so far are `[10, 2]`, which is stable. Then $-5$ arrives: against $2$, $2 < 5$, so 2 explodes; against $10$, $10 > 5$, so $-5$ explodes. The survivors are `[10]`.
+
+**Idea.** Keep the survivors on a stack; they are always stable. A new left-mover keeps colliding with the top while the top is a right-mover, until it dies or nothing is left to hit. Right-movers, and left-movers with nothing to hit, are simply pushed.
+
+```java
+static int[] asteroidCollision(int[] asteroids) {
+    Deque<Integer> survivors = new ArrayDeque<>();
+    for (int a : asteroids) {
+        boolean alive = true;
+        while (alive && a < 0 && !survivors.isEmpty() && survivors.peek() > 0) {
+            int top = survivors.peek();
+            if (top <= -a) survivors.pop();        // the right-mover explodes
+            if (top >= -a) alive = false;          // a explodes (both do when equal)
+        }
+        if (alive) survivors.push(a);
+    }
+    int[] out = new int[survivors.size()];
+    for (int i = out.length - 1; i >= 0; i--) out[i] = survivors.pop();
+    return out;
+}
+```
+
+**Answer.** `[5, 10]`, `[]`, `[10]` for the three examples, and `[-2, -1, 1, 2]` survives unchanged, since everything moves apart. Each asteroid is pushed at most once and popped at most once, so the `while` loop runs at most $n$ times in total: $O(n)$ time and $O(n)$ space.
+
+### 3. LeetCode 224: Basic Calculator (Hard)
+
+**Problem.** Evaluate a string with non-negative integers, `+`, `-`, brackets, spaces and unary minus, without `eval`. For `"(1+(4+5+2)-3)+(6+8)"` the answer is 23; for `"1 - (2 - 3)"` it is 2.
+
+**Math first.** With only `+` and `-`, the whole expression is a signed sum of its numbers. Each number's sign is its own sign times the signs in front of every bracket around it:
+
+$$
+\text{value} = \sum_{i} \sigma_i \, n_i, \qquad \sigma_i = s_i \cdot \prod_{\text{brackets } B \ni n_i} s_B
+$$
+
+where:
+
+- $n_i$ is the $i$-th number in the string;
+- $s_i \in \lbrace +1, -1 \rbrace$ is the sign written directly before it, inside its innermost bracket;
+- $s_B$ is the sign written before bracket $B$, and the product runs over all brackets containing $n_i$.
+
+Example: `1 - (2 - 3)`. The numbers are $1, 2, 3$ with $\sigma_1 = +1$, $\sigma_2 = (+1)(-1) = -1$ and $\sigma_3 = (-1)(-1) = +1$. The value is $1 - 2 + 3 = 2$.
+
+**Idea.** Scan once, keeping the running `result` of the current bracket and the `sign` of the next number. At `(`, push the outer `result` and the sign in front of the bracket, and start afresh. At `)`, finish the inner result and combine: $\text{outer} + s_B \times \text{inner}$. The stack is needed only because brackets nest.
+
+```java
+static int calculate(String s) {
+    Deque<Integer> saved = new ArrayDeque<>();     // for each open '(': the result and sign before it
+    int result = 0, sign = 1, number = 0;
+    for (char c : s.toCharArray()) {
+        if (Character.isDigit(c)) {
+            number = number * 10 + (c - '0');
+        } else if (c == '+' || c == '-') {
+            result += sign * number;
+            number = 0;
+            sign = (c == '+') ? 1 : -1;
+        } else if (c == '(') {
+            saved.push(result);
+            saved.push(sign);
+            result = 0;
+            sign = 1;
+        } else if (c == ')') {
+            result += sign * number;
+            number = 0;
+            result = saved.pop() * result + saved.pop();   // sign before '(' times inside, plus outside
+        }
+    }
+    return result + sign * number;
+}
+```
+
+**Answer.** Trace of `1 - (2 - 3)`: after `1 -`, `result = 1` and `sign = -1`. At `(` push 1 and $-1$ and reset. Inside, `2 - 3` gives `result = -1`. At `)`, $(-1) \times (-1) + 1 = 2$. The examples give 23, 2, $-5$ for `"-(2+3)"`, and $2{,}147{,}483{,}647$ for the largest `int`. One pass over $n$ characters: $O(n)$ time, $O(n)$ space for deeply nested brackets.
+
+## Mathematical Abstraction
+
+A stack is defined entirely by two equations, and its power comes from the fact that it reverses order:
+
+$$
+\operatorname{pop}(\operatorname{push}(S, x)) = (S, x), \qquad
+\#\lbrace \text{pop orders of } 1..n \rbrace = C_n = \frac{1}{n + 1} \binom{2n}{n}
+$$
+
+where:
+
+- $S$ is any stack and $x$ any value;
+- the first equation says the last value pushed is the first popped (LIFO);
+- $C_n$ is the Catalan number, counting the orders a stack can produce from the pushes $1, 2, \dots, n$, and also the balanced bracket strings with $n$ pairs.
+
+Example: for $n = 3$, $C_3 = \frac{1}{4} \times 20 = 5$ orders are possible and $3, 1, 2$ is not; likewise there are 5 balanced strings with 3 pairs: `((()))`, `(()())`, `(())()`, `()(())`, `()()()`. Bracket checking, postfix evaluation and the calculator all use the same fact: the stack's top is always the most recent unfinished thing.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 10, "Elementary Data Structures", Section 10.1, "Simple array-based data structures: arrays, matrices, stacks, queues". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.3 "Bags, Queues, and Stacks", including Dijkstra's two-stack algorithm (`Evaluate.java`): <https://algs4.cs.princeton.edu/13stacks/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 1, §2.2.1 "Stacks, Queues, and Deques" (the exercises there count the permutations a stack can produce).
+- Friedrich L. Bauer, IEEE Computer Society Computer Pioneer Award (1988), for the stack principle developed with Klaus Samelson: <https://history.computer.org/pioneers/bauer.html>.
+- OpenJDK `java.util.Stack` and `java.util.ArrayDeque` documentation: <https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Stack.html>.
+- LeetCode: [155. Min Stack](https://leetcode.com/problems/min-stack/), [735. Asteroid Collision](https://leetcode.com/problems/asteroid-collision/), [224. Basic Calculator](https://leetcode.com/problems/basic-calculator/); from the levels, [20. Valid Parentheses](https://leetcode.com/problems/valid-parentheses/) and [150. Evaluate Reverse Polish Notation](https://leetcode.com/problems/evaluate-reverse-polish-notation/).
+
+[← Doubly-Linked List](../doubly-linked-list/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Queue →](../queue/index.qmd)

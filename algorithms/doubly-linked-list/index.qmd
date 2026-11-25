@@ -1,61 +1,404 @@
 ---
 title: "Doubly-Linked List"
-description: "Understand Doubly-Linked List from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From children holding hands to java.util.LinkedHashMap: prev and next links, sentinel nodes, O(1) removal of a node you hold, Knuth's dancing links, access-ordered maps, and the LRU and LFU caches solved math-first."
 ---
 
-## Start with one concrete problem
+A doubly-linked list gives every node two links, one forwards and one backwards. That one extra reference per node buys something a singly linked list cannot do: remove **any** node you hold in $O(1)$, without searching for its predecessor. Combined with a hash map that finds the node, it becomes the engine of every LRU cache, including the one hidden inside `java.util.LinkedHashMap`.
 
-**LeetCode 146 — LRU Cache.** A linked sequence with predecessor and successor pointers.
+All code is in [`DoublyLinkedListLab.java`](DoublyLinkedListLab.java). Run it from this folder with `java DoublyLinkedListLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A web browser keeps the 2 most recently viewed pages in a fast cache. When a third page arrives, it throws out the page that was used **least recently**. The sequence of requests is: page 1, page 2, page 1 again, page 3.
 
-Keep a list of recently used keys and scan the entire list each time a key is touched; this makes updates linear.
+- After the request for page 3, the cache must hold 1 and 3, because 2 is now the stalest.
+- Keeping the pages in an array sorted by "last used" means shifting the array on every request: $O(n)$ for a cache of $n$ pages.
+- A singly linked list can move a node to the front only if it first walks from the head to find the node's predecessor: also $O(n)$.
+- A doubly-linked list, plus a hash map from page to node, does every request in $O(1)$: find the node in the map, unhook it with two writes, and put it at the front with four.
 
-### The one insight to remember
+## Explain it like I'm ten
 
-A Map locates the node in expected constant time; a doubly linked list removes or moves that node without searching for its predecessor.
+::: {.callout-tip}
+Children stand in a line, and each one holds hands with **both** neighbours: the left hand with the child in front, the right hand with the child behind. If Bea wants to leave, she lets go, and her two neighbours simply join hands. Nobody has to walk down the line asking "who is standing in front of Bea?" That is $O(1)$ removal.
 
-## Build the mathematical meaning from a small example
+To make the ends behave like the middle, put a teacher at each end of the line. Then every child always has someone on both sides, even the first and the last, and even when the line is empty the two teachers hold hands with each other. Those teachers are **sentinels**.
+
+Your desk is a pile of library books. Whenever you read one, you put it back on **top**. When the pile is too tall, the book at the **bottom** goes back to the library, because it is the one you have not touched for the longest time. That is an LRU ("least recently used") cache. Donald Knuth noticed something else about holding hands: a child who stepped out of the line still remembers who her neighbours were, so she can step back in exactly where she was. He called this *dancing links*.
+:::
+
+## From simple to advanced
+
+### Level 1: two links per node
+
+Each node stores a value and two references, `prev` and `next`. You can walk forwards **and** backwards.
+
+```java
+static final class Node {
+    int key, value;
+    int freq = 1;                                  // used only by the LFU cache
+    Node prev, next;
+
+    Node(int key, int value) {
+        this.key = key;
+        this.value = value;
+    }
+}
+```
+
+The node carries a `key` because a cache must know which map entry to delete when it evicts a node. The `freq` field is used only in the last interview problem.
+
+Inserting a node $x$ between two neighbours $p$ and $q$ (where $p.\text{next} = q$) sets four links:
 
 $$
-prev(next(x))=x
+x.\text{prev} \leftarrow p, \quad x.\text{next} \leftarrow q, \quad q.\text{prev} \leftarrow x, \quad p.\text{next} \leftarrow x
 $$
 
-**What each symbol means:** x is an interior list node; next(x) is its successor; prev(y) is the predecessor of node y. The relation is an invariant that holds after every splice.
+where:
 
-**Substitute actual values:** For A↔B↔C, next(A)=B and prev(B)=A, so prev(next(A))=A. Removing B links A directly with C, and the invariant still holds.
+- $p$ and $q$ are the neighbours, which point at each other before the insertion;
+- $x$ is the new node;
+- $\leftarrow$ means "set to"; the first two writes only touch $x$, so they are safe to do first.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: in `A ⇄ C`, insert `B`: `B.prev = A`, `B.next = C`, `C.prev = B`, `A.next = B`. The list is now `A ⇄ B ⇄ C`, read the same forwards and backwards. Four writes, whatever the length of the list. The cost is one more reference per node than a singly linked list.
 
-## Design the algorithm in ordinary English
+### Level 2: sentinels
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+With plain `null` ends, inserting at the front, at the back or into an empty list each need special code. Two **sentinel** nodes, `head` and `tail`, which hold no data and are never removed, make every real node an interior node:
 
-**Correctness argument (the invariant):** Each removal repairs exactly two adjacent links. A hash map supplies direct node access, so no traversal is needed once a key is known.
+$$
+\text{empty: } \text{head} \rightleftarrows \text{tail}, \qquad \text{in general: } \text{head} \rightleftarrows x_1 \rightleftarrows \dots \rightleftarrows x_n \rightleftarrows \text{tail}
+$$
 
-## Code you can run
+where:
 
-This example is best understood as a tiny state transformation. Implement the operation described above in JavaScript or Java, and check each reference or invariant after every step; the exact code is deliberately not replaced by a large framework.
+- $x_1, \dots, x_n$ are the real nodes, $n \ge 0$;
+- $\rightleftarrows$ means the two nodes link to each other in both directions;
+- every real node therefore has a non-null `prev` and `next`.
 
-## Why it works, and how expensive it is
+Example: an empty list is `head ⇄ tail`. Adding `A` at the front is the Level 1 insertion with $p = \text{head}$ and $q = \text{tail}$. Adding `B` at the front later is the same four writes with $p = \text{head}$, $q = A$. Not a single `if`.
 
-Each removal repairs exactly two adjacent links. A hash map supplies direct node access, so no traversal is needed once a key is known.
+```java
+static final class DList {
+    final Node head = new Node(0, 0), tail = new Node(0, 0);
+    int size;
 
-**Time and space:** Expected O(1) get and put with a hash map and linked list, using O(capacity) space.
+    DList() {
+        head.next = tail;
+        tail.prev = head;
+    }
 
-**Common mistake or limitation:** Forget to repair one side of a two-way link and the list becomes inconsistent. Capacity eviction must remove the key from both Map and list.
+    void addFirst(Node x) {                        // right after the head sentinel
+        x.prev = head;
+        x.next = head.next;
+        head.next.prev = x;
+        head.next = x;
+        size++;
+    }
+```
 
-## Try to explain it in an interview
+The `DList` class continues in Levels 3 and 4. CLRS (Section 10.2) uses a single sentinel for both ends, making the list circular. Two sentinels cost one more node and read slightly more plainly.
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+### Level 3: removing a node you hold, in O(1)
 
-## Reading and practice
+A node knows both neighbours, so it can be unhooked with two writes:
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 (linked lists) and Chapter 11 (hash tables). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 146 — LRU Cache. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+$$
+x.\text{prev}.\text{next} \leftarrow x.\text{next}, \qquad x.\text{next}.\text{prev} \leftarrow x.\text{prev}
+$$
+
+where:
+
+- $x$ is the node to remove, which you already hold (for example, from a hash map);
+- the first write makes the node before $x$ skip forwards over it;
+- the second makes the node after $x$ skip backwards over it.
+
+Example: removing `B` from `A ⇄ B ⇄ C`: `A.next = C`, `C.prev = A`. The list is `A ⇄ C`. In a **singly** linked list you would first have to find `A` by walking from the head. For the node at index 999 of a 1,000-node list, that is 999 steps against 2 writes.
+
+```java
+    void remove(Node x) {
+        x.prev.next = x.next;
+        x.next.prev = x.prev;
+        size--;
+    }
+
+    Node removeLast() {                            // callers make sure the list is not empty
+        Node last = tail.prev;
+        remove(last);
+        return last;
+    }
+
+    void moveToFront(Node x) {
+        remove(x);
+        addFirst(x);
+    }
+```
+
+`removeLast` and `moveToFront` are just Level 2 and Level 3 combined, and they are all an LRU cache needs. A *deque* (double-ended queue) is the same structure used only at its two ends; `java.util.LinkedList` is a doubly-linked list that implements `Deque`.
+
+### Level 4: dancing links, undoing a removal
+
+After `remove(B)`, the node `B` itself was not changed: `B.prev` is still `A` and `B.next` is still `C`. So `B` can be put back by pointing its neighbours at it again:
+
+$$
+x.\text{prev}.\text{next} \leftarrow x, \qquad x.\text{next}.\text{prev} \leftarrow x
+$$
+
+where:
+
+- $x$ is a node that was removed by Level 3;
+- its own links still name its old neighbours, which is what makes the undo possible;
+- removals must be undone in **reverse order**, so that those neighbours are themselves back in place.
+
+Example: `A ⇄ C` with the removed `B` still pointing at `A` and `C`. Setting `A.next = B` and `C.prev = B` restores `A ⇄ B ⇄ C`, two writes.
+
+```java
+    void restore(Node x) {
+        x.prev.next = x;
+        x.next.prev = x;
+        size++;
+    }
+}
+```
+
+Knuth's paper *Dancing Links* (2000) builds his Algorithm X for exact-cover puzzles, such as Sudoku and pentomino tilings, on exactly this pair of operations: backtracking search removes rows and columns while going deeper and restores them, in reverse order, while coming back.
+
+### Level 5: `LinkedHashMap`, a hash map threaded on a doubly-linked list
+
+`java.util.LinkedHashMap` is a `HashMap` whose entries are also linked into a doubly-linked list. By default the list keeps **insertion order**. The constructor `LinkedHashMap(initialCapacity, loadFactor, accessOrder)` with `accessOrder = true` keeps **access order** instead: every `get` or `put` moves the entry to the end of the list, so the head is always the least recently used entry. After each insertion the map calls `removeEldestEntry(eldest)`; overriding it gives a complete LRU cache:
+
+```java
+static <K, V> Map<K, V> lruMap(int capacity) {
+    return new LinkedHashMap<>(16, 0.75f, true) {  // true = order by access, not insertion
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<K, V> eldest) {
+            return size() > capacity;
+        }
+    };
+}
+```
+
+Order the entries by the time $\tau$ of their last use. The map evicts
+
+$$
+\text{victim} = \arg\min_{k \in \text{map}} \tau(k) \quad \text{whenever } \lvert \text{map} \rvert > c
+$$
+
+where:
+
+- $\tau(k)$ is the time key $k$ was last read or written;
+- $\arg\min$ picks the key with the smallest $\tau$, the stalest one;
+- $c$ is the capacity and $\lvert \text{map} \rvert$ the number of entries.
+
+Example: capacity $c = 2$. `put 1` at time 1, `put 2` at time 2, `get 1` at time 3, `put 3` at time 4. Now $\tau(1) = 3$, $\tau(2) = 2$, $\tau(3) = 4$ and there are 3 entries, more than 2, so the victim is key 2, with the smallest $\tau$. The map holds keys 1 and 3, in the order 1, 3 (eldest first).
+
+In an interview you are usually asked to build this yourself, which is the first problem below.
+
+## Why it works and what it costs
+
+**Sentinel invariant.** *For every node $x$ in the list, including the sentinels where the link exists, $x.\text{next}.\text{prev} = x$ and $x.\text{prev}.\text{next} = x$.* The empty list `head ⇄ tail` satisfies it. `addFirst` sets all four links that involve the new node, so it still holds. `remove` makes the two neighbours point at each other, which is the invariant for them with $x$ gone. Because every real node has non-null neighbours, neither method needs a `null` check.
+
+**LRU invariant.** *The recency list holds exactly the keys in the map, ordered from most recently used at the front to least recently used at the back.* `get` and `put` move the touched node to the front, which is correct because it now has the largest $\tau$. So the back node is the $\arg\min$ of $\tau$, and evicting it is exactly the LRU rule.
+
+**Costs:**
+
+| Operation | Doubly-linked list | Singly linked list | Array |
+| --- | --- | --- | --- |
+| insert after a held node | $O(1)$, 4 writes | $O(1)$, 2 writes | $O(n)$ |
+| remove a held node | $O(1)$, 2 writes | $O(n)$: find the predecessor | $O(n)$ |
+| add or remove at either end | $O(1)$ | $O(1)$ at the head only | $O(1)$ at the end only |
+| walk backwards | $O(1)$ per step | not possible | $O(1)$ per step |
+| find by value | $O(n)$ | $O(n)$ | $O(n)$ |
+| extra memory per element | 2 references | 1 reference | none |
+| LRU `get` / `put` with a hash map | $O(1)$ | $O(n)$ | $O(n)$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Updating `next` but not `prev` | Walking backwards finds removed nodes or skips live ones | Always set the link in both directions; check by walking both ways |
+| Writing `head.next = x` before `head.next.prev = x` | The old first node is lost, so its `prev` is never fixed | Set the new node's links first, then the neighbours' |
+| No sentinels | `NullPointerException` at the first or last node, or on an empty list | Use `head` and `tail` sentinels |
+| Node without its key in a cache | Cannot remove the evicted node from the hash map | Store the key in the node |
+| Evicting before checking whether the key already exists | A `put` that only updates a value evicts another key | Look the key up first; update and move it if present |
+| Restoring dancing links in the wrong order | Neighbours point at nodes that are still removed | Undo removals in reverse (last removed, first restored) |
+| `new LinkedHashMap<>()` for an LRU cache | Ordered by insertion, so reading a key does not refresh it | Pass `accessOrder = true` |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 146: LRU Cache (Medium)
+
+**Problem.** Design a cache with a fixed capacity, where `get(key)` returns the value or $-1$, and `put(key, value)` inserts or updates. When the cache is over capacity it evicts the least recently used key. Both must run in $O(1)$ on average. With capacity 2: `put(1,1)`, `put(2,2)`, `get(1)`, `put(3,3)`, `get(2)`, `put(4,4)`, `get(1)`, `get(3)`, `get(4)` returns $1, -1, -1, 3, 4$ for the five `get`s.
+
+**Math first.** Keep a total order on the keys by last use and evict its minimum:
+
+$$
+\text{list} = (k_1, k_2, \dots, k_m) \text{ with } \tau(k_1) > \tau(k_2) > \dots > \tau(k_m), \qquad \text{evict } k_m \text{ when } m > c
+$$
+
+where:
+
+- $\tau(k)$ is the time of the last `get` or `put` of key $k$;
+- $k_1$ is the most recently used key and $k_m$ the least recently used;
+- $c$ is the capacity; a hash map from key to node finds any $k_i$ in $O(1)$.
+
+Example: capacity $c = 2$, the front of the list on the left.
+
+| Operation | Returns | List after |
+| --- | --- | --- |
+| `put(1,1)` | | 1 |
+| `put(2,2)` | | 2, 1 |
+| `get(1)` | 1 | 1, 2 |
+| `put(3,3)` | evicts 2 | 3, 1 |
+| `get(2)` | $-1$ | 3, 1 |
+| `put(4,4)` | evicts 1 | 4, 3 |
+| `get(1)` | $-1$ | 4, 3 |
+| `get(3)` | 3 | 3, 4 |
+| `get(4)` | 4 | 4, 3 |
+
+**Idea.** A `HashMap<Integer, Node>` finds the node; the `DList` from Levels 2 and 3 keeps recency order. Touching a key moves its node to the front; eviction removes the last node and deletes its key from the map.
+
+```java
+static final class LRUCache {
+    final int capacity;
+    final Map<Integer, Node> nodes = new HashMap<>();
+    final DList recency = new DList();             // most recently used first
+
+    LRUCache(int capacity) {
+        this.capacity = capacity;
+    }
+
+    int get(int key) {
+        Node x = nodes.get(key);
+        if (x == null) return -1;
+        recency.moveToFront(x);
+        return x.value;
+    }
+
+    void put(int key, int value) {
+        Node x = nodes.get(key);
+        if (x != null) {
+            x.value = value;
+            recency.moveToFront(x);
+            return;
+        }
+        if (nodes.size() == capacity) nodes.remove(recency.removeLast().key);
+        x = new Node(key, value);
+        nodes.put(key, x);
+        recency.addFirst(x);
+    }
+}
+```
+
+**Answer.** The five `get`s return $1, -1, -1, 3, 4$. Every operation is one hash lookup plus at most 6 link writes (2 to remove, 4 to add): $O(1)$ time on average, and $O(c)$ space for $c$ entries.
+
+### 2. LeetCode 460: LFU Cache (Hard)
+
+**Problem.** Like LRU, but evict the key used the **fewest times**; among keys with equal counts, evict the least recently used one. Both operations in $O(1)$ on average. With capacity 2: `put(1,1)`, `put(2,2)`, `get(1)`, `put(3,3)`, `get(2)`, `get(3)`, `put(4,4)`, `get(1)`, `get(3)`, `get(4)` returns $1, -1, 3, -1, 3, 4$ for the six `get`s.
+
+**Math first.** The victim is the minimum of a pair, compared first by count and then by time:
+
+$$
+\text{victim} = \arg\min_{k} \big(f(k),\; \tau(k)\big), \qquad
+\varphi = \min_k f(k)
+$$
+
+where:
+
+- $f(k)$ is how many times key $k$ has been used (each `get` or `put` adds 1; a new key starts at 1);
+- $\tau(k)$ is its last-use time, which breaks ties;
+- pairs are compared lexicographically: smaller $f$ wins, and only equal $f$ looks at $\tau$;
+- $\varphi$ is the smallest count present, kept in the field `minFreq`; the victim is the least recent key in the list for $\varphi$.
+
+The structure is one LRU list **per count**: list $f$ holds the keys used exactly $f$ times, most recent first. A use moves a key from list $f$ to list $f + 1$. $\varphi$ changes only in two ways: a new key sets it to 1, and moving the last key out of list $\varphi$ raises it by 1.
+
+Example: capacity 2.
+
+| Operation | Returns | Lists after (count: keys, most recent first) | $\varphi$ |
+| --- | --- | --- | --- |
+| `put(1,1)`, `put(2,2)` | | 1: [2, 1] | 1 |
+| `get(1)` | 1 | 1: [2] · 2: [1] | 1 |
+| `put(3,3)` | evicts 2, the only key with count 1 | 1: [3] · 2: [1] | 1 |
+| `get(2)` | $-1$ | unchanged | 1 |
+| `get(3)` | 3 | 2: [3, 1] | 2 |
+| `put(4,4)` | evicts 1: count 2 like 3, but older | 1: [4] · 2: [3] | 1 |
+| `get(1)`, `get(3)`, `get(4)` | $-1$, 3, 4 | 2: [4] · 3: [3] | 2 |
+
+**Idea.** Two hash maps: key to node, and count to `DList`. The `touch` method moves a node up one count and fixes `minFreq`. Eviction is `removeLast` on the list for `minFreq`, which is exactly the $\arg\min$ of $(f, \tau)$.
+
+```java
+static final class LFUCache {
+    final int capacity;
+    final Map<Integer, Node> nodes = new HashMap<>();
+    final Map<Integer, DList> byFreq = new HashMap<>();   // use count -> nodes, most recent first
+    int minFreq;
+
+    LFUCache(int capacity) {
+        this.capacity = capacity;
+    }
+
+    int get(int key) {
+        Node x = nodes.get(key);
+        if (x == null) return -1;
+        touch(x);
+        return x.value;
+    }
+```
+
+```java
+    void put(int key, int value) {
+        Node x = nodes.get(key);
+        if (x != null) {
+            x.value = value;
+            touch(x);
+            return;
+        }
+        if (nodes.size() == capacity) {            // fewest uses first, then least recent
+            Node victim = byFreq.get(minFreq).removeLast();
+            nodes.remove(victim.key);
+        }
+        x = new Node(key, value);
+        nodes.put(key, x);
+        byFreq.computeIfAbsent(1, f -> new DList()).addFirst(x);
+        minFreq = 1;
+    }
+
+    void touch(Node x) {                           // move x from list f to list f + 1
+        DList list = byFreq.get(x.freq);
+        list.remove(x);
+        if (x.freq == minFreq && list.size == 0) minFreq++;
+        x.freq++;
+        byFreq.computeIfAbsent(x.freq, f -> new DList()).addFirst(x);
+    }
+}
+```
+
+**Answer.** The six `get`s return $1, -1, 3, -1, 3, 4$. Why `minFreq++` is enough: if $x$ was the last key with count $\varphi$, every other key has a count of at least $\varphi + 1$, and $x$ now has exactly $\varphi + 1$. Each operation does a constant number of hash lookups and link writes: $O(1)$ time on average and $O(c)$ space. A version built on a `TreeMap` of counts would cost $O(\log c)$ per operation instead.
+
+## Mathematical Abstraction
+
+A doubly-linked list is a pair of mutually inverse successor and predecessor functions, which is why one node can be cut out and spliced back locally:
+
+$$
+\operatorname{next} : N \to N, \quad \operatorname{prev} = \operatorname{next}^{-1}, \qquad
+\operatorname{remove}(x) : \;\operatorname{next}(\operatorname{prev}(x)) \leftarrow \operatorname{next}(x), \;\; \operatorname{prev}(\operatorname{next}(x)) \leftarrow \operatorname{prev}(x)
+$$
+
+where:
+
+- $N$ is the set of nodes including the two sentinels, and $\operatorname{next}$ is defined on every node except the tail sentinel;
+- $\operatorname{prev} = \operatorname{next}^{-1}$ says that going forwards then backwards returns to the same node; that is the sentinel invariant;
+- $\operatorname{remove}(x)$ changes two function values and keeps the two functions inverse on the remaining nodes.
+
+Example: in `head ⇄ A ⇄ B ⇄ C ⇄ tail`, removing `B` sets $\operatorname{next}(A) = C$ and $\operatorname{prev}(C) = A$, and $\operatorname{prev}(\operatorname{next}(A)) = \operatorname{prev}(C) = A$ confirms the invariant. An LRU cache is this list ordered by $\tau$ plus a hash map $k \mapsto$ node, giving $\arg\min \tau$ at the tail in $O(1)$; LFU orders by the pair $(f, \tau)$ with one list per $f$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 10, "Elementary Data Structures", Section 10.2, "Linked lists" (doubly linked lists and sentinels). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.3 "Bags, Queues, and Stacks" (linked lists and the deque exercise): <https://algs4.cs.princeton.edu/13stacks/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 1, §2.2.5 "Doubly Linked Lists"; and "Dancing Links" (2000), in *Millennial Perspectives in Computer Science*: <https://arxiv.org/abs/cs/0011047>.
+- OpenJDK `java.util.LinkedHashMap` (access-order constructor and `removeEldestEntry`): <https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/LinkedHashMap.html>.
+- LeetCode: [146. LRU Cache](https://leetcode.com/problems/lru-cache/), [460. LFU Cache](https://leetcode.com/problems/lfu-cache/).
+
+[← Linked List](../linked-list/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Stack →](../stack/index.qmd)

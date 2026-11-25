@@ -1,69 +1,480 @@
 ---
 title: "Graph Theory"
-description: "Understand Graph Theory from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From Euler's seven bridges to interview graphs: vertices, edges and degrees, adjacency matrix versus adjacency list, the handshake lemma, directed and weighted graphs, connected components, bipartite two-colouring, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A graph is a set of dots joined by lines. That is all it is, yet it models road maps, friendships, computer networks, web links and course prerequisites. This lesson names the parts, stores a graph in Java two ways, proves the one counting fact every graph obeys, and finishes with the bipartite test that interview problems love.
 
-**LeetCode 133 — Clone Graph.** Vertices and edges model general relationships and connectivity.
+All code is in [`GraphTheoryLab.java`](GraphTheoryLab.java). Run it from this folder with `java GraphTheoryLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A teacher has 6 children, numbered 0 to 5. Some pairs always quarrel: $\lbrace 0, 1 \rbrace$, $\lbrace 0, 2 \rbrace$, $\lbrace 1, 2 \rbrace$, $\lbrace 1, 3 \rbrace$ and $\lbrace 4, 5 \rbrace$. She asks two questions:
 
-Copy neighbours recursively with no visited map: cycles lead to infinite recursion or duplicate clones.
+1. Which children are linked to each other by a chain of quarrels? (Who belongs to the same "trouble group"?)
+2. Can she split the class into **two rooms** so that no quarrelling pair shares a room?
 
-### The one insight to remember
+The obvious way to answer question 2 is to try every split. Each child goes to room A or room B, so there are $2^6 = 64$ splits to test. For a class of 30 that is $2^{30} \approx 1.07$ billion splits. Graph theory answers both questions by walking the quarrel lines once: about $n + 2m$ steps, which is $6 + 10 = 16$ here.
 
-A graph can connect a node back to an earlier node. Assign every original vertex one clone before traversing its outgoing edges.
+## Explain it like I'm ten
 
-## Build the mathematical meaning from a small example
+::: {.callout-tip}
+In the old city of Königsberg a river split the town into **four pieces of land**, joined by **seven bridges**. People asked: can you go for a walk that crosses every bridge exactly once?
+
+In 1736 Leonhard Euler solved it by throwing the map away. Shapes and distances did not matter; only *which land touches which bridge*. He named the four pieces of land A, B, C, D, and counted the bridges at each: the island had 5 and the other three pieces had 3 each. Today we draw each piece of land as a **dot** and each bridge as a **line**.
+
+Here is his idea in kid language. Every time you walk *into* a piece of land you must walk *out* again, so the bridges at a dot get used in pairs: in, out, in, out. Only the dot where you start and the dot where you finish may have an odd number. Königsberg had **four** odd dots, so no such walk exists, however clever you are.
+
+Euler also noticed that if you add up the bridges at every dot you get $5 + 3 + 3 + 3 = 14$, exactly twice the 7 bridges, because each bridge has two ends. That counting fact is Level 3 of this lesson. Dots and lines are now called **vertices** and **edges**, and Euler's paper is counted as the start of graph theory.
+:::
+
+## From simple to advanced
+
+### Level 1: dots, lines, and the words for them
+
+Our quarrel graph, drawn:
+
+```text
+0 ─── 1 ─── 3        4 ─── 5
+ \   /
+   2
+```
+
+A graph is written as a pair of sets:
 
 $$
-G=(V,E)
+G = (V, E), \qquad E \subseteq \lbrace \lbrace u, v \rbrace : u, v \in V,\ u \ne v \rbrace, \qquad m \le \frac{n(n-1)}{2}
 $$
 
-**What each symbol means:** G is a graph; V is the set of nodes; E is the set of edges linking nodes. For an undirected graph, an edge can be treated as an unordered pair.
+where:
 
-**Substitute actual values:** For V={A,B,C} and E={{A,B},{B,C}}, there are 3 vertices and 2 undirected edges. Adding {C,A} creates a cycle, so blindly cloning neighbours without a visited map can loop forever.
+- $V$ is the set of **vertices** (the dots) and $n = \lvert V \rvert$ is how many there are;
+- $E$ is the set of **edges** (the lines); an undirected edge $\lbrace u, v \rbrace$ is an unordered pair, so $\lbrace 0, 1 \rbrace = \lbrace 1, 0 \rbrace$;
+- $m = \lvert E \rvert$ is the number of edges;
+- $\frac{n(n-1)}{2}$ counts all possible pairs, the most edges a simple graph (no loops, no repeated edges) can have.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: $V = \lbrace 0, 1, 2, 3, 4, 5 \rbrace$ gives $n = 6$, and the five quarrels give $m = 5$. At most $\frac{6 \times 5}{2} = 15$ edges are possible, so this graph uses 5 of 15.
 
-## Design the algorithm in ordinary English
+More words, all on this picture:
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+| Word | Meaning | In our graph |
+| --- | --- | --- |
+| neighbours | two vertices joined by an edge | 1 and 3 are neighbours |
+| degree $\deg(v)$ | the number of edges touching $v$ | $\deg(1) = 3$ |
+| path | a walk along edges that never repeats a vertex | $3 - 1 - 0$ |
+| cycle | a path that returns to its start | $0 - 1 - 2 - 0$, length 3 |
+| connected component | a largest group in which every pair is joined by a path | $\lbrace 0, 1, 2, 3 \rbrace$ and $\lbrace 4, 5 \rbrace$ |
 
-**Correctness argument (the invariant):** A map original→clone ensures each source node is created once; traversing every original edge and recording the corresponding cloned edge preserves graph adjacency.
+The plainest way to give a graph to a program is the **edge list**, one pair per edge:
 
-## Code you can run
+```java
+int[][] edges = {{0, 1}, {0, 2}, {1, 2}, {1, 3}, {4, 5}};
+```
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `componentsDFS`. Its use can be reduced to:
+### Level 2: storing a graph, matrix or list
 
-~~~js
-import { componentsDFS } from '../examples/patterns.mjs';
+An edge list cannot answer "who are the neighbours of 1?" without scanning every edge. Two standard layouts fix that.
 
-console.log(componentsDFS([[1],[0,2],[1]]));
-~~~
+The **adjacency matrix** is an $n \times n$ table of true/false: cell $(u, v)$ is true when $\lbrace u, v \rbrace$ is an edge. The **adjacency list** keeps, for each vertex, a list of its neighbours.
 
-Save the snippet inside the `algorithms/graph-theory/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+```java
+static boolean[][] adjacencyMatrix(int n, int[][] edges) {
+    boolean[][] matrix = new boolean[n][n];
+    for (int[] e : edges) matrix[e[0]][e[1]] = matrix[e[1]][e[0]] = true;
+    return matrix;
+}
 
-## Why it works, and how expensive it is
+static List<List<Integer>> adjacencyList(int n, int[][] edges) {
+    List<List<Integer>> adj = new ArrayList<>();
+    for (int i = 0; i < n; i++) adj.add(new ArrayList<>());
+    for (int[] e : edges) {
+        adj.get(e[0]).add(e[1]);
+        adj.get(e[1]).add(e[0]);   // undirected: the edge is stored at both ends
+    }
+    return adj;
+}
+```
 
-A map original→clone ensures each source node is created once; traversing every original edge and recording the corresponding cloned edge preserves graph adjacency.
+For our graph the list is:
 
-**Time and space:** O(|V|+|E|) time and space for adjacency-list traversal; |V| is number of vertices and |E| number of edges.
+```text
+0: 1, 2
+1: 0, 2, 3
+2: 0, 1
+3: 1
+4: 5
+5: 4
+```
 
-**Common mistake or limitation:** A tree traversal assumes no cycles. Graph problems often need a visited map as soon as you discover, not after returning from recursion.
+Their sizes:
 
-## Try to explain it in an interview
+$$
+\text{matrix cells} = n^2, \qquad \text{list entries} = n + 2m
+$$
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+where:
 
-## Reading and practice
+- $n^2$ counts every (row, column) cell, whether or not an edge is there;
+- $n$ counts the list heads, one per vertex;
+- $2m$ counts neighbour entries: each undirected edge appears twice, once in each endpoint's list.
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 20 (graph representations and traversals). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 133 — Clone Graph. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+Example: our graph has $n = 6$ and $m = 5$. The matrix has $6^2 = 36$ cells, of which only $10$ are true. The list has $6 + 2 \times 5 = 16$ entries. Now a road map with $n = 1{,}000$ junctions and $m = 3{,}000$ roads: the matrix has $1{,}000^2 = 1{,}000{,}000$ cells, the list $1{,}000 + 6{,}000 = 7{,}000$ entries, about 143 times smaller.
+
+| Question | Matrix | List |
+| --- | --- | --- |
+| Is $\lbrace u, v \rbrace$ an edge? | $O(1)$, one cell | $O(\deg u)$, scan one list |
+| Visit all neighbours of $u$ | $O(n)$, a whole row | $O(\deg u)$ |
+| Memory | $O(n^2)$ | $O(n + m)$ |
+
+Most real graphs are **sparse** ($m$ far below $n^2$), so the adjacency list is the default. The matrix wins for small, dense graphs and for algorithms such as Floyd–Warshall that touch every pair anyway.
+
+### Level 3: the handshake lemma
+
+Add up the degrees of all vertices. The answer is always even:
+
+$$
+\sum_{v \in V} \deg(v) = 2m
+$$
+
+where:
+
+- $\sum_{v \in V}$ means "add the following over every vertex $v$";
+- $\deg(v)$ is the number of edges touching $v$;
+- $m$ is the number of edges.
+
+Example: our degrees are $\deg(0..5) = 2, 3, 2, 1, 1, 1$. Their sum is $2 + 3 + 2 + 1 + 1 + 1 = 10 = 2 \times 5$. Königsberg: $5 + 3 + 3 + 3 = 14 = 2 \times 7$.
+
+**Proof.** Count edge ends. Each edge has exactly two ends, so there are $2m$ ends in total. Each end sits at one vertex and adds 1 to that vertex's degree. So the degrees add up to the number of ends, $2m$. The name comes from a party: if everyone counts how many hands they shook, the total is twice the number of handshakes.
+
+**Corollary.** The number of odd-degree vertices is even. The even degrees add up to an even number; to reach the even total $2m$, the odd degrees must also add up to an even number, which needs an even count of them. Our graph has four odd vertices, 1, 3, 4 and 5. Königsberg also has four, which is exactly why Euler's walk fails.
+
+In code, the degree of $v$ is the length of its list, and the lemma becomes a test:
+
+```java
+static int degreeSum(List<List<Integer>> adj) {
+    int sum = 0;
+    for (List<Integer> neighbours : adj) sum += neighbours.size();
+    return sum;
+}
+```
+
+`degreeSum` returns 10 for our graph. That is also why the list has $n + 2m$ entries.
+
+### Level 4: one-way edges and weights
+
+Real maps have one-way streets and roads of different lengths.
+
+- A **directed** graph has ordered edges $(u, v)$, drawn as arrows $u \to v$. Now $(u, v) \ne (v, u)$.
+- A **weighted** graph gives each edge a number $w(u, v)$: a length, a price, a time.
+
+A vertex now has two degrees: arrows leaving it and arrows arriving. The handshake lemma splits in two:
+
+$$
+\sum_{v \in V} \deg^{+}(v) = \sum_{v \in V} \deg^{-}(v) = m
+$$
+
+where:
+
+- $\deg^{+}(v)$ is the **out-degree**, the number of arrows leaving $v$;
+- $\deg^{-}(v)$ is the **in-degree**, the number of arrows arriving at $v$;
+- each arrow has one tail and one head, so it adds 1 to each sum.
+
+Example: three towns with one-way roads $0 \to 1$ (length 4), $0 \to 2$ (length 1) and $2 \to 1$ (length 2). Out-degrees are $2, 0, 1$ and in-degrees $0, 2, 1$; both sum to $3 = m$. The adjacency list now holds $n + m = 3 + 3 = 6$ entries, because each arrow is stored once, at its tail. Weights matter: the direct road $0 \to 1$ costs 4, but $0 \to 2 \to 1$ costs $1 + 2 = 3$. Finding such cheapest routes is the [shortest-path](../shortest-path/index.qmd) lesson.
+
+```java
+record Edge(int to, int weight) {}
+
+static List<List<Edge>> directedWeighted(int n, int[][] edges) {   // each edge is {from, to, weight}
+    List<List<Edge>> adj = new ArrayList<>();
+    for (int i = 0; i < n; i++) adj.add(new ArrayList<>());
+    for (int[] e : edges) adj.get(e[0]).add(new Edge(e[1], e[2]));   // stored once, at its tail
+    return adj;
+}
+```
+
+### Level 5: paths and connected components
+
+Question 1 of the problem asks for the **connected components**. Start at any unlabelled vertex, walk to everything reachable, and give all of it the same label. Then move on to the next unlabelled vertex. The walk below uses a stack, which is [depth-first search](../depth-first-search/index.qmd); a queue would give [breadth-first search](../breadth-first-search/index.qmd), and either works.
+
+```java
+static int[] components(List<List<Integer>> adj) {
+    int[] label = new int[adj.size()];
+    Arrays.fill(label, -1);
+    int count = 0;
+    for (int start = 0; start < adj.size(); start++) {
+        if (label[start] != -1) continue;
+        Deque<Integer> stack = new ArrayDeque<>(List.of(start));
+        label[start] = count;
+        while (!stack.isEmpty()) {
+            int u = stack.pop();
+            for (int v : adj.get(u)) {
+                if (label[v] == -1) { label[v] = count; stack.push(v); }
+            }
+        }
+        count++;
+    }
+    return label;
+}
+```
+
+On our graph the labels are `[0, 0, 0, 0, 1, 1]`: two trouble groups, $\lbrace 0, 1, 2, 3 \rbrace$ and $\lbrace 4, 5 \rbrace$.
+
+Components also tell us how many cycles a graph must contain. A component of $k$ vertices needs at least $k - 1$ edges to hold together (a tree, see the [tree](../tree/index.qmd) lesson); each extra edge closes a new cycle:
+
+$$
+m \ge n - c, \qquad \text{independent cycles} = m - n + c
+$$
+
+where:
+
+- $c$ is the number of connected components;
+- $n - c$ is the number of edges in a spanning forest, one tree per component;
+- $m - n + c$ (the *cyclomatic number*) counts the edges beyond that forest; each one closes exactly one new cycle.
+
+Example: $n = 6$ and $c = 2$, so at least $6 - 2 = 4$ edges are needed. We have $m = 5$, so $5 - 6 + 2 = 1$ independent cycle, the triangle $0 - 1 - 2$.
+
+### Level 6: two rooms, two colours: bipartite graphs
+
+Question 2 asks for a **2-colouring**: paint each vertex room 0 or room 1 so that every edge joins different colours. A graph that has one is **bipartite**.
+
+$$
+c : V \to \lbrace 0, 1 \rbrace \quad \text{with} \quad c(u) \ne c(v) \ \text{for every edge} \ \lbrace u, v \rbrace \in E
+$$
+
+where:
+
+- $c(v)$ is the colour (room) given to vertex $v$;
+- $\to \lbrace 0, 1 \rbrace$ says only two colours are allowed;
+- the condition must hold for **every** edge, so one bad edge spoils the whole colouring.
+
+Example: try $c = (0, 1, 1, 0, 0, 1)$ for vertices $0..5$. Edges $\lbrace 0, 1 \rbrace$, $\lbrace 0, 2 \rbrace$, $\lbrace 1, 3 \rbrace$, $\lbrace 4, 5 \rbrace$ join colours $0/1$, $0/1$, $1/0$, $0/1$: all fine. But $\lbrace 1, 2 \rbrace$ joins $1/1$: broken. Remove that one quarrel and the same colouring works.
+
+```java
+static boolean isProperTwoColouring(int[][] edges, int[] colour) {
+    for (int[] e : edges) {
+        if (colour[e[0]] == colour[e[1]]) return false;
+    }
+    return true;
+}
+```
+
+No colouring can fix the triangle. Its three vertices need alternating colours around the loop, $0, 1, 0$, and then the third edge returns to the start with $0$ next to $0$. The general rule, usually credited to Dénes Kőnig's 1936 textbook:
+
+$$
+G \text{ is bipartite} \iff G \text{ has no cycle of odd length}
+$$
+
+where:
+
+- $\iff$ means "exactly when": each side implies the other;
+- the length of a cycle is its number of edges.
+
+Example: the triangle $0 - 1 - 2 - 0$ has length 3, which is odd, so our quarrel graph needs three rooms. The square $1 - 2 - 3 - 4 - 1$ has length 4; colours $0, 1, 0, 1$ go round and close up correctly, so it is bipartite.
+
+**Why.** Walking around a cycle, the colour flips at every edge. After $\ell$ edges you are back at the start, having flipped $\ell$ times, and you land on the starting colour only when $\ell$ is even. Conversely, with no odd cycle, colour each vertex by the parity of its distance from a starting vertex; Interview problem 2 does exactly that with breadth-first search.
+
+## Why it works and what it costs
+
+**Components are correct.** The invariant is: *a vertex gets label $k$ exactly when it is reachable from the $k$-th start.* Labels are only given to neighbours of labelled vertices, so every labelled vertex is reachable. Conversely, if $v$ is reachable along a path $s = u_0, u_1, \dots, u_t = v$, then by induction each $u_i$ is labelled and pushed, and when it is popped its neighbour $u_{i+1}$ is labelled. A vertex is labelled once and pushed once, so the loop ends.
+
+**Two-colouring by distance parity is correct.** In breadth-first search from $s$, an edge $\lbrace u, v \rbrace$ always joins layers whose distances differ by at most 1. If they differ by 1, the parities differ and the colours differ. If they are equal, the two shortest paths back to $s$ plus that edge form a closed walk of length $d + d + 1 = 2d + 1$, which is odd and contains an odd cycle, so no 2-colouring exists.
+
+**Costs, counted on our graph.** A traversal visits each vertex once ($n = 6$ visits) and reads each list entry once ($2m = 10$ reads): $16$ steps, $O(n + m)$. With a matrix, finding the neighbours of each vertex reads a whole row: $n^2 = 36$ cell reads, $O(n^2)$.
+
+| Operation | Adjacency list | Adjacency matrix |
+| --- | --- | --- |
+| build from an edge list | $O(n + m)$ | $O(n^2)$, to allocate the table |
+| edge test $\lbrace u, v \rbrace$ | $O(\deg u)$ | $O(1)$ |
+| traversal, components, 2-colouring | $O(n + m)$ | $O(n^2)$ |
+| memory | $O(n + m)$ | $O(n^2)$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Storing an undirected edge in one list only | Walks reach $v$ from $u$ but never $u$ from $v$; components split wrongly | Add both `adj[u].add(v)` and `adj[v].add(u)` |
+| Marking a vertex visited when it is popped, not when it is pushed | The same vertex is pushed many times; slow, and BFS distances go wrong | Mark (label, colour, distance) at the moment of pushing |
+| Starting the search only from vertex 0 | Other components are never seen; a disconnected graph looks bipartite or fully cloned | Loop over every vertex and start from each unvisited one |
+| Using a matrix for a big sparse graph | `OutOfMemoryError` at $n = 10^5$ ($10^{10}$ cells) | Adjacency list, $n + 2m$ entries |
+| Mixing 0-based and 1-based vertex numbers | `ArrayIndexOutOfBoundsException` on vertex $n$ | Allocate $n + 1$ slots, or subtract 1 once on input |
+| Using a set of visited *values* when cloning | Two different nodes with the same value are merged | Key the map by the node object itself |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 133: Clone Graph (Medium)
+
+**Problem.** Given one node of a connected undirected graph, return a deep copy: new nodes with the same values and the same connections. Example: the square $1 - 2 - 3 - 4 - 1$, given as the lists `[[2,4],[1,3],[2,4],[1,3]]`.
+
+**Math first.** A copy is a one-to-one map $\varphi$ from old nodes to new nodes that keeps every edge:
+
+$$
+\varphi : V \to V', \qquad \lbrace u, v \rbrace \in E \iff \lbrace \varphi(u), \varphi(v) \rbrace \in E'
+$$
+
+where:
+
+- $V$ is the set of original nodes and $V'$ the set of new nodes;
+- $\varphi(u)$ is the copy of $u$; one-to-one means no two originals share a copy;
+- the right-hand side says the copy has an edge exactly where the original does.
+
+Example: $\varphi(1) = 1'$, $\varphi(2) = 2'$, and so on. The original edge $\lbrace 1, 2 \rbrace$ requires $\lbrace 1', 2' \rbrace$, and the four edges of the square give four edges of the copy. $\lvert V' \rvert = 4$: each node is copied exactly once, even though node 1 is reached twice (from 2 and from 4).
+
+**Idea.** Store $\varphi$ in a hash map. To copy a node, return its copy if the map already has one; otherwise create it, **put it in the map first**, then copy its neighbours. Putting it in first is what stops the walk from going round the cycle forever.
+
+```java
+static Node cloneGraph(Node node) {
+    return node == null ? null : clone(node, new HashMap<>());
+}
+
+static Node clone(Node node, Map<Node, Node> copies) {
+    if (copies.containsKey(node)) return copies.get(node);
+    Node copy = new Node(node.val);
+    copies.put(node, copy);   // register before recursing, so a cycle stops here
+    for (Node next : node.neighbors) copy.neighbors.add(clone(next, copies));
+    return copy;
+}
+```
+
+**Answer.** For the square, the map ends with 4 entries and the copy of 1 has neighbours $2', 4'$, whose first neighbour is $1'$ again. Each node is created once ($n = 4$) and each neighbour entry is followed once ($2m = 8$): $O(n + m)$ time and $O(n)$ space for the map and the recursion.
+
+### 2. LeetCode 785: Is Graph Bipartite? (Medium)
+
+**Problem.** Given an undirected graph as adjacency lists `graph[u]`, return whether it is bipartite. The graph may be disconnected. Example 1: `[[1,2,3],[0,2],[0,1,3],[0,2]]` returns `false`. Example 2: `[[1,3],[0,2],[1,3],[0,2]]` returns `true`.
+
+**Math first.** Colour each vertex by the parity of its breadth-first distance from the start of its component, then check every edge:
+
+$$
+c(v) = d(s, v) \bmod 2, \qquad \text{bipartite} \iff c(u) \ne c(v) \ \text{for all } \lbrace u, v \rbrace \in E
+$$
+
+where:
+
+- $s$ is the first vertex reached in $v$'s component;
+- $d(s, v)$ is the number of edges on a shortest path from $s$ to $v$;
+- $\bmod 2$ turns even distances into colour 0 and odd distances into colour 1.
+
+Example 2: from $s = 0$, distances are $d = 0, 1, 2, 1$ for vertices $0..3$, so colours are $0, 1, 0, 1$. The edges $\lbrace 0,1 \rbrace, \lbrace 0,3 \rbrace, \lbrace 1,2 \rbrace, \lbrace 2,3 \rbrace$ all join different colours: **true**. Example 1: from $s = 0$, vertices 1, 2, 3 all get distance 1 and colour 1, and the edge $\lbrace 1, 2 \rbrace$ joins $1/1$, closing the odd cycle $0 - 1 - 2$: **false**.
+
+**Idea.** Breadth-first search assigns colours as it goes: an uncoloured neighbour gets the opposite colour; an already-coloured neighbour with the same colour is a conflict. Restart the search from every uncoloured vertex, because the graph may have several components.
+
+```java
+static boolean isBipartite(int[][] graph) {
+    int[] colour = new int[graph.length];
+    Arrays.fill(colour, -1);
+    for (int start = 0; start < graph.length; start++) {
+        if (colour[start] != -1) continue;
+        colour[start] = 0;
+        Deque<Integer> queue = new ArrayDeque<>(List.of(start));
+        while (!queue.isEmpty()) {
+            int u = queue.poll();
+            for (int v : graph[u]) {
+                if (colour[v] == -1) { colour[v] = 1 - colour[u]; queue.add(v); }
+                else if (colour[v] == colour[u]) return false;   // both ends share a colour
+            }
+        }
+    }
+    return true;
+}
+```
+
+**Answer.** `false` for example 1 and `true` for example 2. Each vertex is queued once and each list entry read once: for example 2 that is $4 + 8 = 12$ steps. $O(n + m)$ time, $O(n)$ space.
+
+### 3. LeetCode 2493: Divide Nodes Into the Maximum Number of Groups (Hard)
+
+**Problem.** Nodes are numbered $1..n$. Put every node into one of the groups $1, 2, \dots, g$ so that for every edge $\lbrace a, b \rbrace$ the group numbers differ by exactly 1. Return the largest possible $g$, or $-1$ if it cannot be done. Example: $n = 6$, edges $\lbrace 1,2 \rbrace, \lbrace 1,4 \rbrace, \lbrace 1,5 \rbrace, \lbrace 2,6 \rbrace, \lbrace 2,3 \rbrace, \lbrace 4,6 \rbrace$; the answer is 4.
+
+**Math first.** "Differ by exactly 1" means neighbouring groups alternate odd, even, odd, so a valid grouping is a 2-colouring and needs **no odd cycle**. When one exists, the best grouping of one component is the breadth-first layering from the best start, and separate components simply stack their groups:
+
+$$
+g =
+\begin{cases}
+-1 & \text{if some component has an odd cycle} \\[2pt]
+\displaystyle\sum_{C} \max_{s \in C} \big( \operatorname{ecc}(s) + 1 \big) & \text{otherwise}
+\end{cases}
+\qquad \operatorname{ecc}(s) = \max_{v} d(s, v)
+$$
+
+where:
+
+- $C$ runs over the connected components;
+- $d(s, v)$ is the shortest-path distance from $s$ to $v$;
+- $\operatorname{ecc}(s)$, the *eccentricity* of $s$, is the distance to the farthest vertex, so BFS from $s$ has $\operatorname{ecc}(s) + 1$ layers;
+- layer $i$ becomes group $i + 1$; every edge joins consecutive layers, so the rule holds.
+
+Example: the adjacency lists are $1: 2, 4, 5$; $2: 1, 3, 6$; $3: 2$; $4: 1, 6$; $5: 1$; $6: 2, 4$.
+
+- From $s = 5$: layers $\lbrace 5 \rbrace, \lbrace 1 \rbrace, \lbrace 2, 4 \rbrace, \lbrace 3, 6 \rbrace$, so $\operatorname{ecc}(5) = 3$ and 4 groups.
+- From $s = 3$: layers $\lbrace 3 \rbrace, \lbrace 2 \rbrace, \lbrace 1, 6 \rbrace, \lbrace 4, 5 \rbrace$, also 4 groups.
+- From $s = 1$: layers $\lbrace 1 \rbrace, \lbrace 2, 4, 5 \rbrace, \lbrace 3, 6 \rbrace$, only 3 groups.
+
+The only cycle, $1 - 2 - 6 - 4 - 1$, has even length 4. One component, best start gives $3 + 1 = \mathbf{4}$ groups. A triangle instead returns $-1$.
+
+**Idea.** Run BFS from every node. If an edge ever joins two nodes in the same layer, there is an odd cycle: return $-1$. Otherwise remember the largest layer count per component (labelled with `components` from Level 5) and add those maxima.
+
+```java
+static int magnificentSets(int n, int[][] edges) {
+    List<List<Integer>> adj = adjacencyList(n + 1, edges);   // nodes are 1..n, so vertex 0 stays alone
+    int[] component = components(adj);
+    Map<Integer, Integer> bestLayers = new HashMap<>();
+    for (int start = 1; start <= n; start++) {
+        int layers = bfsLayers(adj, start);
+        if (layers == -1) return -1;
+        bestLayers.merge(component[start], layers, Math::max);
+    }
+    int total = 0;
+    for (int layers : bestLayers.values()) total += layers;
+    return total;
+}
+```
+
+```java
+static int bfsLayers(List<List<Integer>> adj, int start) {
+    int[] dist = new int[adj.size()];
+    Arrays.fill(dist, -1);
+    dist[start] = 0;
+    Deque<Integer> queue = new ArrayDeque<>(List.of(start));
+    int deepest = 0;
+    while (!queue.isEmpty()) {
+        int u = queue.poll();
+        deepest = dist[u];
+        for (int v : adj.get(u)) {
+            if (dist[v] == -1) { dist[v] = dist[u] + 1; queue.add(v); }
+            else if (dist[v] == dist[u]) return -1;   // an edge inside one layer closes an odd cycle
+        }
+    }
+    return deepest + 1;
+}
+```
+
+**Answer.** `magnificentSets(6, example) = 4`; the triangle gives $-1$; and $n = 4$ with the single edge $\lbrace 1, 2 \rbrace$ gives $2 + 1 + 1 = 4$, because the isolated nodes 3 and 4 each add a group. One BFS costs $O(n + m)$ and we run $n$ of them: $O(n(n + m))$ time and $O(n + m)$ space. LeetCode allows $n \le 500$ and $m \le 10^4$, so at most $500 \times (500 + 2 \times 10^4) \approx 10$ million steps.
+
+**Why the maximum is right.** If groups differ by exactly 1 along every edge, then along any path the group number changes by at most the path length, so $g(v) - g(s) \le d(s, v)$. Taking $s$ in the lowest group gives at most $\operatorname{ecc}(s) + 1$ groups, and BFS from that $s$ achieves it.
+
+## Mathematical Abstraction
+
+A graph is two sets, and every algorithm here rests on two facts about them:
+
+$$
+G = (V, E), \qquad \sum_{v \in V} \deg(v) = 2\lvert E \rvert, \qquad G \text{ bipartite} \iff \text{no odd cycle}
+$$
+
+where:
+
+- $V$ is the set of vertices and $E$ the set of edges, with $n = \lvert V \rvert$ and $m = \lvert E \rvert$;
+- $\deg(v)$ is the number of edges at $v$, so the degree sum counts every edge end once;
+- bipartite means the vertices can be 2-coloured with every edge joining different colours.
+
+Example: the quarrel graph has $n = 6$, $m = 5$ and degrees $2, 3, 2, 1, 1, 1$ summing to $10 = 2 \times 5$. Stored as a list it takes $6 + 10 = 16$ entries instead of 36 matrix cells, and one traversal of those 16 entries finds its two components and the odd cycle $0 - 1 - 2$ that forbids two rooms. Remove the quarrel $\lbrace 1, 2 \rbrace$ and the colouring $0, 1, 1, 0, 0, 1$ splits the class into two peaceful rooms.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 20, "Elementary Graph Algorithms" (§20.1 Representations of graphs, §20.2 Breadth-first search, §20.3 Depth-first search), and Appendix B.4, "Graphs".
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §4.1 "Undirected Graphs", with Java adjacency lists, DFS, BFS, connected components and the bipartite test: <https://algs4.cs.princeton.edu/41graph/>.
+- Leonhard Euler, "Solutio problematis ad geometriam situs pertinentis", *Commentarii Academiae Scientiarum Petropolitanae* 8 (dated 1736, printed 1741), pp. 128–140; the Königsberg bridges. Background: <https://en.wikipedia.org/wiki/Seven_Bridges_of_K%C3%B6nigsberg>.
+- Dénes Kőnig, *Theorie der endlichen und unendlichen Graphen* (Leipzig, 1936), the first textbook of graph theory, including the odd-cycle characterisation of bipartite graphs.
+- Jeff Erickson, *Algorithms* (2019, free online), Chapter 5, "Basic Graph Algorithms": <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- LeetCode: [133. Clone Graph](https://leetcode.com/problems/clone-graph/), [785. Is Graph Bipartite?](https://leetcode.com/problems/is-graph-bipartite/), [2493. Divide Nodes Into the Maximum Number of Groups](https://leetcode.com/problems/divide-nodes-into-the-maximum-number-of-groups/).
+
+[← Trie](../trie/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Data Stream →](../data-stream/index.qmd)

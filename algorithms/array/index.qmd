@@ -1,69 +1,403 @@
 ---
 title: "Array"
-description: "Understand Array from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From numbered lockers to java.util.ArrayList: contiguous memory, address arithmetic, O(1) indexing versus O(n) insertion, 1.5x growth and amortised copying, one-pass compaction, the array as its own lookup table, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+An array keeps its values side by side in one block of memory. That one decision makes reading any position a single sum, and makes inserting in the middle expensive. This lesson counts both costs exactly, opens `java.util.ArrayList` to see how Java grows an array, and then uses the array's indices as a free lookup table to solve hard interview problems.
 
-**LeetCode 217 — Contains Duplicate.** An indexed sequence with constant-time positional access.
+All code is in [`ArrayLab.java`](ArrayLab.java). Run it from this folder with `java ArrayLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A teacher records six test scores in seat order: `[72, 85, 90, 64, 78, 95]`. She wants to:
 
-Compare every pair: with five entries this can perform ten pair checks.
+- read the score in seat 4 **instantly**;
+- squeeze a late student's score, 80, into seat 2 without losing the order;
+- keep adding scores all year without deciding the class size in advance.
 
-### The one insight to remember
+If the scores were written on a chain of notes, each saying where the next note is, then reading seat 4 means walking past four notes first, and seat 1,000,000 means walking a million. An array answers "where is seat $i$?" with one multiplication and one addition. The price is paid elsewhere: to open seat 2, everybody from seat 2 onwards must shuffle along by one.
 
-The important feature of an array is positional indexing. A set turns duplicate detection into a membership question, so we inspect each element once.
+## Explain it like I'm ten
 
-## Build the mathematical meaning from a small example
+::: {.callout-tip}
+Picture a corridor of identical lockers, each exactly 2 metres wide, starting 100 metres from the door. Locker 0 is at 100 m, locker 1 at 102 m, locker 3 at $100 + 3 \times 2 = 106$ m. You never walk along counting lockers; you work out the distance and go straight there. That is an array: equal-sized boxes in a row, found by arithmetic.
+
+Now a new child needs locker 2, and every locker is full. The only way is for the children in lockers 2, 3, 4 and onwards to each move their things one locker to the right. The more children after locker 2, the longer it takes.
+
+Aditya Bhargava's *Grokking Algorithms* (chapter 2) tells the same story with friends at the cinema: a group that wants to sit **together** needs a row of free seats side by side. When one more friend arrives and the next seat is taken, the whole group has to get up and move to a bigger empty row. That move is exactly what `ArrayList` does when it grows.
+:::
+
+## From simple to advanced
+
+### Level 1: one block of memory, found by arithmetic
+
+An array of $n$ elements, each $s$ bytes wide, occupies $n \cdot s$ consecutive bytes. The address of element $i$ is
 
 $$
-D(A)=\bigl(|A|\ne |\operatorname{set}(A)|\bigr)
+\operatorname{addr}(i) = b + i \cdot s, \qquad 0 \le i \le n - 1
 $$
 
-**What each symbol means:** A is the input array; |A| counts entries; set(A) keeps one copy of each distinct value; D(A) tells whether a duplicate exists.
+where:
 
-**Substitute actual values:** For A=[4,2,4,7], |A|=4 but the distinct set {2,4,7} has size 3, so D(A) is true. For [4,2,7], both sizes equal 3, so D(A) is false.
+- $b$ is the base address, where element 0 starts;
+- $i$ is the index, counted from 0;
+- $s$ is the size of one element in bytes: 4 for an `int`, 8 for a `long` or `double`;
+- $n$ is the number of elements, so the valid indices are $0$ to $n - 1$.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: an `int` array starting at byte $b = 1000$. Element 3 is at $1000 + 3 \times 4 = 1012$. For a `long` array at the same base it is $1000 + 3 \times 8 = 1024$. Element 0 is at $1000 + 0 \times 4 = 1000$, the base itself, which is why indices start at 0: the index is the distance from the start, measured in elements.
 
-## Design the algorithm in ordinary English
+```java
+static long address(long base, int index, int elementSize) {
+    return base + (long) index * elementSize;
+}
+```
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+Java never shows you real addresses, but the JVM does exactly this sum (plus a small fixed header offset) every time you write `a[i]`. It also checks $0 \le i < n$ first and throws `ArrayIndexOutOfBoundsException` otherwise, which is why a Java array can never read a neighbour's memory by accident. One multiplication and one addition cost the same for $i = 3$ as for $i = 3{,}000{,}000$, so indexing is $O(1)$.
 
-**Correctness argument (the invariant):** After processing the first k values, the set contains exactly the distinct values among those k values. The next value is a duplicate precisely when it is already present.
+### Level 2: inserting and deleting means shifting
 
-## Code you can run
+The block has no gaps. To insert at index $k$ in an array holding $n$ elements, every element from $k$ to $n - 1$ moves one place right:
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `containsDuplicate`. Its use can be reduced to:
+$$
+\text{shifts}_{\text{insert}}(k) = n - k, \qquad \text{shifts}_{\text{delete}}(k) = n - 1 - k
+$$
 
-~~~js
-import { containsDuplicate } from '../examples/patterns.mjs';
+where:
 
-console.log(containsDuplicate([4,2,4,7]));
-~~~
+- $n$ is the number of elements before the operation;
+- $k$ is the index where the new element goes, or the index of the element removed;
+- a "shift" is one element copied to its neighbour's place.
 
-Save the snippet inside the `algorithms/array/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+Example: the scores `[72, 85, 90, 64, 78, 95]` have $n = 6$. Inserting 80 at $k = 2$ moves 95, 78, 64 and 90: $6 - 2 = 4$ shifts, giving `[72, 85, 80, 90, 64, 78, 95]`. Deleting index 2 again from these 7 elements moves $7 - 1 - 2 = 4$ elements back left.
 
-## Why it works, and how expensive it is
+```java
+static int insertAt(int[] a, int size, int index, int value) {
+    int shifts = 0;
+    for (int i = size; i > index; i--) {   // right to left, so nothing is overwritten
+        a[i] = a[i - 1];
+        shifts++;
+    }
+    a[index] = value;
+    return shifts;
+}
+```
 
-After processing the first k values, the set contains exactly the distinct values among those k values. The next value is a duplicate precisely when it is already present.
+The loop runs **right to left**. Going left to right would copy `a[2]` into `a[3]` and then copy that same value into `a[4]`, smearing one score over the whole tail. The lab's `removeAt` is the mirror image and runs left to right.
 
-**Time and space:** Expected O(n) time and O(n) extra space for hash-based membership, where n is array length; a worst-case guarantee depends on hash-table behaviour.
+If every insertion position $k = 0, 1, \dots, n$ is equally likely, the average cost is
 
-**Common mistake or limitation:** Hash-set storage trades additional memory for faster expected detection. It is not the right answer if memory must remain constant and modifying the array is allowed; sorting can be an alternative.
+$$
+\overline{\text{shifts}} = \frac{1}{n + 1} \sum_{k=0}^{n} (n - k) = \frac{1}{n + 1} \cdot \frac{n(n+1)}{2} = \frac{n}{2}
+$$
 
-## Try to explain it in an interview
+where:
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+- $\overline{\text{shifts}}$ is the average number of shifts per insertion;
+- the sum adds the cost $n - k$ over all $n + 1$ possible positions;
+- $\frac{n(n+1)}{2}$ is the sum $0 + 1 + \dots + n$.
 
-## Reading and practice
+Example: for $n = 6$ the costs at $k = 0, \dots, 6$ are $6, 5, 4, 3, 2, 1, 0$. They add up to $21 = \frac{6 \times 7}{2}$, and $21 / 7 = 3 = 6 / 2$. Half the array moves on average, so insertion is $O(n)$. Only appending at the end ($k = n$) is free.
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 (arrays) and Chapter 11 (hash tables). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 217 — Contains Duplicate. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+### Level 3: a growable array, as in `java.util.ArrayList`
+
+A plain Java array has a fixed length. `ArrayList` hides a larger array, its **capacity**, and remembers how many slots are really used, its **size**. When the array is full, it allocates a bigger one and copies everything across. The JDK source (`ArrayList.grow`, via `ArraysSupport.newLength`) chooses
+
+$$
+c_{\text{new}} = c + \left\lfloor \frac{c}{2} \right\rfloor, \qquad c_0 = 10
+$$
+
+where:
+
+- $c$ is the current capacity, the length of the hidden array;
+- $\lfloor c/2 \rfloor$ is half of it, rounded down (Java's `c >> 1`);
+- $c_0 = 10$ is `DEFAULT_CAPACITY`, allocated by the first `add` to a `new ArrayList<>()`.
+
+Example: $10 \to 10 + 5 = 15 \to 15 + 7 = 22 \to 22 + 11 = 33 \to 33 + 16 = 49 \to 49 + 24 = 73$. Each step multiplies the capacity by about 1.5.
+
+```java
+static final class IntList {
+    int[] items = new int[10];
+    int size;
+    int copies;                            // elements copied by all resizes so far
+
+    void add(int value) {
+        if (size == items.length) {
+            items = Arrays.copyOf(items, size + (size >> 1));
+            copies += size;
+        }
+        items[size++] = value;
+    }
+
+    int get(int index) {
+        Objects.checkIndex(index, size);   // the array may be longer than size
+        return items[index];
+    }
+}
+```
+
+A resize copies every element, which sounds expensive. Counting shows it is not. Copies happen when the size reaches each capacity $c_0, c_1, \dots, c_t$, and each capacity is about $\frac{2}{3}$ of the next:
+
+$$
+\text{total copies} = \sum_{j=0}^{t} c_j \le c_t \left(1 + \frac{2}{3} + \left(\frac{2}{3}\right)^2 + \dots\right) = 3\,c_t \le 3n
+$$
+
+where:
+
+- $c_j$ is the capacity at the $j$-th resize, so the $j$-th resize copies $c_j$ elements;
+- $c_t$ is the last capacity that filled up, which is less than the number of elements added, $n$;
+- the bracket is a geometric series with ratio $\frac{2}{3}$, whose sum is $\frac{1}{1 - 2/3} = 3$.
+
+Example: adding $n = 50$ elements resizes at sizes 10, 15, 22, 33 and 49, copying $10 + 15 + 22 + 33 + 49 = 129$ elements, and $129 \le 3 \times 50 = 150$. The final capacity is 73. For $n = 1{,}000$ the lab counts 2,456 copies, within $3{,}000$. Adding the $n$ ordinary writes gives under $4n$ work in total, so each `add` is $O(1)$ **amortised**: averaged over the whole sequence, not promised for every single call.
+
+Growing by a **fixed** amount fails this test. Adding 10 slots each time copies $10 + 20 + \dots + 990 = 10 \times \frac{99 \times 100}{2} = 49{,}500$ elements for 1,000 adds, twenty times more, and the gap grows like $n^2$. Doubling copies fewer elements than 1.5x (at most $2n$) but can leave half the array empty; 1.5x leaves at most a third empty. Java chose the smaller waste.
+
+### Level 4: one pass instead of many shifts
+
+Deleting several elements one at a time repeats the shifting. If the $k$ elements to delete all sit at the front of an array of $n$, the deletions shift $n - 1$, then $n - 2$, and so on:
+
+$$
+\text{shifts}_{\text{one by one}} = \sum_{j=1}^{k} (n - j) = kn - \frac{k(k+1)}{2}
+$$
+
+where:
+
+- $n$ is the starting number of elements;
+- $k$ is how many elements are deleted;
+- $n - j$ is the cost of the $j$-th deletion at the front, when $n - j + 1$ elements remain.
+
+Example: deleting the four zeros from `[0, 0, 0, 0, 5, 6, 7, 8]` one at a time costs $4 \times 8 - \frac{4 \times 5}{2} = 32 - 10 = 22$ shifts, which is $7 + 6 + 5 + 4$.
+
+The cure is to keep two indices. `read` visits every element once; `write` marks where the next survivor goes. Each element is read once and written at most once, so the cost is $n$ reads, whatever $k$ is:
+
+```java
+static int removeZeros(int[] a) {
+    int write = 0;
+    for (int read = 0; read < a.length; read++) {
+        if (a[read] != 0) a[write++] = a[read];
+    }
+    return write;                          // the new length: a[0..write) holds the survivors
+}
+```
+
+On `[0, 1, 0, 3, 12]` this makes 5 reads and 3 writes and returns length 3, with `[1, 3, 12]` at the front. `ArrayList.removeIf` works the same way: it marks the victims first, then compacts the survivors in a single pass.
+
+### Level 5: the array as its own lookup table
+
+When the values are known to lie in $1..n$ and the array has $n$ slots, each value has a natural home:
+
+$$
+\operatorname{home}(v) = v - 1, \qquad 1 \le v \le n
+$$
+
+where:
+
+- $v$ is a value stored in the array;
+- $n$ is the array length;
+- $\operatorname{home}(v)$ is the index that "belongs" to $v$.
+
+Example: in an array of length 8, value 5 belongs at index 4 and value 1 at index 0. Value 9 or $-1$ has no home, because it lies outside $1..8$.
+
+This turns the array into a set with $O(1)$ membership and **no extra memory**. To record "I have seen $v$", change something at index $v - 1$ that can be undone or read back later: flip its sign (Interview problem 1), or swap $v$ into that slot (Interview problem 3). A `HashSet` would do the same job with $O(n)$ extra space; the array's own indices are a hash table whose hash function is $v - 1$, with no collisions possible.
+
+## Why it works and what it costs
+
+**Address arithmetic is correct** because the block has no gaps and every element has the same size: element $i$ starts after exactly $i$ whole elements, which occupy $i \cdot s$ bytes.
+
+**`insertAt` is correct.** The invariant of the loop is: *before the step for index `i`, the elements originally at `index..i-1` are untouched, and those originally at `i..size-1` now sit one place to the right.* Initially `i = size` and nothing has moved. Each step copies `a[i - 1]` into `a[i]`, a slot whose old value has already been moved on, so nothing is lost. When `i == index`, the whole tail has moved and `a[index]` is free for the new value.
+
+**Compaction is correct.** The invariant is: *`a[0..write)` holds, in their original order, exactly the non-zero elements among `a[0..read)`.* Because `write <= read` at all times, writing into `a[write]` never destroys an element that has not been read yet.
+
+**Costs**, with $n$ elements:
+
+| Operation | Array (`int[]`) | `ArrayList` | Why |
+| --- | --- | --- | --- |
+| read or write `a[i]` | $O(1)$ | $O(1)$ | one multiplication and one addition |
+| append at the end | not possible | $O(1)$ amortised | at most $3n$ copies over $n$ appends |
+| insert or delete at index $k$ | $O(n - k)$ | $O(n - k)$ | shift the tail; $n/2$ on average |
+| search for a value | $O(n)$ | $O(n)$ | look at every element; $O(\log n)$ if sorted |
+| delete $k$ elements matching a test | $O(n)$ with compaction | $O(n)$ with `removeIf` | each element read once |
+
+Arrays also win on a cost the table hides: neighbours sit in the same cache line, so scanning an array is several times faster than following links of the same length.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Loop to `i <= a.length` | `ArrayIndexOutOfBoundsException` on the last step | Valid indices are $0$ to $n - 1$: use `i < a.length` |
+| Shift left to right when inserting | The same value is smeared over the whole tail | Insert right to left, delete left to right |
+| Calling `list.remove(i)` inside a forward loop | The element right after each removed one is skipped, and the loop is $O(n^2)$ | `list.removeIf(...)`, or a read/write compaction |
+| `list.remove(1)` on a `List<Integer>` | Removes the element at **index** 1, not the value 1 | `list.remove(Integer.valueOf(1))` |
+| Adding to `Arrays.asList(...)` | `UnsupportedOperationException` | It is a fixed-size view of the array; copy it into `new ArrayList<>(...)` |
+| `ArrayList<Integer>` for millions of numbers | Memory several times larger and slower scans, since each element is a separate object | Use `int[]`, or a primitive list class |
+| Expecting `a == b` or `a.equals(b)` to compare contents | Two identical arrays are "not equal" | `Arrays.equals(a, b)` |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 448: Find All Numbers Disappeared in an Array (Easy)
+
+**Problem.** An array of length $n$ holds values in $1..n$; some appear twice and others are missing. Return the missing ones, using no extra space apart from the answer. For `[4, 3, 2, 7, 8, 2, 3, 1]` the answer is `[5, 6]`.
+
+**Math first.** Use Level 5: the sign of slot $v - 1$ records whether $v$ was seen.
+
+$$
+\text{missing} = \lbrace\, i + 1 : a_i > 0 \text{ after marking} \,\rbrace, \qquad \text{marking: } a_{\lvert v \rvert - 1} \leftarrow -\lvert a_{\lvert v \rvert - 1} \rvert \text{ for every } v
+$$
+
+where:
+
+- $a_i$ is the value at index $i$;
+- $\lvert v \rvert$ is the absolute value; it recovers the original value even after its own slot has been made negative;
+- an index whose value is still positive was never anyone's home, so $i + 1$ never appeared.
+
+Example: the values $4, 3, 2, 7, 8, 2, 3, 1$ mark indices $3, 2, 1, 6, 7, 1, 2, 0$. The array becomes `[-4, -3, -2, -7, 8, 2, -3, -1]`. Only indices 4 and 5 stay positive, so the missing values are $4 + 1 = 5$ and $5 + 1 = 6$.
+
+**Idea.** One pass to mark, one pass to collect. Taking the absolute value before using a number as an index matters, because that number may already have been negated.
+
+```java
+static List<Integer> findDisappearedNumbers(int[] nums) {
+    for (int v : nums) {
+        int slot = Math.abs(v) - 1;        // value v is recorded at index v - 1
+        if (nums[slot] > 0) nums[slot] = -nums[slot];
+    }
+    List<Integer> missing = new ArrayList<>();
+    for (int i = 0; i < nums.length; i++) {
+        if (nums[i] > 0) missing.add(i + 1);
+    }
+    return missing;
+}
+```
+
+**Answer.** `[5, 6]` for the example, and `[2]` for `[1, 1]`. Two passes of $n$ steps, $2 \times 8 = 16$ steps here: $O(n)$ time and $O(1)$ extra space.
+
+### 2. LeetCode 238: Product of Array Except Self (Medium)
+
+**Problem.** Return an array whose element $i$ is the product of every element except `nums[i]`, in $O(n)$ time and **without division**. For `[1, 2, 3, 4]` the answer is `[24, 12, 8, 6]`.
+
+**Math first.** Split "everything except $i$" into the part on the left and the part on the right:
+
+$$
+\text{out}_i = L_i \cdot R_i, \qquad L_i = \prod_{j < i} a_j, \qquad R_i = \prod_{j > i} a_j
+$$
+
+where:
+
+- $a_j$ is the input value at index $j$;
+- $L_i$ is the product of everything left of $i$, with $L_0 = 1$ (an empty product);
+- $R_i$ is the product of everything right of $i$, with $R_{n-1} = 1$.
+
+Example: `[1, 2, 3, 4]`.
+
+| $i$ | $L_i$ | $R_i$ | $\text{out}_i$ |
+| --- | --- | --- | --- |
+| 0 | 1 | $2 \cdot 3 \cdot 4 = 24$ | 24 |
+| 1 | 1 | $3 \cdot 4 = 12$ | 12 |
+| 2 | $1 \cdot 2 = 2$ | 4 | 8 |
+| 3 | $1 \cdot 2 \cdot 3 = 6$ | 1 | 6 |
+
+**Idea.** A left-to-right pass writes $L_i$ into the answer; a right-to-left pass multiplies in $R_i$, kept in a single running variable. Division would fail on a zero and is forbidden anyway.
+
+```java
+static int[] productExceptSelf(int[] nums) {
+    int n = nums.length;
+    int[] answer = new int[n];
+    int left = 1;
+    for (int i = 0; i < n; i++) {          // answer[i] = product of everything left of i
+        answer[i] = left;
+        left *= nums[i];
+    }
+    int right = 1;
+    for (int i = n - 1; i >= 0; i--) {     // times the product of everything right of i
+        answer[i] *= right;
+        right *= nums[i];
+    }
+    return answer;
+}
+```
+
+**Answer.** `[24, 12, 8, 6]`; and `[-1, 1, 0, -3, 3]` gives `[0, 0, 9, 0, 0]`, since only index 2 avoids the zero: $(-1)(1)(-3)(3) = 9$. Two passes, $2n$ multiplications each: $O(n)$ time and $O(1)$ extra space besides the output.
+
+### 3. LeetCode 41: First Missing Positive (Hard)
+
+**Problem.** Return the smallest positive integer not in an unsorted array, in $O(n)$ time and $O(1)$ extra space. For `[3, 4, -1, 1]` the answer is 2.
+
+**Math first.** An array of $n$ numbers can contain at most the $n$ values $1, 2, \dots, n$, so by the pigeonhole principle
+
+$$
+\text{answer} \in \lbrace 1, 2, \dots, n + 1 \rbrace, \qquad \text{answer} = \min \lbrace\, i + 1 : a_i \ne i + 1 \,\rbrace \text{ after every } v \in [1, n] \text{ is moved to index } v - 1
+$$
+
+where:
+
+- $n$ is the array length;
+- the answer is $n + 1$ only when all of $1..n$ are present;
+- "moved to index $v - 1$" is Level 5's home, reached by swapping; values outside $[1, n]$ have no home and stay wherever the swaps leave them.
+
+Example: $n = 4$, so the answer is one of $1, \dots, 5$. Placing `[3, 4, -1, 1]`:
+
+- $i = 0$: 3 belongs at index 2. Swap: `[-1, 4, 3, 1]`. Now $-1$ has no home; move on.
+- $i = 1$: 4 belongs at index 3. Swap: `[-1, 1, 3, 4]`. Now 1 belongs at index 0. Swap: `[1, -1, 3, 4]`. $-1$ has no home.
+- $i = 2, 3$: 3 and 4 are already home.
+
+That is 3 swaps. Scanning `[1, -1, 3, 4]`, index 1 holds $-1 \ne 2$, so the answer is **2**.
+
+**Idea.** Every swap puts one value into its home permanently, so there are at most $n$ swaps in total, even though there is a `while` inside the `for`. The condition `nums[nums[i] - 1] != nums[i]` stops when the home already holds the same value, which prevents an endless loop on duplicates such as `[1, 1]`.
+
+```java
+static int firstMissingPositive(int[] nums) {
+    placeValuesHome(nums);
+    for (int i = 0; i < nums.length; i++) {
+        if (nums[i] != i + 1) return i + 1;
+    }
+    return nums.length + 1;
+}
+
+static int placeValuesHome(int[] nums) {   // returns the number of swaps
+    int swaps = 0;
+    for (int i = 0; i < nums.length; i++) {
+        while (nums[i] >= 1 && nums[i] <= nums.length && nums[nums[i] - 1] != nums[i]) {
+            int home = nums[i] - 1;        // value v belongs at index v - 1
+            int moved = nums[home];
+            nums[home] = nums[i];
+            nums[i] = moved;
+            swaps++;
+        }
+    }
+    return swaps;
+}
+```
+
+**Answer.** 2 for `[3, 4, -1, 1]`; 3 for `[1, 2, 0]` (1 and 2 present, so $n + 1 = 3$); 1 for `[7, 8, 9, 11, 12]`; 2 for `[1, 1]`. At most $n$ swaps plus $n$ loop steps plus $n$ scan steps, so at most $3 \times 4 = 12$ steps for the example: $O(n)$ time and $O(1)$ extra space.
+
+## Mathematical Abstraction
+
+An array is a function from indices to values, stored so that the function can be evaluated by arithmetic:
+
+$$
+A : \lbrace 0, 1, \dots, n - 1 \rbrace \to V, \qquad \operatorname{addr}(i) = b + i \cdot s, \qquad
+\text{cost} =
+\begin{cases}
+1 & \text{read or write } A(i) \\
+n - k & \text{insert at index } k \\
+\le 3 \text{ amortised} & \text{append with 1.5x growth}
+\end{cases}
+$$
+
+where:
+
+- $V$ is the set of values the array may hold, and $n$ is its length;
+- $b$ is the base address and $s$ the size of one element in bytes;
+- $k$ is the insertion index, and the cost counts element moves.
+
+Example: for the six `int` scores at base $b = 1000$, reading index 3 is one sum, $1000 + 3 \times 4 = 1012$; inserting at index 2 moves $6 - 2 = 4$ scores; and 50 appends to an `ArrayList`-style array copy 129 elements in total, $129 / 50 \approx 2.6 \le 3$ per append. Fast reads, slow middle inserts and cheap amortised appends all follow from "one block, no gaps".
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 10, "Elementary Data Structures" (Section 10.1, "Simple array-based data structures: arrays, matrices, stacks, queues"), and Chapter 16, "Amortized Analysis" (Section 16.4, "Dynamic tables"). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.1 "Basic Programming Model" (arrays) and §1.3 "Bags, Queues, and Stacks" (resizing arrays): <https://algs4.cs.princeton.edu/11model/>, <https://algs4.cs.princeton.edu/13stacks/>.
+- Aditya Bhargava, *Grokking Algorithms* (Manning), Chapter 2, "Selection sort": arrays and linked lists, with the cinema-seat analogy. <https://livebook.manning.com/book/grokking-algorithms/chapter-2>.
+- OpenJDK `java.util.ArrayList` source (`DEFAULT_CAPACITY`, `grow`, `removeIf`): <https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/ArrayList.java>, and `jdk.internal.util.ArraysSupport.newLength`.
+- LeetCode: [448. Find All Numbers Disappeared in an Array](https://leetcode.com/problems/find-all-numbers-disappeared-in-an-array/), [238. Product of Array Except Self](https://leetcode.com/problems/product-of-array-except-self/), [41. First Missing Positive](https://leetcode.com/problems/first-missing-positive/).
+
+[← Data Structures and Representations](../groups/01-data-structures.qmd) · [String →](../string/index.qmd)

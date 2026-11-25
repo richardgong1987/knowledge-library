@@ -1,69 +1,412 @@
 ---
 title: "Matrix"
-description: "Understand Matrix from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a chocolate bar to int[][]: row-major index arithmetic, Java's arrays of rows, traversal orders and diagonals, rotation as transpose plus reverse, matrix multiplication, 2D prefix sums by inclusion-exclusion, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A matrix is a grid of numbers with rows and columns: a spreadsheet, a game board, an image, a map. This lesson shows how a grid is laid out in memory, how to walk it in different orders, how to rotate it with two simple flips, and how to answer "what is the sum of this rectangle?" in four lookups. The last interview problem combines all of it.
 
-**LeetCode 200 — Number of Islands.** A two-dimensional indexed collection used in grids and linear algebra.
+All code is in [`MatrixLab.java`](MatrixLab.java). Run it from this folder with `java MatrixLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A farmer's field is split into a $3 \times 3$ grid of plots, with these harvests in kilograms:
 
-Treat a grid as an unstructured list, then repeatedly search all cells to find neighbouring land.
+```text
+1  2  3
+4  5  6
+7  8  9
+```
 
-### The one insight to remember
+She asks many questions of the form "how much did the rectangle from plot $(r_1, c_1)$ to plot $(r_2, c_2)$ produce?" The bottom-right $2 \times 2$ rectangle holds $5 + 6 + 8 + 9 = 28$.
 
-A matrix is indexed by row and column. Four-direction neighbours can be generated directly; a flood fill marks one connected component at a time.
+- Adding up the rectangle every time costs one step per plot. On a $1000 \times 1000$ field, one question can touch a million plots, and a thousand questions a billion.
+- With a table of running totals built once, **every** question takes four lookups, whatever the rectangle's size. Level 5 builds that table.
 
-## Build the mathematical meaning from a small example
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Think of a chocolate bar with 3 rows of 4 squares. To give every square a number, count along the top row 0, 1, 2, 3, then carry on along the next row 4, 5, 6, 7, then 8, 9, 10, 11. The square in row 2, column 1 is number $2 \times 4 + 1 = 9$: skip two whole rows of 4, then step 1 more. That is exactly how a computer turns "row and column" into "one position in memory".
+
+To turn a photo a quarter-turn clockwise you can do it in two easy moves. First flip it over its diagonal, the line from top-left to bottom-right, like folding a square napkin corner to corner. Then mirror it left to right. Jon Bentley's *Programming Pearls* (Column 2) has a famous one-dimensional version: rotating a row of items by reversing two pieces and then the whole row, which he demonstrates with your two hands. Big moves can be built from simple flips.
+:::
+
+## From simple to advanced
+
+### Level 1: from (row, column) to one index
+
+Memory is one long line, so a grid with $R$ rows and $C$ columns must be flattened. **Row-major** order stores row 0, then row 1, and so on:
 
 $$
-N_4(i,j)=\{(i-1,j),(i+1,j),(i,j-1),(i,j+1)\}
+k = i \cdot C + j, \qquad i = \left\lfloor \frac{k}{C} \right\rfloor, \quad j = k \bmod C
 $$
 
-**What each symbol means:** (i,j) is the current row and column; N4 means the four candidate neighbours before bounds and obstacle checks.
+where:
 
-**Substitute actual values:** For cell (1,1) in a 3-by-3 grid, the four neighbours are (0,1),(2,1),(1,0),(1,2). For corner (0,0), two candidates have negative coordinates and must be rejected.
+- $i$ is the row, from $0$ to $R - 1$, and $j$ is the column, from $0$ to $C - 1$;
+- $C$ is the number of columns, the length of one row;
+- $k$ is the position in the flat array, from $0$ to $RC - 1$;
+- the second pair of formulas goes back from $k$ to $(i, j)$.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: in a $3 \times 4$ grid, cell $(2, 1)$ is at $k = 2 \times 4 + 1 = 9$. Going back, $\lfloor 9 / 4 \rfloor = 2$ and $9 \bmod 4 = 1$. The first cell is $k = 0$ and the last, $(2, 3)$, is $2 \times 4 + 3 = 11 = 12 - 1$.
 
-## Design the algorithm in ordinary English
+```java
+static int flatIndex(int row, int col, int cols) {
+    return row * cols + col;
+}
+```
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+**Column-major** order (Fortran, MATLAB, R) stores column 0 first, so $k = j \cdot R + i$; cell $(2, 1)$ of the same grid is $1 \times 3 + 2 = 5$.
 
-**Correctness argument (the invariant):** Mark each land cell when first reached. A traversal reaches all and only land cells connected to its start by the permitted moves; each new unmarked start forms a distinct island.
+**Java is different from both.** An `int[][]` is an *array of row arrays*: `grid[2]` is a separate `int[]` object, and `grid[2][1]` first finds that row, then indexes into it. Rows may even have different lengths (`{{1}, {2, 3}, {4, 5, 6}}` is legal, a *jagged* array). When you want one contiguous block, for speed or to pass a grid around as a single array, allocate `new int[R * C]` and use `flatIndex`.
 
-## Code you can run
+### Level 2: walking a grid in different orders
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `matrixSum`. Its use can be reduced to:
+The common orders:
 
-~~~js
-import { matrixSum } from '../examples/patterns.mjs';
+| Order | Loops | Use |
+| --- | --- | --- |
+| row by row | `for i` outside, `for j` inside | the fast default: each row is contiguous in memory |
+| column by column | `for j` outside, `for i` inside | column totals; jumps between row arrays, so slower |
+| anti-diagonals | group cells by $d = i + j$ | Pascal-triangle style DP, zig-zag printing |
+| main diagonals | group cells by $d = i - j$ | checking a diagonal in tic-tac-toe or N-queens |
+| spiral, layer by layer | shrink four boundaries | Interview problem 2 |
+| neighbours of $(i, j)$ | add $(\pm 1, 0)$ and $(0, \pm 1)$, check $0 \le i < R$, $0 \le j < C$ | flood fill, BFS on a grid |
 
-console.log(matrixSum([[1,2],[3,4]]));
-~~~
+A diagonal is the set of cells with the same sum or difference of coordinates:
 
-Save the snippet inside the `algorithms/matrix/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+$$
+D^{+}_d = \lbrace (i, j) : i + j = d \rbrace, \qquad 0 \le d \le R + C - 2
+$$
 
-## Why it works, and how expensive it is
+where:
 
-Mark each land cell when first reached. A traversal reaches all and only land cells connected to its start by the permitted moves; each new unmarked start forms a distinct island.
+- $d$ is the diagonal's number;
+- $D^{+}_d$ is one anti-diagonal, running from bottom-left to top-right;
+- there are $R + C - 1$ anti-diagonals in total.
 
-**Time and space:** O(R*C) time and up to O(R*C) visited or stack space, where R is row count and C is column count.
+Example: the $3 \times 3$ field has $3 + 3 - 1 = 5$ anti-diagonals. Their sums are $d = 0$: $1$; $d = 1$: $2 + 4 = 6$; $d = 2$: $3 + 5 + 7 = 15$; $d = 3$: $6 + 8 = 14$; $d = 4$: $9$.
 
-**Common mistake or limitation:** Decide whether diagonal adjacency counts. For Number of Islands it does not; replacing four neighbours with eight changes the problem.
+```java
+static int[] antiDiagonalSums(int[][] m) {
+    int[] sums = new int[m.length + m[0].length - 1];
+    for (int i = 0; i < m.length; i++) {
+        for (int j = 0; j < m[0].length; j++) sums[i + j] += m[i][j];
+    }
+    return sums;
+}
+```
 
-## Try to explain it in an interview
+### Level 3: transpose, and rotation as two flips
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+The **transpose** swaps rows and columns, $T(i, j) = A(j, i)$. Rotating a square $n \times n$ matrix 90° clockwise sends the left column to the top row:
 
-## Reading and practice
+$$
+R(i, j) = A(n - 1 - j,\; i) = T(i,\; n - 1 - j)
+$$
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 (matrix representation) and Chapter 20 (graph traversals). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 200 — Number of Islands. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+where:
+
+- $A$ is the original matrix and $R$ the rotated one, both $n \times n$;
+- $T$ is the transpose of $A$;
+- $T(i, n - 1 - j)$ reads row $i$ of $T$ backwards, so the rotation equals "transpose, then reverse each row".
+
+Example with the field, $n = 3$:
+
+```text
+A            transpose T      reverse each row = R
+1 2 3        1 4 7            7 4 1
+4 5 6   →    2 5 8      →     8 5 2
+7 8 9        3 6 9            9 6 3
+```
+
+Check one cell: $R(0, 0) = A(3 - 1 - 0, 0) = A(2, 0) = 7$. Correct.
+
+```java
+static void transpose(int[][] m) {                  // square matrices only
+    for (int i = 0; i < m.length; i++) {
+        for (int j = i + 1; j < m.length; j++) {    // above the diagonal, so each pair swaps once
+            int t = m[i][j];
+            m[i][j] = m[j][i];
+            m[j][i] = t;
+        }
+    }
+}
+
+static void reverseEachRow(int[][] m) {
+    for (int[] row : m) {
+        for (int l = 0, r = row.length - 1; l < r; l++, r--) {
+            int t = row[l];
+            row[l] = row[r];
+            row[r] = t;
+        }
+    }
+}
+```
+
+The inner loop of `transpose` starts at `j = i + 1`. Starting at `j = 0` would swap every pair twice and put the matrix back as it was. The other turns follow the same pattern: anticlockwise is transpose then reverse each **column**, and 180° is reverse each row then reverse the order of the rows.
+
+### Level 4: matrix multiplication
+
+The product of an $n \times m$ matrix $A$ and an $m \times p$ matrix $B$ is the $n \times p$ matrix
+
+$$
+C(i, j) = \sum_{k=0}^{m-1} A(i, k) \cdot B(k, j)
+$$
+
+where:
+
+- $i$ is a row of $A$ and of $C$; $j$ is a column of $B$ and of $C$;
+- $k$ runs along a row of $A$ and down a column of $B$, so the inner sizes must agree;
+- each of the $n p$ entries needs $m$ multiplications, $n m p$ in total.
+
+Example: $\begin{pmatrix}1 & 2\\ 3 & 4\end{pmatrix} \begin{pmatrix}5 & 6\\ 7 & 8\end{pmatrix}$. The top-left entry is $1 \cdot 5 + 2 \cdot 7 = 19$, then $1 \cdot 6 + 2 \cdot 8 = 22$, $3 \cdot 5 + 4 \cdot 7 = 43$ and $3 \cdot 6 + 4 \cdot 8 = 50$. That is $2 \times 2 \times 2 = 8$ multiplications.
+
+```java
+static int[][] multiply(int[][] a, int[][] b) {
+    int n = a.length, m = b.length, p = b[0].length;
+    int[][] c = new int[n][p];
+    for (int i = 0; i < n; i++)
+        for (int k = 0; k < m; k++)                 // i-k-j order reads b and c row by row
+            for (int j = 0; j < p; j++)
+                c[i][j] += a[i][k] * b[k][j];
+    return c;
+}
+```
+
+The three loops can be nested in any order and give the same answer. The `i-k-j` order keeps the innermost loop walking along rows, which suits Java's array of rows. For two $n \times n$ matrices the cost is $n^3$; Strassen's algorithm (CLRS Section 4.2) lowers this to about $n^{2.81}$.
+
+### Level 5: 2D prefix sums
+
+Let $P(i, j)$ be the total of the rectangle above and to the left of cell $(i, j)$, not including row $i$ or column $j$. Each entry comes from three neighbours by **inclusion–exclusion**:
+
+$$
+P(i + 1, j + 1) = A(i, j) + P(i, j + 1) + P(i + 1, j) - P(i, j), \qquad P(0, \cdot) = P(\cdot, 0) = 0
+$$
+
+where:
+
+- $A(i, j)$ is the value in cell $(i, j)$;
+- $P(i, j + 1)$ covers the rows above, and $P(i + 1, j)$ the columns to the left;
+- their overlap $P(i, j)$ was added twice, so it is subtracted once;
+- the extra row and column of zeros remove every special case at the edges.
+
+Example: $P(2, 2) = A(1, 1) + P(1, 2) + P(2, 1) - P(1, 1) = 5 + 3 + 5 - 1 = 12$, which is indeed $1 + 2 + 4 + 5$.
+
+Any rectangle with corners $(r_1, c_1)$ and $(r_2, c_2)$, both included, is then
+
+$$
+S = P(r_2 + 1, c_2 + 1) - P(r_1, c_2 + 1) - P(r_2 + 1, c_1) + P(r_1, c_1)
+$$
+
+where:
+
+- $P(r_2 + 1, c_2 + 1)$ is everything up to the bottom-right corner;
+- the two subtracted terms remove the strip above the rectangle and the strip to its left;
+- the corner block $P(r_1, c_1)$ was removed twice, so it is added back once.
+
+Example: the bottom-right $2 \times 2$ block of the field, $(r_1, c_1) = (1, 1)$ and $(r_2, c_2) = (2, 2)$: $S = P(3, 3) - P(1, 3) - P(3, 1) + P(1, 1) = 45 - 6 - 12 + 1 = 28$. That matches $5 + 6 + 8 + 9$, and it took four lookups.
+
+```java
+static int[][] prefixSums(int[][] a) {
+    int rows = a.length, cols = a[0].length;
+    int[][] p = new int[rows + 1][cols + 1];        // row 0 and column 0 stay 0
+    for (int i = 0; i < rows; i++)
+        for (int j = 0; j < cols; j++)
+            p[i + 1][j + 1] = a[i][j] + p[i][j + 1] + p[i + 1][j] - p[i][j];
+    return p;
+}
+
+static int regionSum(int[][] p, int r1, int c1, int r2, int c2) {   // corners included
+    return p[r2 + 1][c2 + 1] - p[r1][c2 + 1] - p[r2 + 1][c1] + p[r1][c1];
+}
+```
+
+The one-dimensional version, and range updates, are in the [Prefix Sum](../prefix-sum/index.qmd) lesson.
+
+## Why it works and what it costs
+
+**Row-major indexing is a bijection.** Writing $k = iC + j$ with $0 \le j < C$ is exactly division with remainder: $i$ is the quotient and $j$ the remainder of $k \div C$. Every cell gets a different $k$, and every $k$ from $0$ to $RC - 1$ is used.
+
+**Transpose then reverse is a rotation.** After the transpose, cell $(i, j)$ holds $A(j, i)$. Reversing row $i$ moves the value at column $n - 1 - j$ to column $j$, so cell $(i, j)$ ends up with $A(n - 1 - j, i)$, which is the definition of a clockwise rotation. Both steps swap pairs in place, so no second matrix is needed.
+
+**The prefix table is correct by induction.** Assume all entries above and to the left of $P(i + 1, j + 1)$ are correct. The rectangle for $P(i + 1, j + 1)$ is the rectangle for $P(i, j + 1)$, plus the one for $P(i + 1, j)$, minus their overlap $P(i, j)$, plus the new cell. The rows of zeros make the base case true.
+
+**Costs** for an $R \times C$ grid:
+
+| Operation | Cost | Field example ($3 \times 3$) |
+| --- | --- | --- |
+| read `m[i][j]` | $O(1)$ | 1 step |
+| full traversal in any order | $O(RC)$ | 9 cells |
+| transpose an $n \times n$ matrix | $\frac{n(n-1)}{2}$ swaps | 3 swaps |
+| reverse every row | $n \lfloor n/2 \rfloor$ swaps | 3 swaps |
+| multiply two $n \times n$ | $n^3$ multiplications | 27 |
+| build the prefix table | $O(RC)$ once | 9 entries |
+| rectangle sum with the table | $O(1)$ | 4 lookups |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Swapping `i` and `j`, or `rows` and `cols` | Works on square grids, crashes or garbles on $3 \times 4$ | Name them `row`/`col`; test a non-square grid |
+| `m[0].length` on an empty matrix | `ArrayIndexOutOfBoundsException` | Check `m.length == 0` first |
+| Transpose loop with `j` from 0 | The matrix is swapped twice and comes back unchanged | Start at `j = i + 1` |
+| Rotating into the same array cell by cell | Values overwritten before they are read | Transpose plus reverse, or rotate four cells at a time with a temporary |
+| Forgetting `- P(i, j)` in the prefix sum | The top-left block is counted twice | Draw the four rectangles; inclusion–exclusion |
+| Prefix table the same size as the grid | Many `if (i > 0)` edge cases and off-by-one errors | Allocate `(R + 1) × (C + 1)` with zeros in row and column 0 |
+| Spiral without the `top < bottom && left < right` guard | The middle row or column is printed twice | Only walk back when the layer has height and width above 1 |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 48: Rotate Image (Medium)
+
+**Problem.** Rotate an $n \times n$ matrix 90° clockwise **in place**. For `[[1,2,3],[4,5,6],[7,8,9]]` the result is `[[7,4,1],[8,5,2],[9,6,3]]`.
+
+**Math first.** From Level 3:
+
+$$
+R(i, j) = A(n - 1 - j, i) = \operatorname{rev}_{\text{row}}\big(A^{\mathsf{T}}\big)(i, j)
+$$
+
+where:
+
+- $A^{\mathsf{T}}$ is the transpose, $A^{\mathsf{T}}(i, j) = A(j, i)$;
+- $\operatorname{rev}_{\text{row}}$ reverses every row, sending column $j$ to column $n - 1 - j$;
+- both steps only swap pairs of cells, so they need $O(1)$ extra memory.
+
+Example: $R(1, 2) = A(3 - 1 - 2, 1) = A(0, 1) = 2$, and the expected result has 2 in row 1, column 2. Correct.
+
+**Idea.** Transpose, then reverse each row.
+
+```java
+static void rotate(int[][] m) {                     // 90 degrees clockwise, in place
+    transpose(m);
+    reverseEachRow(m);
+}
+```
+
+**Answer.** `[[7,4,1],[8,5,2],[9,6,3]]`. For the $4 \times 4$ example `[[5,1,9,11],[2,4,8,10],[13,3,6,7],[15,14,12,16]]` the result is `[[15,13,2,5],[14,3,4,1],[12,6,8,9],[16,7,10,11]]`. Every cell is moved at most twice: $\frac{n(n-1)}{2} + n \lfloor n / 2 \rfloor$ swaps, which is $6 + 8 = 14$ for $n = 4$. $O(n^2)$ time, $O(1)$ extra space.
+
+### 2. LeetCode 54: Spiral Matrix (Medium)
+
+**Problem.** Return all elements of an $m \times n$ matrix in clockwise spiral order. For `[[1,2,3,4],[5,6,7,8],[9,10,11,12]]` the answer is `[1,2,3,4,8,12,11,10,9,5,6,7]`.
+
+**Math first.** Peel the matrix like an onion. Layer $\ell$ is the ring with boundaries
+
+$$
+\text{top} = \ell, \quad \text{bottom} = m - 1 - \ell, \quad \text{left} = \ell, \quad \text{right} = n - 1 - \ell, \qquad \#\text{layers} = \left\lceil \frac{\min(m, n)}{2} \right\rceil
+$$
+
+where:
+
+- $m$ is the number of rows and $n$ the number of columns;
+- $\ell = 0$ is the outer ring;
+- a ring of height $h \ge 2$ and width $w \ge 2$ has $2(h + w) - 4$ cells: two full rows and two columns without their corners.
+
+Example: $m = 3$, $n = 4$ gives $\lceil 3/2 \rceil = 2$ layers. The outer ring has $2(3 + 4) - 4 = 10$ cells: `1,2,3,4` (top), `8,12` (right), `11,10,9` (bottom), `5` (left). The inner layer is the single row `6,7`, 2 cells. $10 + 2 = 12 = 3 \times 4$, so every cell is visited once.
+
+**Idea.** Walk top row, right column, bottom row backwards and left column upwards, then shrink all four boundaries. When a layer is a single row or column, walking back would repeat it, so skip the return trip.
+
+```java
+static List<Integer> spiralOrder(int[][] m) {
+    List<Integer> out = new ArrayList<>();
+    int top = 0, bottom = m.length - 1, left = 0, right = m[0].length - 1;
+    while (top <= bottom && left <= right) {
+        for (int j = left; j <= right; j++) out.add(m[top][j]);
+        for (int i = top + 1; i <= bottom; i++) out.add(m[i][right]);
+        if (top < bottom && left < right) {         // a lone row or column has no way back
+            for (int j = right - 1; j >= left; j--) out.add(m[bottom][j]);
+            for (int i = bottom - 1; i > top; i--) out.add(m[i][left]);
+        }
+        top++;
+        bottom--;
+        left++;
+        right--;
+    }
+    return out;
+}
+```
+
+**Answer.** `[1,2,3,4,8,12,11,10,9,5,6,7]`; the $3 \times 3$ field gives `[1,2,3,6,9,8,7,4,5]`; a single column `[[1],[2],[3]]` gives `[1,2,3]`. Each of the $mn = 12$ cells is added once: $O(mn)$ time, $O(1)$ extra space besides the output.
+
+### 3. LeetCode 1074: Number of Submatrices That Sum to Target (Hard)
+
+**Problem.** Count the non-empty rectangles whose cells sum to `target`. For `[[1,-1],[-1,1]]` and target 0 the answer is 5: the two horizontal pairs, the two vertical pairs and the whole matrix.
+
+**Math first.** Fix the top row $r_1$ and the bottom row $r_2$. Squash the strip between them into one row of column totals; a rectangle in the strip is then a contiguous piece of that row:
+
+$$
+\operatorname{col}_c = \sum_{r = r_1}^{r_2} A(r, c), \qquad \sum_{c = c_1}^{c_2} \operatorname{col}_c = S_{c_2 + 1} - S_{c_1} = \text{target} \iff S_{c_1} = S_{c_2 + 1} - \text{target}
+$$
+
+where:
+
+- $\operatorname{col}_c$ is the total of column $c$ between rows $r_1$ and $r_2$;
+- $S_j = \operatorname{col}_0 + \dots + \operatorname{col}_{j-1}$ is a prefix sum of that row, with $S_0 = 0$;
+- for each end $c_2$, count the earlier prefixes equal to $S_{c_2+1} - \text{target}$ with a hash map, exactly as in LeetCode 560 in the [Hash Table](../hash-table/index.qmd) lesson.
+
+Example: `[[1,-1],[-1,1]]`, target 0, has three strips.
+
+| Rows | Column totals | Prefixes $S$ | Zero-sum pieces |
+| --- | --- | --- | --- |
+| 0 to 0 | `[1, -1]` | 0, 1, 0 | $S_0 = S_2$: 1 piece |
+| 1 to 1 | `[-1, 1]` | 0, −1, 0 | $S_0 = S_2$: 1 piece |
+| 0 to 1 | `[0, 0]` | 0, 0, 0 | 3 equal pairs: 3 pieces |
+
+The total is $1 + 1 + 3 = 5$.
+
+**Idea.** For each top row, grow the bottom row one step at a time, adding the new row into the column totals, and count matching pieces in each strip. Reusing the totals keeps each strip at $O(n)$.
+
+```java
+static int numSubmatrixSumTarget(int[][] matrix, int target) {
+    int rows = matrix.length, cols = matrix[0].length, count = 0;
+    for (int top = 0; top < rows; top++) {
+        int[] columnSums = new int[cols];           // sums of rows top..bottom, per column
+        for (int bottom = top; bottom < rows; bottom++) {
+            for (int c = 0; c < cols; c++) columnSums[c] += matrix[bottom][c];
+            count += subarraysWithSum(columnSums, target);
+        }
+    }
+    return count;
+}
+
+static int subarraysWithSum(int[] a, int target) {  // LeetCode 560 on one strip
+    Map<Integer, Integer> prefixCount = new HashMap<>(Map.of(0, 1));
+    int prefix = 0, count = 0;
+    for (int x : a) {
+        prefix += x;
+        count += prefixCount.getOrDefault(prefix - target, 0);
+        prefixCount.merge(prefix, 1, Integer::sum);
+    }
+    return count;
+}
+```
+
+**Answer.** 5 for the example; 4 for `[[0,1,0],[1,1,1],[0,1,0]]` with target 0 (the four corner zeros). There are $\frac{m(m+1)}{2}$ strips, each costing $O(n)$, so $O(m^2 n)$ time and $O(n)$ space. The limits allow $m, n \le 100$: about $5{,}050 \times 100 \approx 5 \times 10^5$ steps, compared with $O(m^2 n^2) \approx 2.5 \times 10^7$ rectangles for checking each one with the Level 5 table. If $m > n$, transpose first so that the squared side is the smaller one.
+
+## Mathematical Abstraction
+
+A matrix is a function on a grid of index pairs, stored by a linear address formula, and most matrix tricks are identities between such functions:
+
+$$
+A : \lbrace 0..R-1 \rbrace \times \lbrace 0..C-1 \rbrace \to \mathbb{Z}, \qquad k(i, j) = iC + j, \qquad
+\sum_{r = r_1}^{r_2} \sum_{c = c_1}^{c_2} A(r, c) = P(r_2{+}1, c_2{+}1) - P(r_1, c_2{+}1) - P(r_2{+}1, c_1) + P(r_1, c_1)
+$$
+
+where:
+
+- $R$ and $C$ are the numbers of rows and columns, and $\mathbb{Z}$ is the integers;
+- $k(i, j)$ is the row-major position of cell $(i, j)$;
+- $P$ is the prefix table of Level 5, and the identity is inclusion–exclusion.
+
+Example: in the $3 \times 3$ field, cell $(2, 1)$ is at $k = 2 \times 3 + 1 = 7$, and the bottom-right $2 \times 2$ block sums to $45 - 6 - 12 + 1 = 28$. Rotation is the identity $R(i, j) = A(n - 1 - j, i)$, built from a transpose and a reversal.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 10, Section 10.1, "Simple array-based data structures: arrays, matrices, stacks, queues" (row-major and column-major storage); Chapter 4, Sections 4.1 "Multiplying square matrices" and 4.2 "Strassen's algorithm for matrix multiplication"; Chapter 28, "Matrix Operations". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.1 "Basic Programming Model", two-dimensional arrays: <https://algs4.cs.princeton.edu/11model/>.
+- Jon Bentley, *Programming Pearls*, 2nd edition (Addison-Wesley, 2000), Column 2, "Aha! Algorithms": rotation by reversals.
+- LeetCode: [48. Rotate Image](https://leetcode.com/problems/rotate-image/), [54. Spiral Matrix](https://leetcode.com/problems/spiral-matrix/), [1074. Number of Submatrices That Sum to Target](https://leetcode.com/problems/number-of-submatrices-that-sum-to-target/).
+
+[← Hash Table](../hash-table/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Linked List →](../linked-list/index.qmd)

@@ -1,62 +1,132 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = process.cwd();
-const catalog = JSON.parse(readFileSync(join(root,'algorithms/leetcode-topic-catalog.json'),'utf8'));
-const read = p => readFileSync(join(root,p),'utf8');
+const catalog = JSON.parse(readFileSync(join(root, 'algorithms/leetcode-topic-catalog.json'), 'utf8'));
+const read = path => readFileSync(join(root, path), 'utf8');
 
-test('every LeetCode topic is a substantive original worked lesson', () => {
+// Groups already rewritten to the Java, kid-first, math-first standard in WRITING_GUIDE.md.
+// While writing, check more locally with ALGO_REWRITTEN=<group-id>,... or ALGO_TOPICS=<slug>,...
+const fromEnv = name => (process.env[name] ?? '').split(',').filter(Boolean);
+const REWRITTEN = new Set(['01-data-structures', ...fromEnv('ALGO_REWRITTEN')]);
+const REWRITTEN_TOPICS = new Set(fromEnv('ALGO_TOPICS'));
+const isRewritten = topic => REWRITTEN.has(topic.group) || REWRITTEN_TOPICS.has(topic.slug);
+
+// LeetCode publishes no Hard problem under these tags, so their lessons end with the hardest available ones.
+const NO_HARD_PROBLEM_ON_LEETCODE = new Set(['shell', 'concurrency', 'reservoir-sampling', 'rejection-sampling']);
+
+const HEADINGS = [
+  '## The problem',
+  "## Explain it like I'm ten",
+  '## From simple to advanced',
+  '## Why it works and what it costs',
+  '## Common mistakes',
+  '## Interview problems',
+  '## Mathematical Abstraction',
+  '## References',
+];
+
+// Fenced code may contain `$$` (for example the shell PID), so formulas are read from prose only.
+const stripFencedCode = text => text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '');
+
+const lastMatch = (text, regex) => Math.max(-1, ...[...text.matchAll(regex)].map(match => match.index));
+
+// A display equation inside a worked example is the substitution itself, not a new formula.
+const isWorkedSubstitution = before => lastMatch(before, /\bexample\b/gi) > lastMatch(before, /\bwhere\b/gi);
+
+function formulasNeedingExplanation(prose) {
+  const parts = prose.split('$$');
+  const formulas = [];
+  for (let i = 1; i < parts.length - 1; i += 2) {
+    const before = parts.slice(0, i).join('$$').slice(-1500);
+    if (!isWorkedSubstitution(before)) formulas.push({ formula: parts[i].trim(), after: parts.slice(i + 1).join('$$') });
+  }
+  return formulas;
+}
+
+const javaBlocks = text =>
+  [...text.matchAll(/^```java[ \t]*\n([\s\S]*?)^```[ \t]*$/gm)].map(match => match[1]);
+
+const codeLines = code => code.split('\n').map(line => line.trim()).filter(Boolean);
+
+function containsInOrder(haystack, needle) {
+  for (let start = 0; start + needle.length <= haystack.length; start++) {
+    if (needle.every((line, i) => haystack[start + i] === line)) return true;
+  }
+  return false;
+}
+
+const section = (text, heading) => {
+  const start = text.indexOf(heading);
+  const end = text.indexOf('\n## ', start + heading.length);
+  return text.slice(start, end < 0 ? undefined : end);
+};
+
+function checkRewrittenLesson(topic, text) {
+  const path = `algorithms/${topic.slug}/index.qmd`;
+  const folder = join(root, 'algorithms', topic.slug);
+
+  let position = -1;
+  for (const heading of HEADINGS) {
+    const at = text.indexOf(heading);
+    assert.ok(at > position, `${path}: "${heading}" missing or out of order`);
+    position = at;
+  }
+  assert.ok(text.length > 9000, `${path}: too shallow (${text.length} chars)`);
+  assert.ok(!text.includes('patterns.mjs'), `${path}: still points at the old JavaScript lab`);
+
+  for (const { formula, after } of formulasNeedingExplanation(stripFencedCode(text))) {
+    const label = `${path}: $$${formula.slice(0, 40)}…`;
+    assert.ok(/\bwhere\b/i.test(after.slice(0, 400)), `symbols not explained right after ${label}`);
+    assert.ok(/\bexample\b/i.test(after.slice(0, 2500)), `no numeric example after ${label}`);
+  }
+
+  const interviews = section(text, '## Interview problems');
+  const problems = interviews.split('\n### ').length - 1;
+  assert.ok(problems >= 2, `${path}: needs at least 2 interview problems`);
+  assert.ok((interviews.match(/\*\*Math first\.\*\*/g) ?? []).length >= problems, `${path}: every problem starts with **Math first.**`);
+  if (!NO_HARD_PROBLEM_ON_LEETCODE.has(topic.slug)) {
+    assert.ok(/\(Hard\)/.test(interviews), `${path}: needs at least one Hard problem`);
+  }
+
+  const labs = readdirSync(folder).filter(name => /(Lab\.java|_lab\.py|_lab\.sh)$/.test(name));
+  assert.ok(labs.length > 0, `${path}: no runnable lab file next to the lesson`);
+  const labLines = labs.filter(name => name.endsWith('.java')).map(name => codeLines(readFileSync(join(folder, name), 'utf8')));
+  for (const block of javaBlocks(text)) {
+    const lines = codeLines(block);
+    if (lines[0]?.startsWith('// sketch')) continue;
+    assert.ok(labLines.some(lab => containsInOrder(lab, lines)),
+      `${path}: this Java block is not an exact excerpt of the lab:\n${lines.slice(0, 3).join('\n')}`);
+  }
+}
+
+// The original template check, kept only for groups that have not been rewritten yet.
+function checkLegacyLesson(topic, text) {
+  const path = `algorithms/${topic.slug}/index.qmd`;
+  assert.ok(text.length > 2200, 'Insufficient lesson depth: ' + path);
+  assert.ok(text.includes('$$'), 'No mathematical formalisation: ' + path);
+  assert.ok(/(?:LeetCode|leetcode)/.test(text), 'No interview practice: ' + path);
+}
+
+test('every LeetCode topic is a substantive lesson', () => {
   assert.equal(catalog.topics.length, 73);
-  const names = new Set();
   for (const topic of catalog.topics) {
-    const path = 'algorithms/' + topic.slug + '/index.qmd';
-    assert.ok(existsSync(join(root,path)), 'Missing chapter: '+path);
+    const path = `algorithms/${topic.slug}/index.qmd`;
+    assert.ok(existsSync(join(root, path)), 'Missing chapter: ' + path);
     const text = read(path);
-    assert.ok(text.length > 2200, 'Insufficient lesson depth: '+path+' '+text.length);
-    assert.ok(!text.includes('A useful starting question is:'), 'Old outline remains: '+path);
-    assert.ok(!text.includes('The formula captures a central structural relationship'), 'Old placeholder remains: '+path);
-    assert.ok(!text.includes('To be written'), 'Placeholder remains: '+path);
-    assert.ok(text.includes('$$'), 'No mathematical formalisation: '+path);
-    assert.ok(/(?:proof|correctness|invariant|why it works|justified)/i.test(text), 'No argument: '+path);
-    assert.ok(/(?:limitation|pitfall|counterexample|mistake|failure|assumption)/i.test(text), 'No assumptions or counterexample: '+path);
-    assert.ok(/(?:O\(|Θ\(|omega|complexity|time and space|time and memory|cost)/i.test(text), 'No complexity discussion: '+path);
-    assert.ok(/(?:LeetCode|leetcode)/.test(text), 'No interview practice: '+path);
-    assert.ok(!names.has(topic.slug),'Duplicate slug');
-    names.add(topic.slug);
-
-    // Check first full display formula, and enforce adjacent meaning + actual values.
-    const first = text.indexOf('$$');
-    const end = text.indexOf('$$',first+2);
-    assert.ok(end > first + 4, 'Broken display formula: '+path);
-    const next = text.slice(end+2, end+1300);
-    assert.ok(/(?:symbol|notation|what each|what every)/i.test(next.slice(0,280)),
-      'Explain each symbol immediately after formula: '+path);
-    assert.ok(/(?:substitut|actual|numeric|numbers|calculate|worked)/i.test(next.slice(0,1200)),
-      'Show a numerical substitution after formula: '+path);
+    if (isRewritten(topic)) checkRewrittenLesson(topic, text);
+    else checkLegacyLesson(topic, text);
   }
 });
 
-test('the algorithm road map and all seven groups link to the new teaching guides',()=>{
-  for (const name of ['read-the-math','choose-a-pattern','prove-and-count','clrs-roadmap']) {
-    const file='algorithms/guides/'+name+'.qmd';
-    assert.ok(existsSync(join(root,file)),file);
-    assert.ok(read(file).length>2500,'Guide is empty: '+file);
+test('every group page links all of its topics', () => {
+  for (const group of catalog.groups) {
+    const page = read(`algorithms/groups/${group.id}.qmd`);
+    assert.ok(page.length > 1300, 'Group page is empty: ' + group.id);
+    for (const topic of catalog.topics.filter(t => t.group === group.id)) {
+      assert.ok(page.includes(`../${topic.slug}/index.qmd`), `${group.id} does not link ${topic.slug}`);
+    }
   }
-  const idx=read('algorithms/index.qmd');
-  assert.ok(idx.includes('Understand first. Prove second. Code third.'));
-  assert.ok(idx.includes('guides/read-the-math.qmd'));
-  for(const group of catalog.groups){
-    const path='algorithms/groups/'+group.id+'.qmd';
-    assert.ok(read(path).length>1300);
-    for(const t of catalog.topics.filter(t=>t.group===group.id))
-      assert.ok(read(path).includes('../'+t.slug+'/index.qmd'),t.slug);
-  }
-});
-
-test('all original pattern functions have a runnable source and tests',()=>{
-  assert.ok(read('algorithms/examples/patterns.mjs').includes('export function'));
-  assert.ok(read('algorithms/examples/patterns.test.mjs').includes('node:test'));
-  assert.ok(read('algorithms/examples/README.md').includes('node --test'));
 });

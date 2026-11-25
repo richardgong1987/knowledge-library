@@ -1,61 +1,475 @@
 ---
 title: "Trie"
-description: "Understand Trie from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a building of lettered doors to autocomplete: the prefix tree, insert, search and startsWith in O(L), counting words by prefix, the node-count bound, array versus hash-map children, compressed (radix and Patricia) tries, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A trie stores a set of words so that every question about a **beginning** of a word, a prefix, takes as many steps as the prefix has letters, however many words are stored. This lesson builds one letter by letter, counts its nodes, compares two ways to store children, shrinks it into a compressed trie, and then uses it to search a whole grid of letters at once.
 
-**LeetCode 208 — Implement Trie (Prefix Tree).** A prefix-sharing tree for strings and sequences.
+All code is in [`TrieLab.java`](TrieLab.java). Run it from this folder with `java TrieLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A phone keyboard knows four words: `car`, `cat`, `cart` and `dog`. As you type, it must answer two questions after every key:
 
-Search every dictionary word on each prefix query.
+- Is what I have typed a whole word? (`car` yes, `ca` no.)
+- Does any word **start** with it, and how many? (`ca` starts 3 words; `cow` starts none.)
 
-### The one insight to remember
+The obvious methods are slow or blind:
 
-A trie shares the initial path of words with common prefixes. Searching 'car' walks the c→a→r path once, regardless of the number of words elsewhere.
+- A **list** of $n$ words compares the prefix with every word: $n$ comparisons per key press, and a real dictionary has $n = 100{,}000$ words.
+- A **hash set** answers "is `car` a word?" quickly, but it cannot answer "which words start with `ca`?" without checking every word, because hashing scatters `car`, `cat` and `cart` to unrelated buckets.
+- A **sorted array** can find the first word starting with `ca` by binary search, about $\log_2 n$ string comparisons, but every insertion shifts the array.
 
-## Build the mathematical meaning from a small example
+We want each question to cost about $L$ steps, where $L$ is the length of the prefix, independent of $n$.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Imagine a building where every room has **26 doors**, labelled `a` to `z`. You start in the lobby. To spell `cat`, go through door `c`, then door `a` in the next room, then door `t`. If a word ends in a room, there is a gold star on its floor.
+
+- To **add** a word, walk through its doors one letter at a time; if a door does not exist yet, build it.
+- To **check** a word, walk through its doors. If a door is missing, the word is not there. If you arrive, look for the gold star.
+- `car`, `cat` and `cart` all go through the same `c` and `a` rooms, so the shared beginning is built **once**. That sharing is the whole trick.
+
+Whether `ca` is a word is a question about one gold star; whether any word starts with `ca` is just "does the `ca` room exist?". Either way you walk 2 doors, whether the building holds 4 words or 100,000.
+
+The name comes from Edward Fredkin's 1960 paper "Trie Memory". He took it from the middle of the word re**trie**val and said he meant it to be pronounced "tree"; most people now say "try" so that it does not sound like every other tree.
+:::
+
+## From simple to advanced
+
+### Level 1: one node, 26 doors
+
+A trie node has an array of 26 child links, one per letter, and a marker that says whether a word ends there. Letter $c$ uses slot
 
 $$
-p\preceq w
+\operatorname{index}(c) = \operatorname{code}(c) - \operatorname{code}(\texttt{a})
 $$
 
-**What each symbol means:** p is a query prefix, w is a stored word, and the symbol ≼ means 'p appears at the beginning of w'.
+where:
 
-**Substitute actual values:** With words 'car', 'cart', 'cat', query 'ca' is a prefix of all three, while 'cab' is not a prefix of any. Three terms share the first two trie edges c→a.
+- $c$ is a lowercase letter;
+- $\operatorname{code}(c)$ is its character code in Java (Unicode, which agrees with ASCII for `a` to `z`): $\texttt{a} = 97$, $\texttt{b} = 98$, …, $\texttt{z} = 122$;
+- the result is a slot number from 0 to 25.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: `cat` has codes 99, 97, 116, so its path is slots $99 - 97 = 2$, then $97 - 97 = 0$, then $116 - 97 = 19$. The node for `cat` is `root.children[2].children[0].children[19]`.
 
-## Design the algorithm in ordinary English
+```java
+static final class Node {
+    final Node[] children = new Node[26]; // children[0] is 'a', children[25] is 'z'
+    String word;                          // the word that ends here, or null
+    int passCount;                        // how many inserted words pass through here (Level 4)
+}
+```
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+The "gold star" is the field `word`: `null` means no word ends here. A `boolean` would also work; keeping the word itself saves rebuilding it from the path later, which Word Search II uses. After inserting `car`, `cat`, `cart` and `dog` the trie looks like this, with ★ marking a word end:
 
-**Correctness argument (the invariant):** Every edge consumes one next character. A path exists exactly when a stored word shares the required prefix; a terminal flag distinguishes full words from prefixes.
+```text
+root
+├─ c
+│  └─ a
+│     ├─ r ★ car
+│     │  └─ t ★ cart
+│     └─ t ★ cat
+└─ d
+   └─ o
+      └─ g ★ dog
+```
 
-## Code you can run
+### Level 2: insert in $O(L)$
 
-This example is best understood as a tiny state transformation. Implement the operation described above in JavaScript or Java, and check each reference or invariant after every step; the exact code is deliberately not replaced by a large framework.
+Walk the word letter by letter. When a door is missing, build it. At the end, place the star. A word of length $L$ takes exactly $L$ steps, and creates only the nodes for the part of the word that is new:
 
-## Why it works, and how expensive it is
+$$
+\text{new nodes}(w) = \lvert w \rvert - \lvert \operatorname{lcp}(w) \rvert
+$$
 
-Every edge consumes one next character. A path exists exactly when a stored word shares the required prefix; a terminal flag distinguishes full words from prefixes.
+where:
 
-**Time and space:** O(m) per prefix lookup where m is prefix length, independent of number of stored words but memory can be high.
+- $w$ is the word being inserted and $\lvert w \rvert$ its length $L$;
+- $\operatorname{lcp}(w)$ is the longest prefix of $w$ already present as a path in the trie;
+- the new nodes are the letters after that shared prefix.
 
-**Common mistake or limitation:** A trie node reached by 'car' does not prove 'car' is a stored word unless its terminal marker is true.
+Example: insert `car`, `cat`, `cart`, `dog` into an empty trie.
 
-## Try to explain it in an interview
+| Word | Already present | New nodes |
+| --- | --- | --- |
+| `car` | nothing | $3 - 0 = 3$ |
+| `cat` | `ca` | $3 - 2 = 1$ |
+| `cart` | `car` | $4 - 3 = 1$ |
+| `dog` | nothing | $3 - 0 = 3$ |
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+That is $3 + 1 + 1 + 3 = 8$ letter nodes, plus the root: 9 nodes.
 
-## Reading and practice
+```java
+void insert(String word) {
+    Node node = root;
+    node.passCount++;
+    for (char c : word.toCharArray()) {
+        int i = c - 'a';
+        if (node.children[i] == null) node.children[i] = new Node();
+        node = node.children[i];
+        node.passCount++;
+    }
+    node.word = word;
+}
+```
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, The full trie is outside the CLRS chapter-10 elementary list; relate it to rooted trees and string representations. [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 208 — Implement Trie (Prefix Tree). Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+### Level 3: walking a prefix
+
+Every question starts the same way: follow the prefix's letters from the root. Either all doors exist and we reach the prefix's node, or a door is missing and no stored word begins that way.
+
+Example:
+
+- `walk("ca")`: root → slot 2 (`c`) → slot 0 (`a`). Two steps, and we reach a node.
+- `walk("cow")`: root → slot 2 (`c`) → slot 14 (`o`) is empty. The walk stops after 2 steps and returns `null`.
+
+The cost is at most $L$ steps for a prefix of length $L$. It does not depend on the number of stored words $n$ at all: with 4 words or 100,000, `walk("ca")` takes 2 steps.
+
+```java
+Node walk(String prefix) {
+    Node node = root;
+    for (char c : prefix.toCharArray()) {
+        node = node.children[c - 'a'];
+        if (node == null) return null; // no stored word starts this way
+    }
+    return node;
+}
+```
+
+Whole-word search and prefix search both use this walk; they are LeetCode 208 in the interview section.
+
+### Level 4: how many words start with a prefix?
+
+Autocomplete wants a number, not just yes or no. Each node keeps a counter of how many inserted words pass through it, and `insert` adds 1 at every node on the word's path (Level 2). Then
+
+$$
+\operatorname{count}(p) = \#\lbrace w \in W : p \text{ is a prefix of } w \rbrace = \operatorname{pass}(\operatorname{node}(p))
+$$
+
+where:
+
+- $W$ is the set of inserted words and $p$ the prefix asked about;
+- $\#\lbrace \dots \rbrace$ means "how many elements";
+- $\operatorname{node}(p)$ is the node reached by walking $p$, and $\operatorname{pass}$ is its counter; if the walk fails, the count is 0.
+
+Example with $W = \lbrace \texttt{car}, \texttt{cat}, \texttt{cart}, \texttt{dog} \rbrace$:
+
+- $\operatorname{count}(\texttt{ca}) = 3$, because `car`, `cat` and `cart` passed through the `ca` node;
+- $\operatorname{count}(\texttt{car}) = 2$ (`car` and `cart`), $\operatorname{count}(\texttt{d}) = 1$, $\operatorname{count}(\texttt{x}) = 0$;
+- $\operatorname{count}(\text{empty prefix}) = 4$, the root's counter.
+
+```java
+int countWithPrefix(String prefix) {
+    Node node = walk(prefix);
+    return node == null ? 0 : node.passCount;
+}
+```
+
+The answer costs $L$ steps instead of scanning all $n$ words. A word inserted twice is counted twice; check `search` first if duplicates must count once.
+
+### Level 5: how many nodes?
+
+Each node stands for exactly one prefix that some word has, and the root stands for the empty prefix. Sharing means the trie never needs more nodes than the letters it was given:
+
+$$
+N = \lvert \operatorname{Pref}(W) \rvert \;\le\; 1 + \sum_{w \in W} \lvert w \rvert
+$$
+
+where:
+
+- $N$ is the number of nodes, the root included;
+- $\operatorname{Pref}(W)$ is the set of all prefixes of all words in $W$, including the empty prefix;
+- $\lvert w \rvert$ is the length of word $w$; the sum is the total number of letters inserted.
+
+Example: for `car`, `cat`, `cart`, `dog` the prefixes are the empty prefix, `c`, `ca`, `car`, `cat`, `cart`, `d`, `do`, `dog`, so $N = 9$. The bound is $1 + (3 + 3 + 4 + 3) = 14$. Sharing saved $14 - 9 = 5$ nodes. The bound is reached only when no two words share a first letter.
+
+```java
+static int countNodes(Node node) {
+    int count = 1;
+    for (Node child : node.children) {
+        if (child != null) count += countNodes(child);
+    }
+    return count;
+}
+```
+
+### Level 6: children in an array or in a hash map
+
+The array of 26 gives the fastest possible step, one array index, but most slots stay empty. Every node except the root is the child of exactly one node, so a trie of $N$ nodes uses $N - 1$ of its $26N$ slots:
+
+$$
+\text{used fraction} = \frac{N - 1}{26 N}
+$$
+
+where:
+
+- $N$ is the number of nodes;
+- $N - 1$ is the number of child links actually in use;
+- $26N$ is the number of slots allocated.
+
+Example: our 9-node trie has $\frac{8}{26 \times 9} = \frac{8}{234} \approx 0.034$, so only **3.4%** of the slots hold a link. On a 64-bit JVM with compressed 4-byte references, each node's array costs about $26 \times 4 = 104$ bytes, so the 9 nodes spend about 936 bytes to hold 8 links.
+
+The alternative stores only the children that exist, in a `HashMap`:
+
+```java
+static final class MapNode {
+    final Map<Character, MapNode> children = new HashMap<>();
+    boolean isWord;
+}
+
+static void insert(MapNode root, String word) {
+    MapNode node = root;
+    for (char c : word.toCharArray()) node = node.children.computeIfAbsent(c, k -> new MapNode());
+    node.isWord = true;
+}
+```
+
+| Children stored as | Step cost | Memory | Alphabet |
+| --- | --- | --- | --- |
+| `Node[26]` | one array index | 26 slots per node, mostly empty | fixed: `a` to `z` only |
+| `HashMap` | one hash lookup, a few times slower | only real children, but tens of bytes each | anything: `é`, digits, Chinese characters |
+
+The array version crashes on `café`, because `'é' - 'a'` is $233 - 97 = 136$, past slot 25. The map version stores it like any other letter. Search in the map version is the same walk with `children.get(c)`; the lab checks it.
+
+### Level 7: compressed tries (radix and Patricia)
+
+Long chains of rooms with one door each waste nodes. `dog` uses three nodes in a row although nothing branches off them. A **compressed trie**, also called a *radix tree*, merges every such chain into one edge labelled with a whole string:
+
+```text
+plain trie (9 nodes)             compressed trie (6 nodes)
+root                             root
+├─ c                             ├─ "ca"
+│  └─ a                          │   ├─ "r" ★ car
+│     ├─ r ★ car                 │   │   └─ "t" ★ cart
+│     │  └─ t ★ cart             │   └─ "t" ★ cat
+│     └─ t ★ cat                 └─ "dog" ★
+└─ d
+   └─ o
+      └─ g ★ dog
+```
+
+Now every node except the root is either a word end or a branching point, which bounds the size by the number of words instead of the number of letters:
+
+$$
+N_{\text{compressed}} \le 1 + W + (W - 1) = 2W
+$$
+
+where:
+
+- $W$ is the number of words;
+- the first $W$ counts word-end nodes, at most one per word;
+- $W - 1$ bounds the branching nodes that are not word ends, because a tree with at most $W$ leaves has at most $W - 1$ nodes with two or more children;
+- the 1 is the root.
+
+Example: $W = 4$ words give at most $2 \times 4 = 8$ nodes; the compressed trie above has 6 (root, `ca`, `car`, `cart`, `cat`, `dog`), down from 9. The saving grows with long words: in a plain trie, the 30 letters at the end of a URL that no other URL shares form a chain of 30 nodes; in a compressed trie they are one edge.
+
+**Patricia** (Donald Morrison, 1968) is the binary version: keys are bit strings, and each node stores only *which bit to test next*, skipping the bits that do not branch. Binary tries of this kind are used for longest-prefix matching of IP addresses in routers. Implementing a compressed trie needs edge splitting on insert, which is longer than the code on this page; the plain trie is what interviews expect.
+
+## Why it works and what it costs
+
+**The invariant.** After any sequence of inserts of a set of words $W$:
+
+- a node for prefix $p$ exists exactly when $p \in \operatorname{Pref}(W)$;
+- that node's `word` is $p$ exactly when $p \in W$;
+- its `passCount` is the number of inserts whose word starts with $p$.
+
+*Initially* $W$ is empty, the only node is the root (the empty prefix), and all three hold. *Insert keeps them*: inserting $w$ walks the prefixes of $w$ in order, creates exactly the ones that were missing, adds 1 to each counter on the path, and marks the last node with $w$. Nothing off the path changes. *Therefore the queries are correct*: `walk(p)` succeeds exactly when $p$ is a prefix of a stored word, `search` additionally needs the mark, and `countWithPrefix` reads the counter.
+
+**Costs**, for a word or prefix of length $L$, $n$ stored words and $\Sigma$ total letters inserted:
+
+| Operation | Trie | Hash set of strings | Sorted array / `TreeSet` |
+| --- | --- | --- | --- |
+| insert | $O(L)$ | $O(L)$ to hash | $O(L \log n)$ comparisons |
+| is $w$ a word? | $O(L)$ | $O(L)$ | $O(L \log n)$ |
+| does any word start with $p$? | $O(L)$ | $O(nL)$, a full scan | $O(L \log n)$ |
+| how many start with $p$? | $O(L)$ with counters | $O(nL)$ | $O(L \log n)$ with two binary searches |
+| memory | at most $1 + \Sigma$ nodes, each with 26 slots | about $\Sigma$ characters plus the table | about $\Sigma$ characters |
+
+Example: with $n = 100{,}000$ words and the prefix `ca`, the trie takes 2 steps, the sorted array about $\log_2 100{,}000 \approx 17$ string comparisons, and the hash set 100,000. The trie pays for this speed in memory, which is what Level 6 and Level 7 reduce.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `search` returns true whenever the walk succeeds | `search("ca")` is true although only `car` and `cat` were inserted | Also require the word marker: `node.word != null` |
+| `c - 'a'` on capitals, digits or accents | `ArrayIndexOutOfBoundsException`: `'A' - 'a'` is $-32$ | Lower-case the input, or use map children |
+| A 26-slot array for a large alphabet | Memory explodes: 65,536 slots per node for all of `char` | Map children, or a compressed trie |
+| In Word Search II, not restoring a cell after the DFS | Later paths miss letters, so real words are not found | Restore `board[r][c] = letter` when backtracking |
+| Reporting a word every time a path spells it | The same word appears twice in the answer | Clear `node.word` after reporting it |
+| Running one grid search per word | Time limit exceeded with 30,000 words | Put all words in one trie and search the grid once |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 208: Implement Trie (Prefix Tree) (Medium)
+
+**Problem.** Implement `insert(word)`, `search(word)` and `startsWith(prefix)` for lowercase words. After inserting `car`, `cat`, `cart` and `dog`: `search("car")` is true, `search("ca")` is false, `startsWith("ca")` is true, `startsWith("cow")` is false.
+
+**Math first.** The trie stores the set of prefixes $\operatorname{Pref}(W)$ and marks the members of $W$. The two queries are two membership tests:
+
+$$
+\operatorname{search}(w) \iff w \in W, \qquad \operatorname{startsWith}(p) \iff p \in \operatorname{Pref}(W)
+$$
+
+where:
+
+- $W$ is the set of inserted words;
+- $\operatorname{Pref}(W)$ is the set of all their prefixes, so $W \subseteq \operatorname{Pref}(W)$;
+- $p \in \operatorname{Pref}(W)$ is exactly "the walk for $p$ reaches a node", and $w \in W$ adds "and that node is marked".
+
+Example: `ca` $\in \operatorname{Pref}(W)$ because it begins `car`, but `ca` $\notin W$; so `startsWith("ca")` is true and `search("ca")` is false. `cow` is not in $\operatorname{Pref}(W)$, because no word begins with `co`.
+
+**Idea.** `insert` is Level 2 and `walk` is Level 3. Both queries walk, then differ only in whether they look at the marker.
+
+```java
+boolean search(String word) {
+    Node node = walk(word);
+    return node != null && node.word != null;
+}
+
+boolean startsWith(String prefix) {
+    return walk(prefix) != null;
+}
+```
+
+**Answer.** `true`, `false`, `true`, `false` for the four calls above. Each call is $O(L)$ time: `search("cart")` takes 4 steps. LeetCode allows words of up to 2,000 letters and 30,000 calls, so at most $2{,}000 \times 30{,}000 = 6 \times 10^7$ steps in total. Space is at most $1 + \Sigma$ nodes, here 9.
+
+### 2. LeetCode 211: Design Add and Search Words Data Structure (Medium)
+
+**Problem.** Like LeetCode 208, but a search pattern may contain `.`, which matches any one letter. After adding `bad`, `dad` and `mad`: `search(".ad")` and `search("b..")` are true, and `search("pad")` is false.
+
+**Math first.** Let $q = q_0 q_1 \dots q_{L-1}$ be the pattern. Define $m(v, i)$: "can the rest of the pattern, from position $i$, be spelled starting at node $v$?"
+
+$$
+m(v, i) =
+\begin{cases}
+\text{a word ends at } v & i = L \\
+\bigvee_{c = \texttt{a}}^{\texttt{z}} m(\operatorname{child}_c(v), i + 1) & q_i = \texttt{.} \\
+m(\operatorname{child}_{q_i}(v), i + 1) & \text{otherwise}
+\end{cases}
+\qquad m(\text{missing}, i) = \text{false}
+$$
+
+where:
+
+- $v$ is a trie node and $i$ the position in the pattern;
+- $\operatorname{child}_c(v)$ is $v$'s child for letter $c$, possibly missing;
+- $\bigvee$ means "or" over all 26 letters: a dot tries every door;
+- the answer is $m(\text{root}, 0)$.
+
+Example: pattern `.ad` against `bad`, `dad`, `mad`.
+
+- $m(\text{root}, 0)$: $q_0$ is a dot, so try every child of the root. The first existing one is `b`.
+- $m(\texttt{b}, 1)$: $q_1 = \texttt{a}$, child exists. $m(\texttt{ba}, 2)$: $q_2 = \texttt{d}$, child exists.
+- $m(\texttt{bad}, 3)$: $i = L = 3$ and `bad` ends here, so true.
+
+For `pad`, $q_0 = \texttt{p}$ and the root has no `p` child, so $m$ is false after one step.
+
+**Idea.** A plain letter follows one door, exactly like `walk`. A dot loops over all existing doors and returns true as soon as one branch succeeds.
+
+```java
+static boolean matches(Node node, String pattern, int i) {
+    if (i == pattern.length()) return node.word != null;
+    char c = pattern.charAt(i);
+    if (c != '.') {
+        Node child = node.children[c - 'a'];
+        return child != null && matches(child, pattern, i + 1);
+    }
+    for (Node child : node.children) {
+        if (child != null && matches(child, pattern, i + 1)) return true;
+    }
+    return false;
+}
+```
+
+**Answer.** `.ad` → true, `b..` → true (via `bad`), `pad` → false, and `ba` → false (`ba` is only a prefix). Without dots a search is $O(L)$. Each dot can branch 26 ways, so $k$ dots cost at most $26^k L$ steps. LeetCode allows at most 2 dots and 25 letters: $26^2 \times 25 = 16{,}900$ steps in the worst case.
+
+### 3. LeetCode 212: Word Search II (Hard)
+
+**Problem.** Given a grid of letters and a list of words, return every word that can be spelled by a path of horizontally or vertically adjacent cells, using each cell at most once per word. For the grid below and the words `cat`, `dog`, `goat`, `cod`, the answer is `cat`, `dog`, `goat`.
+
+```text
+c a t
+d o g
+```
+
+**Math first.** Search the grid once, for all words together. A path spells a string $s$; continue it only while $s$ can still become a word, and report it when it is one:
+
+$$
+\operatorname{explore}(s) \iff s \in \operatorname{Pref}(W), \qquad \operatorname{report}(s) \iff s \in W
+$$
+
+where:
+
+- $W$ is the set of words and $\operatorname{Pref}(W)$ the set of their prefixes, both answered by one trie step per letter;
+- $s$ is the string spelled by the current path of distinct adjacent cells.
+
+Without this pruning, a path of length $L$ can be continued in at most 4 directions at the first step and 3 afterwards (it cannot step back), so there are up to $R \cdot C \cdot 4 \cdot 3^{L-1}$ paths, for an $R \times C$ grid.
+
+Example: here $\operatorname{Pref}(W)$ is the empty string, `c`, `ca`, `cat`, `co`, `cod`, `d`, `do`, `dog`, `g`, `go`, `goa`, `goat`.
+
+- From `c`: `ca` is a prefix and `cat` is a word, so report it. `cd` is not a prefix: pruned. (`co` is a prefix, but `o` is not next to `c`.)
+- From `a`, `t` and `o`: no word starts with them, so each is pruned after one look.
+- From `d`: `do`, then `dog`, report. From `g`: `go`, `goa`, `goat`, report.
+
+Only 10 prefix paths survive (`c`, `ca`, `cat`, `d`, `do`, `dog`, `g`, `go`, `goa`, `goat`), against the bound $2 \cdot 3 \cdot 4 \cdot 3^{3} = 648$ paths of length 4. `cod` is never found, because `o` is not next to `c`.
+
+**Idea.** Put all words in one trie. Start a depth-first search from every cell, carrying the current trie node; step into a neighbour only if the trie has a child for its letter. Mark the cell `#` while it is on the path and restore it on the way back. Clear a word's marker once it is reported, so it is reported once.
+
+```java
+static List<String> findWords(char[][] board, String[] words) {
+    Trie trie = new Trie();
+    for (String w : words) trie.insert(w);
+    List<String> found = new ArrayList<>();
+    for (int r = 0; r < board.length; r++) {
+        for (int c = 0; c < board[0].length; c++) dfs(board, r, c, trie.root, found);
+    }
+    return found;
+}
+
+static void dfs(char[][] board, int r, int c, Node parent, List<String> found) {
+    if (r < 0 || c < 0 || r >= board.length || c >= board[0].length) return;
+    char letter = board[r][c];
+    if (letter == '#' || parent.children[letter - 'a'] == null) return; // used cell, or no word goes this way
+    Node node = parent.children[letter - 'a'];
+    if (node.word != null) { found.add(node.word); node.word = null; } // report each word once
+    board[r][c] = '#';                                                  // mark the cell as used on this path
+    dfs(board, r + 1, c, node, found);
+    dfs(board, r - 1, c, node, found);
+    dfs(board, r, c + 1, node, found);
+    dfs(board, r, c - 1, node, found);
+    board[r][c] = letter;                                               // unmark when backtracking
+}
+```
+
+**Answer.** `[cat, dog, goat]` for the example, and `[oath, eat]` for LeetCode's own example with words `oath`, `pea`, `eat`, `rain`. Building the trie costs $O(\Sigma)$ for $\Sigma$ total letters. The search is at most $O(R \cdot C \cdot 4 \cdot 3^{L-1})$ for the longest word length $L$; at LeetCode's limits ($12 \times 12$ grid, words of up to 10 letters) that bound is $144 \times 4 \times 3^9 = 11{,}337{,}408$ steps, but the trie prunes almost every path early, as the example shows. A further speed-up removes trie leaves once their word is found, so finished branches are never walked again. Extra space is $O(\Sigma)$ for the trie plus $O(L)$ recursion depth.
+
+## Mathematical Abstraction
+
+A trie is the set of prefixes of the stored words, arranged as a tree in which each edge adds one letter:
+
+$$
+\text{nodes} = \operatorname{Pref}(W), \qquad \operatorname{child}_c(p) = pc, \qquad \text{query cost} = O(\lvert p \rvert), \qquad \lvert \operatorname{Pref}(W) \rvert \le 1 + \sum_{w \in W} \lvert w \rvert
+$$
+
+where:
+
+- $W$ is the set of words and $\operatorname{Pref}(W)$ all their prefixes, the empty one included;
+- $pc$ is prefix $p$ with letter $c$ appended, so the child for letter $c$ is one letter longer;
+- $\lvert p \rvert$ is the length of the queried word or prefix, and $\lvert w \rvert$ the length of a stored word.
+
+Example: $W = \lbrace \texttt{car}, \texttt{cat}, \texttt{cart}, \texttt{dog} \rbrace$ has 9 prefixes against the bound $1 + 13 = 14$, so the trie has 9 nodes. The query `ca` costs 2 steps, finds the node whose counter says 3 words start there, and has no word marker, so `ca` itself is not a word. The cost depends only on $\lvert p \rvert = 2$, never on how many words are stored.
+
+## References
+
+- Edward Fredkin, "Trie Memory", *Communications of the ACM* 3(9):490–499 (September 1960), which named the structure.
+- NIST *Dictionary of Algorithms and Data Structures*, "trie", including Fredkin's note on the pronunciation: <https://xlinux.nist.gov/dads/HTML/trie.html>.
+- Donald R. Morrison, "PATRICIA—Practical Algorithm To Retrieve Information Coded in Alphanumeric", *Journal of the ACM* 15(4):514–534 (1968).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §5.2 "Tries", with R-way tries and ternary search tries in Java: <https://algs4.cs.princeton.edu/52trie/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 3, *Sorting and Searching*, §6.3 "Digital Searching".
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), has no chapter on tries; Chapter 12, "Binary Search Trees", is the comparison-based alternative contrasted in the cost table.
+- LeetCode: [208. Implement Trie (Prefix Tree)](https://leetcode.com/problems/implement-trie-prefix-tree/), [211. Design Add and Search Words Data Structure](https://leetcode.com/problems/design-add-and-search-words-data-structure/), [212. Word Search II](https://leetcode.com/problems/word-search-ii/).
+
+[← Binary Search Tree](../binary-search-tree/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Graph Theory →](../graph-theory/index.qmd)

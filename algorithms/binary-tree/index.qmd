@@ -1,61 +1,495 @@
 ---
 title: "Binary Tree"
-description: "Understand Binary Tree from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a family where everyone has at most two children to interview level: node counts such as 2^(h+1) − 1, pre-, in-, post- and level-order traversals traced on one tree, the recursive pattern f(node) = combine(f(left), f(right)), traversal with your own stack, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A binary tree is a tree in which every node has **at most two** children, called *left* and *right*. Almost every question about one is answered by the same three-line recursion: solve the left subtree, solve the right subtree, combine the two answers. This lesson counts how many nodes fit in a given height, walks one small tree in all four standard orders, and then uses that single pattern to solve three interview problems, two of them Hard.
 
-**LeetCode 226 — Invert Binary Tree.** A rooted tree in which each node has at most two children.
+All code is in [`BinaryTreeLab.java`](BinaryTreeLab.java). Run it from this folder with `java BinaryTreeLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+Here is a binary tree with 6 nodes. We will use it all the way through.
 
-Rebuild a new tree with all its values and worry about matching their original positions.
+```text
+        1
+       / \
+      2   3
+     / \   \
+    4   5   6
+```
 
-### The one insight to remember
+We want to print its values, measure its height, find the lowest common ancestor of two nodes, and save it to a string so that it can be rebuilt exactly.
 
-A binary node contains two child references. Recursively swap them after inverting child subtrees, or swap first and recurse consistently.
+The obvious idea is to treat it like an array and read it row by row: `1, 2, 3, 4, 5, 6`. But that list loses the **shape**. The same six values, read row by row, also describe the tree where 6 is the *left* child of 3 instead of the right one. A tree has no index $i$ to loop over; it has a node, a left subtree and a right subtree. The tools in this lesson follow that shape.
 
-## Build the mathematical meaning from a small example
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Imagine a family in which every parent has **at most two** children: an older one standing on the left and a younger one on the right.
+
+**Walking around the family.** Draw the tree on paper. Put your finger on the top and trace around the outside of the whole drawing, going down the left side first, like walking round a building with your hand on the wall. Your finger passes every node **three times**: once coming down its left side, once passing underneath it, and once going back up its right side.
+
+- Write each number the **first** time you pass it: that is *pre-order*.
+- Write it when you pass **underneath**: that is *in-order*.
+- Write it the **last** time, on the way up: that is *post-order*.
+
+**Asking the fairy.** Jeff Erickson's free textbook *Algorithms* tells students to trust the *Recursion Fairy*. To answer a question about a whole family, such as "how many people are there?", hand the left child's family and the right child's family to the fairy. She magically returns the right answer for each. Your only job is to combine them: left count + right count + 1 for yourself. Erickson points out that the fairy's grown-up name is the *induction hypothesis*.
+:::
+
+## From simple to advanced
+
+### Level 1: the node, and how many nodes fit in a height
+
+A node holds a value and two links. This is the same shape as LeetCode's `TreeNode`:
+
+```java
+static final class TreeNode {
+    int val;
+    TreeNode left, right;
+
+    TreeNode(int val) {
+        this.val = val;
+    }
+
+    TreeNode(int val, TreeNode left, TreeNode right) {
+        this.val = val;
+        this.left = left;
+        this.right = right;
+    }
+}
+```
+
+The **depth** of a node is the number of edges from the root, and the **height** of the tree is the largest depth. Depth $k$ can hold at most $2^k$ nodes, because each node one level up has at most two children. A tree that fills every level is called **perfect**:
 
 $$
-mirror(v)=(mirror(right(v)),mirror(left(v)))
+N(h) = 2^0 + 2^1 + \dots + 2^h = 2^{h+1} - 1
 $$
 
-**What each symbol means:** v is a binary tree node; left(v) and right(v) are its two child subtrees; mirror means exchanging the orientation at every node.
+where:
 
-**Substitute actual values:** The root 4 with left child 2 and right child 7 becomes root 4 with left child 7 and right child 2. Applying mirror twice restores the original tree.
+- $h$ is the height, counted in edges, so a single node has $h = 0$;
+- $2^k$ is the number of nodes at depth $k$ in a perfect tree;
+- $N(h)$ is the total number of nodes, a geometric series.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: $h = 2$ gives $1 + 2 + 4 = 7 = 2^3 - 1$, and $h = 3$ gives $7 + 8 = 15 = 2^4 - 1$. Our tree has height 2 and 6 nodes, one short of perfect, because 3 has no left child. Building a perfect tree recursively mirrors the count $N(h) = 2N(h-1) + 1$:
 
-## Design the algorithm in ordinary English
+```java
+static TreeNode perfect(int height) {
+    if (height < 0) return null;
+    return new TreeNode(height, perfect(height - 1), perfect(height - 1));
+}
+```
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+Turned around, the count says how tall a tree with $n$ nodes must be:
 
-**Correctness argument (the invariant):** Base case: an empty tree is unchanged. By induction, each child subtree is correctly mirrored; swapping their positions mirrors the whole tree.
+$$
+\lceil \log_2 (n + 1) \rceil - 1 \;\le\; h \;\le\; n - 1
+$$
 
-## Code you can run
+where:
 
-This example is best understood as a tiny state transformation. Implement the operation described above in JavaScript or Java, and check each reference or invariant after every step; the exact code is deliberately not replaced by a large framework.
+- $n$ is the number of nodes;
+- $\lceil x \rceil$ rounds $x$ up to a whole number;
+- the left bound is the height of the bushiest tree, every level full except perhaps the last;
+- the right bound is a chain, every node with a single child.
 
-## Why it works, and how expensive it is
+Example: for $n = 6$, $\lceil \log_2 7 \rceil - 1 = 3 - 1 = 2$, so $2 \le h \le 5$. Our tree reaches the minimum 2; the chain $1 \to 2 \to \dots \to 6$ reaches 5. For $n = 1{,}000{,}000$ the range is $19 \le h \le 999{,}999$, since $2^{20} = 1{,}048{,}576 \ge 1{,}000{,}001$. Every walk below takes time proportional to $n$ but memory proportional to $h$, which is why balanced trees (the next two lessons) matter.
 
-Base case: an empty tree is unchanged. By induction, each child subtree is correctly mirrored; swapping their positions mirrors the whole tree.
+### Level 2: three depth-first orders
 
-**Time and space:** O(n) time and O(h) recursive stack for n nodes and height h.
+The three orders from the finger walk have short recursive definitions:
 
-**Common mistake or limitation:** Do not confuse binary trees with binary SEARCH trees: arbitrary mirroring destroys the ordering invariant of a BST.
+$$
+\operatorname{pre}(T) = v,\ \operatorname{pre}(L),\ \operatorname{pre}(R)
+\qquad
+\operatorname{in}(T) = \operatorname{in}(L),\ v,\ \operatorname{in}(R)
+\qquad
+\operatorname{post}(T) = \operatorname{post}(L),\ \operatorname{post}(R),\ v
+$$
 
-## Try to explain it in an interview
+where:
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+- $T$ is a tree with root value $v$, left subtree $L$ and right subtree $R$;
+- the commas mean "followed by";
+- the empty tree gives the empty sequence.
 
-## Reading and practice
+Example, in-order: the subtree at 2 gives $\operatorname{in} = 4, 2, 5$, and the subtree at 3 gives (nothing), $3$, $6$. So $\operatorname{in}(T) = 4, 2, 5,\ 1,\ 3, 6$.
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 (tree representation). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 226 — Invert Binary Tree. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+| Order | Rule | Result on our tree | Typical use |
+| --- | --- | --- | --- |
+| pre-order | node, left, right | 1, 2, 4, 5, 3, 6 | copy or save a tree: a parent is written before its children |
+| in-order | left, node, right | 4, 2, 5, 1, 3, 6 | in a binary search tree this is sorted order |
+| post-order | left, right, node | 4, 5, 2, 6, 3, 1 | anything that needs the children's answers first |
+
+The three methods are identical except for **where the visit line sits**:
+
+```java
+static void preorder(TreeNode node, List<Integer> out) {
+    if (node == null) return;
+    out.add(node.val);           // visit before the children
+    preorder(node.left, out);
+    preorder(node.right, out);
+}
+
+static void inorder(TreeNode node, List<Integer> out) {
+    if (node == null) return;
+    inorder(node.left, out);
+    out.add(node.val);           // visit between the children
+    inorder(node.right, out);
+}
+
+static void postorder(TreeNode node, List<Integer> out) {
+    if (node == null) return;
+    postorder(node.left, out);
+    postorder(node.right, out);
+    out.add(node.val);           // visit after the children
+}
+```
+
+### Level 3: the one pattern, f(node) = combine(f(left), f(right))
+
+Post-order is more than a printing order. It is the shape of almost every binary-tree computation: get an answer from each child, then combine them at the node.
+
+$$
+f(\text{empty}) = b, \qquad f(T) = \operatorname{combine}\big(f(L),\ f(R),\ v\big)
+$$
+
+where:
+
+- $b$ is the answer for the empty tree, the base case;
+- $f(L)$ and $f(R)$ are the answers for the two subtrees, which the Recursion Fairy supplies;
+- $\operatorname{combine}$ builds the answer for $T$ from those two answers and the root value $v$.
+
+| Question | $b$ | $\operatorname{combine}$ |
+| --- | --- | --- |
+| number of nodes | 0 | $f(L) + f(R) + 1$ |
+| height in edges | $-1$ | $\max(f(L), f(R)) + 1$ |
+| sum of values | 0 | $f(L) + f(R) + v$ |
+
+Example, height on our tree, from the bottom up:
+
+- leaves 4, 5, 6: $\max(-1, -1) + 1 = 0$;
+- node 2: $\max(0, 0) + 1 = 1$, and node 3: $\max(-1, 0) + 1 = 1$;
+- node 1: $\max(1, 1) + 1 = 2$.
+
+And size: node 2 gives $1 + 1 + 1 = 3$, node 3 gives $0 + 1 + 1 = 2$, so the root gives $3 + 2 + 1 = 6$. The base case $b = -1$ for height is chosen so that a single leaf comes out as $\max(-1, -1) + 1 = 0$.
+
+```java
+static int size(TreeNode node) {
+    if (node == null) return 0;
+    return size(node.left) + size(node.right) + 1;
+}
+
+static int height(TreeNode node) {
+    if (node == null) return -1;                     // so that a single leaf has height 0
+    return Math.max(height(node.left), height(node.right)) + 1;
+}
+```
+
+All three interview problems below are this pattern with a cleverer $\operatorname{combine}$.
+
+### Level 4: level order, row by row with a queue
+
+*Level order* (breadth-first) visits the tree one row at a time. A **queue** does it: take a node from the front, put its children at the back. Children join the queue after everyone on the current row, so rows never mix.
+
+| Row | Taken from the queue | Queue afterwards | Row list |
+| --- | --- | --- | --- |
+| 0 | 1 | 2, 3 | `[1]` |
+| 1 | 2, then 3 | 3, 4, 5, then 4, 5, 6 | `[2, 3]` |
+| 2 | 4, 5, 6 | empty | `[4, 5, 6]` |
+
+The rows have sizes 1, 2 and 3, within the limits $2^0 = 1$, $2^1 = 2$ and $2^2 = 4$ from Level 1. This is LeetCode 102, "Binary Tree Level Order Traversal":
+
+```java
+static List<List<Integer>> levelOrder(TreeNode root) {
+    List<List<Integer>> levels = new ArrayList<>();
+    Queue<TreeNode> queue = new ArrayDeque<>();
+    if (root != null) queue.add(root);
+    while (!queue.isEmpty()) {
+        List<Integer> level = new ArrayList<>();
+        for (int i = queue.size(); i > 0; i--) {     // exactly the nodes of the current level
+            TreeNode node = queue.poll();
+            level.add(node.val);
+            if (node.left != null) queue.add(node.left);
+            if (node.right != null) queue.add(node.right);
+        }
+        levels.add(level);
+    }
+    return levels;
+}
+```
+
+The queue holds up to one whole row. In a perfect tree of height 19 the last row alone has $2^{19} = 524{,}288$ nodes, while a depth-first walk of the same tree never holds more than $19 + 1 = 20$.
+
+### Level 5: the call stack made visible
+
+A recursive walk keeps one Java stack frame for each node on the path from the root to where it is now. On a chain of a million nodes that is a million frames, and Java throws `StackOverflowError`. The cure is to keep **our own** stack. For in-order: go left as far as possible, pushing every node; then pop one, visit it, and step into its right subtree.
+
+$$
+\text{pushes} = \text{pops} = n, \qquad \text{stack size} \le h + 1
+$$
+
+where:
+
+- $n$ is the number of nodes; each is pushed once, when we pass it going left, and popped once, when it is visited;
+- $h$ is the height; the stack only ever holds nodes on one root-to-node path, which has at most $h + 1$ nodes.
+
+Example on our tree, with $n = 6$ and $h = 2$:
+
+| Step | Stack, top on the right | Output so far |
+| --- | --- | --- |
+| push 1, 2, 4 | 1, 2, 4 | |
+| pop 4 (no right child), pop 2 | 1 | 4, 2 |
+| go right to 5: push 5, pop 5 | 1 | 4, 2, 5 |
+| pop 1, go right to 3: push 3, pop 3 | empty | 4, 2, 5, 1, 3 |
+| go right to 6: push 6, pop 6 | empty | 4, 2, 5, 1, 3, 6 |
+
+That is 6 pushes and 6 pops, and the stack peaks at 3 nodes, which is $h + 1 = 3$.
+
+```java
+static List<Integer> inorderIterative(TreeNode root) {
+    List<Integer> out = new ArrayList<>();
+    Deque<TreeNode> stack = new ArrayDeque<>();
+    TreeNode node = root;
+    while (node != null || !stack.isEmpty()) {
+        while (node != null) {                       // go left as far as possible
+            stack.push(node);
+            node = node.left;
+        }
+        node = stack.pop();
+        out.add(node.val);
+        node = node.right;
+    }
+    return out;
+}
+```
+
+This is LeetCode 94, "Binary Tree Inorder Traversal". One step further, **Morris traversal** (J. M. Morris, 1979) needs no stack at all: before going left, it temporarily points the rightmost node of the left subtree back at the current node, uses that thread to climb back up, and then removes it. It runs in $O(n)$ time with $O(1)$ extra memory, at the price of briefly modifying the tree.
+
+## Why it works and what it costs
+
+**Why the pattern is correct: induction on size.** Claim: if $\operatorname{combine}$ is right, then $f(T)$ is right for every tree $T$.
+
+- *Base:* the empty tree returns $b$, which is correct by definition.
+- *Step:* a tree with $n \ge 1$ nodes has subtrees $L$ and $R$ with fewer than $n$ nodes each. By the induction hypothesis (the Recursion Fairy), $f(L)$ and $f(R)$ are correct, so $\operatorname{combine}(f(L), f(R), v)$ is correct.
+
+On our tree, $\operatorname{height}(1)$ trusts $\operatorname{height}(2) = 1$ and $\operatorname{height}(3) = 1$ and returns 2, which is right.
+
+**A counting fact: leaves = two-child nodes + 1.** Let $n_0$, $n_1$ and $n_2$ count the nodes with 0, 1 and 2 children:
+
+$$
+n = n_0 + n_1 + n_2, \qquad n - 1 = n_1 + 2 n_2 \quad\Longrightarrow\quad n_0 = n_2 + 1
+$$
+
+where:
+
+- the first equation sorts every node by its number of children;
+- the second counts edges two ways: there are $n - 1$ (every node but the root has one parent edge), and also one edge per child;
+- subtracting the second from the first gives $1 = n_0 - n_2$.
+
+Example: in our tree $n_0 = 3$ (4, 5, 6), $n_1 = 1$ (node 3) and $n_2 = 2$ (1 and 2). Check: $6 = 3 + 1 + 2$, $5 = 1 + 2 \times 2$, and $3 = 2 + 1$. A perfect tree of height $h$ has $2^h$ leaves and $2^h - 1$ two-child nodes, so just over half of its nodes are leaves.
+
+**Costs.** Every walk touches each node a constant number of times, so all are $O(n)$ time. They differ in memory:
+
+| Walk | Time | Extra memory | On our tree ($n = 6$, $h = 2$) |
+| --- | --- | --- | --- |
+| recursive pre-, in-, post-order | $O(n)$ | $O(h)$ call stack | 6 visits; calls nest at most 4 deep, counting the call on an empty child |
+| level order | $O(n)$ | $O(\text{widest row})$ queue | at most 3 queued |
+| iterative in-order | $O(n)$ | $O(h)$ stack | 6 pushes, 6 pops, at most 3 stacked |
+| Morris | $O(n)$ | $O(1)$ | edits and restores right links |
+
+$O(h)$ is $O(\log n)$ for a balanced tree, 19 for a million nodes, but $O(n)$ for a chain, 999,999 for a million nodes.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| No `if (node == null) return ...` base case | `NullPointerException` at the first missing child | Make the empty tree the base case of every recursion |
+| Mixing height in edges with depth in nodes | Off by one: a single node is reported as 1 instead of 0 | Pick one; LeetCode 104 "maximum depth" counts nodes, so its empty tree is 0 |
+| LeetCode 124 starting `best` at 0 | The tree `[-3]` returns 0, a path with no nodes | Start at `Integer.MIN_VALUE` |
+| LeetCode 124 returning `val + left + right` to the parent | The parent extends a path that already forks, and the sum is too big | Return `val + max(left, right)`; record the bent path separately |
+| Serializing without null markers | Two different trees give the same string | Write `#` for every missing child |
+| Using a stack for level order | The output is no longer row by row | Use a first-in, first-out queue |
+| Recursing on a very deep tree | `StackOverflowError` on a long chain | Use your own stack (Level 5) or Morris traversal |
+
+## Interview problems
+
+Each solution starts with the mathematics. All three are the Level 3 pattern with a different $\operatorname{combine}$.
+
+### 1. LeetCode 236: Lowest Common Ancestor of a Binary Tree (Medium)
+
+**Problem.** Given a binary tree and two of its nodes $p$ and $q$, return their *lowest common ancestor*: the deepest node that has both in its subtree, where a node counts as being in its own subtree. On our tree, $\operatorname{LCA}(4, 6) = 1$, $\operatorname{LCA}(4, 5) = 2$ and $\operatorname{LCA}(2, 5) = 2$.
+
+**Math first.** Each subtree reports what it found: $p$, $q$, their ancestor, or nothing.
+
+$$
+r(T) =
+\begin{cases}
+\text{none} & T \text{ is empty} \\
+\text{root of } T & \text{the root is } p \text{ or } q \\
+\text{root of } T & r(L) \ne \text{none} \text{ and } r(R) \ne \text{none} \\
+r(L) & r(R) = \text{none} \\
+r(R) & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $r(T)$ is the report from subtree $T$, and the cases are tried from top to bottom;
+- $L$ and $R$ are the left and right subtrees of $T$;
+- the second case is where $p$ and $q$ arrive from different sides, so the root of $T$ is the lowest node above both.
+
+Example: $p = 4$, $q = 6$.
+
+- $r(4) = 4$, because it is $p$; $r(5) = $ none. So node 2 reports $r(L) = 4$.
+- $r(6) = 6$; node 3 has an empty left side, so it reports 6.
+- At node 1 both sides report something, so $r = 1$.
+
+**Idea.** Run the pattern in post-order. A node that *is* $p$ or $q$ can stop at once: if the other node is below it, it is the answer itself; if not, the other node's report will arrive from elsewhere. The first node that hears from both sides is the answer.
+
+```java
+static TreeNode lowestCommonAncestor(TreeNode node, TreeNode p, TreeNode q) {
+    if (node == null || node == p || node == q) return node;
+    TreeNode left = lowestCommonAncestor(node.left, p, q);
+    TreeNode right = lowestCommonAncestor(node.right, p, q);
+    if (left != null && right != null) return node;  // p and q are on different sides
+    return left != null ? left : right;
+}
+```
+
+**Answer.** $\operatorname{LCA}(4, 6) = 1$, $\operatorname{LCA}(4, 5) = 2$, and $\operatorname{LCA}(2, 5) = 2$, where the search stops at 2 without visiting 5. Each node is visited at most once: $O(n)$ time, and $O(h)$ stack because the calls only ever follow one root-to-leaf path.
+
+### 2. LeetCode 124: Binary Tree Maximum Path Sum (Hard)
+
+**Problem.** A *path* is a sequence of nodes joined by edges, each node used at most once; it need not pass through the root. Return the largest sum of values along any non-empty path. Values may be negative. LeetCode's example is `[-10, 9, 20, null, null, 15, 7]`, with answer 42 from the path $15 \to 20 \to 7$:
+
+```text
+       -10
+       /  \
+      9    20
+          /  \
+         15   7
+```
+
+**Math first.** Every path has one highest node, where it *bends*. Below the bend it runs down at most two branches, each a straight downward path. So define the best straight downward path from each node:
+
+$$
+g(v) = \operatorname{val}(v) + \max\big(0,\ g(L),\ g(R)\big),
+\qquad
+\text{best} = \max_{v}\Big(\operatorname{val}(v) + \max\big(0, g(L)\big) + \max\big(0, g(R)\big)\Big)
+$$
+
+where:
+
+- $\operatorname{val}(v)$ is the value at node $v$, and $L$ and $R$ are its children, with $g(\text{empty}) = 0$;
+- $g(v)$ is the largest sum of a path that starts at $v$ and only goes down; it may stop at $v$;
+- $\max(0, \cdot)$ drops a branch whose sum is negative, because leaving it out is better;
+- $\text{best}$ tries every node as the bend, adding the best branch on each side.
+
+Example, bottom up:
+
+- leaves: $g(9) = 9$, $g(15) = 15$, $g(7) = 7$, and bending at each gives 9, 15 and 7;
+- $g(20) = 20 + \max(0, 15, 7) = 35$, and bending at 20 gives $20 + 15 + 7 = 42$;
+- $g(-10) = -10 + \max(0, 9, 35) = 25$, and bending at $-10$ gives $-10 + 9 + 35 = 34$;
+- $\text{best} = \max(9, 15, 7, 42, 34) = 42$.
+
+**Idea.** One post-order pass computes $g$. Each node *returns* $g$ to its parent, because a path continuing upwards can only use one of its branches. But before returning, it *records* the bent path $\operatorname{val} + \text{left} + \text{right}$ in `best`. Starting `best` at the smallest integer handles trees where every value is negative.
+
+```java
+static int maxPathSum(TreeNode root) {
+    int[] best = {Integer.MIN_VALUE};
+    gain(root, best);
+    return best[0];
+}
+
+// The best downward path that starts at node; also records the best path that bends at node.
+static int gain(TreeNode node, int[] best) {
+    if (node == null) return 0;
+    int left = Math.max(0, gain(node.left, best));   // a branch with a negative sum is left out
+    int right = Math.max(0, gain(node.right, best));
+    best[0] = Math.max(best[0], node.val + left + right);
+    return node.val + Math.max(left, right);
+}
+```
+
+**Answer.** 42 for LeetCode's example, 6 for `[1, 2, 3]`, $-3$ for the single node `[-3]`, and 17 for our six-node tree, along $5 \to 2 \to 1 \to 3 \to 6$. Each node is visited once: $O(n)$ time, $O(h)$ stack. The one-element array `best` is just a mutable box that every call can update.
+
+### 3. LeetCode 297: Serialize and Deserialize Binary Tree (Hard)
+
+**Problem.** Write `serialize`, which turns a tree into a string, and `deserialize`, which turns the string back into the identical tree. Values may be negative, and there are up to $10^4$ nodes.
+
+**Math first.** Write the tree in pre-order, with a marker `#` for every **missing** child. The markers record the shape, and their number is fixed:
+
+$$
+\text{markers} = 2n - (n - 1) = n + 1, \qquad \text{tokens} = n + (n + 1) = 2n + 1
+$$
+
+where:
+
+- $n$ is the number of nodes, which have $2n$ child slots between them;
+- $n - 1$ slots are filled, because every node except the root is somebody's child;
+- the remaining $n + 1$ slots are empty, and each becomes one `#`.
+
+Example: our tree has $n = 6$, so $12 - 5 = 7$ markers and $6 + 7 = 13$ tokens:
+
+```text
+1,2,4,#,#,5,#,#,3,#,6,#,#
+```
+
+Without markers, pre-order is ambiguous: the tree with root 1 and **left** child 2, and the tree with root 1 and **right** child 2, both give `1,2`. With markers they become `1,2,#,#,#` and `1,#,2,#,#`.
+
+**Idea.** `serialize` is pre-order. `deserialize` reads the tokens back in the same order: the first token is the root, then a complete left subtree, then a complete right subtree. A `#` says exactly where a subtree stops, so each recursive call takes precisely its own tokens.
+
+```java
+static String serialize(TreeNode node) {
+    if (node == null) return "#";
+    return node.val + "," + serialize(node.left) + "," + serialize(node.right);
+}
+
+static TreeNode deserialize(String data) {
+    return build(new ArrayDeque<>(Arrays.asList(data.split(","))));
+}
+
+static TreeNode build(Deque<String> tokens) {
+    String token = tokens.poll();
+    if (token.equals("#")) return null;
+    TreeNode node = new TreeNode(Integer.parseInt(token));
+    node.left = build(tokens);
+    node.right = build(tokens);
+    return node;
+}
+```
+
+**Answer.** `serialize` gives `1,2,4,#,#,5,#,#,3,#,6,#,#`, 13 tokens with 7 markers, and `deserialize` rebuilds the same tree, so serializing it again gives the identical string. `deserialize` reads each of the $2n + 1$ tokens once: $O(n)$ time and space. This `serialize` is the plainest version; its string concatenation copies each subtree's text once per ancestor, which costs $O(n \cdot h)$ characters. Appending to one `StringBuilder` instead makes it $O(n)$.
+
+## Mathematical Abstraction
+
+A binary tree is defined by recursion, so every question about it can be answered by the same recursion:
+
+$$
+T ::= \text{empty} \;\mid\; (L, v, R),
+\qquad
+f(\text{empty}) = b,
+\qquad
+f\big((L, v, R)\big) = \operatorname{combine}\big(f(L), f(R), v\big)
+$$
+
+where:
+
+- $::=$ reads "is defined as one of", and $\mid$ separates the two choices;
+- $(L, v, R)$ is a root with value $v$, a left subtree $L$ and a right subtree $R$, each itself a binary tree;
+- $b$ is the answer for the empty tree, and $\operatorname{combine}$ builds a node's answer from its children's answers.
+
+Example: with $b = -1$ and $\operatorname{combine} = \max(f(L), f(R)) + 1$, our tree gives height $\max(1, 1) + 1 = 2$. With $b = 0$ and $\operatorname{combine} = f(L) + f(R) + 1$ it gives $3 + 2 + 1 = 6$ nodes, within the Level 1 bound $n \le 2^{h+1} - 1 = 2^3 - 1 = 7$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): §10.3 "Representing rooted trees" (binary trees with left, right and parent links); Chapter 12, "Binary Search Trees", whose §12.1 introduces the in-order tree walk; Appendix B.5 "Trees" (binary and positional trees, and their node counts). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §3.2 "Binary Search Trees", whose `BST.java` has recursive `size` and `height`, in-order `keys` and `levelOrder`: <https://algs4.cs.princeton.edu/32bst/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 1, §2.3.1 "Traversing Binary Trees".
+- Jeff Erickson, *Algorithms*, 1st edition (2019), Chapter 1, "Recursion", for the Recursion Fairy: <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- J. M. Morris, "Traversing binary trees simply and cheaply", *Information Processing Letters* 9(5) (1979), 197–200.
+- LeetCode: [236. Lowest Common Ancestor of a Binary Tree](https://leetcode.com/problems/lowest-common-ancestor-of-a-binary-tree/), [124. Binary Tree Maximum Path Sum](https://leetcode.com/problems/binary-tree-maximum-path-sum/), [297. Serialize and Deserialize Binary Tree](https://leetcode.com/problems/serialize-and-deserialize-binary-tree/), and the warm-ups [94. Binary Tree Inorder Traversal](https://leetcode.com/problems/binary-tree-inorder-traversal/), [102. Binary Tree Level Order Traversal](https://leetcode.com/problems/binary-tree-level-order-traversal/) and [104. Maximum Depth of Binary Tree](https://leetcode.com/problems/maximum-depth-of-binary-tree/).
+
+[← Tree](../tree/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Binary Search Tree →](../binary-search-tree/index.qmd)

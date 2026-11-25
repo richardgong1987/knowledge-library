@@ -1,61 +1,420 @@
 ---
 title: "Linked List"
-description: "Understand Linked List from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a treasure hunt to linked nodes in Java: O(1) relinking versus O(n) searching, the dummy head, in-place reversal, fast and slow pointers, Floyd's cycle detection with the meeting-point proof, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A linked list stores each value in its own small object, a **node**, which also holds a link to the next node. Nothing has to sit side by side in memory, so inserting is just changing two links. The price is that you can only move forwards one link at a time. This lesson builds a list from one node, learns the three standard techniques (dummy head, reversal, fast and slow pointers), proves why Floyd's cycle detection finds the start of a loop, and then solves the classic hard problem of reversing a list in groups.
 
-**LeetCode 206 — Reverse Linked List.** A sequence represented by nodes with successor references.
+All code is in [`LinkedListLab.java`](LinkedListLab.java). Run it from this folder with `java LinkedListLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A music player holds the playlist `10 → 20 → 30 → 40`. The listener keeps inserting songs right after the one that is playing, and deleting the song after it.
 
-Copy every node's values to an array, reverse the array, then build new nodes. That works but hides the pointer property of a list.
+- In an array, inserting after position 1 shifts every later song one place: for a playlist of a million songs near the start, about a million moves.
+- In a linked list, the player already holds the current node, so inserting after it is **two link changes**, whatever the playlist's length.
 
-### The one insight to remember
+But a linked list cannot jump: "play song number 3" means following 3 links from the start. And a buggy edit that points a node back at an earlier one makes the playlist loop forever. Level 6 shows how to detect that loop, and exactly where it starts, with two pointers and no extra memory.
 
-A singly linked list is a path of references. Reversal needs only three moving references: previous, current and next.
+## Explain it like I'm ten
 
-## Build the mathematical meaning from a small example
+::: {.callout-tip}
+A linked list is a **treasure hunt**. The first clue is under the doormat. It says "the next clue is in the fridge". The fridge clue says "the next clue is under the sofa", and so on until a clue says "the end". To reach the fifth clue you must read the first four; there is no shortcut. But adding a new clue is easy: change the fridge clue to point at your new hiding place, and make your new clue point where the fridge clue used to. Aditya Bhargava's *Grokking Algorithms* (chapter 2) uses this same treasure-hunt picture for linked lists.
+
+What if someone made the sofa clue point back to the fridge? You would run round in a circle forever. To catch this, send two children: a **tortoise** that reads one clue at a time and a **hare** that reads two at a time. If the trail has an end, the hare gets there first. If there is a loop, the hare, running round faster, must eventually catch up with the tortoise from behind, just like a fast runner lapping a slow one on a running track. Donald Knuth credits this trick to Robert W. Floyd in *The Art of Computer Programming*, Volume 2 (exercises of §3.1).
+:::
+
+## From simple to advanced
+
+### Level 1: nodes and links
+
+Each node holds a value and a reference to the next node; the last node's `next` is `null`. The list itself is just a reference to the first node, the **head**.
+
+```java
+static final class Node {
+    int val;
+    Node next;
+
+    Node(int val, Node next) {
+        this.val = val;
+        this.next = next;
+    }
+}
+```
+
+There is no address arithmetic. To reach index $i$ you follow links:
 
 $$
-next_{\mathrm{new}}(v_i)=v_{i-1}
+\text{steps}(i) = i, \qquad \overline{\text{steps}} = \frac{1}{n} \sum_{i=0}^{n-1} i = \frac{n - 1}{2}
 $$
 
-**What each symbol means:** v_i is the i-th node in the original order; next_new is its pointer after reversal; v_(i-1) is the previous original node.
+where:
 
-**Substitute actual values:** Original 1→2→3→null: after reversing the 1 pointer it becomes 1→null; then 2→1; then 3→2→1→null. The original head becomes the tail.
+- $i$ is the index you want, counted from 0 at the head;
+- $n$ is the length of the list;
+- $\overline{\text{steps}}$ is the average over all indices, assuming each is equally likely.
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: in `10 → 20 → 30 → 40`, reaching index 3 (the 40) takes 3 steps. The average over indices $0, 1, 2, 3$ is $\frac{0 + 1 + 2 + 3}{4} = 1.5 = \frac{4 - 1}{2}$. Random access is $O(n)$, against $O(1)$ for an array.
 
-## Design the algorithm in ordinary English
+```java
+static Node nodeAt(Node head, int index) {         // follows index links: O(index)
+    Node n = head;
+    for (int i = 0; i < index; i++) n = n.next;
+    return n;
+}
+```
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+### Level 2: inserting and deleting next to a node you hold
 
-**Correctness argument (the invariant):** Before each step, previous is the head of the already-reversed prefix; current starts the untouched suffix. Redirecting one pointer and advancing preserves both parts.
+Once you hold a reference to node $x$, inserting after it or deleting the node after it changes a fixed number of links:
 
-## Code you can run
+$$
+\text{insert after } x: \;\; y.\text{next} \leftarrow x.\text{next},\;\; x.\text{next} \leftarrow y \qquad\qquad \text{delete after } x: \;\; x.\text{next} \leftarrow x.\text{next}.\text{next}
+$$
 
-This example is best understood as a tiny state transformation. Implement the operation described above in JavaScript or Java, and check each reference or invariant after every step; the exact code is deliberately not replaced by a large framework.
+where:
 
-## Why it works, and how expensive it is
+- $x$ is the node you already hold;
+- $y$ is the new node;
+- $\leftarrow$ means "set to"; the order matters, because once $x.\text{next}$ is overwritten its old value is lost.
 
-Before each step, previous is the head of the already-reversed prefix; current starts the untouched suffix. Redirecting one pointer and advancing preserves both parts.
+Example: holding the node 20 in `10 → 20 → 30 → 40`, insert 25: set $y.\text{next}$ to 30, then $20.\text{next}$ to $y$, giving `10 → 20 → 25 → 30 → 40`. Two writes, compared with 2 shifts in an array of this size and about $n$ in a long one. Deleting after 20 is one write, back to `10 → 20 → 30 → 40`.
 
-**Time and space:** O(n) time and O(1) extra pointers, where n is number of nodes; this does not allocate new list nodes.
+```java
+static void insertAfter(Node node, int val) {
+    node.next = new Node(val, node.next);
+}
 
-**Common mistake or limitation:** Save current.next before changing current.next, or the unprocessed suffix becomes unreachable.
+static void removeAfter(Node node) {
+    node.next = node.next.next;                    // the skipped node is left for the garbage collector
+}
+```
 
-## Try to explain it in an interview
+So "linked lists insert in $O(1)$" is only half the story: **finding** the place is still $O(n)$ unless you already hold the node. To delete a node itself, rather than the one after it, you need its predecessor; the [Doubly-Linked List](../doubly-linked-list/index.qmd) lesson removes that limitation.
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+### Level 3: the dummy head
 
-## Reading and practice
+Deleting the head is different from deleting any other node, because nothing points to the head; the head variable itself must change. A **dummy** (or *sentinel*) node placed in front of the head removes that special case: now every real node has a predecessor.
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 §10.2 (linked lists). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 206 — Reverse Linked List. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+$$
+\text{dummy} \to h_0 \to h_1 \to \dots \to h_{n-1} \to \text{null}, \qquad \text{answer} = \text{dummy}.\text{next}
+$$
+
+where:
+
+- $h_0, \dots, h_{n-1}$ are the real nodes;
+- the dummy's value is never read;
+- after the work, $\text{dummy}.\text{next}$ is the real head, even if the old head was deleted.
+
+Example: removing every 6 from `6 → 1 → 2 → 6 → 3 → 6`. With the dummy in front, the first 6 is just "the node after the dummy", deleted like any other, and the result is `1 → 2 → 3`. Removing every 6 from `6 → 6` leaves the dummy pointing at `null`, so the answer is the empty list.
+
+```java
+static Node removeAll(Node head, int target) {
+    Node dummy = new Node(0, head);
+    for (Node n = dummy; n.next != null; ) {
+        if (n.next.val == target) n.next = n.next.next;
+        else n = n.next;
+    }
+    return dummy.next;
+}
+```
+
+`n` only moves forward when it does **not** delete. After a deletion, the new `n.next` has not been checked yet, and it might be another 6.
+
+### Level 4: reversing in place
+
+Reversal flips every arrow. Walk once through the list with three references: `prev` (the part already reversed), `curr` (the node being flipped) and `next` (the rest, saved before the link is cut).
+
+$$
+\text{after step } t: \quad \underbrace{a_{t-1} \to \dots \to a_0 \to \text{null}}_{\text{prev}}, \qquad \underbrace{a_t \to a_{t+1} \to \dots \to a_{n-1}}_{\text{curr}}
+$$
+
+where:
+
+- $a_0, \dots, a_{n-1}$ are the nodes in their original order;
+- $t$ is the number of arrows flipped so far, from 0 to $n$;
+- when $t = n$, `curr` is `null` and `prev` is the whole reversed list.
+
+Example: reversing `1 → 2 → 3 → 4`:
+
+| $t$ | `prev` | `curr` |
+| --- | --- | --- |
+| 0 | null | 1 → 2 → 3 → 4 |
+| 1 | 1 | 2 → 3 → 4 |
+| 2 | 2 → 1 | 3 → 4 |
+| 3 | 3 → 2 → 1 | 4 |
+| 4 | 4 → 3 → 2 → 1 | null |
+
+Four steps for four nodes: $O(n)$ time and $O(1)$ extra space.
+
+```java
+static Node reverse(Node head) {
+    Node prev = null, curr = head;
+    while (curr != null) {
+        Node next = curr.next;                     // remember the rest before cutting the link
+        curr.next = prev;
+        prev = curr;
+        curr = next;
+    }
+    return prev;
+}
+```
+
+### Level 5: fast and slow pointers
+
+Two references walking at different speeds measure the list without knowing its length. The slow one moves 1 link per step and the fast one 2:
+
+$$
+\text{slow}_t = t, \qquad \text{fast}_t = 2t, \qquad \text{stop when } 2t \ge n - 1 \;\Rightarrow\; \text{slow ends at } \left\lfloor \frac{n}{2} \right\rfloor
+$$
+
+where:
+
+- $t$ is the number of steps taken;
+- $\text{slow}_t$ and $\text{fast}_t$ are the indices the two references point at;
+- the loop stops when the fast reference is on the last node or past it.
+
+Example: for `1 → 2 → 3 → 4 → 5` ($n = 5$) the loop stops at $t = 2$, so slow is at index $\lfloor 5/2 \rfloor = 2$, the value 3, the exact middle. For six nodes it stops at $t = 3$, index 3, the value 4: the second of the two middles.
+
+```java
+static Node middle(Node head) {
+    Node slow = head, fast = head;
+    while (fast != null && fast.next != null) {
+        slow = slow.next;                          // one step
+        fast = fast.next.next;                     // two steps
+    }
+    return slow;
+}
+```
+
+The same pattern finds the $k$-th node from the end (start the fast pointer $k$ nodes ahead) and splits a list in half for merge sort.
+
+### Level 6: Floyd's cycle detection, and where the cycle starts
+
+If some node links back to an earlier node, the list has the shape of the Greek letter ρ (rho): a **tail** of $\mu$ nodes leading into a **cycle** of $\lambda$ nodes. With the slow and fast pointers of Level 5:
+
+- If there is no cycle, `fast` reaches `null`.
+- If there is a cycle, both pointers enter it, and each step the fast one gains one node on the slow one. The gap shrinks by 1 every step, so it cannot jump over 0: they **meet** within $\lambda$ steps of the slow pointer entering.
+
+Where they meet tells us where the cycle starts. Suppose they meet after the slow pointer has walked $d$ links, $a$ of them inside the cycle:
+
+$$
+d = \mu + a, \qquad 2d = \mu + a + k\lambda \;\;\Rightarrow\;\; d = k\lambda \;\;\Rightarrow\;\; \mu = k\lambda - a
+$$
+
+where:
+
+- $\mu$ is the number of links from the head to the first node of the cycle;
+- $\lambda$ is the length of the cycle;
+- $a$ is how far past the cycle start the meeting point is, $0 \le a < \lambda$;
+- $k \ge 1$ is how many more laps the fast pointer has run, since it walked $2d$ links in the same time.
+
+So walking $\mu$ more links from the meeting point means walking $k\lambda - a$ links, which brings you from $a$ into the cycle to a whole number of laps: **exactly the cycle start**. A second pointer starting at the head reaches the cycle start after the same $\mu$ links. Move both one link at a time; they meet at the cycle start.
+
+Example: ten nodes `0 → 1 → … → 9`, with node 9 linking back to node 4. Then $\mu = 4$ and $\lambda = 6$ (nodes 4 to 9).
+
+- They meet when $d$ is a multiple of 6 and at least 4, so $d = 6$: slow is at node 6, fast has walked 12 links: $4$ to enter, then 8 in the cycle, which is $6 + 2$, also node 6.
+- Check the formula: $a = d - \mu = 6 - 4 = 2$ and $\mu = k\lambda - a = 1 \times 6 - 2 = 4$.
+- From node 6, four links go $7, 8, 9, 4$; from the head, four links go $1, 2, 3, 4$. Both arrive at node **4**, the cycle start.
+
+```java
+static Node meetingPoint(Node head) {
+    Node slow = head, fast = head;
+    while (fast != null && fast.next != null) {
+        slow = slow.next;
+        fast = fast.next.next;
+        if (slow == fast) return slow;
+    }
+    return null;
+}
+```
+
+Notice `slow == fast` compares **references**, the identity of the nodes, not their values. Two different nodes may hold equal values.
+
+## Why it works and what it costs
+
+**Reversal.** The invariant is in the Level 4 formula: *`prev` is the reversed list of the first $t$ nodes, and `curr` is the unchanged rest.* One step moves exactly one node from the front of `curr` to the front of `prev`. Saving `next` first is what keeps the rest reachable after the link is cut. After $n$ steps, `curr` is empty and `prev` is the answer.
+
+**Floyd meets in a cycle and never in a straight line.** Without a cycle, `fast` is always ahead of `slow` and runs off the end, so `slow == fast` never happens after the start. With a cycle, once both are inside, the forward distance from `slow` to `fast`, measured around the cycle, drops by exactly 1 each step, so it reaches 0 within $\lambda$ steps. The slow pointer has then walked at most $\mu + \lambda$ links, so detection is $O(n)$ with $n = \mu + \lambda$ nodes.
+
+**Costs**, for a list of $n$ nodes:
+
+| Operation | Linked list | Array | Why |
+| --- | --- | --- | --- |
+| get index $i$ | $O(i)$ | $O(1)$ | follow $i$ links |
+| insert or delete after a held node | $O(1)$ | $O(n)$ | two link writes against shifting |
+| insert at the head | $O(1)$ | $O(n)$ | same reason |
+| find a value | $O(n)$ | $O(n)$ | both scan; arrays are faster in practice (cache) |
+| reverse, middle, cycle check | $O(n)$, $O(1)$ space | | one or two passes |
+| memory per element | value + one reference + object header | value only | a Java `Node` holding an `int` takes about 24 bytes on a typical 64-bit JVM, against 4 in an `int[]` |
+
+`java.util.LinkedList` is a doubly-linked list. Its `get(i)` walks from whichever end is nearer, at most $n/2$ links. For most programs `ArrayList` or `ArrayDeque` is faster; linked lists win when you hold node references and relink often, which is exactly the setting of the next lesson's LRU cache.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Overwriting `curr.next` before saving it | The rest of the list is lost; the result has one or two nodes | Save `next = curr.next` first |
+| Special-casing the head with many `if`s | Bugs when the head itself must be removed | Start from a dummy node; return `dummy.next` |
+| `fast.next.next` without checking `fast.next` | `NullPointerException` on even-length lists | Loop while `fast != null && fast.next != null` |
+| Comparing nodes by value in cycle detection | False alarms when two nodes hold the same value | Compare references: `slow == fast` |
+| Advancing after a deletion | Two adjacent targets: the second one survives | Advance only when nothing was deleted |
+| Calling `list.get(i)` in a loop over a `java.util.LinkedList` | $O(n^2)$: each `get` walks from an end | Use an iterator or a for-each loop |
+| Forgetting to cut the old tail when splitting | Accidental cycles and infinite loops | Set the last node's `next` to `null` |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 21: Merge Two Sorted Lists (Easy)
+
+**Problem.** Merge two sorted lists into one sorted list by relinking their nodes. For `1 → 2 → 4` and `1 → 3 → 4` the answer is `1 → 1 → 2 → 3 → 4 → 4`.
+
+**Math first.** The smallest remaining element is always at the front of one of the two lists:
+
+$$
+\operatorname{merge}(a, b) =
+\begin{cases}
+b & a = \text{null} \\
+a & b = \text{null} \\
+a_0 \to \operatorname{merge}(a_{1..}, b) & a_0 \le b_0 \\
+b_0 \to \operatorname{merge}(a, b_{1..}) & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $a_0$ and $b_0$ are the first values of the two lists, and $a_{1..}$ is $a$ without its first node;
+- choosing $a_0$ on a tie keeps equal values in their original order (a *stable* merge);
+- each comparison places one node, and once one list is empty the other is attached whole, so there are at most $m + n - 1$ comparisons.
+
+Example: merging `1, 2, 4` with `1, 3, 4` compares $1 \le 1$ (take $a$), $2 > 1$ (take $b$), $2 \le 3$ (take $a$), $4 > 3$ (take $b$), $4 \le 4$ (take $a$). That is $5 = 3 + 3 - 1$ comparisons; then $a$ is empty and the last 4 is attached.
+
+**Idea.** A dummy node gives the result a place to start, and `tail` always points at its last node. Write the recursion as a loop so that long lists do not overflow the call stack.
+
+```java
+static Node mergeTwoLists(Node a, Node b) {
+    Node dummy = new Node(0, null), tail = dummy;
+    while (a != null && b != null) {
+        if (a.val <= b.val) {
+            tail.next = a;
+            a = a.next;
+        } else {
+            tail.next = b;
+            b = b.next;
+        }
+        tail = tail.next;
+    }
+    tail.next = (a != null) ? a : b;               // one list is used up; append the other
+    return dummy.next;
+}
+```
+
+**Answer.** `1 → 1 → 2 → 3 → 4 → 4`, using 5 comparisons. $O(m + n)$ time and $O(1)$ extra space, since no node is copied. This is the merge step of merge sort, and the building block of [Merge k Sorted Lists](../heap-priority-queue/index.qmd).
+
+### 2. LeetCode 142: Linked List Cycle II (Medium)
+
+**Problem.** Return the node where the cycle begins, or `null` if there is no cycle, using $O(1)$ memory. For `3 → 2 → 0 → -4` with `-4` linking back to `2`, the answer is the node `2`.
+
+**Math first.** From Level 6:
+
+$$
+\mu = k\lambda - a \quad\Rightarrow\quad \text{walking } \mu \text{ links from the meeting point reaches the cycle start}
+$$
+
+where:
+
+- $\mu$ is the tail length from the head to the cycle start;
+- $\lambda$ is the cycle length, and $a$ is the meeting point's distance past the cycle start;
+- $k \ge 1$ counts the extra laps of the fast pointer.
+
+Example: here $\mu = 1$ (head `3` to `2`) and $\lambda = 3$ (`2 → 0 → -4 → 2`). The pointers meet when $d$ is a multiple of 3 that is at least 1, so $d = 3$: slow has walked `2, 0, -4` and fast `0, 2, -4`, both at `-4`. Then $a = d - \mu = 2$ and $\mu = 1 \times 3 - 2 = 1$. One link from `-4` is `2`, and one link from the head is `2`. The answer is node **2**.
+
+**Idea.** Find the meeting point. Then start one pointer at the head and one at the meeting point and move both one link at a time; where they meet is the cycle start.
+
+```java
+static Node detectCycle(Node head) {
+    Node meet = meetingPoint(head);
+    if (meet == null) return null;
+    Node fromHead = head, fromMeet = meet;
+    while (fromHead != fromMeet) {                 // both are mu steps from the cycle start
+        fromHead = fromHead.next;
+        fromMeet = fromMeet.next;
+    }
+    return fromHead;
+}
+```
+
+**Answer.** Node `2` for the example; node 4 for the ten-node list of Level 6; the node itself for a one-node list linking to itself; `null` for `1 → 2 → 3`. The lab also checks every tail and cycle length up to 12 nodes. At most $\mu + \lambda$ steps to meet plus $\mu$ more: $O(n)$ time, $O(1)$ space. A `HashSet` of visited nodes also works, with $O(n)$ space.
+
+### 3. LeetCode 25: Reverse Nodes in k-Group (Hard)
+
+**Problem.** Reverse the nodes of the list $k$ at a time; a final group with fewer than $k$ nodes keeps its order. Only links may change, not values. For `1 → 2 → 3 → 4 → 5`, $k = 2$ gives `2 → 1 → 4 → 3 → 5`, and $k = 3$ gives `3 → 2 → 1 → 4 → 5`.
+
+**Math first.** Cut the list into blocks of $k$:
+
+$$
+\#\text{full groups} = \left\lfloor \frac{n}{k} \right\rfloor, \qquad \text{leftover} = n \bmod k, \qquad
+\text{group } g = a_{gk}, \dots, a_{gk + k - 1} \;\mapsto\; a_{gk + k - 1}, \dots, a_{gk}
+$$
+
+where:
+
+- $n$ is the number of nodes and $k$ the group size;
+- $g = 0, 1, \dots$ numbers the full groups, and $a_i$ is the node at original index $i$;
+- after reversal, the group's old **first** node is its new **last** node, so it is the node that must link to the next group.
+
+Example: $n = 5$, $k = 2$: $\lfloor 5/2 \rfloor = 2$ full groups, $(1, 2)$ and $(3, 4)$, and $5 \bmod 2 = 1$ leftover node, 5. Reversing the groups gives `2 → 1`, `4 → 3`, then `5`. For $k = 3$ there is $\lfloor 5/3 \rfloor = 1$ group, `3 → 2 → 1`, and 2 leftover nodes `4 → 5`.
+
+**Idea.** Keep `groupPrev`, the node just before the current group (a dummy at first). Look $k$ nodes ahead; if there are not $k$, stop. Otherwise reverse the group with the Level 4 loop, but start `prev` at the node after the group, so the reversed group's tail already points onward. Then link `groupPrev` to the new head and move `groupPrev` to the new tail.
+
+```java
+static Node reverseKGroup(Node head, int k) {
+    Node dummy = new Node(0, head), groupPrev = dummy;
+    while (true) {
+        Node kth = groupPrev;
+        for (int i = 0; i < k && kth != null; i++) kth = kth.next;
+        if (kth == null) return dummy.next;        // fewer than k nodes left: keep their order
+        Node groupNext = kth.next, first = groupPrev.next;
+        Node prev = groupNext, curr = first;       // reverse the group; its new tail points at groupNext
+        while (curr != groupNext) {
+            Node next = curr.next;
+            curr.next = prev;
+            prev = curr;
+            curr = next;
+        }
+        groupPrev.next = kth;                      // kth is the group's new head
+        groupPrev = first;                         // first is the group's new tail
+    }
+}
+```
+
+**Answer.** `2 → 1 → 4 → 3 → 5` for $k = 2$ and `3 → 2 → 1 → 4 → 5` for $k = 3$; $k = 1$ changes nothing and $k = n$ reverses everything. Each node is visited twice, once by the look-ahead and once by the reversal, so there are at most $2n = 10$ steps for the example: $O(n)$ time and $O(1)$ extra space. A recursive solution is shorter but uses $O(n/k)$ stack frames.
+
+## Mathematical Abstraction
+
+A singly linked list is a successor function on a finite set of nodes. Following it from the head either stops at null or, after a tail, cycles forever:
+
+$$
+\operatorname{next} : N \to N \cup \lbrace \text{null} \rbrace, \qquad
+h, \operatorname{next}(h), \operatorname{next}^2(h), \dots =
+\underbrace{x_0, \dots, x_{\mu - 1}}_{\text{tail}},\; \underbrace{x_\mu, \dots, x_{\mu + \lambda - 1}}_{\text{cycle}},\; x_\mu, \dots
+$$
+
+where:
+
+- $N$ is the set of nodes, $h$ the head, and $\operatorname{next}^i$ means applying $\operatorname{next}$ $i$ times;
+- $\mu$ is the tail length and $\lambda$ the cycle length; a list with no cycle simply reaches null;
+- Floyd's pointers meet after $d = k\lambda$ steps, and the cycle starts $\mu$ steps further on.
+
+Example: for the ten-node list with node 9 linking to node 4, $\mu = 4$ and $\lambda = 6$; the pointers meet at node 6 after $d = 6$ steps, and 4 more steps from there reach node 4. Every operation in this lesson is a careful rewrite of $\operatorname{next}$: insertion changes two values of the function, reversal inverts it, and the dummy node adds one extra element in front of $h$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 10, "Elementary Data Structures", Section 10.2, "Linked lists" (including sentinels). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.3 "Bags, Queues, and Stacks", linked lists: <https://algs4.cs.princeton.edu/13stacks/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 1, §2.2.3 "Linked Allocation", and Volume 2, §3.1 (exercises), where the cycle-finding algorithm is credited to R. W. Floyd. Background: <https://en.wikipedia.org/wiki/Cycle_detection>.
+- Aditya Bhargava, *Grokking Algorithms* (Manning), Chapter 2, "Selection sort": linked lists as a treasure hunt. <https://livebook.manning.com/book/grokking-algorithms/chapter-2>.
+- LeetCode: [21. Merge Two Sorted Lists](https://leetcode.com/problems/merge-two-sorted-lists/), [142. Linked List Cycle II](https://leetcode.com/problems/linked-list-cycle-ii/), [25. Reverse Nodes in k-Group](https://leetcode.com/problems/reverse-nodes-in-k-group/); related warm-ups [206. Reverse Linked List](https://leetcode.com/problems/reverse-linked-list/) and [141. Linked List Cycle](https://leetcode.com/problems/linked-list-cycle/).
+
+[← Matrix](../matrix/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Doubly-Linked List →](../doubly-linked-list/index.qmd)

@@ -1,69 +1,408 @@
 ---
 title: "String"
-description: "Understand String from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From letter tiles to java.lang.String: characters as numbers, UTF-16 code units versus code points, immutability, why += in a loop costs n(n+1)/2 copies and StringBuilder does not, palindromes, counting arrays for anagrams, lexicographic order, and hard interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+A string is an array of characters with two twists. In Java it can never change once made, and its "characters" are 16-bit code units, which do not always match what a human calls a character. This lesson starts from letters as numbers, counts exactly what immutability costs, and finishes with palindrome and parenthesis problems solved by counting.
 
-**LeetCode 3 — Longest Substring Without Repeating Characters.** An ordered sequence of characters used in parsing and matching.
+All code is in [`StringLab.java`](StringLab.java). Run it from this folder with `java StringLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A word game receives the words `eat, tea, tan, ate, nat, bat` and must put words made of the same letters into the same group: `{eat, tea, ate}`, `{tan, nat}`, `{bat}`.
 
-Try every substring and scan it again for duplicates. Most characters get rechecked unnecessarily.
+- Comparing every pair of words, and for each pair trying every rearrangement of letters, is hopeless: a 10-letter word has $10! = 3{,}628{,}800$ rearrangements.
+- Building each group by gluing strings together with `+=` looks innocent but copies the whole string again on every step.
+- The right tool is to see letters as **numbers**: `'a'` is 97, so `c - 'a'` turns a letter into an index from 0 to 25, and a word becomes a tally of 26 counts. Two words belong together exactly when their tallies are equal.
 
-### The one insight to remember
+## Explain it like I'm ten
 
-A string is an indexed sequence: the expensive question is not indexing, but tracking constraints on a moving interval. Keep the last location of each character.
+::: {.callout-tip}
+A string is a row of letter tiles on a Scrabble rack. Each tile sits in a numbered position, 0, 1, 2, and so on, so "the tile in position 2" is found at once, just like an array.
 
-## Build the mathematical meaning from a small example
+A Java `String` is more like a **printed name badge** than a rack. You cannot pick a letter off a badge. To change "jave" into "java" you print a whole new badge, and the old one is still there for anyone who was holding it. That sounds wasteful, but it means a badge you hand to a friend can never be changed behind your back. Joshua Bloch's *Effective Java* (3rd edition, Item 17, "Minimize mutability") makes this case for immutable classes, and Item 63, "Beware the performance of string concatenation", warns about the cost: printing a new badge for every added letter.
+
+Two words are **anagrams** when they use the same tiles: pour both racks into piles sorted by letter and the piles match. A **palindrome** reads the same from both ends, like "racecar": point one finger at each end and walk them towards the middle.
+:::
+
+## From simple to advanced
+
+### Level 1: a string is a sequence with positions
+
+A string of length $n$ is a sequence $s = s_0 s_1 \dots s_{n-1}$. Java's `s.charAt(i)` reads $s_i$ in $O(1)$, and `s.substring(i, j)` returns the piece $s_i \dots s_{j-1}$, of length $j - i$. The number of non-empty substrings is
 
 $$
-\operatorname{length}([l,r])=r-l+1
+\#\text{substrings} = \binom{n + 1}{2} = \frac{n(n+1)}{2}
 $$
 
-**What each symbol means:** l and r are the inclusive left and right character positions of the current valid substring; length counts characters.
+where:
 
-**Substitute actual values:** In 'abca', after reading positions 0..2, l=0 and r=2, so length=2-0+1=3 ('abc'). At r=3 the new 'a' repeats index 0, so move l to 1 and length becomes 3-1+1=3 ('bca').
+- $n$ is the length of the string;
+- a substring is fixed by choosing a start $i$ and an end $j$ with $0 \le i < j \le n$, which is choosing 2 of the $n + 1$ cut points;
+- $\binom{n+1}{2}$ is "$n + 1$ choose 2".
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: `"java"` has $n = 4$, so $\frac{4 \times 5}{2} = 10$ substrings: 4 of length 1, 3 of length 2, 2 of length 3 and 1 of length 4. Only 9 are different, because `"a"` appears twice. A brute force that examines every substring and spends $O(n)$ on each is therefore $O(n^3)$; the interview problems below avoid that.
 
-## Design the algorithm in ordinary English
+Every Java `String` is **immutable**. `word.toUpperCase()` does not touch `word`; it returns a new string:
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+| Call | `word` afterwards | Result |
+| --- | --- | --- |
+| `word = "java"` | `"java"` | |
+| `word.toUpperCase()` | still `"java"` | a new string `"JAVA"` |
 
-**Correctness argument (the invariant):** At the end of each iteration the current interval has no duplicate characters, and left never moves backwards. Therefore each candidate length is valid and no larger candidate ending at that right position is missed.
+Immutability lets strings be shared freely, used safely as `HashMap` keys, and cache their hash code (`String` keeps it in a private `hash` field after computing it once). Since Java 9 ([JEP 254, Compact Strings](https://openjdk.org/jeps/254)), a string whose characters all fit in one byte is even stored as one byte per character.
 
-## Code you can run
+### Level 2: characters are numbers, and UTF-16
 
-The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `longestUniqueSubstring`. Its use can be reduced to:
+A Java `char` is a 16-bit number, a **UTF-16 code unit**. `'a'` is 97, `'b'` is 98, and so on to `'z'` = 122, so `c - 'a'` maps the lower-case letters onto $0..25$. That single subtraction is the trick behind every counting array in this lesson.
 
-~~~js
-import { longestUniqueSubstring } from '../examples/patterns.mjs';
+Sixteen bits give only 65,536 values, but Unicode has over a million **code points**. Code points above `U+FFFF`, such as most emoji, are stored as **two** code units, a *surrogate pair*:
 
-console.log(longestUniqueSubstring('abca'));
-~~~
+$$
+u' = u - \text{0x10000}, \qquad \text{high} = \text{0xD800} + \left\lfloor \frac{u'}{2^{10}} \right\rfloor, \qquad \text{low} = \text{0xDC00} + (u' \bmod 2^{10})
+$$
 
-Save the snippet inside the `algorithms/string/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+where:
 
-## Why it works, and how expensive it is
+- $u$ is the code point, a number from `0x10000` to `0x10FFFF`;
+- $u'$ is what is left after removing the first 65,536 values; it fits in 20 bits;
+- the high surrogate carries the top 10 bits and the low surrogate the bottom 10 bits;
+- `0x` marks hexadecimal, so `0x10000` is 65,536 and $2^{10} = 1024$.
 
-At the end of each iteration the current interval has no duplicate characters, and left never moves backwards. Therefore each candidate length is valid and no larger candidate ending at that right position is missed.
+Example: the grinning face 😀 is $u = \text{0x1F600} = 128{,}512$.
 
-**Time and space:** O(n) expected time with a hash map and O(min(n, alphabet size)) state, where n is the number of indexed characters.
+- $u' = 128{,}512 - 65{,}536 = 62{,}976$ (`0xF600`);
+- $\lfloor 62{,}976 / 1024 \rfloor = 61$ (`0x3D`), so high $= \text{0xD800} + \text{0x3D} = \text{0xD83D}$;
+- $62{,}976 - 61 \times 1024 = 512$ (`0x200`), so low $= \text{0xDC00} + \text{0x200} = \text{0xDE00}$.
 
-**Common mistake or limitation:** A byte-indexed approach is not a Unicode grapheme algorithm; JavaScript characters can contain surrogate pairs. Define the alphabet and indexing model before implementing.
+So `"😀".length()` is **2**, while `"😀".codePointCount(0, 2)` is **1**.
 
-## Try to explain it in an interview
+```java
+static char[] surrogatePair(int codePoint) {
+    int offset = codePoint - 0x10000;      // 20 bits remain
+    char high = (char) (0xD800 + (offset >> 10));
+    char low = (char) (0xDC00 + (offset & 0x3FF));
+    return new char[] {high, low};
+}
+```
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+Most interview strings are plain `a`–`z`, so `char` indexing is fine there. In real text, `charAt` can split an emoji in half. Use `codePoints()` to walk real characters; `StringBuilder.reverse()` already keeps surrogate pairs together.
 
-## Reading and practice
+### Level 3: building strings, `+=` versus `StringBuilder`
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 32 covers string matching; the sliding-window pattern is a separate interview technique. [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 3 — Longest Substring Without Repeating Characters. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+Because a `String` cannot grow, `s += "a"` creates a **new** string of length $\lvert s \rvert + 1$ and copies every character into it. Appending one character $n$ times copies
+
+$$
+1 + 2 + \dots + n = \sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+$$
+
+where:
+
+- $n$ is the number of appends;
+- the $i$-th append builds a string of length $i$, copying $i$ characters;
+- the sum is the triangular number, which grows like $n^2 / 2$.
+
+Example: 5 appends copy $1 + 2 + 3 + 4 + 5 = 15$ characters. For $n = 10{,}000$ that is $\frac{10{,}000 \times 10{,}001}{2} = 50{,}005{,}000$ characters, to build a string of only 10,000.
+
+```java
+static int charactersCopiedByPlusEquals(int n) {
+    String s = "";
+    int copied = 0;
+    for (int i = 0; i < n; i++) {
+        s += "a";                          // a new string of length i + 1, every character copied
+        copied += s.length();
+    }
+    return copied;
+}
+```
+
+`StringBuilder` is a growable character array, exactly the `ArrayList` idea from the [Array](../array/index.qmd) lesson. It starts with room for 16 and, when full, grows from capacity $c$ to $2c + 2$ (OpenJDK `AbstractStringBuilder.newCapacity`):
+
+$$
+\text{total copies} = \sum_{j} c_j < 2n
+$$
+
+where:
+
+- $c_j$ is the capacity at the $j$-th resize, $c_0 = 16$ and $c_{j+1} = 2 c_j + 2$;
+- each resize copies the $c_j$ characters already present;
+- each capacity is less than half the next, so the sum is less than twice the last capacity, which is below $n$.
+
+Example: 10,000 appends resize at $16, 34, 70, 142, 286, 574, 1150, 2302, 4606, 9214$, copying $18{,}394 < 20{,}000$ characters. That is 18 thousand instead of 50 million.
+
+```java
+static String repeatWithBuilder(char c, int n) {
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < n; i++) sb.append(c);  // writes into spare room; grows about 2x when full
+    return sb.toString();
+}
+```
+
+A single line such as `"x = " + x + "!"` is fine: the compiler builds it in one go. The trap is `+=` **inside a loop**.
+
+### Level 4: palindromes, reading from both ends
+
+A string is a palindrome when each character equals its mirror image:
+
+$$
+\operatorname{pal}(s) \iff s_i = s_{n-1-i} \text{ for all } 0 \le i < \left\lfloor \frac{n}{2} \right\rfloor
+$$
+
+where:
+
+- $n$ is the length;
+- $s_{n-1-i}$ is the character $i$ places from the end;
+- $\lfloor n/2 \rfloor$ pairs are enough: the middle character of an odd-length string is its own mirror.
+
+Example: `"racecar"`, $n = 7$, needs $\lfloor 7/2 \rfloor = 3$ comparisons: $s_0 = s_6 = $ `r`, $s_1 = s_5 = $ `a`, $s_2 = s_4 = $ `c`. All equal, so it is a palindrome. `"rocket"` fails at the first pair, `r` against `t`.
+
+```java
+static boolean isPalindrome(String s) {
+    for (int i = 0, j = s.length() - 1; i < j; i++, j--) {
+        if (s.charAt(i) != s.charAt(j)) return false;
+    }
+    return true;
+}
+```
+
+### Level 5: anagrams, counting with an array
+
+Two strings are anagrams exactly when every letter occurs equally often in both:
+
+$$
+s \sim t \iff \operatorname{cnt}_s(c) = \operatorname{cnt}_t(c) \text{ for every letter } c \in \lbrace \texttt{a}, \dots, \texttt{z} \rbrace
+$$
+
+where:
+
+- $\sim$ means "is an anagram of";
+- $\operatorname{cnt}_s(c)$ is how many times letter $c$ occurs in $s$;
+- the 26 counts live in an `int[26]`, at index $c - \texttt{'a'}$.
+
+Example: `"listen"` and `"silent"` both have one each of `e, i, l, n, s, t` and zero of the other 20 letters, so they are anagrams. `"rat"` and `"car"` differ at `t` (1 against 0), so they are not.
+
+```java
+static int[] letterCounts(String s) {
+    int[] count = new int[26];
+    for (char c : s.toCharArray()) count[c - 'a']++;  // 'a' -> 0, 'b' -> 1, ..., 'z' -> 25
+    return count;
+}
+
+static boolean isAnagram(String s, String t) {
+    return Arrays.equals(letterCounts(s), letterCounts(t));
+}
+```
+
+This costs $O(n)$, compared with $O(n \log n)$ for sorting both strings and comparing. A counting array is direct addressing from the [Hash Table](../hash-table/index.qmd) lesson, with a universe of only 26 keys.
+
+### Level 6: comparing strings
+
+`s.equals(t)` compares letters. `s == t` asks whether they are the **same object**, which depends on how they were built: a string assembled by `StringBuilder` is a different object from the literal `"java"`, even though the letters match.
+
+For ordering, Java uses **lexicographic** (dictionary) order. Find the first position where the strings differ:
+
+$$
+\operatorname{cmp}(s, t) =
+\begin{cases}
+s_k - t_k & \text{if } k = \min \lbrace i : s_i \ne t_i \rbrace \text{ exists} \\
+\lvert s \rvert - \lvert t \rvert & \text{if one string is a prefix of the other}
+\end{cases}
+$$
+
+where:
+
+- $k$ is the first index where the two strings disagree;
+- $s_k - t_k$ is the difference of the two character codes;
+- $\lvert s \rvert$ is the length of $s$; a negative result means $s$ comes first.
+
+Example: `"apple".compareTo("apply")` first differs at $k = 4$, `e` against `y`: $101 - 121 = -20$, so "apple" comes first. `"app".compareTo("apple")` has no differing position, so it returns $3 - 5 = -2$. Only the sign is promised by the `Comparable` contract, so test `< 0`, never `== -1`.
+
+## Why it works and what it costs
+
+**Palindrome check.** The invariant is: *when the loop reaches positions $i$ and $j = n - 1 - i$, every earlier pair has matched.* If some pair fails, the string is not a palindrome. If $i$ meets or passes $j$, all $\lfloor n/2 \rfloor$ pairs matched, which is exactly the definition.
+
+**Anagram check.** Rearranging letters changes their positions but never their counts, so anagrams have equal count arrays. Conversely, equal counts let you rebuild $t$ by taking the letters of $s$ in a different order, so equal counts imply anagrams. The counting array is therefore a *canonical form*: one representative per group.
+
+**Costs**, for strings of length $n$:
+
+| Operation | Cost | Why |
+| --- | --- | --- |
+| `charAt(i)`, `length()` | $O(1)$ | array indexing |
+| `substring(i, j)`, `toUpperCase()`, `+` | $O(j - i)$ or $O(n)$ | builds and copies a new string |
+| `equals`, `compareTo` | $O(n)$ | compares up to the first difference |
+| `hashCode()` | $O(n)$ once, then $O(1)$ | cached in the string |
+| $n$ appends with `+=` | $O(n^2)$ | $n(n+1)/2$ characters copied |
+| $n$ appends with `StringBuilder` | $O(n)$ amortised | fewer than $2n$ characters copied by resizes |
+| palindrome, anagram | $O(n)$ | one pass; the anagram tally uses 26 counters |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Comparing with `==` | Equal-looking strings compare as different, sometimes | Use `equals`, or `equalsIgnoreCase` |
+| `s += piece` inside a loop | A loop over 100,000 pieces takes seconds | `StringBuilder`, or `String.join` |
+| Calling `s.toUpperCase()` and ignoring the result | The string "does not change" | Strings are immutable: `s = s.toUpperCase();` |
+| Assuming `length()` counts visible characters | An emoji counts as 2 and `charAt` splits it | `codePointCount`, `codePoints()` |
+| `count[c - 'a']` on input with capitals or spaces | `ArrayIndexOutOfBoundsException` (`' ' - 'a'` is $-65$) | Normalise first, or count in a `HashMap` or an `int[128]` |
+| Testing `compareTo(...) == -1` | Works for some strings, fails for others | Only the sign is defined: test `< 0` |
+| `substring(i, j)` with `j` as a length | Wrong slice or `StringIndexOutOfBoundsException` | The second argument is the end index, exclusive |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 49: Group Anagrams (Medium)
+
+**Problem.** Group the words that are anagrams of each other, in any order. For `["eat", "tea", "tan", "ate", "nat", "bat"]` the answer is `[["bat"], ["nat", "tan"], ["ate", "eat", "tea"]]`.
+
+**Math first.** Map each word to a key that is equal exactly for anagrams. Level 5 says the count vector is such a key:
+
+$$
+\operatorname{key}(w) = \big(\operatorname{cnt}_w(\texttt{a}), \operatorname{cnt}_w(\texttt{b}), \dots, \operatorname{cnt}_w(\texttt{z})\big), \qquad w \sim v \iff \operatorname{key}(w) = \operatorname{key}(v)
+$$
+
+where:
+
+- $w$ and $v$ are words;
+- $\operatorname{key}(w)$ is a vector of 26 counts;
+- each group is the set of words sharing one key.
+
+Example: $\operatorname{key}(\text{eat}) = \operatorname{key}(\text{tea}) = \operatorname{key}(\text{ate})$, with a 1 at `a`, `e` and `t` and 0 elsewhere. $\operatorname{key}(\text{tan}) = \operatorname{key}(\text{nat})$ has 1 at `a`, `n`, `t`. $\operatorname{key}(\text{bat})$ has 1 at `a`, `b`, `t`. Three distinct keys give three groups.
+
+**Idea.** Use a `HashMap` from key to list of words. `Arrays.toString(count)` turns the 26 counts into a string such as `"[1, 0, 0, 0, 1, ...]"`, which has proper `equals` and `hashCode`, unlike a raw `int[]`.
+
+```java
+static List<List<String>> groupAnagrams(String[] words) {
+    Map<String, List<String>> groups = new HashMap<>();
+    for (String w : words) {
+        String key = Arrays.toString(letterCounts(w));    // equal counts, equal key
+        groups.computeIfAbsent(key, k -> new ArrayList<>()).add(w);
+    }
+    return new ArrayList<>(groups.values());
+}
+```
+
+**Answer.** Three groups: `{bat}`, `{nat, tan}`, `{ate, eat, tea}`. For $m$ words of length at most $k$, building keys costs $O(m(k + 26))$; for the example, $6 \times (3 + 26) = 174$ steps. Space is $O(mk)$. Sorting each word as its key would cost $O(m \cdot k \log k)$ instead.
+
+### 2. LeetCode 5: Longest Palindromic Substring (Medium)
+
+**Problem.** Return the longest substring that is a palindrome. For `"babad"` the answer is `"bab"` (`"aba"` is also accepted); for `"cbbd"` it is `"bb"`.
+
+**Math first.** Every palindrome has a centre: a character (odd length) or a gap between two characters (even length). A string of length $n$ has
+
+$$
+\#\text{centres} = n + (n - 1) = 2n - 1, \qquad \text{work} \le \sum_{\text{centres}} \left\lceil \frac{n}{2} \right\rceil = O(n^2)
+$$
+
+where:
+
+- $n$ centres sit on characters and $n - 1$ sit in the gaps between neighbours;
+- from each centre, expansion compares $s_{lo}$ with $s_{hi}$ and steps outwards while they match;
+- one expansion can grow at most halfway across the string.
+
+Example: `"babad"`, $n = 5$, has $2 \times 5 - 1 = 9$ centres. From the centre at index 1 (`a`): $s_0 = s_2 = $ `b` matches, then $lo = -1$ stops it, giving `"bab"`, length 3. No centre does better, so the answer has length **3**. In `"cbbd"` the gap between the two `b`s expands to `"bb"`, length 2.
+
+**Idea.** For each index $c$ try two expansions: from $(c, c)$ for odd lengths and from $(c, c+1)$ for even lengths. `expand` returns the length found; the start is then $c - \lfloor (\text{length} - 1)/2 \rfloor$.
+
+```java
+static String longestPalindrome(String s) {
+    int start = 0, end = 0;                // the best palindrome so far is s[start..end)
+    for (int c = 0; c < s.length(); c++) {
+        int length = Math.max(expand(s, c, c), expand(s, c, c + 1));  // odd and even centres
+        if (length > end - start) {
+            start = c - (length - 1) / 2;
+            end = start + length;
+        }
+    }
+    return s.substring(start, end);
+}
+
+static int expand(String s, int lo, int hi) {      // length of the palindrome grown from s[lo..hi]
+    while (lo >= 0 && hi < s.length() && s.charAt(lo) == s.charAt(hi)) {
+        lo--;
+        hi++;
+    }
+    return hi - lo - 1;
+}
+```
+
+**Answer.** `"bab"` for `"babad"`, `"bb"` for `"cbbd"`, `"a"` for `"a"`. $O(n^2)$ time in the worst case, such as `"aaaa…"`, and $O(1)$ extra space. Manacher's algorithm reaches $O(n)$ by reusing mirror information, but is rarely expected in an interview.
+
+### 3. LeetCode 32: Longest Valid Parentheses (Hard)
+
+**Problem.** Given a string of `(` and `)`, return the length of the longest well-formed substring. For `")()())"` the answer is 4, from `"()()"`.
+
+**Math first.** Give `(` the value $+1$ and `)` the value $-1$, and let $B$ be the running sum over a stretch of characters. A stretch is well-formed exactly when
+
+$$
+B_{\text{end}} = 0 \quad \text{and} \quad B_m \ge 0 \text{ at every point } m \text{ along the way}
+$$
+
+where:
+
+- $B_m$ is (opens so far) minus (closes so far), counted from the start of the stretch;
+- $B_m < 0$ means a `)` with no partner, so no valid stretch can extend across that point;
+- $B_{\text{end}} = 0$ means every `(` has been closed.
+
+Example: `")()())"`. Start a stretch at each reset:
+
+| Character | `)` | `(` | `)` | `(` | `)` | `)` |
+| --- | --- | --- | --- | --- | --- | --- |
+| opens, closes | 0, 1 → reset | 1, 0 | 1, 1 | 2, 1 | 2, 2 | 2, 3 → reset |
+| balanced length | | | **2** | | **4** | |
+
+The best balanced length is $2 \times 2 = 4$.
+
+**Idea.** Keep two counters and scan left to right. Whenever they are equal, $2 \times \text{closes}$ is a candidate; whenever closes exceed opens, reset both. A left-to-right scan never sees $B = 0$ in `"(()"`, because the extra `(` keeps opens ahead. So also scan the reversed string with the roles of `(` and `)` swapped.
+
+```java
+static int longestValidParentheses(String s) {
+    String reversed = new StringBuilder(s).reverse().toString();
+    return Math.max(scan(s, '('), scan(reversed, ')'));
+}
+
+static int scan(String s, char open) {     // longest balanced run, reading left to right
+    int opens = 0, closes = 0, best = 0;
+    for (char ch : s.toCharArray()) {
+        if (ch == open) opens++;
+        else closes++;
+        if (opens == closes) best = Math.max(best, 2 * closes);
+        else if (closes > opens) opens = closes = 0;   // an unmatched closer: start afresh
+    }
+    return best;
+}
+```
+
+**Answer.** 4 for `")()())"`; 2 for `"(()"` (the forward pass gives 0, the backward pass gives 2); 6 for `"()(())"`; 0 for `""`. Two passes of $n$ steps: $O(n)$ time and $O(1)$ extra space apart from the reversed copy. The classic alternative keeps a stack of indices of unmatched characters, which is also $O(n)$ but uses $O(n)$ space.
+
+## Mathematical Abstraction
+
+A string is a finite sequence over an alphabet, and most string tricks replace it with a cheaper summary:
+
+$$
+s \in \Sigma^n, \qquad \operatorname{cnt}_s : \Sigma \to \mathbb{N}, \qquad \text{cost of } n \text{ appends} =
+\begin{cases}
+\dfrac{n(n+1)}{2} & \text{immutable } \texttt{+=} \\[6pt]
+< 3n & \texttt{StringBuilder}
+\end{cases}
+$$
+
+where:
+
+- $\Sigma$ is the alphabet, for example the 26 lower-case letters, and $\Sigma^n$ is the set of strings of length $n$;
+- $\operatorname{cnt}_s$ is the count summary: it forgets order and keeps only how often each letter occurs;
+- $\mathbb{N}$ is the set of counts $0, 1, 2, \dots$;
+- the costs count characters written: $n$ appends plus fewer than $2n$ resize copies for `StringBuilder`.
+
+Example: `"listen"` and `"silent"` are different sequences in $\Sigma^6$ but have the same summary, so they are anagrams. Building a 10,000-character string costs 50,005,000 copies with `+=` but $10{,}000 + 18{,}394 = 28{,}394$ writes with `StringBuilder`, under $3 \times 10{,}000$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 32, "String Matching" (for where strings go next), and Chapter 16, "Amortized Analysis" (Section 16.4, "Dynamic tables", the reason `StringBuilder` is fast). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, Chapter 5, "Strings", and the string discussion in §1.2: <https://algs4.cs.princeton.edu/50strings/>.
+- Joshua Bloch, *Effective Java*, 3rd edition (Addison-Wesley, 2018), Item 17, "Minimize mutability", and Item 63, "Beware the performance of string concatenation".
+- The Unicode Standard, Chapter 3, UTF-16 encoding form: <https://www.unicode.org/versions/latest/>; and JEP 254, "Compact Strings": <https://openjdk.org/jeps/254>.
+- OpenJDK `java.lang.String` (`compareTo`, cached `hash`) and `java.lang.AbstractStringBuilder` (`newCapacity`): <https://github.com/openjdk/jdk/tree/master/src/java.base/share/classes/java/lang>.
+- LeetCode: [49. Group Anagrams](https://leetcode.com/problems/group-anagrams/), [5. Longest Palindromic Substring](https://leetcode.com/problems/longest-palindromic-substring/), [32. Longest Valid Parentheses](https://leetcode.com/problems/longest-valid-parentheses/).
+
+[← Array](../array/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd) · [Hash Table →](../hash-table/index.qmd)

@@ -1,61 +1,516 @@
 ---
 title: "Iterator"
-description: "Understand Iterator from a real problem, a worked numerical example, a proof invariant and original code."
+description: "From a bookmark in a book to java.util.Iterator: the hasNext/next protocol, lazy and infinite sequences, tree iterators that keep the recursion on a stack, fail-fast iteration and modCount, the iterator family (ListIterator, Spliterator, weakly consistent), the amortised O(1) proof for the BST iterator, and interview problems solved math-first."
 ---
 
-## Start with one concrete problem
+An iterator hands out the elements of a collection **one at a time, on request**, and remembers where it stopped. The caller never sees whether the elements live in an array, a chain of nodes or a tree. This lesson builds iterators for each of those, shows how Java detects code that changes a collection mid-walk, proves that a tree iterator costs $O(1)$ per element on average, and finishes with four interview problems that are all "write the right iterator".
 
-**LeetCode 173 — Binary Search Tree Iterator.** A stateful abstraction for visiting elements in sequence.
+All code is in [`IteratorLab.java`](IteratorLab.java). Run it from this folder with `java IteratorLab.java`; it checks every number on this page and prints `OK`.
 
-Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
+## The problem
 
-### The obvious method — and why it falls short
+A shop keeps 1,000,000 order IDs in a binary search tree, so they come out sorted. A web page shows them **3 at a time**, and most visitors only look at the first page.
 
-Flatten the entire BST to an array before returning its first element, even when the client only requests one value.
+- The obvious method walks the whole tree recursively and collects every ID into a list, then shows the first 3. That is 1,000,000 visits and a 1,000,000-element list to display 3 numbers.
+- Recursion cannot simply *pause* after 3 elements and continue later, because its position lives on the call stack, which is gone once the method returns.
+- The same page also lists products from an array and customers from a linked list, and nobody wants three different loops.
 
-### The one insight to remember
+An iterator solves all three. It keeps its position in a small object, so it can stop after 3 IDs and continue later. For a balanced tree its memory is one path, about 20 nodes, instead of a million-element list. And every collection offers the same two methods, so one loop serves them all.
 
-An iterator remembers exactly where traversal stopped. A stack of left ancestors produces the next in-order element on demand.
+## Explain it like I'm ten
 
-## Build the mathematical meaning from a small example
+::: {.callout-tip}
+Think of a **bookmark**. You read a page, put the bookmark in, and close the book. Tomorrow you open it at the bookmark and carry on. The bookmark does not contain the story; it only remembers *where you are*. Asking "are there pages left?" is `hasNext()`. Reading the next page and moving the bookmark along is `next()`.
+
+Now imagine that while your bookmark sits on page 40, your little brother tears out pages 10 to 20. Your bookmark now points at the wrong place, and you might skip a page without noticing. Java's lists try to catch this: they count every change, and if the count has moved since you placed your bookmark, they shout `ConcurrentModificationException` instead of letting you read nonsense.
+
+The "Gang of Four" book *Design Patterns* (Gamma, Helm, Johnson and Vlissides, 1994) made the **Iterator** one of its standard patterns: a way to visit a collection's elements in order without revealing how the collection stores them. The idea is older still: Barbara Liskov's language CLU, first working in 1975, already had iterators that `yield` one value at a time.
+:::
+
+## From simple to advanced
+
+### Level 1: the protocol, two methods and a cursor
+
+Every iterator is a little machine with a hidden **state**. Each call to `next()` produces one element and moves the state forward:
 
 $$
-next(S_t)=(x_t,S_{t+1})
+\operatorname{next}(s_t) = (x_t,\; s_{t+1}), \qquad \operatorname{hasNext}(s_t) \iff t < n
 $$
 
-**What each symbol means:** S_t is the iterator's internal state before call t; x_t is the returned value; S_(t+1) is the updated state for the next call.
+where:
 
-**Substitute actual values:** For tree root 2 with children 1 and 3, the iterator starts with stack [2,1]. The first next() returns 1; the second returns 2 and pushes 3; the third returns 3.
+- $s_t$ is the iterator's state after it has handed out $t$ elements;
+- $x_t$ is the element number $t$, counting from 0;
+- $n$ is the number of elements;
+- $\iff$ means "is true exactly when".
 
-Do not move to implementation until you can explain this example without reading the formula.
+Example: the array $a = [4, 8, 15]$, whose state is just the cursor index. Starting from $s_0 = 0$, `next()` gives $(4, 1)$, then $(8, 2)$, then $(15, 3)$. Now $\operatorname{hasNext}(3)$ asks whether $3 < 3$, which is false, so the walk is over after exactly $n = 3$ elements.
 
-## Design the algorithm in ordinary English
+```java
+static final class ArrayIterator implements Iterator<Integer> {
+    private final int[] items;
+    private int cursor;                            // index of the next item to hand out
 
-1. State what the stored representation means before the first operation.
-2. Perform exactly the operation suggested by the example, updating only the necessary state.
-3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
-4. Stop when the requested result is known; do not perform work unrelated to the output.
+    ArrayIterator(int[] items) { this.items = items; }
 
-**Correctness argument (the invariant):** The stack maintains the leftmost unvisited path. Popping its top returns the smallest remaining key, then pushing the left spine of its right child preserves that property.
+    public boolean hasNext() { return cursor < items.length; }
 
-## Code you can run
+    public Integer next() {
+        if (!hasNext()) throw new NoSuchElementException();
+        return items[cursor++];
+    }
+}
+```
 
-This example is best understood as a tiny state transformation. Implement the operation described above in JavaScript or Java, and check each reference or invariant after every step; the exact code is deliberately not replaced by a large framework.
+Three rules of the protocol are worth remembering. `hasNext()` must not move anything, so calling it twice is harmless. `next()` past the end must **throw** `NoSuchElementException`, not return `null`. And `remove()`, the third method, is optional.
 
-## Why it works, and how expensive it is
+A class that can hand out an iterator implements `Iterable`, and then the `for (x : collection)` loop works on it. The compiler turns that loop into exactly these calls (Java Language Specification §14.14.2):
 
-The stack maintains the leftmost unvisited path. Popping its top returns the smallest remaining key, then pushing the left spine of its right child preserves that property.
+```java
+static int sum(Iterable<Integer> numbers) {
+    int total = 0;
+    Iterator<Integer> it = numbers.iterator();
+    while (it.hasNext()) total += it.next();       // what for (int x : numbers) compiles to
+    return total;
+}
+```
 
-**Time and space:** O(h) stored stack and O(1) amortised work per next; h is tree height. Every edge is pushed or popped a bounded number of times.
+The lab calls this one method on an `ArrayList`, a `LinkedList` and a `TreeSet` holding 4, 8 and 15, and gets 27 each time. The loop does not know or care how each one stores its numbers.
 
-**Common mistake or limitation:** An iterator is a stateful interface, not one fixed traversal data structure. Concurrent tree mutation can invalidate its ordering unless the contract defines snapshot behaviour.
+### Level 2: laziness, computing only what is asked for
 
-## Try to explain it in an interview
+A list must hold all its elements at once. An iterator only has to produce the next one when asked, so it can describe sequences that are huge, or even endless:
 
-Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+```java
+static Iterator<Long> squares() {                  // 1, 4, 9, 16, ... forever; only a counter is stored
+    return new Iterator<>() {
+        private long n = 0;
 
-## Reading and practice
+        public boolean hasNext() { return true; }
 
-- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 (trees and stacks) and Chapter 12 (BST traversal). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 173 — Binary Search Tree Iterator. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
-- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).
+        public Long next() { n++; return n * n; }
+    };
+}
+```
+
+The difference in cost is easy to put into numbers:
+
+$$
+\text{memory}_{\text{list}} = 4n \text{ bytes}, \qquad \text{memory}_{\text{iterator}} = O(1), \qquad \text{work}_{\text{iterator}} = k \text{ calls}
+$$
+
+where:
+
+- $n$ is the number of elements a list would have to store, at 4 bytes per `int`;
+- $O(1)$ means a fixed amount, here one `long` counter, whatever $n$ is;
+- $k$ is how many elements the caller actually takes.
+
+Example: the first $n = 10^9$ squares as an `int` list would need $4 \times 10^9$ bytes, which is 4 GB, before anybody reads one. The iterator stores one 8-byte counter, and a caller that takes $k = 4$ values pays for 4 multiplications and gets 1, 4, 9, 16.
+
+Java streams are built on the same idea: `Stream.iterate(1L, n -> n + 1).map(n -> n * n).limit(4)` does no work until a terminal operation such as `toList()` starts pulling elements through it.
+
+### Level 3: every structure has its own cursor; a tree needs a stack
+
+The protocol is the same everywhere; only the state differs:
+
+| Collection | What the state $s_t$ is | Cost of one `next()` |
+| --- | --- | --- |
+| Array, `ArrayList` | an index | $O(1)$ |
+| `LinkedList` | a pointer to the next node | $O(1)$ |
+| `HashMap` | a bucket index and a node in that bucket's chain | $O(1)$ on average; it skips empty buckets |
+| `TreeMap` | the next node; parent pointers find its successor | $O(\log n)$ worst, $O(1)$ on average over a full walk |
+| A tree without parent pointers | a **stack** of nodes still to visit | $O(1)$ for pre-order, $O(1)$ on average for in-order |
+
+The last row is the interesting one. A recursive traversal keeps its "what is left to do" on the call stack. An iterator must survive between calls, so it moves that information onto a stack of its own. Here is pre-order (node, then left subtree, then right subtree) on this tree:
+
+```text
+        4
+      /   \
+     2     6
+    / \   / \
+   1   3 5   7
+```
+
+```java
+static final class PreorderIterator implements Iterator<Integer> {
+    private final Deque<Node> stack = new ArrayDeque<>();
+
+    PreorderIterator(Node root) { if (root != null) stack.push(root); }
+
+    public boolean hasNext() { return !stack.isEmpty(); }
+
+    public Integer next() {
+        Node node = stack.pop();
+        if (node.right != null) stack.push(node.right);   // pushed first, so it comes out after the left
+        if (node.left != null) stack.push(node.left);
+        return node.key;
+    }
+}
+```
+
+| Call | Returns | Stack afterwards (top first) |
+| --- | --- | --- |
+| start | | 4 |
+| 1 | 4 | 2, 6 |
+| 2 | 2 | 1, 3, 6 |
+| 3 | 1 | 3, 6 |
+| 4 | 3 | 6 |
+| 5 | 6 | 5, 7 |
+| 6 | 5 | 7 |
+| 7 | 7 | empty |
+
+The output is 4, 2, 1, 3, 6, 5, 7, exactly the recursive pre-order. The stack only ever holds pending right subtrees along one path, plus the two children just pushed, so
+
+$$
+\lvert \text{stack} \rvert \le h + 1
+$$
+
+where:
+
+- $\lvert \text{stack} \rvert$ is the number of nodes on the stack at any moment;
+- $h$ is the tree's height, the number of edges on its longest root-to-leaf path.
+
+Example: this tree has $h = 2$, so the stack never holds more than $2 + 1 = 3$ nodes, and the trace peaks at exactly 3 (after call 2). For a balanced tree of 1,000,000 nodes, $h = 19$, so the iterator needs at most 20 stack slots where a collected list needs 1,000,000. In-order iteration needs one more idea, which is interview problem 2 below.
+
+### Level 4: fail-fast iterators and `modCount`
+
+What if the list changes while an iterator is walking it? Java's `ArrayList` keeps a counter, `modCount`, that goes up on every structural change (`add`, `remove`, `clear`). An iterator copies it when it is created and compares it on every `next()`:
+
+$$
+\operatorname{next}() \text{ throws} \iff m \ne e, \qquad \operatorname{hasNext}() \iff c \ne \text{size}
+$$
+
+where:
+
+- $m$ is the list's current `modCount`;
+- $e$ is the iterator's `expectedModCount`, copied from $m$ when the iterator was made and updated only by the iterator's own `remove()`;
+- $c$ is the iterator's cursor and size is the list's current length.
+
+This is the classic bug, removing from a list inside a for-each loop over it:
+
+```java
+static void removeEvensWrong(List<Integer> list) {
+    for (Integer x : list) {
+        if (x % 2 == 0) list.remove(x);            // wrong: changes the list behind the iterator's back
+    }
+}
+```
+
+Example 1: `[2, 3, 4, 5]`. The first `next()` returns 2, so $c = 1$. `list.remove(2)` makes $m = e + 1$ and size 3. `hasNext()` checks $1 \ne 3$, true, so `next()` runs, sees $m \ne e$, and throws `ConcurrentModificationException`. The bug is caught.
+
+Example 2: `[1, 2, 4]`. `next()` returns 1, then 2, so $c = 2$. `list.remove(2)` makes size 2. Now `hasNext()` checks $2 \ne 2$, which is false, so the loop **ends quietly**. The 4 was never examined, and the list is `[1, 4]`, still holding an even number. No exception at all.
+
+That second example is why the Java documentation calls fail-fast behaviour "best-effort" and says it should be used only to detect bugs. The fix is to remove through the iterator, which updates $e$ together with $m$:
+
+```java
+static void removeEvens(List<Integer> list) {
+    Iterator<Integer> it = list.iterator();
+    while (it.hasNext()) {
+        if (it.next() % 2 == 0) it.remove();       // removing through the iterator keeps it in step
+    }
+}
+```
+
+Now `[1, 2, 4]` becomes `[1]` and `[2, 3, 4, 5]` becomes `[3, 5]`. The one-line alternative is `list.removeIf(x -> x % 2 == 0)`.
+
+### Level 5: the iterator family
+
+`Iterator` is the simplest member of a family. Each relative adds one ability:
+
+| Kind | What it adds | Where you meet it |
+| --- | --- | --- |
+| `Iterator` | `hasNext`, `next`, optional `remove` | every collection |
+| `ListIterator` | `previous`, `set`, `add`; it can walk both ways | `list.listIterator()` |
+| `PrimitiveIterator.OfInt` | `nextInt()` without boxing each value into an `Integer` | `IntStream.iterator()` |
+| `Spliterator` | `tryAdvance`, and `trySplit` to divide the work among threads | behind every stream, including parallel ones |
+| Weakly consistent iterator | never throws `ConcurrentModificationException`; may or may not show changes made during the walk | `ConcurrentHashMap` views |
+| Snapshot iterator | walks a frozen copy, so changes are never seen | `CopyOnWriteArrayList` |
+
+Two more distinctions come from *Design Patterns*. An **external** iterator is driven by the caller, which calls `next()`; Java's `Iterator` is one. An **internal** iterator drives itself and calls your code for each element, like `list.forEach(x -> ...)`. Languages with generators, such as Python's `yield` or CLU's before it, let you write an iterator as an ordinary loop; in Java you write the state machine by hand, as in Level 3.
+
+A `ListIterator`'s cursor sits **between** elements, so a list of $n$ elements has $n + 1$ cursor positions: `[4, 8, 15]` has 4 of them (before 4, between 4 and 8, between 8 and 15, after 15). `set` replaces the element that the last `next()` returned:
+
+```java
+static void doubleEach(List<Integer> list) {
+    for (ListIterator<Integer> it = list.listIterator(); it.hasNext(); ) {
+        it.set(it.next() * 2);                     // set replaces the element next() just returned
+    }
+}
+```
+
+It turns `[4, 8, 15]` into `[8, 16, 30]` in one pass, without index arithmetic, and it works just as well on a `LinkedList`, where `list.set(i, ...)` would cost $O(i)$ each time.
+
+## Why it works and what it costs
+
+**The array iterator is correct.** The invariant is: *`items[0..cursor)` have been handed out exactly once, in order, and `items[cursor..n)` have not.* It holds at the start (`cursor = 0`), each `next()` moves exactly one item from the second part to the first, and `hasNext()` is false exactly when the second part is empty. So $n$ calls return all $n$ items in order.
+
+**The pre-order iterator is correct.** The invariant is: *the stack holds the roots of exactly the subtrees not yet visited, in the order they must be visited, top first.* Popping a node visits it, and pushing its right child and then its left child puts the left subtree on top, which is the pre-order rule "node, left, right".
+
+**The in-order (BST) iterator costs $O(1)$ on average.** This is the aggregate method of CLRS Chapter 16. Count stack operations over the whole walk instead of per call. Each node is pushed exactly once, when the left path it lies on is pushed, and popped exactly once, when its key is returned. So $n$ calls do $2n$ operations in total, which is 2 per call on average, even though a single call may push a whole path of $h$ nodes. Interview problem 2 traces the numbers.
+
+**Costs** of the iterators in this lesson, for $n$ elements, tree height $h$, nesting depth $d$ and $k$ merged lists:
+
+| Iterator | One `next()`, worst case | One `next()`, on average | Extra memory |
+| --- | --- | --- | --- |
+| `ArrayIterator` | $O(1)$ | $O(1)$ | one `int` |
+| `squares()` | $O(1)$ | $O(1)$ | one `long` |
+| `PreorderIterator` | $O(1)$ | $O(1)$ | $O(h)$ stack |
+| BST in-order (LeetCode 173) | $O(h)$ | $O(1)$, 2 stack operations | $O(h)$ stack |
+| Nested list (LeetCode 341) | $O(d)$ plus any empty lists skipped | $O(1)$ per list entered or integer returned | $O(d)$ stack |
+| $k$-way merge (LeetCode 632) | $O(\log k)$ | $O(\log k)$ | $O(k)$ heap |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Calling `next()` twice in one loop pass, as in `if (it.next() > 0) sum += it.next();` | Every other element is skipped, then `NoSuchElementException` | Call `next()` once and store the result in a variable |
+| Removing from a collection inside a for-each loop over it | `ConcurrentModificationException`, or worse, an element silently skipped (Level 4) | `it.remove()`, or `removeIf` |
+| A `hasNext()` that moves the cursor | Calling it twice loses an element | Keep `hasNext()` side-effect free; cache a found value as in LeetCode 284 and 341 |
+| `next()` returning `null` at the end | Callers loop forever or crash later with a `NullPointerException` | Throw `NoSuchElementException` |
+| `it.remove()` twice in a row, or before the first `next()` | `IllegalStateException` | One `remove()` per `next()` |
+| Reusing an iterator that is already used up | The second loop runs zero times | Ask the `Iterable` for a fresh iterator |
+| Trusting the exception to protect threads | Corrupted data without any exception, because fail-fast is best-effort | Use `ConcurrentHashMap`, `CopyOnWriteArrayList` or a lock |
+
+## Interview problems
+
+LeetCode tags nine problems "Iterator" (checked in November 2026): one is Easy, eight are Medium, none is Hard, and four need a paid subscription. So the first three problems below are free Iterator-tagged Mediums, and the fourth is a Hard problem that LeetCode tags "Heap" and "Sliding Window" rather than "Iterator", but whose clean solution is a merge of $k$ iterators.
+
+### 1. LeetCode 284: Peeking Iterator (Medium)
+
+**Problem.** Wrap an existing iterator and add `peek()`, which returns the next element **without** moving past it. For a source `[1, 2, 3]`: `next()` gives 1, `peek()` gives 2, `next()` gives 2, `next()` gives 3, and `hasNext()` is then false.
+
+**Math first.** Read one element ahead and keep it in a variable $v$. The wrapper then promises:
+
+$$
+R = v \cdot R_{\text{source}}, \qquad \operatorname{peek}() = v, \qquad \operatorname{hasNext}() \iff v \ne \bot
+$$
+
+where:
+
+- $R$ is the sequence the wrapper will still hand out, and $R_{\text{source}}$ the sequence the source will still hand out;
+- $v \cdot R_{\text{source}}$ means "$v$, followed by everything the source has left";
+- $\bot$ ("bottom") means "nothing", stored as `null`.
+
+Example: after construction, $v = 1$ and the source still holds $(2, 3)$, so $R = (1, 2, 3)$. `next()` returns 1 and refills $v = 2$. `peek()` returns 2 and changes nothing. `next()` returns 2 and refills $v = 3$. `next()` returns 3 and finds the source empty, so $v = \bot$ and `hasNext()` is false.
+
+**Idea.** Always stay one step ahead of the caller. `peek()` just shows the cached value; `next()` hands it over and fetches the next one.
+
+```java
+static final class PeekingIterator implements Iterator<Integer> {
+    private final Iterator<Integer> source;
+    private Integer nextValue;                     // always one step ahead; null when the source is used up
+
+    PeekingIterator(Iterator<Integer> source) {
+        this.source = source;
+        nextValue = source.hasNext() ? source.next() : null;
+    }
+
+    public Integer peek() { return nextValue; }
+
+    public boolean hasNext() { return nextValue != null; }
+
+    public Integer next() {
+        if (nextValue == null) throw new NoSuchElementException();
+        Integer current = nextValue;
+        nextValue = source.hasNext() ? source.next() : null;
+        return current;
+    }
+}
+```
+
+**Answer.** 1, 2 (peek), 2, 3, then `hasNext()` is false, matching the example. Every method is $O(1)$ time and the wrapper stores one extra value. Using `null` as $\bot$ works because LeetCode's values are plain integers; a source that may contain `null` would need a separate `boolean` flag.
+
+### 2. LeetCode 173: Binary Search Tree Iterator (Medium)
+
+**Problem.** Iterate over a binary search tree in sorted (in-order) order with `next()` and `hasNext()`, using $O(h)$ memory and $O(1)$ average time per call. For the tree with root 7, left child 3, and right child 15 whose children are 9 and 20, the calls return 3, 7, 9, 15, 20.
+
+```text
+      7
+     / \
+    3   15
+       /  \
+      9    20
+```
+
+**Math first.** In-order means "left subtree, node, right subtree", so the smallest key is at the end of the **left path** from the root. Keep that path on a stack. When a node is returned, the next keys are the left path of its right child. Every node is pushed once and popped once, so for $n$ nodes:
+
+$$
+\text{average cost per call} = \frac{\text{total stack operations}}{\text{calls}} = \frac{n \text{ pushes} + n \text{ pops}}{n} = 2
+$$
+
+where:
+
+- $n$ is the number of nodes, which is also the number of `next()` calls;
+- a push happens only when a node's left path is entered, which happens once per node;
+- a pop happens only when a node's key is returned, which happens once per node.
+
+Example: $n = 5$. The constructor pushes the left path 7, 3 (2 operations). Then the five calls cost:
+
+| Call | Returns | Pops | Pushes | Operations | Stack afterwards (top first) |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 3 | 1 | 0 | 1 | 7 |
+| 2 | 7 | 1 | 2 (15, 9) | 3 | 9, 15 |
+| 3 | 9 | 1 | 0 | 1 | 15 |
+| 4 | 15 | 1 | 1 (20) | 2 | 20 |
+| 5 | 20 | 1 | 0 | 1 | empty |
+
+The total is $2 + 1 + 3 + 1 + 2 + 1 = 10 = 5 + 5$ operations, so the average is $10 / 5 = 2$ per call. The most expensive single call, the one returning 7, costs 3, and in general one call can cost up to $h + 1$.
+
+**Idea.** Push the left path of the root. `next()` pops the top node, pushes the left path of its right child, and returns the popped key. The stack always holds one path, so it never exceeds $h + 1$ nodes.
+
+```java
+static final class BSTIterator {
+    private final Deque<Node> stack = new ArrayDeque<>();   // nodes whose key is still to come
+
+    BSTIterator(Node root) { pushLeftPath(root); }
+
+    private void pushLeftPath(Node node) {
+        for (; node != null; node = node.left) stack.push(node);
+    }
+
+    boolean hasNext() { return !stack.isEmpty(); }
+
+    int next() {
+        Node node = stack.pop();
+        pushLeftPath(node.right);                  // everything in the right subtree comes next
+        return node.key;
+    }
+}
+```
+
+**Answer.** 3, 7, 9, 15, 20, with exactly 5 pushes and 5 pops. Each call costs $O(1)$ on average and $O(h)$ in the worst case, with $O(h)$ memory. For a balanced tree of $10^6$ nodes the stack holds at most 20 nodes; showing the first page of 3 IDs from the problem costs 20 pushes and 3 pops instead of a million-element list.
+
+### 3. LeetCode 341: Flatten Nested List Iterator (Medium)
+
+**Problem.** A list contains integers and other lists, nested to any depth. Iterate over the integers in order. `[[1, 1], 2, [1, 1]]` gives 1, 1, 2, 1, 1, and `[1, [4, [6]]]` gives 1, 4, 6.
+
+**Math first.** Flattening is a recursive definition, a concatenation over the list's items:
+
+$$
+\operatorname{flat}(L) = \operatorname{flat}(e_1) \cdot \operatorname{flat}(e_2) \cdots \operatorname{flat}(e_m), \qquad
+\operatorname{flat}(x) = (x) \text{ for an integer } x
+$$
+
+where:
+
+- $L = (e_1, \dots, e_m)$ is a list of $m$ items, each an integer or another list;
+- $\cdot$ means "followed by", and an integer $x$ flattens to the one-element sequence $(x)$;
+- the recursion goes one level deeper for each nested list, so pausing it needs a stack of **iterators**, one per open list, at most $d + 1$ of them for nesting depth $d$.
+
+Example: $L = (1, (4, (6)))$ has depth $d = 2$. $\operatorname{flat}(L) = (1) \cdot \operatorname{flat}((4, (6))) = (1) \cdot (4) \cdot \operatorname{flat}((6)) = (1, 4, 6)$. While 6 is being found, the stack holds 3 iterators: one for $L$, one for $(4, (6))$ and one for $(6)$, which is $d + 1 = 3$.
+
+**Idea.** `hasNext()` does the searching: while no integer is waiting, look at the top iterator; if it is finished, pop it; if its next item is an integer, keep it; if it is a list, push that list's iterator. `next()` hands over the integer that `hasNext()` found. Searching in `hasNext()` also handles empty lists such as `[[], [[]]]`, which contain no integers at all. LeetCode supplies the `NestedInteger` interface with `isInteger()`, `getInteger()` and `getList()`; the lab has a tiny stand-in.
+
+```java
+static final class NestedIterator implements Iterator<Integer> {
+    private final Deque<Iterator<NestedInteger>> stack = new ArrayDeque<>();
+    private Integer nextValue;                     // found by hasNext(), handed out by next()
+
+    NestedIterator(List<NestedInteger> nestedList) { stack.push(nestedList.iterator()); }
+
+    public boolean hasNext() {
+        while (nextValue == null && !stack.isEmpty()) {
+            if (!stack.peek().hasNext()) { stack.pop(); continue; }   // this list is finished
+            NestedInteger item = stack.peek().next();
+            if (item.isInteger()) nextValue = item.getInteger();
+            else stack.push(item.getList().iterator());               // step into the inner list
+        }
+        return nextValue != null;
+    }
+
+    public Integer next() {
+        if (!hasNext()) throw new NoSuchElementException();
+        Integer value = nextValue;
+        nextValue = null;
+        return value;
+    }
+}
+```
+
+**Answer.** 1, 1, 2, 1, 1 and 1, 4, 6 for the two examples, and nothing for `[[], [[]]]`, where `hasNext()` returns `false` however often it is called. Each integer is handed out once and each list is pushed once and popped once, so a full walk over $I$ integers in $M$ lists costs $O(I + M)$: for `[1, [4, [6]]]`, $I = 3$ and $M = 3$. Memory is $O(d)$ for the stack, instead of $O(I)$ for a fully flattened copy.
+
+### 4. LeetCode 632: Smallest Range Covering Elements from K Lists (Hard)
+
+**Problem.** Given $k$ sorted lists, find the smallest range $[a, b]$ that contains at least one number from each list; a tie in width goes to the smaller $a$. For `[[1, 5, 8], [4, 12], [7, 8, 10]]` the answer is $[4, 7]$, which contains 5, 4 and 7. LeetCode's own example, `[[4, 10, 15, 24, 26], [0, 9, 12, 20], [5, 18, 22, 30]]`, gives $[20, 24]$.
+
+**Math first.** Give each list an iterator, and let $c_i$ be the current element of list $i$. Those $k$ current elements are covered by the range from their minimum to their maximum:
+
+$$
+\text{width}_t = \max_i c_i - \min_i c_i, \qquad \text{answer} = \text{the range with the smallest width}_t \text{ over all steps } t
+$$
+
+where:
+
+- $c_i$ is the element that list $i$'s iterator is currently on, and $i$ runs over the $k$ lists;
+- step $t$ advances **only the iterator holding the minimum**, because advancing any other one can only raise the maximum and widen the range;
+- the search stops when the iterator holding the minimum is used up, because every later range would have to leave that list out.
+
+Example: `[[1, 5, 8], [4, 12], [7, 8, 10]]`.
+
+| Step | Current $(c_1, c_2, c_3)$ | Range | Width | Advance |
+| --- | --- | --- | --- | --- |
+| 0 | $(1, 4, 7)$ | $[1, 7]$ | 6 | list 1, which holds the minimum 1 |
+| 1 | $(5, 4, 7)$ | $[4, 7]$ | **3** | list 2 |
+| 2 | $(5, 12, 7)$ | $[5, 12]$ | 7 | list 1 |
+| 3 | $(8, 12, 7)$ | $[7, 12]$ | 5 | list 3 |
+| 4 | $(8, 12, 8)$ | $[8, 12]$ | 4 | list 1 is used up: stop |
+
+The smallest width is 3, at $[4, 7]$.
+
+**Idea.** A min-heap of $k$ entries finds the iterator holding the minimum in $O(\log k)$, and a single variable tracks the maximum, which only ever grows. This is the $k$-way merge of sorted iterators, the same machinery that merges sorted runs in external sorting, stopped at the right moment.
+
+```java
+static int[] smallestRange(List<List<Integer>> lists) {
+    List<Iterator<Integer>> cursors = new ArrayList<>();
+    PriorityQueue<int[]> heap = new PriorityQueue<>((a, b) -> Integer.compare(a[0], b[0])); // {value, list}
+    int max = Integer.MIN_VALUE;
+    for (int i = 0; i < lists.size(); i++) {
+        cursors.add(lists.get(i).iterator());
+        int value = cursors.get(i).next();
+        heap.add(new int[] {value, i});
+        max = Math.max(max, value);
+    }
+```
+
+```java
+int[] best = null;
+while (true) {
+    int[] min = heap.poll();
+    if (best == null || max - min[0] < best[1] - best[0]) best = new int[] {min[0], max};
+    Iterator<Integer> cursor = cursors.get(min[1]);
+    if (!cursor.hasNext()) return best;        // this list is used up: no later range can include it
+    int value = cursor.next();
+    heap.add(new int[] {value, min[1]});
+    max = Math.max(max, value);
+}
+```
+
+**Answer.** $[4, 7]$ for the small example, $[20, 24]$ for LeetCode's example, and $[1, 1]$ when all three lists are `[1, 2, 3]`. Ties go to the smaller $a$ automatically: minima come out of the heap in increasing order, and only a *strictly* narrower range replaces the best one. Each of the $N$ elements enters and leaves the heap at most once, so the time is $O(N \log k)$ and the memory $O(k)$. LeetCode's example has $N = 13$ elements in $k = 3$ lists, so the heap never holds more than 3 entries.
+
+## Mathematical Abstraction
+
+An iterator is a state machine that turns a collection into a sequence, one element per call, and its cost is measured over the whole walk rather than per call:
+
+$$
+\operatorname{next} : s_t \mapsto (x_t,\, s_{t+1}), \qquad \operatorname{hasNext}(s_t) \iff t < n, \qquad \text{amortised cost} = \frac{1}{n} \sum_{t} c_t
+$$
+
+where:
+
+- $s_t$ is the state after $t$ elements (an index, a node pointer, or a stack of nodes or iterators);
+- $x_t$ is the element handed out by call $t$, and $n$ is the number of elements;
+- $c_t$ is the work done by call $t$, and the sum runs over every call, including the set-up in the constructor.
+
+Example: the BST iterator on 5 nodes. The constructor costs 2 stack operations, and the five calls cost $1, 3, 1, 2, 1$, so the amortised cost is $\frac{1}{5}(2 + 1 + 3 + 1 + 2 + 1) = \frac{10}{5} = 2$ operations per element. The state is a stack of at most $h + 1$ nodes, which for a balanced million-node tree is 20 nodes instead of a million-element list.
+
+## References
+
+- Erich Gamma, Richard Helm, Ralph Johnson and John Vlissides, *Design Patterns: Elements of Reusable Object-Oriented Software* (Addison-Wesley, 1994), the Iterator pattern (internal and external iterators).
+- Barbara Liskov, "A History of CLU", *ACM SIGPLAN Notices* 28(3) (1993), 133–147, on CLU's iterators: <https://www.cs.tufts.edu/~nr/cs257/archive/barbara-liskov/clu-history.pdf>.
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 12, "Binary Search Trees" (in-order walks and successors), and Chapter 16, "Amortized Analysis" (the aggregate method). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.3 "Bags, Queues, and Stacks", which implements `Iterable` collections in Java: <https://algs4.cs.princeton.edu/13stacks/>.
+- *The Java Language Specification*, Java SE 21, §14.14.2 "The enhanced for statement": <https://docs.oracle.com/javase/specs/jls/se21/html/jls-14.html#jls-14.14.2>.
+- Java SE documentation: [`Iterator`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Iterator.html), [`ListIterator`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/ListIterator.html), [`ArrayList`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/ArrayList.html) (fail-fast iterators on a best-effort basis) and [`ConcurrentModificationException`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/ConcurrentModificationException.html).
+- LeetCode: [284. Peeking Iterator](https://leetcode.com/problems/peeking-iterator/), [173. Binary Search Tree Iterator](https://leetcode.com/problems/binary-search-tree-iterator/), [341. Flatten Nested List Iterator](https://leetcode.com/problems/flatten-nested-list-iterator/), [632. Smallest Range Covering Elements from K Lists](https://leetcode.com/problems/smallest-range-covering-elements-from-k-lists/).
+
+[← Data Stream](../data-stream/index.qmd) · [Data Structures and Representations](../groups/01-data-structures.qmd)

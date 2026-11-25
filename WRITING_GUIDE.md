@@ -82,16 +82,33 @@ Use `## Mathematical Abstraction`, include a display formula or formal relation 
 
 ### Standard for Algorithms chapters
 
-1. Choose one tiny representative problem from the classic algorithm family or LeetCode. State input and output using actual values.
-2. Explain the naive method and the precise repeated work or incorrect assumption.
-3. Derive the useful fact or invariant before naming the trick. A pattern name is not a correctness argument.
-4. Introduce one equation at a time. **Define every symbol immediately and substitute numbers immediately.**
-5. Prove correctness using CLRS-style initialisation, maintenance and termination, induction, exchange arguments, or an exhaustive branch argument.
-6. Give original small runnable code where it clarifies the idea; put algorithms in a dependency-free module with tests where possible.
-7. Derive complexity from actual operation counts. Distinguish expected, worst-case, amortised and output-size bounds.
-8. Include a counterexample or changed assumption showing when the chosen technique does not apply.
-9. Cite CLRS 4th edition and the appropriate official chapter when the concept is covered; do not pretend that LeetCode tags such as SQL, Shell and Sliding Window are textbook chapters.
-10. Use LeetCode community discussions for **insight and pitfalls**, but write all explanations, code and examples independently; do not copy third-party solutions or copyrighted textbook passages.
+The model lesson is [`algorithms/hash-table/`](algorithms/hash-table/index.qmd). `algorithms/check-depth.test.mjs` enforces the structure, and `algorithms/check-labs.test.mjs` runs every lab.
+
+**Teach like a patient teacher of a ten-year-old, then go all the way to interview level.** Simple first, advanced last, and never skip a step in between.
+
+Sections, in this order and with these exact headings:
+
+1. `## The problem`: one tiny concrete problem with real values, plus why the obvious method is too slow or wrong.
+2. `## Explain it like I'm ten`: a `::: {.callout-tip}` analogy (lockers, queues of children, a maze). Cite well-known teachers where they fit: CLRS, Sedgewick and Wayne (Java), Knuth, Skiena, Bentley, Erickson, Bhargava. Verify every attribution.
+3. `## From simple to advanced`: `### Level 1`, `### Level 2`, and so on. Each level adds one idea: the idea, then its math with numbers, then short Java. Cover the real variants of the topic, not only the textbook one. A hash table must cover every collision strategy (linked-list chains, red-black-tree bins as in `java.util.HashMap`, linear, quadratic and double-hash probing, Robin Hood, cuckoo). Backtracking must write out the state-space tree, its node count, the pruning condition and the recurrence.
+4. `## Why it works and what it costs`: an invariant or induction proof in plain words, and costs derived by counting operations on the example.
+5. `## Common mistakes`: a table of mistake, symptom and fix.
+6. `## Interview problems`: two to four problems, ordered by difficulty, at least one LeetCode **(Hard)**. The exception is a tag with no Hard problem on LeetCode (Shell, Concurrency, Reservoir Sampling, Rejection Sampling), which ends with the hardest problem available. Each is `### N. LeetCode <id>: <title> (<difficulty>)` with **Problem.**, **Math first.** (the model as a formula, symbols defined, numbers from the example substituted), **Idea.**, the Java solution, and **Answer.** (the traced result and the complexity).
+7. `## Mathematical Abstraction`: the core of the topic in one or two display formulas, with symbols and one numeric example.
+8. `## References`: CLRS 4th edition chapter, Sedgewick and Wayne or other sources used, and LeetCode problem links.
+
+**Math.** After every display formula, within a few lines, write a list starting "where" that defines each symbol in plain words. Then give an "Example:" that substitutes the lesson's own numbers step by step to a final value. Do this for every formula. A display equation that is itself the substitution needs no second explanation.
+
+**Code (Java).**
+- **The lab file.** Each topic has one lab file, `algorithms/<slug>/<Name>Lab.java`. It is a single file that runs with `java <Name>Lab.java`, builds with only the JDK, and compiles on Java 21 and later without preview features.
+- **The lab checks itself.** Its `main` checks every number the lesson quotes, plus edge cases, and prints `OK`.
+- **Lesson code comes from the lab.** Every ```java block in the lesson must be an exact excerpt of the lab. A block whose first line is `// sketch` is exempt; use that only for deliberately wrong code.
+- **Short and plain.** Keep code and examples concise and easy to understand: one idea per block, usually 5–20 lines, the plainest correct version, with optimisations described in prose. Never pile code up.
+- **Other languages where they fit.** The Database topic uses SQL, with a lab `database_lab.py` that runs the queries in Python's built-in `sqlite3`. The Shell topic uses Bash, with a lab `shell_lab.sh`. Each prints `OK`.
+
+**Honesty.**
+- Cite CLRS 4th edition chapters where the concept is covered. Do not pretend that LeetCode tags such as Shell or Sliding Window are textbook chapters.
+- Write all explanations, code and examples independently. Use LeetCode discussions only for insight and pitfalls.
 
 **A page consisting of generic definitions, one unexplained formula, a prompt to study, or no actual worked example is not a complete lesson.**
 
