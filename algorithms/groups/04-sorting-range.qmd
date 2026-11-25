@@ -1,46 +1,146 @@
 ---
 title: "Sorting, Range Queries, and Monotonic Structures"
-description: "A connected learning path through 11 worked algorithms topics."
+description: "Eleven lessons in one path: five ways to sort (comparison, merge, counting, bucket, radix), then the structures that answer questions about ranges quickly (monotonic stack and queue, prefix sums, segment tree, binary indexed tree, sweep line), with a which-tool-when table and a cheat sheet of formulas."
 ---
 
-## What you are really learning
+## What this group is about
 
-Order values and maintain just enough information to answer repeated range questions.
+Imagine the class has just handed in 30 exam papers in a messy pile. Two kinds of jobs follow.
 
-The goal is not to learn 11 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+**Putting things in order.** The teacher wants the papers sorted by mark. You can compare papers two at a time, like weighing them on a balance; or, because marks are small whole numbers, you can make a tally for each mark and skip comparing altogether. The first five lessons are five ways to sort, and each one tells you *when* it is the fastest.
 
-## Begin with a small example
+**Answering questions about stretches of the list.** Once the marks are in a row, the questions are about ranges: "what is the total of papers 5 to 12?", "what is the best mark in every group of 4 neighbours?", "who is the next child with a higher mark?", and the list may change between questions. The last six lessons each keep a small, clever summary so that every such question costs one or a few steps instead of a walk along the whole row.
 
-Merge sort splits values into halves then combines two sorted halves.
+Both halves share one habit: **decide what order to process things in, and keep only what can still matter.** A sorted list, a stack that stays sorted, a table of running totals and a tree of partial sums are all ways of doing that.
+
+## Reading order, from simple to advanced
+
+1. **[Sorting](../sorting/index.qmd)**: sorting a hand of cards (insertion sort and inversions), why no comparison sort beats $\lceil \log_2 n! \rceil$ comparisons, stability, quicksort and heapsort, what `Arrays.sort` really runs, and comparator chains.
+2. **[Merge Sort](../merge-sort/index.qmd)**: divide and conquer; merging two sorted runs, the recursion tree behind $n \log_2 n$, bottom-up merging, and counting inversions while merging.
+3. **[Counting Sort](../counting-sort/index.qmd)**: small integer keys; counts, prefix sums that give each key its final position, and stable placement in $O(n + k)$.
+4. **[Bucket Sort](../bucket-sort/index.qmd)**: evenly spread values; why buckets give linear time on average, and buckets of a fixed width for "close values" questions.
+5. **[Radix Sort](../radix-sort/index.qmd)**: sorting digit by digit with a stable counting sort per digit; LSD for numbers, MSD for strings, and the cost $d(n + b)$.
+6. **[Monotonic Stack](../monotonic-stack/index.qmd)**: the next greater or smaller element for every position, with a stack that stays sorted, so each index is pushed and popped at most once.
+7. **[Monotonic Queue](../monotonic-queue/index.qmd)**: the maximum or minimum of every sliding window, with a deque of the candidates that can still win.
+8. **[Prefix Sum](../prefix-sum/index.qmd)**: any range total as the difference of two running totals; 2D prefix sums and difference arrays.
+9. **[Segment Tree](../segment-tree/index.qmd)**: range queries **and** updates in $O(\log n)$, by storing a summary for each half, quarter, eighth, … of the array; lazy propagation for range updates.
+10. **[Binary Indexed Tree](../binary-indexed-tree/index.qmd)**: prefix sums with updates in a single array, guided by the lowest set bit of each index.
+11. **[Sweep Line](../sweep-line/index.qmd)**: turn intervals and rectangles into start and end events, sort them, and sweep once while keeping a running state.
+
+Lessons 1–5 are about sorting itself. Lessons 6–7 use the idea of a structure that *stays* sorted. Lessons 8–10 store running totals so that range questions become subtractions. Lesson 11 combines sorting with any of the others.
+
+## Which tool when
+
+| If the problem says… | Reach for… | Because… |
+| --- | --- | --- |
+| "arrange to make the largest / smallest result", "in what order should we do the tasks" | [Sorting](../sorting/index.qmd) with a custom comparator | an exchange argument on two neighbours proves which order is best |
+| "sort by A, then by B", "keep the original order of ties" | a **stable** sort ([Sorting](../sorting/index.qmd), [Merge Sort](../merge-sort/index.qmd)) | stability lets later keys decide without undoing earlier ones |
+| "count pairs $i < j$ with $a_i > a_j$" (or $a_i > 2a_j$, …) | [Merge Sort](../merge-sort/index.qmd) | every pair is split by exactly one merge, where both halves are sorted |
+| "sort a linked list" | [Merge Sort](../merge-sort/index.qmd) | merging only relinks the two fronts, with no extra array |
+| "values are between 0 and 1000", "digits", "letters" | [Counting Sort](../counting-sort/index.qmd) | $O(n + k)$ with no comparisons when $k$ is small |
+| "values are spread evenly", "two values within $v$ of each other", "maximum gap" | [Bucket Sort](../bucket-sort/index.qmd) | equal-width buckets put close values together and keep far values apart |
+| "sort fixed-width numbers or strings in linear time", "trim to the last $p$ digits" | [Radix Sort](../radix-sort/index.qmd) | $d$ stable passes; after pass $p$ the keys are sorted by their last $p$ digits |
+| "next greater / smaller element", "largest rectangle in a histogram" | [Monotonic Stack](../monotonic-stack/index.qmd) | a position is popped exactly when its answer arrives |
+| "maximum / minimum of every window of length $k$" | [Monotonic Queue](../monotonic-queue/index.qmd) | dominated candidates leave the back, expired ones leave the front |
+| "sum of a subarray", many queries, no updates | [Prefix Sum](../prefix-sum/index.qmd) | one subtraction per query after one pass |
+| "range sum / min / max" **with** updates, or "add to a whole range" | [Segment Tree](../segment-tree/index.qmd) | $O(\log n)$ nodes cover any range; lazy tags delay range updates |
+| "prefix sums with point updates", "how many earlier values are smaller" | [Binary Indexed Tree](../binary-indexed-tree/index.qmd) | about $\log_2 n$ boxes per operation, in one array of $n + 1$ numbers |
+| "intervals, meetings, rooms, skyline, union of rectangles" | [Sweep Line](../sweep-line/index.qmd) | sorted start/end events change the state only at those coordinates |
+
+## Cheat sheet
+
+Every formula below is worked out in full in its lesson. Each one is listed with its symbols and one small example.
+
+**1. The comparison lower bound** ([Sorting](../sorting/index.qmd)):
 
 $$
-T(n)=2T(n/2)+cn
+C_{\text{worst}}(n) \ge \lceil \log_2 n! \rceil
 $$
 
-**What the symbols mean:** T(n) is work for n entries; 2 counts recursive calls for each half; c is per-element merging cost.
+where $n$ is the number of keys, $n!$ the number of possible orders, and $C_{\text{worst}}(n)$ the worst-case number of comparisons of any sort that only compares keys. Example: $10! = 3{,}628{,}800$ and $2^{21} < 3{,}628{,}800 \le 2^{22}$, so sorting 10 keys needs at least 22 comparisons; for 4 keys, $\lceil \log_2 24 \rceil = 5$.
 
-**Substitute actual numbers:** For n=8,c=1, three merge levels each handle eight entries, giving about 8×3=24 merge-work units. The point is the number of levels, not a particular CPU time.
+**2. Merge sort** ([Merge Sort](../merge-sort/index.qmd)):
 
-This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+$$
+T(n) = 2\,T\!\left(\frac{n}{2}\right) + n, \quad T(1) = 0 \quad \Longrightarrow \quad T(n) = n \log_2 n
+$$
 
-## The chapters in this family
+where $T(n)$ counts key moves for $n$ keys ($n$ a power of two), $2T(n/2)$ sorts the halves and $n$ is the merge. Example: $T(8) = 2 \cdot 8 + 8 = 24$, that is 3 merge levels of 8 moves each.
 
-1. **[Sorting](../sorting/index.qmd)** — Reorder a collection according to a comparison rule.
-2. **[Merge Sort](../merge-sort/index.qmd)** — Recursively sort halves and merge their ordered outputs.
-3. **[Counting Sort](../counting-sort/index.qmd)** — Count discrete keys in a bounded domain to construct sorted output.
-4. **[Bucket Sort](../bucket-sort/index.qmd)** — Distribute keys into buckets, sort locally, and concatenate.
-5. **[Radix Sort](../radix-sort/index.qmd)** — Sort positional digits with a stable subroutine.
-6. **[Monotonic Stack](../monotonic-stack/index.qmd)** — Maintain candidate indices whose values follow a monotonic invariant.
-7. **[Monotonic Queue](../monotonic-queue/index.qmd)** — Maintain an ordered deque of undominated candidates in a sliding window.
-8. **[Prefix Sum](../prefix-sum/index.qmd)** — Precompute cumulative aggregates for efficient interval queries.
-9. **[Segment Tree](../segment-tree/index.qmd)** — Store associative aggregates over a recursively partitioned range.
-10. **[Binary Indexed Tree](../binary-indexed-tree/index.qmd)** — Represent prefix aggregates through binary-indexed intervals.
-11. **[Sweep Line](../sweep-line/index.qmd)** — Process geometric or time events in sorted order while maintaining active state.
+**3. Counting sort** ([Counting Sort](../counting-sort/index.qmd)):
 
-## Practice method
+$$
+\text{pos}(i) = \sum_{u < a_i} c[u] + \#\lbrace j < i : a_j = a_i \rbrace, \qquad T = O(n + k)
+$$
 
-Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
+where $c[u]$ counts the keys equal to $u$, the sum counts the smaller keys, the second term counts earlier equal keys (this makes it stable), and $k$ is the number of possible key values. Example: for `[3, 1, 4, 1, 0, 3, 2, 1]`, the last 1 (position 7) goes to $c[0] + 2 = 1 + 2 = 3$; the whole sort costs $8 + 5 + 8 = 21$ steps.
 
-The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
+**4. Bucket sort** ([Bucket Sort](../bucket-sort/index.qmd)):
 
-[← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)
+$$
+E[n_i^2] = 2 - \frac{1}{n}
+$$
+
+where $n_i$ is the number of values in bucket $i$, there are $n$ values and $n$ buckets, the values are uniformly random in $[0, 1)$, and $E$ is the average. Example: $n = 8$ gives $E[n_i^2] = 1.875$, so all 8 buckets together expect $\sum n_i^2 = 15 = 2n - 1$ units of sorting work: linear.
+
+**5. Radix sort** ([Radix Sort](../radix-sort/index.qmd)):
+
+$$
+T = d\,(n + b)
+$$
+
+where $d$ is the number of digits per key, $n$ the number of keys and $b$ the base (counters per pass). Example: 8 three-digit numbers in base 10 cost $3 \times (8 + 10) = 54$; a million 32-bit keys in bytes cost $4 \times (10^6 + 256) = 4{,}001{,}024$.
+
+**6. Monotonic stack** ([Monotonic Stack](../monotonic-stack/index.qmd)):
+
+$$
+\operatorname{next}(i) = \min \lbrace j > i : a_j > a_i \rbrace, \qquad \text{pushes} + \text{pops} \le 2n
+$$
+
+where $\operatorname{next}(i)$ is the first position to the right of $i$ holding a larger value, and the bound holds because each of the $n$ positions is pushed once and popped at most once. Example: for `[2, 1, 5, 6, 2, 3]`, $\operatorname{next} = [2, 2, 3, -1, 5, -1]$ ($-1$ for none), found with 6 pushes and 4 pops, $10 \le 12$.
+
+**7. Monotonic queue** ([Monotonic Queue](../monotonic-queue/index.qmd)):
+
+$$
+M_i = \max_{i - k < t \le i} a_t = a_{q_1}, \qquad a_{q_1} > a_{q_2} > \dots > a_{q_m}
+$$
+
+where $M_i$ is the maximum of the window of length $k$ ending at $i$, and $q_1, \dots, q_m$ are the positions kept in the deque, front to back, with decreasing values. Example: for `[2, 7, 3, 1, 5, 4]` and $k = 3$, at $i = 5$ the deque holds the values $5 > 4$, so $M_5 = 5$.
+
+**8. Prefix sums** ([Prefix Sum](../prefix-sum/index.qmd)):
+
+$$
+P_j = \sum_{i=0}^{j-1} a_i, \qquad \sum_{i=l}^{r} a_i = P_{r+1} - P_l
+$$
+
+where $P_j$ is the total of the first $j$ values (so $P_0 = 0$), and $l \le r$ are the ends of the range, both included. Example: for `[3, 1, 4, 1, 5, 9]`, $P = [0, 3, 4, 8, 9, 14, 23]$, so the sum of positions 2 to 4 is $P_5 - P_2 = 14 - 4 = 10 = 4 + 1 + 5$.
+
+**9. Segment tree** ([Segment Tree](../segment-tree/index.qmd)):
+
+$$
+F([l, r]) = F([l, m]) \oplus F([m + 1, r]), \qquad m = \left\lfloor \frac{l + r}{2} \right\rfloor
+$$
+
+where $F$ is the stored summary of a range (a sum, a maximum, …), $\oplus$ combines two neighbouring summaries, and $m$ splits a node's range into its two children. Example: for `[5, 8, 6, 3, 2, 7, 2, 6]` with sums, $F([0, 3]) = 22$ and $F([4, 7]) = 17$, so the root holds $22 + 17 = 39$; a tree over $n = 8$ values has $2n - 1 = 15$ nodes.
+
+**10. Binary indexed tree** ([Binary Indexed Tree](../binary-indexed-tree/index.qmd)):
+
+$$
+\operatorname{lowbit}(i) = i \mathbin{\&} (-i), \qquad \text{box } i \text{ covers positions } i - \operatorname{lowbit}(i) + 1, \dots, i
+$$
+
+where $i \ge 1$ is a position, $\&$ is bitwise AND, and $\operatorname{lowbit}(i)$ is the value of the lowest 1-bit of $i$. Example: $12 = 1100_2$, so $\operatorname{lowbit}(12) = 4$ and box 12 covers positions 9 to 12; a prefix query at 7 reads boxes $7, 6, 4$, one per 1-bit of $7 = 111_2$.
+
+**11. Sweep line** ([Sweep Line](../sweep-line/index.qmd)):
+
+$$
+c(x) = \sum_{x_k \le x} \delta_k, \qquad \delta_k = +1 \text{ at a start}, \ -1 \text{ at an end}
+$$
+
+where the events are sorted by coordinate $x_k$, and $c(x)$ is the number of intervals active at $x$. Example: meetings $[1, 4)$, $[2, 6)$, $[3, 5)$, $[7, 8)$ give running counts $1, 2, 3, 2, 1, 0, 1, 0$, so at most 3 meetings overlap and 3 rooms are needed.
+
+## How to study this group
+
+Read the lessons in order; each one reuses the one before it. Counting sort reuses the prefix sums you will meet again in lesson 8, radix sort runs counting sort once per digit, and the binary indexed tree solves the same "count the smaller elements to the right" problem that merge sort solves. For each lesson, run its lab (`java <Name>Lab.java` in the lesson's folder), trace the first example by hand, and then try its interview problems before reading the solutions.
+
+[← Algorithms](../index.qmd) · [How to choose the right algorithm](../guides/choose-a-pattern.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

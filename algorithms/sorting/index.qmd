@@ -1,94 +1,508 @@
 ---
 title: "Sorting"
-description: "CLRS-inspired worked lesson on Sorting: numerical substitution, invariants, original code and complexity."
+description: "From sorting a hand of cards to java.util.Arrays.sort: insertion sort and inversions, the comparison model and its ⌈log2 n!⌉ lower bound, stability, quicksort and heapsort, what Java really runs for primitives and for objects, Comparator chains, and hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+Sorting puts things in order, and an ordered list makes almost every later question cheaper: searching, finding duplicates, merging, and spotting gaps. This lesson starts with sorting a hand of cards, proves that no comparison sort can beat about $n \log_2 n$ comparisons, explains why *stability* matters, and then opens `java.util.Arrays` to see which algorithms Java really runs.
 
-**LeetCode 912 — Sort an Array.**
+All code is in [`SortingLab.java`](SortingLab.java). Run it from this folder with `java SortingLab.java`; it checks every number on this page and prints `OK`.
 
-Sorting is a contract: output is ordered AND contains exactly the same multiset as input. A comparator must define a consistent order.
+## The problem
 
-## First try the obvious approach
+A teacher has five exam scores, `[4, 2, 5, 1, 3]`, and wants them from lowest to highest. Easy by eye. Now the school office has **1,000,000** records to sort by student number.
 
-Comparing every pair gives a simple but unnecessary quadratic process. Before choosing a sort, ask whether you need stability, can mutate input, and what keys look like.
+- Trying every possible order is hopeless: 5 scores already have $5! = 120$ orders, and a million records have more orders than there are atoms in the universe.
+- The method most people use by hand, "find the smallest, then the next smallest, …", compares every pair: about $\frac{n^2}{2} = 500{,}000{,}000{,}000$ comparisons for a million records.
+- A good sort needs about $n \log_2 n \approx 1{,}000{,}000 \times 20 = 20{,}000{,}000$, which is **25,000 times fewer**. This lesson shows where that number comes from, and why nothing that only compares can do better.
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+## Explain it like I'm ten
 
-## Mathematical relationship, explained immediately
+::: {.callout-tip}
+You are dealt cards one at a time. Each new card goes into your hand **in the right place**: you slide it left past every bigger card until it meets a smaller one. When the last card is in, your hand is sorted. That is **insertion sort**, and CLRS opens its very first algorithm (Section 2.1) with exactly this picture of sorting a hand of playing cards.
 
-$$
-a_{\pi(0)}\leq a_{\pi(1)}\leq\cdots\leq a_{\pi(n-1)}
-$$
+Now play a game of "guess my order". I secretly arrange three cards, and you may only ask questions like *"is card A smaller than card B?"*. There are 6 possible orders. Each answer is yes or no, so it at best cuts the possibilities in half: 6, then 3, then 2, then 1. You need **3 questions** in the worst case, however clever you are. That halving argument is the famous **lower bound** for sorting, and it holds for every sorting method that works only by comparing.
 
-**Symbol by symbol:** a is the original array; n is the number of entries; π is a permutation of the original indices. The reordered values must be nondecreasing.
+One more idea: two children both scored 90. A **stable** sort keeps them in the order they were already standing in. That sounds fussy, but it is what lets you sort by one thing, then by another, without undoing the first.
+:::
 
-**Calculate with real numbers:** For [4,1,4,2], an appropriate permutation produces [1,2,4,4]. Both 4s remain: correctness is order plus preservation, not merely returning any increasing list.
+## From simple to advanced
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+### Level 1: insertion sort and inversions
 
-## How the algorithm emerges
+Take the cards from left to right. Hold the next card, slide every bigger card one step right, and drop the held card into the gap.
 
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
-
-**Correctness argument:** A correct sort never loses or invents entries, and every adjacent output pair is in order. Stability additionally keeps the original order of equal-key objects.
-
-## Code, but only after the reasoning
-
-Use the tested [algorithm lab](../examples/patterns.mjs), which exports `mergeSort`:
-
-~~~js
-import { mergeSort } from '../examples/patterns.mjs';
-
-console.log(mergeSort([4,1,4,2]));
-~~~
-
-Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function mergeSort(a) {
-  if (a.length <= 1) return [...a];
-  const m = Math.floor(a.length / 2);
-  const l = mergeSort(a.slice(0, m)), r = mergeSort(a.slice(m));
-  const result = [];
-  let i = 0, j = 0;
-  while (i < l.length || j < r.length) {
-    if (j === r.length || (i < l.length && l[i] <= r[j]))
-      result.push(l[i++]);
-    else result.push(r[j++]);
-  }
-  return result;
+```java
+static int insertionSort(int[] a) {
+    int shifts = 0;
+    for (int i = 1; i < a.length; i++) {
+        int card = a[i];
+        int j = i - 1;
+        while (j >= 0 && a[j] > card) {   // strict >, so equal keys never pass each other
+            a[j + 1] = a[j];
+            j--;
+            shifts++;
+        }
+        a[j + 1] = card;
+    }
+    return shifts;
 }
-~~~
+```
 
-**Walk through the important lines:**
+How much work is that? Count the pairs that are **in the wrong order**. Such a pair is called an *inversion*:
 
-1. Every returned array is a permutation of the input values; no value is invented or dropped.
-2. The recursive halves establish sorted subarrays.
-3. The merge repeatedly chooses the smaller available head, so the output remains ordered.
-4. Duplicate values are preserved; for `[4,1,4,2]` output is **[1,2,4,4]**.
+$$
+I(a) = \#\lbrace (i, j) : i < j \text{ and } a_i > a_j \rbrace
+$$
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+where:
 
-## Count the work rigorously
+- $a_0, a_1, \dots, a_{n-1}$ are the keys in their current order;
+- $(i, j)$ is a pair of positions with $i$ to the left of $j$;
+- $\#\lbrace \dots \rbrace$ means "how many pairs satisfy the condition";
+- $I(a)$ is the number of inversions: 0 for a sorted array.
 
-**Time and memory:** Merge sort O(n log n) time, O(n) space; built-in library sort performance depends on runtime and comparator.
+Example: `[4, 2, 5, 1, 3]`. The inversions are $(4,2)$, $(4,1)$, $(4,3)$, $(2,1)$, $(5,1)$ and $(5,3)$, so $I = 6$.
 
-**The misleading shortcut:** A comparison sort has a worst-case lower bound of Ω(n log n) comparisons for arbitrary distinct inputs, but counting/radix sorts can beat this if keys have additional structure.
+Every shift in insertion sort swaps one neighbouring pair that is out of order, which removes **exactly one** inversion and creates none. So the number of shifts equals $I(a)$. Trace on `[4, 2, 5, 1, 3]`:
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+| Step | Held card | Bigger cards it passes | Shifts | Hand afterwards |
+| --- | --- | --- | --- | --- |
+| 1 | 2 | 4 | 1 | `[2, 4, 5, 1, 3]` |
+| 2 | 5 | none | 0 | `[2, 4, 5, 1, 3]` |
+| 3 | 1 | 5, 4, 2 | 3 | `[1, 2, 4, 5, 3]` |
+| 4 | 3 | 5, 4 | 2 | `[1, 2, 3, 4, 5]` |
 
-## Practice and source
+Total shifts: $1 + 0 + 3 + 2 = 6 = I$. The lab's `countInversions` checks every pair directly and also gets 6.
 
-- **Textbook relationship:** CLRS Chapters 2, 6–8 (insertion, heap, quick, linear-time sorting)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 912 — Sort an Array. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+This explains insertion sort's whole personality:
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+- **Sorted input**: $I = 0$, so it makes no shifts and only $n - 1$ comparisons. It is *adaptive*.
+- **Reversed input**: every pair is an inversion, $I = \frac{n(n-1)}{2}$. For $n = 5$ that is 10 shifts, for $n = 8$ it is 28, and for a million keys it is about $5 \times 10^{11}$.
+
+Each shift fixes only one inversion, so any sort that only swaps neighbours needs $I(a)$ steps. To be fast, a sort must move keys **far** in one step. Quicksort and merge sort do.
+
+### Level 2: the comparison model and the $\lceil \log_2 n! \rceil$ lower bound
+
+A **comparison sort** learns about the keys only by asking "is $a_i \le a_j$?". Insertion sort, merge sort, quicksort, heapsort and Java's `Arrays.sort` for objects are all comparison sorts.
+
+Draw every possible run of such an algorithm as a **decision tree**: each inner node is a question, each branch is an answer, and each leaf is a finished order. For three keys $a, b, c$:
+
+```text
+                  a < b ?
+              yes /     \ no
+            b < c ?       a < c ?
+           /     \        /     \
+       a,b,c   a < c ?  b,a,c   b < c ?
+               /    \           /    \
+           a,c,b   c,a,b     b,c,a   c,b,a
+```
+
+There are $3! = 6$ leaves, one for each possible order, and the longest path asks 3 questions. In general:
+
+$$
+h \ge \lceil \log_2 n! \rceil
+$$
+
+where:
+
+- $n$ is the number of keys, all different;
+- $n! = 1 \cdot 2 \cdot \dots \cdot n$ is the number of possible orders, and each needs its own leaf;
+- $h$ is the height of the tree: the number of comparisons in the worst case;
+- a tree of height $h$ has at most $2^h$ leaves, so $2^h \ge n!$, which gives $h \ge \log_2 n!$;
+- $\lceil x \rceil$ rounds up, because $h$ is a whole number.
+
+Example: for $n = 4$, $4! = 24$. Since $2^4 = 16 < 24 \le 32 = 2^5$, every comparison sort needs at least **5** comparisons on some input. For $n = 10$, $10! = 3{,}628{,}800$, and $2^{21} = 2{,}097{,}152 < 3{,}628{,}800 \le 4{,}194{,}304 = 2^{22}$, so the bound is **22**. For $n = 5$ it is 7, because $5! = 120 \le 128 = 2^7$.
+
+```java
+static int comparisonLowerBound(int n) {   // smallest h with 2^h >= n!, exact for n <= 20
+    long factorial = 1;
+    for (int k = 2; k <= n; k++) factorial *= k;
+    int h = 0;
+    while ((1L << h) < factorial) h++;
+    return h;
+}
+```
+
+How big is $\log_2 n!$ for large $n$? Stirling's formula says
+
+$$
+\log_2 n! \approx n \log_2 n - n \log_2 e \approx n \log_2 n - 1.44\,n
+$$
+
+where $e \approx 2.718$ is the base of natural logarithms, so $\log_2 e \approx 1.44$. Example: for $n = 1000$, $\log_2 1000 \approx 9.97$, so the estimate is $9{,}966 - 1{,}443 = 8{,}523$; the exact value, which the lab adds up, is $\log_2 1000! \approx 8{,}529$. So sorting 1000 keys by comparisons **must** cost about 8,500 comparisons in the worst case, and $n \log_2 n$ is the right target. Merge sort and heapsort reach it. To go below it you must stop comparing and look *inside* the keys, which is what [counting sort](../counting-sort/index.qmd), [bucket sort](../bucket-sort/index.qmd) and [radix sort](../radix-sort/index.qmd) do.
+
+### Level 3: stability
+
+A sort is **stable** if keys that compare equal stay in their original order.
+
+Four students arrive in this order: Ava 90, Ben 85, Cal 90, Dee 85. Sort them by score:
+
+- Stable: Ben 85, Dee 85, Ava 90, Cal 90. Ben was before Dee, and Ava before Cal, so they still are.
+- Unstable: Ben 85, Dee 85, **Cal 90, Ava 90**. Same scores, but Ava and Cal changed places.
+
+**Selection sort** ("swap the smallest remaining into place") is the classic unstable one. In the lab, `Student` is a record holding a `name` and a `score`:
+
+```java
+static void selectionSortByScore(Student[] s) {
+    for (int i = 0; i < s.length; i++) {
+        int min = i;
+        for (int j = i + 1; j < s.length; j++) {
+            if (s[j].score() < s[min].score()) min = j;
+        }
+        Student moved = s[i];   // this long-distance swap can jump over an equal score
+        s[i] = s[min];
+        s[min] = moved;
+    }
+}
+```
+
+Trace: first Ben (85) swaps with Ava, giving Ben, Ava, Cal, Dee. Then Dee (85) swaps with Ava, and Ava jumps **over** Cal: Ben, Dee, Cal, Ava. The lab checks this exact unstable result, and checks that Java's `Arrays.sort` on objects gives the stable one.
+
+**Why you care.** Stability lets you sort by several keys one at a time. Sort the class by name, then *stably* by score: inside each score, the names are still alphabetical. The last sort decides the main order, and earlier sorts break ties. Radix sort is built entirely on this trick.
+
+For primitive `int` values stability cannot be observed: two 85s are identical. It matters only when the keys carry other data.
+
+### Level 4: quicksort and heapsort, the $n \log n$ workhorses
+
+**Quicksort** (Tony Hoare, 1961) picks a *pivot*, moves smaller keys to its left and larger keys to its right, and sorts the two sides the same way. After partitioning, the pivot is in its final place forever.
+
+```java
+static int quickSort(int[] a, int lo, int hi) {   // sorts a[lo..hi], both ends included
+    if (lo >= hi) return 0;
+    int pivot = a[hi], small = lo;                 // a[lo..small) holds the keys below the pivot
+    for (int i = lo; i < hi; i++) {
+        if (a[i] < pivot) swap(a, i, small++);
+    }
+    swap(a, small, hi);                            // the pivot lands in its final place
+    return (hi - lo) + quickSort(a, lo, small - 1) + quickSort(a, small + 1, hi);
+}
+```
+
+On `[4, 2, 5, 1, 3]` the pivot 3 is compared with the other 4 keys, giving `[2, 1, 3, 4, 5]`; then `[2, 1]` and `[4, 5]` need one comparison each. Total: $4 + 1 + 1 = 6$.
+
+Its cost depends on luck with pivots. With a uniformly random pivot, the expected number of comparisons is
+
+$$
+E[C(n)] = 2(n + 1) H_n - 4n, \qquad H_n = 1 + \frac{1}{2} + \frac{1}{3} + \dots + \frac{1}{n}
+$$
+
+where:
+
+- $C(n)$ is the number of comparisons quicksort makes on $n$ distinct keys;
+- $E[\cdot]$ averages over the random pivot choices;
+- $H_n$ is the $n$-th harmonic number, which grows like $\ln n$, so $E[C(n)] \approx 1.39\, n \log_2 n$.
+
+Example 1: $n = 3$. $H_3 = 1 + 0.5 + 0.333 = 1.833$, so $E[C(3)] = 2 \cdot 4 \cdot 1.833 - 12 = 14.667 - 12 = 2.667$. Check by hand: the first partition always costs 2; with probability $\frac{1}{3}$ the pivot is the middle key and we are done, otherwise one more comparison is needed: $\frac{1}{3} \cdot 2 + \frac{2}{3} \cdot 3 = \frac{8}{3} = 2.667$.
+
+Example 2: $n = 1000$. $H_{1000} \approx 7.4855$, so $E[C] = 2 \cdot 1001 \cdot 7.4855 - 4000 \approx 10{,}986$, only 29% above the lower bound of about 8,529.
+
+The **worst case** is a pivot that is always the largest key, for example sorted input with the last key as pivot. Then each partition removes only one key: $(n-1) + (n-2) + \dots + 1 = \frac{n(n-1)}{2}$. For `[1, 2, 3, 4, 5]` that is 10 comparisons, and for $n = 1000$ it is 499,500. Real libraries avoid this with better pivots (median of several samples) and a safety net.
+
+**Heapsort** (J. W. J. Williams, 1964) is that safety net. It builds a max-heap (see [Heap / Priority Queue](../heap-priority-queue/index.qmd)), then $n - 1$ times swaps the largest key to the end and repairs the heap. Each repair walks down one root-to-leaf path with at most 2 comparisons per level, so it needs at most about $2 n \log_2 n$ comparisons on **every** input: about 19,932 for $n = 1000$. It sorts in place, but it is not stable, and it jumps around memory, so it is usually slower than quicksort in practice.
+
+| | Average comparisons | Worst case | Extra memory | Stable |
+| --- | --- | --- | --- | --- |
+| Insertion sort | $\approx n^2/4$ | $n^2/2$ | $O(1)$ | yes |
+| Quicksort | $\approx 1.39\, n \log_2 n$ | $n^2/2$ | $O(\log n)$ stack | no |
+| Heapsort | $\approx 2 n \log_2 n$ | $\approx 2 n \log_2 n$ | $O(1)$ | no |
+| [Merge sort](../merge-sort/index.qmd) | $\approx n \log_2 n$ | $n \log_2 n$ | $O(n)$ | yes |
+
+### Level 5: what `Arrays.sort` really runs
+
+The table above suggests the trade-off, and the JDK takes both sides. These facts come from the OpenJDK 23 source (`java/util/Arrays.java`, `DualPivotQuicksort.java`, `TimSort.java`):
+
+| Call | Algorithm | Stable? |
+| --- | --- | --- |
+| `Arrays.sort(int[])`, and `long[]`, `float[]`, `double[]` | **Dual-Pivot Quicksort** (Yaroslavskiy, Bentley and Bloch, Java 7). Insertion sort below 44 elements; detects and merges already-sorted runs; switches to heapsort if partitioning goes too deep | no, and for primitives it cannot matter |
+| `Arrays.sort(byte[])` | **counting sort** when there are more than 64 elements, else insertion sort | not observable |
+| `Arrays.sort(char[])`, `short[]` | **counting sort** above 1,750 elements, else Dual-Pivot Quicksort | not observable |
+| `Arrays.sort(Object[])`, `Arrays.sort(T[], Comparator)`, `List.sort`, `Collections.sort` | **TimSort**, adapted from Tim Peters's 2002 sort for Python | **yes** |
+
+Why two families?
+
+- For **primitives**, equal values are indistinguishable, so stability is worthless; quicksort is fast and needs almost no extra memory. Using two pivots splits each range into three parts, which in practice beats one pivot.
+- For **objects**, stability is part of the documented contract, and comparisons are expensive because each one calls `compareTo` or a `Comparator`. TimSort is a merge sort that first finds the *runs* that are already in order. Arrays shorter than 32 elements get a binary insertion sort. On nearly sorted data it needs only about $n$ comparisons.
+
+The lab counts TimSort's comparisons with a counting comparator:
+
+```java
+static int countComparisons(Integer[] a) {
+    int[] count = {0};
+    Arrays.sort(a, (x, y) -> {
+        count[0]++;
+        return Integer.compare(x, y);
+    });
+    return count[0];
+}
+```
+
+Example: on the sorted array 1 to 8 it makes exactly $n - 1 = 7$ comparisons, because the whole array is one run. On 8 down to 1 it also makes 7: a strictly descending run is detected and simply reversed. Insertion sort needs 28 shifts on that reversed input.
+
+The quicksort worst case is also handled: every partitioning step adds to a depth counter, and if the recursion gets about 64 levels deep, `DualPivotQuicksort` switches that part to heapsort. So `Arrays.sort(int[])` is $O(n \log n)$ on every input.
+
+### Level 6: `Comparator` chains
+
+Java builds a multi-key order by chaining comparators. Mathematically this is **lexicographic order**, the way a dictionary orders words:
+
+$$
+(x_1, x_2) \prec (y_1, y_2) \iff x_1 \prec_1 y_1 \ \lor\ (x_1 = y_1 \land x_2 \prec_2 y_2)
+$$
+
+where:
+
+- $(x_1, x_2)$ and $(y_1, y_2)$ are the sort keys of two items, main key first;
+- $\prec_1$ and $\prec_2$ are the orders for the first and second keys, for example "higher score first" and "alphabetical";
+- $\lor$ means "or" and $\land$ means "and": the second key is consulted only when the first keys tie.
+
+Example: sort Ava 90, Ben 85, Cal 90, Dee 85 by score descending, then name. Ava and Cal tie on 90, so the names decide: Ava, Cal. Then Ben and Dee tie on 85: Ben, Dee. Result: **Ava, Cal, Ben, Dee**.
+
+```java
+static final Comparator<Student> BY_SCORE_DESC_THEN_NAME =
+        Comparator.comparingInt(Student::score).reversed().thenComparing(Student::name);
+```
+
+Two traps:
+
+- `reversed()` reverses **everything built so far**. `comparingInt(Student::score).thenComparing(Student::name).reversed()` also reverses the names: Cal before Ava.
+- Never write `(x, y) -> x - y`. With $x = 2{,}000{,}000{,}000$ and $y = -1{,}000{,}000{,}000$ the true difference, $3{,}000{,}000{,}000$, does not fit in an `int` and wraps to $-1{,}294{,}967{,}296$, so the comparator claims $x < y$. Use `Integer.compare(x, y)` or `Comparator.comparingInt`.
+
+## Why it works and what it costs
+
+**Insertion sort is correct.** The invariant is: *before step $i$, the first $i$ keys are the original first $i$ keys, in sorted order.*
+
+- *Initially* $i = 1$: one key is sorted.
+- *Each step keeps it*: the held card moves left past exactly the keys bigger than it, so it lands after every smaller-or-equal key and before every bigger key.
+- *At the end* $i = n$: all keys are in sorted order.
+
+The cost is $I(a)$ shifts plus at most $n - 1$ extra comparisons, between $n - 1$ and $\frac{n(n-1)}{2}$.
+
+**Quicksort is correct** by induction on the size of the range. After `partition`, every key left of the pivot is smaller, every key right of it is not, and the pivot sits in its final position. Sorting each side (smaller ranges, so correct by induction) therefore sorts the whole range.
+
+**No comparison sort beats $\lceil \log_2 n! \rceil$.** Each comparison has two outcomes, so after $h$ comparisons an algorithm can tell apart at most $2^h$ inputs. It must tell apart all $n!$ orders, so $2^h \ge n!$. For $n = 10$ that forces $h \ge 22$.
+
+**Costs at a glance**, for $n = 1000$:
+
+| Algorithm | Comparisons on this $n$ |
+| --- | --- |
+| Lower bound for any comparison sort | $\lceil \log_2 1000! \rceil \approx 8{,}530$ |
+| Quicksort, random pivot, average | $\approx 10{,}986$ |
+| Heapsort, worst case | $\le$ about $19{,}932$ |
+| Insertion sort or quicksort, worst case | $499{,}500$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Comparator `(a, b) -> a - b` | Wrong order once values are large or of mixed sign, because the subtraction overflows | `Integer.compare(a, b)` or `Comparator.comparingInt(...)` |
+| A comparator that is not transitive or not consistent, for example random or based on a changing field | `IllegalArgumentException: Comparison method violates its general contract!` from TimSort, or a silently wrong order | Compare by fixed keys; check that $a \prec b$ and $b \prec c$ imply $a \prec c$ |
+| `.reversed()` at the end of a chain | Every key is reversed, not just the first | Call `.reversed()` right after the key it should reverse, or use `Comparator.reverseOrder()` inside `thenComparing` |
+| Assuming your own quicksort is stable | Multi-key sorts come out scrambled | Use `Arrays.sort` / `List.sort` on objects (TimSort is stable), or sort by all keys at once |
+| Sorting `int[]` with a `Comparator` | Compile error: there is no `Arrays.sort(int[], Comparator)` | Sort ascending then reverse, or box into `Integer[]` |
+| Fixed first or last pivot in a hand-written quicksort | $O(n^2)$ time and deep recursion on already-sorted input | Random pivot or median of three; or just call `Arrays.sort` |
+| Calling `sort` on `List.of(...)` | `UnsupportedOperationException` | Sort a mutable copy: `new ArrayList<>(list)` |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the order is defined, the code is short.
+
+### 1. LeetCode 75: Sort Colors (Medium)
+
+**Problem.** An array holds only 0s, 1s and 2s (red, white, blue). Sort it in place, in one pass, without a library sort. For `[2, 0, 2, 1, 1, 0]` the answer is `[0, 0, 1, 1, 2, 2]`.
+
+**Math first.** This is Dijkstra's **Dutch national flag** problem. Keep three pointers and four regions, and maintain this invariant at every step:
+
+$$
+a[0, \ell) = 0, \qquad a[\ell, i) = 1, \qquad a[i, h] = \text{unknown}, \qquad a(h, n - 1] = 2
+$$
+
+where:
+
+- $\ell$ ("low") is the first position after the 0s;
+- $i$ is the next unknown key to look at;
+- $h$ ("high") is the last unknown position, with only 2s to its right;
+- $[x, y)$ includes $x$ and excludes $y$; $(x, y]$ excludes $x$ and includes $y$.
+
+Each step shrinks the unknown region $h - i + 1$ by exactly one, so the loop runs exactly $n$ times.
+
+Example: `[2, 0, 2, 1, 1, 0]`, with $\ell = 0$, $i = 0$, $h = 5$.
+
+- $a_0 = 2$: swap with $a_5$, giving `[0, 0, 2, 1, 1, 2]`; $h = 4$.
+- $a_0 = 0$: swap with itself; $\ell = 1$, $i = 1$.
+- $a_1 = 0$: $\ell = 2$, $i = 2$.
+- $a_2 = 2$: swap with $a_4$, giving `[0, 0, 1, 1, 2, 2]`; $h = 3$.
+- $a_2 = 1$: $i = 3$. Then $a_3 = 1$: $i = 4 > h$, so stop after $6 = n$ steps.
+
+**Idea.** A 0 is swapped to the end of the 0 region; a 2 is swapped to the front of the 2 region; a 1 just stays. After swapping a 2 away, do **not** advance $i$, because the key that came back from position $h$ has not been examined yet.
+
+```java
+static void sortColors(int[] nums) {
+    int low = 0, i = 0, high = nums.length - 1;   // [0, low) = 0s, [low, i) = 1s, (high, end] = 2s
+    while (i <= high) {
+        if (nums[i] == 0) swap(nums, i++, low++);
+        else if (nums[i] == 2) swap(nums, i, high--);   // keep i: the value swapped in is still unseen
+        else i++;
+    }
+}
+```
+
+**Answer.** `[0, 0, 1, 1, 2, 2]`, after exactly $n = 6$ loop steps. $O(n)$ time, $O(1)$ space. A counting sort (count the 0s, 1s and 2s, then rewrite) is also $O(n)$ but needs two passes.
+
+### 2. LeetCode 56: Merge Intervals (Medium)
+
+**Problem.** Merge all overlapping intervals. Intervals that touch, such as `[1, 4]` and `[4, 5]`, count as overlapping. For `[[1,3],[2,6],[8,10],[15,18]]` the answer is `[[1,6],[8,10],[15,18]]`.
+
+**Math first.** Sort by start, so $s_1 \le s_2 \le \dots \le s_n$. Keep the current merged block $[S, E]$. The next interval $[s, e]$ has $s \ge S$, so it touches the block exactly when
+
+$$
+s \le E \implies E \leftarrow \max(E, e), \qquad s > E \implies \text{start a new block } [s, e]
+$$
+
+where:
+
+- $[S, E]$ is the block being built, $S$ its start and $E$ its end so far;
+- $[s, e]$ is the next interval in sorted order;
+- $\leftarrow$ means "becomes".
+
+Why sorting makes this safe: once $s > E$, every later interval starts at $s' \ge s > E$, so nothing later can reach back into the finished block.
+
+Example: sorted input $[1,3], [2,6], [8,10], [15,18]$.
+
+- Block $[1, 3]$. Next $[2, 6]$: $2 \le 3$, so $E = \max(3, 6) = 6$; block $[1, 6]$.
+- Next $[8, 10]$: $8 > 6$, so output $[1, 6]$ and start $[8, 10]$.
+- Next $[15, 18]$: $15 > 10$, so output $[8, 10]$ and start $[15, 18]$, output at the end.
+
+**Idea.** Sort by start with a comparator, then one pass that either stretches the last block or starts a new one.
+
+```java
+static int[][] mergeIntervals(int[][] intervals) {
+    int[][] sorted = intervals.clone();
+    Arrays.sort(sorted, Comparator.comparingInt(interval -> interval[0]));
+    List<int[]> merged = new ArrayList<>();
+    for (int[] next : sorted) {
+        if (!merged.isEmpty() && next[0] <= merged.getLast()[1]) {
+            merged.getLast()[1] = Math.max(merged.getLast()[1], next[1]);   // overlap: stretch the block
+        } else {
+            merged.add(new int[] {next[0], next[1]});
+        }
+    }
+    return merged.toArray(new int[0][]);
+}
+```
+
+**Answer.** `[[1,6],[8,10],[15,18]]`; and `[[4,7],[1,4]]` becomes `[[1,7]]` after sorting. The sort costs $O(n \log n)$ and the pass $O(n)$; output space $O(n)$. For $n = 10^4$ intervals that is about $10^4 \times 14 = 1.4 \times 10^5$ comparisons.
+
+### 3. LeetCode 179: Largest Number (Medium)
+
+**Problem.** Arrange non-negative integers so that, written side by side, they form the largest number. Return it as a string. For `[3, 30, 34, 5, 9]` the answer is `"9534330"`.
+
+**Math first.** Sorting by numeric value, largest first, fails: 34 would come before 9. Sorting the strings in reverse alphabetical order fails too: it puts `"30"` before `"3"`, but $330 > 303$ says 3 should come first. The right rule compares the two ways of gluing a pair. Writing $\ell_x$ for the number of digits of $x$, gluing $a$ then $b$ gives $a \cdot 10^{\ell_b} + b$, so
+
+$$
+a \text{ before } b \iff a \cdot 10^{\ell_b} + b > b \cdot 10^{\ell_a} + a \iff \frac{a}{10^{\ell_a} - 1} > \frac{b}{10^{\ell_b} - 1}
+$$
+
+where:
+
+- $a$ and $b$ are two of the numbers;
+- $\ell_a$ and $\ell_b$ are their digit counts, so $10^{\ell_b}$ shifts $a$ left to make room for $b$;
+- the right-hand form comes from moving the $a$ terms to one side and the $b$ terms to the other: $a(10^{\ell_b} - 1) > b(10^{\ell_a} - 1)$.
+
+The right-hand side matters: it says each number has a fixed real **key** $f(x) = \frac{x}{10^{\ell_x} - 1}$, which is the repeating decimal $0.xxx\ldots$. Sorting by a real key is automatically transitive, so this comparator is a valid sort order (an arbitrary pairwise rule need not be). And if an arrangement had a neighbouring pair in the wrong order, swapping them would make the number bigger, so the sorted order is the best.
+
+Example: $f(9) = \frac{9}{9} = 1$, $f(5) = \frac{5}{9} = 0.555\ldots$, $f(34) = \frac{34}{99} = 0.3434\ldots$, $f(3) = \frac{3}{9} = 0.333\ldots$, $f(30) = \frac{30}{99} = 0.3030\ldots$. Largest key first: 9, 5, 34, 3, 30, giving **9534330**. Check the tricky pair directly: $3 \cdot 100 + 30 = 330 > 303 = 30 \cdot 10 + 3$.
+
+**Idea.** Turn the numbers into strings and sort with the comparator "is $b + a$ smaller than $a + b$?". Comparing equal-length strings is the same as comparing the numbers. If the biggest piece is `"0"`, everything is zero.
+
+```java
+static String largestNumber(int[] nums) {
+    String[] parts = new String[nums.length];
+    for (int i = 0; i < nums.length; i++) parts[i] = String.valueOf(nums[i]);
+    Arrays.sort(parts, (a, b) -> (b + a).compareTo(a + b));   // a goes first when a+b beats b+a
+    if (parts[0].equals("0")) return "0";                     // every number is zero
+    return String.join("", parts);
+}
+```
+
+**Answer.** `"9534330"`; `[10, 2]` gives `"210"`; `[0, 0]` gives `"0"`, not `"00"`. With $n$ numbers of at most $L = 10$ digits, each comparison builds strings of length at most $2L$: $O(n \log n \cdot L)$ time and $O(nL)$ space. For $n = 100$ that is roughly $100 \times 7 \times 20 = 14{,}000$ character steps.
+
+### 4. LeetCode 1665: Minimum Initial Energy to Finish Tasks (Hard)
+
+**Problem.** Task $i$ is $[a_i, m_i]$: you need at least $m_i$ energy to **start** it, and it uses $a_i$ energy. Tasks may be done in any order. Return the smallest starting energy that finishes them all. For `[[1,2],[2,4],[4,8]]` the answer is 8.
+
+**Math first.** For a fixed order, task $k$ can start only if the energy minus everything spent so far is at least $m_k$, so the needed start energy is
+
+$$
+E(\text{order}) = \max_{k} \Big( m_k + \sum_{j \text{ before } k} a_j \Big)
+$$
+
+where:
+
+- $k$ runs over the tasks in the chosen order;
+- $\sum_{j \text{ before } k} a_j$ is the energy already spent when task $k$ starts;
+- $m_k$ is what task $k$ needs at its start.
+
+Which order is best? Use an **exchange argument** on two neighbouring tasks $i$ and $j$ (everything before them is the same, so look only at these two). Doing $i$ first needs $\max(m_i, a_i + m_j)$; doing $j$ first needs $\max(m_j, a_j + m_i)$. If $m_i - a_i \ge m_j - a_j$, then $a_j + m_i \ge a_i + m_j$ and $a_j + m_i \ge m_i$, so
+
+$$
+\max(m_j, a_j + m_i) \ge a_j + m_i \ge \max(m_i, a_i + m_j)
+$$
+
+where the left side is the cost of putting $j$ first and the right side the cost of putting $i$ first. So $i$ first is never worse: **sort by the leftover $m - a$, largest first**. Intuitively, a task that leaves you a lot of spare energy should go early, while you still have plenty.
+
+Example: `[[1,3],[2,4],[10,11],[10,12],[8,9]]` has leftovers $2, 2, 1, 2, 1$. Largest first (ties keep their order): $[1,3], [2,4], [10,12], [10,11], [8,9]$.
+
+| Task $k$ | Spent before | $m_k$ + spent |
+| --- | --- | --- |
+| $[1, 3]$ | 0 | 3 |
+| $[2, 4]$ | 1 | 5 |
+| $[10, 12]$ | 3 | 15 |
+| $[10, 11]$ | 13 | 24 |
+| $[8, 9]$ | 23 | **32** |
+
+The maximum is **32**.
+
+**Idea.** Sort with the comparator "larger $m - a$ first", then walk once, tracking the spent energy and the largest requirement seen.
+
+```java
+static int minimumEffort(int[][] tasks) {
+    int[][] order = tasks.clone();
+    Arrays.sort(order, (p, q) -> Integer.compare(q[1] - q[0], p[1] - p[0]));   // largest m - a first
+    int spent = 0, need = 0;
+    for (int[] task : order) {
+        need = Math.max(need, spent + task[1]);   // energy needed to start this task
+        spent += task[0];
+    }
+    return need;
+}
+```
+
+**Answer.** 8 for `[[1,2],[2,4],[4,8]]` (order $[4,8], [2,4], [1,2]$ gives $\max(8, 4 + 4, 6 + 2) = 8$), 32 for the traced example, and 27 for `[[1,7],[2,8],[3,9],[4,10],[5,11],[6,12]]`. The subtraction in the comparator is safe here because $1 \le a \le m \le 10^4$. Time $O(n \log n)$ for the sort, about $10^5 \times 17 = 1.7 \times 10^6$ comparisons at $n = 10^5$; space $O(n)$ for the sorted copy.
+
+## Mathematical Abstraction
+
+Sorting means finding a permutation, and comparing alone cannot find it faster than this:
+
+$$
+\text{find } \pi \text{ with } a_{\pi(0)} \le a_{\pi(1)} \le \dots \le a_{\pi(n-1)}, \qquad
+C_{\text{worst}}(n) \ge \lceil \log_2 n! \rceil \approx n \log_2 n - 1.44\, n
+$$
+
+where:
+
+- $\pi$ is a permutation of the positions $0, \dots, n - 1$: $\pi(0)$ is the position of the smallest key, $\pi(1)$ of the next, and so on;
+- a **stable** sort additionally requires $\pi(r) < \pi(r+1)$ whenever $a_{\pi(r)} = a_{\pi(r+1)}$, so equal keys keep their order;
+- $C_{\text{worst}}(n)$ is the worst-case number of comparisons of any algorithm that only compares keys.
+
+Example: for $n = 10$, $\lceil \log_2 3{,}628{,}800 \rceil = 22$, and for $n = 4$ it is 5. Insertion sort pays one step per inversion, up to $\frac{n(n-1)}{2}$; quicksort averages $2(n+1)H_n - 4n \approx 10{,}986$ comparisons for $n = 1000$, against a floor of about 8,529. Java uses Dual-Pivot Quicksort for primitives, where stability is invisible, and stable TimSort for objects.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 2, "Getting Started" (Section 2.1, insertion sort and the hand of cards); Chapter 6, "Heapsort"; Chapter 7, "Quicksort"; Chapter 8, "Sorting in Linear Time" (Section 8.1, lower bounds for sorting). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, Chapter 2 "Sorting": [2.1 Elementary Sorts](https://algs4.cs.princeton.edu/21elementary/), [2.3 Quicksort](https://algs4.cs.princeton.edu/23quicksort/), [2.4 Priority Queues](https://algs4.cs.princeton.edu/24pq/) (heapsort), [2.5 Sorting Applications](https://algs4.cs.princeton.edu/25applications/) (stability, comparators).
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 3, *Sorting and Searching*, 2nd edition (Addison-Wesley, 1998), Chapter 5.
+- C. A. R. Hoare, "Quicksort", *The Computer Journal* 5(1), 1962; J. W. J. Williams, "Algorithm 232: Heapsort", *Communications of the ACM* 7(6), 1964.
+- OpenJDK source: [`Arrays.java`](https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/Arrays.java), [`DualPivotQuicksort.java`](https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/DualPivotQuicksort.java), [`TimSort.java`](https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/TimSort.java); Vladimir Yaroslavskiy's 2009 proposal on the core-libs-dev list: <https://mail.openjdk.org/pipermail/core-libs-dev/2009-September/002692.html>; Tim Peters, `listsort.txt`, the description of TimSort in CPython.
+- Edsger W. Dijkstra, *A Discipline of Programming* (Prentice-Hall, 1976), which poses the Dutch national flag problem.
+- LeetCode: [75. Sort Colors](https://leetcode.com/problems/sort-colors/), [56. Merge Intervals](https://leetcode.com/problems/merge-intervals/), [179. Largest Number](https://leetcode.com/problems/largest-number/), [1665. Minimum Initial Energy to Finish Tasks](https://leetcode.com/problems/minimum-initial-energy-to-finish-tasks/).
+
+[← Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd) · [Merge Sort →](../merge-sort/index.qmd)

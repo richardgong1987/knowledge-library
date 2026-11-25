@@ -1,92 +1,461 @@
 ---
 title: "Prefix Sum"
-description: "CLRS-inspired worked lesson on Prefix Sum: numerical substitution, invariants, original code and complexity."
+description: "From a piggy-bank diary to rectangle sums: the prefix array P and the range formula P[r+1] − P[l], 2D prefix sums by inclusion–exclusion, difference arrays for range updates, which operations work (sum, XOR) and which do not (max), and hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+A prefix sum answers "what is the total from position $l$ to position $r$?" in one subtraction, after one pass of preparation. It is the simplest range-query structure there is, and the idea behind it (store running totals, subtract two of them) returns in 2D grids, in range updates, and inside hash-map and ordered-set tricks. This lesson builds it from the slow loop and ends with the hardest rectangle problem LeetCode has on the topic.
 
-**LeetCode 560 — Subarray Sum Equals K.**
+All code is in [`PrefixSumLab.java`](PrefixSumLab.java). Run it from this folder with `java PrefixSumLab.java`; it checks every number on this page and prints `OK`.
 
-Store the running sum before each position. The sum between two positions is the difference of their prefixes. Count how many earlier prefixes equal the one needed for target k.
+## The problem
 
-## First try the obvious approach
+A shop records its sales for six days: `a = [3, 1, 4, 1, 5, 9]` (days 0 to 5). The manager keeps asking questions such as "how much did we sell from day 2 to day 4?" The answer to that one is $4 + 1 + 5 = 10$.
 
-Try every start/end and sum all entries repeatedly. With negative numbers, a standard nonnegative sliding-window rule can miss valid intervals.
+- Adding the range up for each question costs up to $n$ additions. For $n = 100{,}000$ days and $q = 100{,}000$ questions that is up to $10^{10}$ additions.
+- We want to prepare once in $n$ steps and then answer every question in **one subtraction**: about $n + q = 200{,}000$ steps in total.
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+## Explain it like I'm ten
 
-## Mathematical relationship, explained immediately
+::: {.callout-tip}
+You keep a piggy-bank diary. Every evening you write down **how much is in the bank in total**, not just what you added that day.
+
+| Evening | Before day 0 | 0 | 1 | 2 | 3 | 4 | 5 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Added that day | | 3 | 1 | 4 | 1 | 5 | 9 |
+| Total in the bank | 0 | 3 | 4 | 8 | 9 | 14 | 23 |
+
+How much did you save from day 2 to day 4? You don't add the days up again. You read the total at the end of day 4, which is 14, and subtract the total at the end of day 1, which is 4. The answer is $14 - 4 = 10$. Two lookups and one subtraction, whatever the length of the range.
+
+It is the same trick as the distance markers on a motorway: the distance from marker 120 to marker 145 is $145 - 120 = 25$ km, and nobody drives it to find out.
+
+Jon Bentley's *Programming Pearls* uses exactly this "cumulative array" in its column on the maximum-sum subvector: once the running totals are stored, the sum of any stretch is one subtraction.
+:::
+
+## From simple to advanced
+
+### Level 1: add the range every time
+
+The definition, written straight down:
 
 $$
-\operatorname{sum}(l,r)=P_r-P_l
+\operatorname{sum}(l, r) = \sum_{i=l}^{r} a_i = a_l + a_{l+1} + \dots + a_r
 $$
 
-**Symbol by symbol:** P_j is the sum of entries with indices 0 through j−1, so P₀=0; l is inclusive left index and r exclusive right index.
+where:
 
-**Calculate with real numbers:** For [2,−1,4], prefixes are P=[0,2,1,5]. The sum of positions [1,3) is P₃−P₁=5−2=3, matching (−1)+4=3. For target 3, any earlier prefix equal to current prefix−3 forms a match.
+- $a_i$ is the value at position $i$, counting from 0;
+- $l$ and $r$ are the first and last positions of the range, both included, with $l \le r$;
+- $\sum_{i=l}^{r}$ means "add the following term for $i = l, l+1, \dots, r$".
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+Example: $\operatorname{sum}(2, 4) = a_2 + a_3 + a_4 = 4 + 1 + 5 = 10$.
 
-## How the algorithm emerges
-
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
-
-**Correctness argument:** The same first-l elements appear in both prefix sums and cancel when subtracted, leaving exactly a_l+...+a_(r−1). A frequency map counts ALL matching starting positions, including repeated prefixes.
-
-## Code, but only after the reasoning
-
-Use the tested [algorithm lab](../examples/patterns.mjs), which exports `subarraySumEqualsK`:
-
-~~~js
-import { subarraySumEqualsK } from '../examples/patterns.mjs';
-
-console.log(subarraySumEqualsK([1,-1,0],0));
-~~~
-
-Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function subarraySumEqualsK(a, k) {
-  let prefix = 0, answer = 0;
-  const freq = new Map([[0, 1]]);
-  for (const x of a) {
-    prefix += x;
-    answer += freq.get(prefix - k) ?? 0;
-    freq.set(prefix, (freq.get(prefix) ?? 0) + 1);
-  }
-  return answer;
+```java
+static int rangeSumBrute(int[] a, int l, int r) {
+    int sum = 0;
+    for (int i = l; i <= r; i++) sum += a[i];
+    return sum;
 }
-~~~
+```
 
-**Walk through the important lines:**
+Each question costs $r - l + 1$ additions, up to $n$. Fine for one question, too slow for a hundred thousand.
 
-1. `prefix` is the sum up to the current index.
-2. If the target sum is `k`, every earlier prefix with value `prefix - k` creates one matching subarray.
-3. The map stores the **frequency** of earlier prefixes, not merely whether the value exists.
-4. Initialise frequency of zero to one, representing the empty prefix.
-5. For `[1,-1,0]` and target zero, the method counts **three** subarrays.
+### Level 2: the prefix array and one subtraction
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+Store the running totals once. Define the **prefix array** $P$ with one more slot than $a$:
 
-## Count the work rigorously
+$$
+P_0 = 0, \qquad P_{i+1} = P_i + a_i, \qquad \text{so} \qquad P_j = \sum_{i=0}^{j-1} a_i
+$$
 
-**Time and memory:** O(n) expected counting with a hash map and O(n) space, where n is number of elements; each prefix is processed once.
+where:
 
-**The misleading shortcut:** Initialise prefix frequency with {0:1}; otherwise subarrays starting at index zero disappear. When negative values are possible, shrinking a sum window may increase the sum, invalidating common pointer heuristics.
+- $P_j$ is the sum of the **first $j$ values**, positions $0$ to $j - 1$;
+- $P_0 = 0$ is the empty prefix: the sum of no values;
+- $P$ has $n + 1$ entries, $P_0$ to $P_n$, for an array of $n$ values.
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+Example: for `a = [3, 1, 4, 1, 5, 9]`,
 
-## Practice and source
+$$
+P = [0,\; 3,\; 3+1 = 4,\; 4+4 = 8,\; 8+1 = 9,\; 9+5 = 14,\; 14+9 = 23]
+$$
 
-- **Textbook relationship:** CLRS Chapter 2 (reuse of partial computations) and Chapter 11 (hash tables)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 560 — Subarray Sum Equals K. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+A range is "the first $r + 1$ values" minus "the first $l$ values":
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+$$
+\operatorname{sum}(l, r) = P_{r+1} - P_l
+$$
+
+where:
+
+- $P_{r+1}$ covers positions $0$ to $r$;
+- $P_l$ covers positions $0$ to $l - 1$, exactly the part before the range;
+- subtracting removes that part and leaves positions $l$ to $r$.
+
+Example: $\operatorname{sum}(2, 4) = P_5 - P_2 = 14 - 4 = 10$, the same as Level 1. The whole array is $\operatorname{sum}(0, 5) = P_6 - P_0 = 23 - 0 = 23$.
+
+```java
+static int[] prefixSums(int[] a) {
+    int[] prefix = new int[a.length + 1];             // prefix[0] = 0 is the empty prefix
+    for (int i = 0; i < a.length; i++) prefix[i + 1] = prefix[i] + a[i];
+    return prefix;
+}
+```
+
+**Why the extra slot?** Without $P_0 = 0$, a range that starts at position 0 would need $P_{-1}$, and every query would need an `if`. The shifted index ($P_{j}$ holds $j$ values) removes that special case. Remember it as: *$P$ is one longer than $a$, and a range $[l, r]$ uses $P_{r+1}$ and $P_l$.*
+
+### Level 3: two dimensions, by inclusion–exclusion
+
+For a grid, let $S_{i,j}$ be the sum of the top-left rectangle of $i$ rows and $j$ columns. Build it from three neighbours:
+
+$$
+S_{i+1,\,j+1} = S_{i,\,j+1} + S_{i+1,\,j} - S_{i,\,j} + g_{i,\,j}
+$$
+
+where:
+
+- $g_{i,j}$ is the grid value in row $i$, column $j$ (both from 0);
+- $S_{i,j}$ is the sum of rows $0$ to $i - 1$ and columns $0$ to $j - 1$, with $S_{0,j} = S_{i,0} = 0$;
+- $S_{i,j+1}$ (the block above) and $S_{i+1,j}$ (the block to the left) both contain $S_{i,j}$ (the block above-left), so it is counted twice and subtracted once. That is *inclusion–exclusion*.
+
+Example: the grid
+
+```text
+1 2 3
+4 5 6
+7 8 9
+```
+
+gives the table $S$ (with the extra row and column of zeros):
+
+| | col 0 | col 1 | col 2 | col 3 |
+| --- | --- | --- | --- | --- |
+| row 0 | 0 | 0 | 0 | 0 |
+| row 1 | 0 | 1 | 3 | 6 |
+| row 2 | 0 | 5 | 12 | 21 |
+| row 3 | 0 | 12 | 27 | 45 |
+
+For instance $S_{2,2} = S_{1,2} + S_{2,1} - S_{1,1} + g_{1,1} = 3 + 5 - 1 + 5 = 12$, which is $1 + 2 + 4 + 5$.
+
+A rectangle from row $r_1$ to $r_2$ and column $c_1$ to $c_2$ is the big top-left block minus the strip above, minus the strip to the left, plus the corner that was removed twice:
+
+$$
+\operatorname{sum}(r_1, c_1, r_2, c_2) = S_{r_2+1,\, c_2+1} - S_{r_1,\, c_2+1} - S_{r_2+1,\, c_1} + S_{r_1,\, c_1}
+$$
+
+where:
+
+- $(r_1, c_1)$ is the top-left cell and $(r_2, c_2)$ the bottom-right cell, both included;
+- $S_{r_1, c_2+1}$ is everything above the rectangle, and $S_{r_2+1, c_1}$ everything to its left;
+- $S_{r_1, c_1}$ is the corner block above-left, inside both strips, so it is added back once.
+
+Example: rows 1 to 2 and columns 1 to 2 hold $5 + 6 + 8 + 9 = 28$. The formula gives $S_{3,3} - S_{1,3} - S_{3,1} + S_{1,1} = 45 - 6 - 12 + 1 = 28$.
+
+```java
+static int[][] prefixSums2D(int[][] grid) {
+    int rows = grid.length, cols = grid[0].length;
+    int[][] s = new int[rows + 1][cols + 1];          // row 0 and column 0 stay 0
+    for (int i = 0; i < rows; i++) {
+        for (int j = 0; j < cols; j++) {
+            s[i + 1][j + 1] = s[i][j + 1] + s[i + 1][j] - s[i][j] + grid[i][j];
+        }
+    }
+    return s;
+}
+```
+
+### Level 4: difference arrays for range updates
+
+Now flip the problem: instead of many **questions** about ranges, we get many **updates** "add $v$ to every position from $l$ to $r$", and want the final array. Doing each update directly costs up to $n$ steps. Instead, record only where the value **changes**:
+
+$$
+D_l \mathrel{+}= v, \qquad D_{r+1} \mathrel{-}= v, \qquad a_i = \sum_{t=0}^{i} D_t
+$$
+
+where:
+
+- $D$ is the *difference array*, of length $n + 1$, starting at all zeros;
+- $\mathrel{+}=$ means "increase by", as in Java;
+- "$+v$ at $l$" says "from $l$ onwards, everything is $v$ higher", and "$-v$ at $r + 1$" cancels it after the range;
+- a prefix sum of $D$ rebuilds the final values.
+
+Example: $n = 6$ zeros, then "add 2 to positions 1 to 3" and "add 3 to positions 2 to 5".
+
+- First update: $D_1 = 2$ and $D_4 = -2$.
+- Second update: $D_2 = 3$ and $D_6 = -3$ (the extra slot).
+- So $D = [0, 2, 3, 0, -2, 0, -3]$, and its running sums are $a = [0,\; 2,\; 2+3 = 5,\; 5,\; 5-2 = 3,\; 3]$.
+
+Check position 2: it is inside both ranges, so $2 + 3 = 5$. Position 4 is inside only the second: 3.
+
+```java
+static int[] applyRangeAdds(int n, int[][] updates) {
+    int[] diff = new int[n + 1];                      // one extra slot for r + 1 = n
+    for (int[] u : updates) {
+        int l = u[0], r = u[1], v = u[2];
+        diff[l] += v;                                 // from l onwards, everything is v higher
+        diff[r + 1] -= v;                             // from r + 1 onwards, cancel it again
+    }
+    int[] a = new int[n];
+    int running = 0;
+    for (int i = 0; i < n; i++) {
+        running += diff[i];                           // a prefix sum of diff rebuilds the array
+        a[i] = running;
+    }
+    return a;
+}
+```
+
+$u$ updates cost $O(u + n)$ instead of $O(u \cdot n)$. Prefix sum and difference are **inverse** operations, like adding up and taking away. The same $+v$, $-v$ bookkeeping drives the [Sweep Line](../sweep-line/index.qmd) lesson. The 2D version marks four corners: $+v$ at $(r_1, c_1)$, $-v$ at $(r_1, c_2+1)$ and $(r_2+1, c_1)$, and $+v$ at $(r_2+1, c_2+1)$.
+
+### Level 5: which operations work, and which do not
+
+The trick needs two things from the operation $\oplus$: it must be **associative** (so running totals make sense), and it must have an **inverse** (so we can "take away" the part before the range):
+
+$$
+\operatorname{range}(l, r) = P_{r+1} \ominus P_l \quad\text{needs}\quad (x \oplus y) \ominus x = y
+$$
+
+where:
+
+- $\oplus$ is the combining operation and $P_j = a_0 \oplus a_1 \oplus \dots \oplus a_{j-1}$;
+- $\ominus$ is its inverse, the operation that undoes $\oplus$;
+- the condition says that combining $x$ with $y$ and then removing $x$ leaves $y$.
+
+Example with XOR, written $\oplus$, which is its own inverse because $x \oplus x = 0$. For `a = [3, 1, 4, 1, 5, 9]` the prefix XORs are $X = [0, 3, 2, 6, 7, 2, 11]$. The XOR of positions 1 to 3 is $X_4 \oplus X_1 = 7 \oplus 3 = 4$, and indeed $1 \oplus 4 \oplus 1 = 4$.
+
+| Operation | Inverse | Prefix trick works? |
+| --- | --- | --- |
+| sum $+$ | subtraction | yes |
+| XOR $\oplus$ | XOR itself | yes |
+| count of matches | subtraction | yes (a prefix sum of 0s and 1s) |
+| product $\times$ | division | only if no value is 0 |
+| max, min | none | **no** |
+
+Max fails because nothing can "un-max". For `a = [9, 1, 2]` the prefix maxima are $[9, 9, 9]$, yet the maximum of positions 1 to 2 is 2: no operation on 9 and 9 can produce 2. Range maximum needs a [Segment Tree](../segment-tree/index.qmd) or a sparse table, and so do range sums when values **change** between queries.
+
+## Why it works and what it costs
+
+**Correctness by telescoping.** By definition $a_i = P_{i+1} - P_i$. Adding this for $i = l, \dots, r$, every middle term cancels with its neighbour:
+
+$$
+\sum_{i=l}^{r} (P_{i+1} - P_i) = (P_{l+1} - P_l) + (P_{l+2} - P_{l+1}) + \dots + (P_{r+1} - P_r) = P_{r+1} - P_l
+$$
+
+where each $P_i$ inside the range appears once with $+$ and once with $-$, so only the two ends survive. Example: for $l = 2$, $r = 4$, the sum is $(8 - 4) + (9 - 8) + (14 - 9) = 4 + 1 + 5 = 10 = 14 - 4$. The difference array is the same identity read backwards: $D$ holds the differences, and its prefix sums rebuild the values.
+
+**Costs**, for $n$ values, $q$ questions and $u$ range updates:
+
+| Method | Preparation | Each question | Each update | Space |
+| --- | --- | --- | --- | --- |
+| Level 1, loop | none | $O(n)$ | $O(1)$ point update | $O(1)$ |
+| Level 2, prefix array | $O(n)$ | $O(1)$ | $O(n)$, rebuild | $O(n)$ |
+| Level 3, 2D prefix | $O(R \cdot C)$ | $O(1)$ | $O(R \cdot C)$ | $O(R \cdot C)$ |
+| Level 4, difference array | $O(n)$ at the end | read after rebuilding | $O(1)$ range update | $O(n)$ |
+
+Example: $n = q = 10^5$. The loop needs up to $10^{10}$ additions; the prefix array needs $10^5$ to build and $10^5$ subtractions, $2 \times 10^5$ steps in total. When values change **and** questions keep coming, neither is enough: use a [Binary Indexed Tree](../binary-indexed-tree/index.qmd) or a segment tree, $O(\log n)$ for both.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Making $P$ the same length as $a$ | Ranges starting at 0 need a special case, or are wrong | Use length $n + 1$ with $P_0 = 0$; then $\operatorname{sum}(l, r) = P_{r+1} - P_l$ |
+| Writing $P_r - P_l$ | Off by one: the last value is missing | $P_{r+1}$ includes position $r$; check with $l = r$ |
+| Forgetting the corner in 2D | Sums too small by the top-left block | Add $S_{r_1, c_1}$ back once |
+| Integer overflow | Negative totals on big inputs | Use `long` when $n \cdot \max \lvert a_i \rvert$ can pass about $2.1 \times 10^9$ |
+| Difference array of length $n$ | `ArrayIndexOutOfBoundsException` at $r + 1 = n$ | Allocate $n + 1$ slots |
+| Using prefix tricks for max or min | Wrong answers, because max has no inverse | A segment tree or a sparse table |
+| Forgetting the empty prefix in a hash map of prefixes | Subarrays that start at position 0 are missed | Seed the map with prefix 0 at position 0 |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 303: Range Sum Query - Immutable (Easy)
+
+**Problem.** Build an object from `nums` that answers `sumRange(left, right)` many times. For `nums = [-2, 0, 3, -5, 2, -1]`: `sumRange(0, 2) = 1`, `sumRange(2, 5) = -1`, `sumRange(0, 5) = -3`.
+
+**Math first.** The array never changes, so Level 2 applies directly:
+
+$$
+\operatorname{sumRange}(l, r) = P_{r+1} - P_l, \qquad P = [0, -2, -2, 1, -4, -2, -3]
+$$
+
+where:
+
+- $P$ is the prefix array of `nums`, built once in the constructor;
+- $l$ and $r$ are `left` and `right`, both included.
+
+Example: $\operatorname{sumRange}(2, 5) = P_6 - P_2 = -3 - (-2) = -1$, which is $3 - 5 + 2 - 1$. And $\operatorname{sumRange}(0, 2) = P_3 - P_0 = 1 - 0 = 1$.
+
+**Idea.** Build $P$ in the constructor; answer each call with one subtraction.
+
+```java
+static final class NumArray {
+    private final int[] prefix;
+
+    NumArray(int[] nums) {
+        prefix = prefixSums(nums);
+    }
+
+    int sumRange(int left, int right) {
+        return prefix[right + 1] - prefix[left];
+    }
+}
+```
+
+**Answer.** $1$, $-1$ and $-3$. Building costs $O(n)$ and each call $O(1)$, with $O(n)$ space. For the limit of $10^4$ calls on $10^4$ numbers that is about $2 \times 10^4$ steps instead of up to $10^8$.
+
+### 2. LeetCode 304: Range Sum Query 2D - Immutable (Medium)
+
+**Problem.** The same, for rectangles of a fixed matrix: `sumRegion(row1, col1, row2, col2)`. For the matrix below, `sumRegion(2, 1, 4, 3) = 8`, `sumRegion(1, 1, 2, 2) = 11` and `sumRegion(1, 2, 2, 4) = 12`.
+
+```text
+3 0 1 4 2
+5 6 3 2 1
+1 2 0 1 5
+4 1 0 1 7
+1 0 3 0 5
+```
+
+**Math first.** Build $S$ once, then use the four-term formula from Level 3:
+
+$$
+\operatorname{sumRegion}(r_1, c_1, r_2, c_2) = S_{r_2+1,\, c_2+1} - S_{r_1,\, c_2+1} - S_{r_2+1,\, c_1} + S_{r_1,\, c_1}
+$$
+
+where:
+
+- $S_{i,j}$ is the sum of the top-left block of $i$ rows and $j$ columns;
+- the two middle terms remove the strips above and to the left, and the last term adds back their overlap.
+
+Example: for `sumRegion(1, 1, 2, 2)` the needed entries are $S_{3,3} = 21$, $S_{1,3} = 4$, $S_{3,1} = 9$ and $S_{1,1} = 3$. So the sum is $21 - 4 - 9 + 3 = 11$, which is the block $6 + 3 + 2 + 0$.
+
+**Idea.** The constructor builds $S$ with `prefixSums2D`; each query reads four numbers.
+
+```java
+static final class NumMatrix {
+    private final int[][] s;
+
+    NumMatrix(int[][] matrix) {
+        s = prefixSums2D(matrix);
+    }
+
+    int sumRegion(int row1, int col1, int row2, int col2) {
+        return s[row2 + 1][col2 + 1] - s[row1][col2 + 1] - s[row2 + 1][col1] + s[row1][col1];
+    }
+}
+```
+
+**Answer.** $8$, $11$ and $12$. Building costs $O(R \cdot C)$, here $5 \times 5 = 25$ cells; each query is 4 lookups and 3 additions, $O(1)$. A loop over the rectangle would cost up to $R \cdot C$ per query.
+
+### 3. LeetCode 525: Contiguous Array (Medium)
+
+**Problem.** In an array of 0s and 1s, return the length of the longest subarray with as many 0s as 1s. For `[0, 1, 1, 1, 1, 1, 0, 0, 0]` the answer is 6, from `[1, 1, 1, 0, 0, 0]`.
+
+**Math first.** Count a 1 as $+1$ and a 0 as $-1$. "Equal numbers" becomes "the sum is 0", and a zero-sum range is two **equal** prefixes:
+
+$$
+P_j - P_i = 0 \iff P_i = P_j, \qquad \text{answer} = \max_j \bigl(j - \operatorname{first}(P_j)\bigr)
+$$
+
+where:
+
+- $P_j$ is the sum of the first $j$ values after the $\pm 1$ change, with $P_0 = 0$;
+- the subarray from position $i$ to $j - 1$ has length $j - i$;
+- $\operatorname{first}(v)$ is the smallest index where the prefix value $v$ appeared, because the earliest start gives the longest subarray.
+
+Example: the values become $[-1, 1, 1, 1, 1, 1, -1, -1, -1]$, so $P = [0, -1, 0, 1, 2, 3, 4, 3, 2, 1]$ for $j = 0, \dots, 9$. The first appearances are $0 \to 0$, $-1 \to 1$, $1 \to 3$, $2 \to 4$, $3 \to 5$, $4 \to 6$.
+
+- $j = 2$: $P_2 = 0$, first at 0, length $2 - 0 = 2$.
+- $j = 7$: $P_7 = 3$, first at 5, length 2.
+- $j = 8$: $P_8 = 2$, first at 4, length 4.
+- $j = 9$: $P_9 = 1$, first at 3, length $9 - 3 = \mathbf{6}$: positions 3 to 8.
+
+**Idea.** Walk once, keeping a hash map from prefix value to the **first** index where it appeared, seeded with $0 \to 0$ for the empty prefix. Never overwrite an entry, because a later index would only shorten the answer.
+
+```java
+static int findMaxLength(int[] nums) {
+    Map<Integer, Integer> firstSeen = new HashMap<>(Map.of(0, 0)); // prefix value -> first index where it occurred
+    int prefix = 0, best = 0;
+    for (int j = 1; j <= nums.length; j++) {
+        prefix += nums[j - 1] == 1 ? 1 : -1;
+        if (firstSeen.containsKey(prefix)) best = Math.max(best, j - firstSeen.get(prefix));
+        else firstSeen.put(prefix, j);
+    }
+    return best;
+}
+```
+
+**Answer.** 6 for the example, 2 for `[0, 1, 0]`, 0 for `[0, 0]`. One pass: $O(n)$ time and $O(n)$ space, because the prefix takes at most $2n + 1$ different values. Checking every subarray would be $\frac{n(n+1)}{2} \approx 5 \times 10^9$ for $n = 10^5$.
+
+### 4. LeetCode 363: Max Sum of Rectangle No Larger Than K (Hard)
+
+**Problem.** Return the largest sum of a rectangle in the matrix that is **at most** $k$. For `[[1, 0, 1], [0, -2, 3]]` and $k = 2$ the answer is 2, from the rectangle `[[0, 1], [-2, 3]]`.
+
+**Math first.** Fix a band of rows, top $t$ to bottom $b$. Squash it into one row of column sums $c_j$; any rectangle in the band is a range of columns. With $Q$ the prefix sums of $c$:
+
+$$
+Q_r - Q_l \le k \iff Q_l \ge Q_r - k, \qquad \text{best}(r) = Q_r - \min \lbrace Q_l : l < r,\; Q_l \ge Q_r - k \rbrace
+$$
+
+where:
+
+- $c_j$ is the sum of column $j$ over rows $t$ to $b$, and $Q_0 = 0$, $Q_{j+1} = Q_j + c_j$;
+- the rectangle covers columns $l$ to $r - 1$ and its sum is $Q_r - Q_l$;
+- to make $Q_r - Q_l$ as large as possible while still $\le k$, we want the **smallest** earlier $Q_l$ that is at least $Q_r - k$. An ordered set answers that with `ceiling`.
+
+Example: the band of rows 0 to 1 gives $c = [1 + 0,\; 0 - 2,\; 1 + 3] = [1, -2, 4]$ and $Q = [0, 1, -1, 3]$. For $r = 3$: $Q_3 - k = 3 - 2 = 1$, and the earlier prefixes are $\lbrace 0, 1, -1 \rbrace$. The smallest one $\ge 1$ is $Q_1 = 1$, so $\text{best} = 3 - 1 = 2$: columns 1 to 2, which is $-2 + 4 = 2$. The other bands score $2$ (row 0 alone, $1 + 0 + 1$) and $1$ (row 1 alone), so the answer is $\max(2, 2, 1) = 2$.
+
+**Idea.** Two nested loops choose the band and update the column sums incrementally. For each band, scan the columns with a `TreeSet` of prefix sums seeded with 0, and ask `ceiling(prefix - k)`.
+
+```java
+static int maxSumSubmatrix(int[][] matrix, int k) {
+    int rows = matrix.length, cols = matrix[0].length, best = Integer.MIN_VALUE;
+    for (int top = 0; top < rows; top++) {
+        int[] colSum = new int[cols];                 // column sums of rows top..bottom
+        for (int bottom = top; bottom < rows; bottom++) {
+            for (int c = 0; c < cols; c++) colSum[c] += matrix[bottom][c];
+            best = Math.max(best, maxSubarrayAtMost(colSum, k));
+        }
+    }
+    return best;
+}
+
+static int maxSubarrayAtMost(int[] a, int k) {
+    TreeSet<Integer> seen = new TreeSet<>(List.of(0)); // prefix sums so far, starting with the empty prefix
+    int prefix = 0, best = Integer.MIN_VALUE;
+    for (int x : a) {
+        prefix += x;
+        Integer smallest = seen.ceiling(prefix - k);  // the smallest earlier prefix that is >= prefix - k
+        if (smallest != null) best = Math.max(best, prefix - smallest);
+        seen.add(prefix);
+    }
+    return best;
+}
+```
+
+**Answer.** 2 for the example, and 3 for `[[2, 2, -1]]` with $k = 3$. There are $\frac{R(R+1)}{2}$ bands, each scanned in $O(C \log C)$, so the time is $O(R^2 \cdot C \log C)$ and the space $O(C)$. For the limit $R = C = 100$: $5{,}050$ bands times $100$ columns times about $7$ for $\log_2 100$, roughly $3.5 \times 10^6$ steps. If there are many more rows than columns, swap the roles so that the squared factor is the smaller side. Kadane's scan finds the largest sum, but it cannot respect the cap "at most $k$", which is why the ordered set is needed.
+
+## Mathematical Abstraction
+
+A prefix sum turns every range question into the difference of two stored totals, and the difference array is its inverse:
+
+$$
+P_j = \sum_{i=0}^{j-1} a_i, \qquad \sum_{i=l}^{r} a_i = P_{r+1} - P_l, \qquad a_i = \sum_{t=0}^{i} D_t \;\text{ with }\; D_t = a_t - a_{t-1}
+$$
+
+where:
+
+- $a$ is the array, indexed from 0, and $P$ its prefix array of length $n + 1$ with $P_0 = 0$;
+- $l \le r$ are the ends of a range, both included;
+- $D$ is the difference array, with $a_{-1} = 0$, so adding $v$ to $a_l, \dots, a_r$ changes only $D_l$ and $D_{r+1}$.
+
+Example: for `a = [3, 1, 4, 1, 5, 9]`, $P = [0, 3, 4, 8, 9, 14, 23]$ and $\operatorname{sum}(2, 4) = 14 - 4 = 10$. In two dimensions the same idea needs four terms, $45 - 6 - 12 + 1 = 28$, and it works for any operation that can be undone (sum, XOR, counts), but not for max or min.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Appendix A, "Summations", §A.1, for sums and the telescoping identity used in the correctness proof. CLRS has no chapter on prefix-sum arrays. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Jon Bentley, *Programming Pearls*, 2nd edition (Addison-Wesley), Column 8, "Algorithm Design Techniques": the maximum-subvector problem and its cumulative array.
+- Antti Laaksonen, *Competitive Programmer's Handbook*, Chapter 9 "Range queries", §9.1 "Static array queries", including two-dimensional prefix sums: <https://cses.fi/book/book.pdf>.
+- LeetCode: [303. Range Sum Query - Immutable](https://leetcode.com/problems/range-sum-query-immutable/), [304. Range Sum Query 2D - Immutable](https://leetcode.com/problems/range-sum-query-2d-immutable/), [525. Contiguous Array](https://leetcode.com/problems/contiguous-array/), [363. Max Sum of Rectangle No Larger Than K](https://leetcode.com/problems/max-sum-of-rectangle-no-larger-than-k/).
+
+[← Monotonic Queue](../monotonic-queue/index.qmd) · [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd) · [Segment Tree →](../segment-tree/index.qmd)

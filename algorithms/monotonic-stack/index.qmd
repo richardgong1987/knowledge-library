@@ -1,91 +1,452 @@
 ---
 title: "Monotonic Stack"
-description: "CLRS-inspired worked lesson on Monotonic Stack: numerical substitution, invariants, original code and complexity."
+description: "From children looking for someone taller to the largest rectangle in a histogram: next greater and next smaller elements, the decreasing-stack invariant, why every index is pushed and popped at most once, circular arrays, and hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+A monotonic stack answers "who is the first bigger (or smaller) value to my right?" for **every** position of an array in one pass. It is an ordinary stack with one house rule: the values on it always go in one direction. This lesson builds it from the slow double loop, proves that it does at most $2n$ stack operations, covers the four directions and circular arrays, and then uses it to find the largest rectangle in a histogram.
 
-**LeetCode 496 — Next Greater Element I.**
+All code is in [`MonotonicStackLab.java`](MonotonicStackLab.java). Run it from this folder with `java MonotonicStackLab.java`; it checks every number on this page and prints `OK`.
 
-A stack contains indices whose next greater value has not yet been found, arranged so their values decrease from bottom to top. A larger newcomer resolves several waiting indices at once.
+## The problem
 
-## First try the obvious approach
+Six bars stand in a row with heights `a = [2, 1, 5, 6, 2, 3]` (positions 0 to 5). For each bar we want its **next greater element**: the position of the first bar to its right that is strictly taller, or $-1$ if there is none.
 
-For every index, scan all values to its right until you find a greater one. Many comparisons are repeated.
+| Position $i$ | 0 | 1 | 2 | 3 | 4 | 5 |
+| --- | --- | --- | --- | --- | --- | --- |
+| Height $a_i$ | 2 | 1 | 5 | 6 | 2 | 3 |
+| Next greater position | 2 | 2 | 3 | $-1$ | 5 | $-1$ |
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+- The obvious method lets every bar look right, one bar at a time. In the worst case (a falling array such as `[6, 5, 4, 3, 2, 1]`) bar $i$ checks all $n - 1 - i$ bars after it, which is $\frac{n(n-1)}{2}$ comparisons: 15 for $n = 6$, and about $5 \times 10^9$ for $n = 100{,}000$.
+- We want each bar to be handled a constant number of times: at most $2n = 12$ stack operations for these six bars.
 
-## Mathematical relationship, explained immediately
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Six children stand in a line, all facing right. Each one wants to know: *who is the first child in front of me who is taller than me?*
+
+A teacher walks along the line from left to right with a pile of name cards. The pile holds the children who are **still waiting** for an answer, newest card on top.
+
+When a new child arrives, the teacher looks at the top card. If that child is shorter than the newcomer, the newcomer is their answer: she tells them and throws the card away. She repeats this until the top card belongs to someone taller, or the pile is empty. Then she puts the newcomer's card on top.
+
+Look at the pile at any moment: the tallest child is at the bottom and the shortest at the top. It can never be the other way round, because a short card sitting on a tall one would have been thrown away when the tall child arrived. That ordering is why the pile is called *monotonic*.
+
+Every card goes onto the pile once and comes off at most once. So for six children the teacher moves at most $2 \times 6 = 12$ cards, however the heights are arranged.
+
+Antti Laaksonen's free *Competitive Programmer's Handbook* (§8.2, "Nearest smaller elements") makes the same counting argument: each element is added to the stack exactly once and removed at most once. CLRS use the same reasoning in their chapter on amortized analysis, where a stack's pops can never outnumber its pushes.
+:::
+
+## From simple to advanced
+
+### Level 1: let every bar look to the right
+
+The plainest method writes the definition straight down:
 
 $$
-a_{s_0}\geq a_{s_1}\geq\cdots\geq a_{s_k}
+\operatorname{next}(i) =
+\begin{cases}
+\min \lbrace j > i : a_j > a_i \rbrace & \text{if such a } j \text{ exists} \\
+-1 & \text{otherwise}
+\end{cases}
 $$
 
-**Symbol by symbol:** s₀ through s_k are the indices currently on the stack from bottom to top; a_s is the array value at that stored index.
+where:
 
-**Calculate with real numbers:** For [2,1,3], push indices of 2 then 1 (values 2≥1). When 3 arrives, it exceeds 1 and 2, so pop both; their next greater value is 3. The last 3 has none to its right, so result is [3,3,−1].
+- $i$ is the position we ask about, and $j$ ranges over the positions to its right;
+- $a_i$ is the height at position $i$;
+- $\min \lbrace \dots \rbrace$ picks the **closest** such $j$, because closer means smaller index.
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+Example: for $i = 0$ ($a_0 = 2$), the positions to the right with a taller bar are $\lbrace 2, 3, 5 \rbrace$ (heights 5, 6 and 3). The smallest is 2, so $\operatorname{next}(0) = 2$. For $i = 3$ ($a_3 = 6$) the set is empty, so $\operatorname{next}(3) = -1$.
 
-## How the algorithm emerges
-
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
-
-**Correctness argument:** An index remains on the stack only until the first strictly greater element arrives; any previously smaller pending element can be settled at once. Each index is pushed and popped at most once.
-
-## Code, but only after the reasoning
-
-Use the tested [algorithm lab](../examples/patterns.mjs), which exports `nextGreater`:
-
-~~~js
-import { nextGreater } from '../examples/patterns.mjs';
-
-console.log(nextGreater([2,1,3]));
-~~~
-
-Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function nextGreater(a) {
-  const out = Array(a.length).fill(-1), stack = [];
-  for (let i = 0; i < a.length; i++) {
-    while (stack.length && a[stack[stack.length - 1]] < a[i])
-      out[stack.pop()] = a[i];
-    stack.push(i);
-  }
-  return out;
+```java
+static int[] nextGreaterBrute(int[] a) {
+    int[] next = new int[a.length];
+    for (int i = 0; i < a.length; i++) {
+        next[i] = -1;
+        for (int j = i + 1; j < a.length; j++) {
+            if (a[j] > a[i]) { next[i] = j; break; }
+        }
+    }
+    return next;
 }
-~~~
+```
 
-**Walk through the important lines:**
+It is correct, but on a falling array it compares $5 + 4 + 3 + 2 + 1 = 15$ pairs for $n = 6$, so it is $O(n^2)$.
 
-1. The stack stores unresolved **indices**, not answers.
-2. A new larger value answers the next-greater question for all smaller waiting values on top of the stack.
-3. Pop while the current value is strictly greater. Equal values must not be treated as next strictly greater.
-4. Each index is pushed once and popped at most once, so nested loops do not imply quadratic time.
-5. `[2,1,3]` returns **[3,3,-1]**.
+### Level 2: a stack of bars still waiting for an answer
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+Turn the question around. Instead of each bar searching forward, let each **new** bar answer the waiting bars behind it. Keep the waiting positions on a stack $s_1, s_2, \dots, s_k$, bottom to top. The rule that keeps it monotonic is
 
-## Count the work rigorously
+$$
+a_{s_1} \ge a_{s_2} \ge \dots \ge a_{s_k}
+$$
 
-**Time and memory:** O(n) total time despite the nested while: every index enters and leaves the stack at most once. O(n) stack space.
+where:
 
-**The misleading shortcut:** Strict versus non-strict comparisons change how equal values are handled. For 'next strictly greater', 3 must NOT pop an earlier 3.
+- $s_1$ is the position at the bottom of the stack and $s_k$ the one on top;
+- $k$ is how many bars are still waiting;
+- the heights never increase from bottom to top, so the top is always the **shortest** waiting bar.
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+When bar $j$ arrives, every waiting bar shorter than $a_j$ sits at the top, so we pop them and record $\operatorname{next}(s) = j$ for each. Then we push $j$, and the rule still holds.
 
-## Practice and source
+Example: the trace on `a = [2, 1, 5, 6, 2, 3]`. The stack column lists positions with their heights in brackets.
 
-- **Textbook relationship:** CLRS Chapter 10 (stacks), combined with an amortised-analysis argument from Chapter 16., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 496 — Next Greater Element I. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+| $j$ | $a_j$ | Popped (answer is $j$) | Stack after pushing $j$ |
+| --- | --- | --- | --- |
+| 0 | 2 | — | 0 (2) |
+| 1 | 1 | — | 0 (2), 1 (1) |
+| 2 | 5 | 1, then 0 | 2 (5) |
+| 3 | 6 | 2 | 3 (6) |
+| 4 | 2 | — | 3 (6), 4 (2) |
+| 5 | 3 | 4 | 3 (6), 5 (3) |
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+Positions 3 and 5 are still waiting at the end, so their answer is $-1$. The result is `[2, 2, 3, -1, 5, -1]`, exactly the table in "The problem".
+
+```java
+static int[] nextGreaterIndex(int[] a) {
+    int[] next = new int[a.length];
+    Arrays.fill(next, -1);                            // -1 = no greater value to the right
+    Deque<Integer> waiting = new ArrayDeque<>();      // indices; their values decrease from bottom to top
+    for (int j = 0; j < a.length; j++) {
+        while (!waiting.isEmpty() && a[waiting.peek()] < a[j]) {
+            next[waiting.pop()] = j;                  // a[j] is the first greater value for that index
+        }
+        waiting.push(j);
+    }
+    return next;
+}
+```
+
+The stack stores **positions**, not heights. A position gives you both the height (`a[i]`) and the distance (`j - i`), and Interview problem 2 needs the distance.
+
+### Level 3: counting the work, at most $2n$ operations
+
+The `while` loop can pop many bars at once (at $j = 2$ it popped two), so one step may be expensive. Count over the whole run instead:
+
+$$
+\text{pushes} + \text{pops} \le n + n = 2n
+$$
+
+where:
+
+- $n$ is the number of bars;
+- every position is pushed **exactly once**, so there are $n$ pushes;
+- a position can only be popped after it was pushed, and is never pushed again, so there are at most $n$ pops.
+
+Example: for our six bars there are 6 pushes and 4 pops (positions 1, 0, 2 and 4), so $6 + 4 = 10 \le 12$. The comparisons follow the same budget: each `while` test either pops (at most $n$ times in total) or fails and ends the loop (once per $j$, so $n$ times). That gives at most $2n = 12$ comparisons, against 15 for Level 1 on a falling array of the same length.
+
+So the stack runs in $O(n)$ time **overall**, even though a single step can cost $O(n)$. This style of counting is called *aggregate* amortized analysis.
+
+### Level 4: the four directions, and equal values
+
+"Next greater" is one of four questions with the same answer pattern:
+
+| Question | Scan direction | Pop while the top is… | Stack values, bottom to top |
+| --- | --- | --- | --- |
+| next greater | left to right | `<` the newcomer | decreasing |
+| next smaller | left to right | `>` the newcomer | increasing |
+| previous greater | left to right | `<=` the newcomer | decreasing |
+| previous smaller | left to right | `>=` the newcomer | increasing |
+
+For the "previous" questions the answer is **whatever is left on top after popping**: the nearest survivor to the left. Scanning from right to left turns a "previous" question into a "next" one, which is how `nextSmallerIndex` below works.
+
+$$
+L_i = \max \lbrace t < i : a_t < a_i \rbrace, \qquad R_i = \min \lbrace t > i : a_t < a_i \rbrace
+$$
+
+where:
+
+- $L_i$ is the nearest position to the **left** of $i$ with a strictly smaller height, or $-1$ if there is none;
+- $R_i$ is the nearest position to the **right** with a strictly smaller height, or $n$ if there is none;
+- the fake positions $-1$ and $n$ act as walls of height 0 just outside the array.
+
+Example: on `a = [2, 1, 5, 6, 2, 3]`, take $i = 2$ ($a_2 = 5$). To the left, position 1 has height $1 < 5$, so $L_2 = 1$. To the right, position 3 has height 6 (not smaller) and position 4 has height $2 < 5$, so $R_2 = 4$. Over all six positions, $L = [-1, -1, 1, 2, 1, 4]$ and $R = [1, 6, 4, 4, 6, 6]$.
+
+```java
+static int[] previousSmallerIndex(int[] a) {
+    int[] left = new int[a.length];
+    Deque<Integer> stack = new ArrayDeque<>();        // values increase from bottom to top
+    for (int i = 0; i < a.length; i++) {
+        while (!stack.isEmpty() && a[stack.peek()] >= a[i]) stack.pop();
+        left[i] = stack.isEmpty() ? -1 : stack.peek();
+        stack.push(i);
+    }
+    return left;
+}
+
+static int[] nextSmallerIndex(int[] a) {
+    int[] right = new int[a.length];
+    Deque<Integer> stack = new ArrayDeque<>();
+    for (int i = a.length - 1; i >= 0; i--) {
+        while (!stack.isEmpty() && a[stack.peek()] >= a[i]) stack.pop();
+        right[i] = stack.isEmpty() ? a.length : stack.peek();
+        stack.push(i);
+    }
+    return right;
+}
+```
+
+**Equal values.** The choice between `<` and `<=` decides what happens to ties. With `a = [2, 2]`, popping on `<` leaves the first 2 waiting (an equal bar is not *greater*), so both answers are $-1$. Popping on `<=` would answer "next greater **or equal**" and give position 1 for position 0. Decide which one the problem wants before you write the comparison.
+
+### Level 5: circular arrays
+
+In a circular array the element after the last one is the first one (LeetCode 503, Next Greater Element II). Walk the array **twice**, using position $j \bmod n$:
+
+$$
+\operatorname{next}_{\circ}(i) = a_{\,j \bmod n} \quad \text{for the smallest } j \in \lbrace i+1, \dots, i+n-1 \rbrace \text{ with } a_{\,j \bmod n} > a_i
+$$
+
+where:
+
+- $n$ is the array length and $j \bmod n$ wraps a position past the end back to the start;
+- $j$ runs at most $n - 1$ steps past $i$, so every other element is seen once;
+- the answer here is the **value** $a_{j \bmod n}$, as LeetCode 503 asks, or $-1$ if nothing is bigger.
+
+Example: `a = [5, 4, 3]`, $n = 3$. For $i = 2$ ($a_2 = 3$): $j = 3$ gives $3 \bmod 3 = 0$ and $a_0 = 5 > 3$, so the answer is 5. For $i = 0$ nothing is bigger than 5, so the answer is $-1$. The full result is `[-1, 5, 5]`.
+
+```java
+static int[] nextGreaterCircular(int[] a) {
+    int n = a.length;
+    int[] next = new int[n];
+    Arrays.fill(next, -1);
+    Deque<Integer> waiting = new ArrayDeque<>();
+    for (int j = 0; j < 2 * n; j++) {
+        while (!waiting.isEmpty() && a[waiting.peek()] < a[j % n]) next[waiting.pop()] = a[j % n];
+        if (j < n) waiting.push(j);                   // the second lap only answers, it never waits
+    }
+    return next;
+}
+```
+
+The second lap pushes nothing, so the work is still at most $n$ pushes, $n$ pops and $2n$ loop steps: $O(n)$.
+
+## Why it works and what it costs
+
+**The invariant.** *Before position $j$ is processed, the stack holds exactly the positions $i < j$ whose next greater element is not yet known, and their heights do not increase from bottom to top.*
+
+- *Initially* no position has been seen and the stack is empty, so it holds.
+- *Processing $j$ maintains it.* Every waiting position $s$ with $a_s < a_j$ has no greater bar between $s$ and $j$ (otherwise that bar would already have popped it), so $j$ is truly its **first** greater bar. Because the heights rise towards the bottom, all such positions are at the top, and the `while` loop pops exactly them. What remains has heights $\ge a_j$, so pushing $j$ keeps the order.
+- *At the end* the positions still on the stack never met a greater bar, so $-1$ is correct for them.
+
+**Costs**, for $n$ elements:
+
+| Method | Time | Extra space | Comparisons for $n = 6$, falling array |
+| --- | --- | --- | --- |
+| Level 1, look right from every bar | $O(n^2)$ | $O(1)$ | up to 15 |
+| Level 2, monotonic stack | $O(n)$ | $O(n)$ stack | at most 12 |
+| Level 5, circular | $O(n)$ | $O(n)$ | at most $2n + n = 18$ |
+
+The stack can hold all $n$ positions at once (on a falling array nothing is ever popped), so the extra space is $O(n)$ in the worst case.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Pushing values instead of positions | You cannot compute distances (LeetCode 739) or widths (LeetCode 84) | Push indices and read values through `a[index]` |
+| `<` and `<=` swapped | Wrong answers only when values repeat, such as `[2, 2]` | Decide whether ties count as "greater", then test the case with duplicates |
+| Forgetting the bars left on the stack | Their answers stay at the default `0` instead of `-1` | Fill the answer array with the "none" value first |
+| Using `java.util.Stack` | Works, but it is a synchronized legacy class | `ArrayDeque` with `push`, `pop`, `peek` |
+| Circular array walked only once | The last elements never see the first ones | Loop to `2 * n`, use `j % n`, and push only on the first lap |
+| Calling it $O(n^2)$ because of the inner `while` | Rejecting a correct linear solution | Count pushes and pops over the whole run: at most $2n$ |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 496: Next Greater Element I (Easy)
+
+**Problem.** `nums1` is a subset of `nums2`, and all values are distinct. For each value in `nums1`, return the first greater value to its right **in `nums2`**, or $-1$. For `nums1 = [4, 1, 2]` and `nums2 = [1, 3, 4, 2]` the answer is `[-1, 3, -1]`.
+
+**Math first.** Let $p(x)$ be the position of value $x$ in `nums2`, written $b$. Then
+
+$$
+\operatorname{answer}(x) =
+\begin{cases}
+b_{\operatorname{next}(p(x))} & \text{if } \operatorname{next}(p(x)) \ne -1 \\
+-1 & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $b$ is the array `nums2` and $\operatorname{next}$ is the next-greater position from Level 2, computed on $b$;
+- $p(x)$ is well defined because the values are distinct.
+
+Example: $b = [1, 3, 4, 2]$ gives $\operatorname{next} = [1, 2, -1, -1]$. For $x = 1$: $p(1) = 0$, $\operatorname{next}(0) = 1$, so the answer is $b_1 = 3$. For $x = 4$: $p(4) = 2$, $\operatorname{next}(2) = -1$, so the answer is $-1$. For $x = 2$: $p(2) = 3$, $\operatorname{next}(3) = -1$, so $-1$.
+
+**Idea.** Run the stack once over `nums2`, store "value → next greater value" in a hash map, then look up each value of `nums1`.
+
+```java
+static int[] nextGreaterElement(int[] nums1, int[] nums2) {
+    int[] next = nextGreaterIndex(nums2);
+    Map<Integer, Integer> answerFor = new HashMap<>();
+    for (int i = 0; i < nums2.length; i++) answerFor.put(nums2[i], next[i] == -1 ? -1 : nums2[next[i]]);
+    int[] answer = new int[nums1.length];
+    for (int i = 0; i < nums1.length; i++) answer[i] = answerFor.get(nums1[i]);
+    return answer;
+}
+```
+
+**Answer.** `[-1, 3, -1]` for the example, and `[3, -1]` for `nums1 = [2, 4]`, `nums2 = [1, 2, 3, 4]`. With $m$ = `nums1.length` and $n$ = `nums2.length`, the time is $O(n + m)$ instead of $O(m \cdot n)$, and the space is $O(n)$. For $n = m = 1{,}000$ that is at most 2,000 stack operations instead of up to $1{,}000 \times 1{,}000 = 10^6$ steps.
+
+### 2. LeetCode 739: Daily Temperatures (Medium)
+
+**Problem.** For each day, return how many days you wait for a warmer temperature, or 0 if it never comes. For `[73, 74, 75, 71, 69, 72, 76, 73]` the answer is `[1, 1, 4, 2, 1, 1, 0, 0]`.
+
+**Math first.** The wait is the distance to the next greater position:
+
+$$
+w_i =
+\begin{cases}
+\operatorname{next}(i) - i & \text{if } \operatorname{next}(i) \ne -1 \\
+0 & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $w_i$ is the number of days to wait after day $i$;
+- $\operatorname{next}(i)$ is the first later day that is strictly warmer, from Level 2.
+
+Example: day 2 is $75$. Days 3, 4 and 5 are $71, 69, 72$, all colder, and day 6 is $76 > 75$. So $\operatorname{next}(2) = 6$ and $w_2 = 6 - 2 = 4$. Day 6 ($76$) is never beaten, so $w_6 = 0$.
+
+**Idea.** This is exactly Level 2 with positions on the stack, which is why we pushed indices and not temperatures. Subtract to get the distance.
+
+```java
+static int[] dailyTemperatures(int[] temperatures) {
+    int[] next = nextGreaterIndex(temperatures);
+    int[] wait = new int[temperatures.length];
+    for (int i = 0; i < wait.length; i++) wait[i] = next[i] == -1 ? 0 : next[i] - i;
+    return wait;
+}
+```
+
+**Answer.** `[1, 1, 4, 2, 1, 1, 0, 0]`. For $n = 8$ days there are 8 pushes and 6 pops (every day except days 6 and 7 gets an answer), $14 \le 16$ operations. $O(n)$ time and $O(n)$ space; for the maximum $n = 10^5$ that is at most $2 \times 10^5$ stack operations.
+
+### 3. LeetCode 84: Largest Rectangle in Histogram (Hard)
+
+**Problem.** Bars of width 1 have the given heights. Return the area of the largest rectangle that fits inside the histogram. For `[2, 1, 5, 6, 2, 3]`, our bars from the start of the lesson, the answer is 10.
+
+**Math first.** Every best rectangle has some **shortest bar** $i$ inside it, and its height is $a_i$. Given that height, the rectangle stretches left and right until it hits a strictly shorter bar, so its edges are $L_i$ and $R_i$ from Level 4:
+
+$$
+\text{area}(i) = a_i \cdot (R_i - L_i - 1), \qquad \text{answer} = \max_i \text{area}(i)
+$$
+
+where:
+
+- $a_i$ is the height of the shortest bar, which is the rectangle's height;
+- $L_i$ is the nearest strictly shorter bar on the left ($-1$ if none), and $R_i$ the nearest one on the right ($n$ if none);
+- $R_i - L_i - 1$ counts the bars strictly between the two walls, which is the width.
+
+Example: with $L = [-1, -1, 1, 2, 1, 4]$ and $R = [1, 6, 4, 4, 6, 6]$:
+
+| $i$ | $a_i$ | $L_i$ | $R_i$ | Width $R_i - L_i - 1$ | Area |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 2 | $-1$ | 1 | $1 - (-1) - 1 = 1$ | 2 |
+| 1 | 1 | $-1$ | 6 | $6 - (-1) - 1 = 6$ | 6 |
+| 2 | 5 | 1 | 4 | $4 - 1 - 1 = 2$ | **10** |
+| 3 | 6 | 2 | 4 | $4 - 2 - 1 = 1$ | 6 |
+| 4 | 2 | 1 | 6 | $6 - 1 - 1 = 4$ | 8 |
+| 5 | 3 | 4 | 6 | $6 - 4 - 1 = 1$ | 3 |
+
+The largest is bar 2: height 5 across positions 2 and 3, area $5 \times 2 = 10$.
+
+**Idea.** Compute $L$ with one stack pass and $R$ with another, then take the best $a_i (R_i - L_i - 1)$. Ties do not matter for the maximum: with equal bars the leftmost one is cut short, but the rightmost one of the run still sees the full width.
+
+```java
+static int largestRectangleArea(int[] heights) {
+    int[] left = previousSmallerIndex(heights), right = nextSmallerIndex(heights);
+    int best = 0;
+    for (int i = 0; i < heights.length; i++) {
+        best = Math.max(best, heights[i] * (right[i] - left[i] - 1)); // bar i is the shortest in its widest rectangle
+    }
+    return best;
+}
+```
+
+**Answer.** 10 for the example, 4 for `[2, 2]`, 7 for `[7]`. Three passes of $O(n)$ each: $O(n)$ time, $O(n)$ space. The checking-every-pair alternative tries all $\frac{n(n+1)}{2}$ ranges, $21$ for $n = 6$ but about $5 \times 10^9$ for $n = 10^5$. A one-pass version computes the area at the moment a bar is popped (its right wall is the newcomer, its left wall is the new top), which saves two arrays but is harder to read.
+
+### 4. LeetCode 85: Maximal Rectangle (Hard)
+
+**Problem.** In a grid of `'0'` and `'1'`, return the area of the largest rectangle containing only `'1'`. For the grid below the answer is 6.
+
+```text
+1 0 1 0 0
+1 0 1 1 1
+1 1 1 1 1
+1 0 0 1 0
+```
+
+**Math first.** Treat each row as the floor of a histogram. The bar in column $c$ is the number of consecutive `'1'`s ending at that row:
+
+$$
+h_r(c) =
+\begin{cases}
+h_{r-1}(c) + 1 & \text{if cell } (r, c) \text{ is } 1 \\
+0 & \text{if cell } (r, c) \text{ is } 0
+\end{cases}
+\qquad
+\text{answer} = \max_r \operatorname{LRA}(h_r)
+$$
+
+where:
+
+- $r$ is the row and $c$ the column, with $h_{-1}(c) = 0$ above the grid;
+- $h_r(c)$ is the height of the column of `'1'`s that stands on row $r$;
+- $\operatorname{LRA}$ is Largest Rectangle Area from problem 3.
+
+Any all-ones rectangle has a bottom row $r$, and above that row it fits under the bars $h_r$. So checking every row as a floor finds it.
+
+Example: the four histograms are
+
+| Row $r$ | $h_r$ | $\operatorname{LRA}(h_r)$ |
+| --- | --- | --- |
+| 0 | `[1, 0, 1, 0, 0]` | 1 |
+| 1 | `[2, 0, 2, 1, 1]` | 3 (height 1 across columns 2 to 4) |
+| 2 | `[3, 1, 3, 2, 2]` | **6** (height 2 across columns 2 to 4) |
+| 3 | `[4, 0, 0, 3, 0]` | 4 |
+
+The maximum is $\max(1, 3, 6, 4) = 6$.
+
+**Idea.** Keep one `heights` array, update it row by row with the rule above, and call `largestRectangleArea` after each row.
+
+```java
+static int maximalRectangle(char[][] matrix) {
+    int[] heights = new int[matrix[0].length];        // heights[c] = run of '1's ending at this row in column c
+    int best = 0;
+    for (char[] row : matrix) {
+        for (int c = 0; c < row.length; c++) heights[c] = row[c] == '1' ? heights[c] + 1 : 0;
+        best = Math.max(best, largestRectangleArea(heights));
+    }
+    return best;
+}
+```
+
+**Answer.** 6 for the example, 0 for `[["0"]]`. Each of the $R$ rows costs $O(C)$ to update and $O(C)$ for the histogram, so the time is $O(R \cdot C)$ and the space $O(C)$. For the maximum $200 \times 200$ grid that is about $40{,}000$ cells times a small constant.
+
+## Mathematical Abstraction
+
+A monotonic stack computes the nearest larger (or smaller) neighbour of every element, using a stack whose values stay sorted:
+
+$$
+\operatorname{next}(i) = \min \lbrace j > i : a_j > a_i \rbrace, \qquad a_{s_1} \ge a_{s_2} \ge \dots \ge a_{s_k}, \qquad \text{pushes} + \text{pops} \le 2n
+$$
+
+where:
+
+- $a$ is the array and $n$ its length;
+- $\operatorname{next}(i)$ is the first position to the right of $i$ with a larger value, or $-1$;
+- $s_1, \dots, s_k$ are the positions on the stack from bottom to top, still waiting for their answer;
+- the bound $2n$ holds because each position is pushed once and popped at most once.
+
+Example: for `a = [2, 1, 5, 6, 2, 3]`, $\operatorname{next} = [2, 2, 3, -1, 5, -1]$ with 6 pushes and 4 pops, $10 \le 12$. Swapping "greater" for "smaller" and running both directions gives the walls $L_i$ and $R_i$, and the histogram formula $\max_i a_i (R_i - L_i - 1) = 5 \times (4 - 1 - 1) = 10$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 10, "Elementary Data Structures", for the stack itself; Chapter 16, "Amortized Analysis", for the aggregate argument that pops can never outnumber pushes. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.3 "Bags, Queues, and Stacks", with Java stack implementations: <https://algs4.cs.princeton.edu/13stacks/>.
+- Antti Laaksonen, *Competitive Programmer's Handbook*, Chapter 8 "Amortized analysis", §8.2 "Nearest smaller elements": <https://cses.fi/book/book.pdf>.
+- Omer Berkman, Baruch Schieber and Uzi Vishkin, "Optimal Doubly Logarithmic Parallel Algorithms Based on Finding All Nearest Smaller Values", *Journal of Algorithms* 14(3), 1993, which identified "all nearest smaller values" as a building block for other algorithms.
+- LeetCode: [496. Next Greater Element I](https://leetcode.com/problems/next-greater-element-i/), [739. Daily Temperatures](https://leetcode.com/problems/daily-temperatures/), [84. Largest Rectangle in Histogram](https://leetcode.com/problems/largest-rectangle-in-histogram/), [85. Maximal Rectangle](https://leetcode.com/problems/maximal-rectangle/), and the circular variant [503. Next Greater Element II](https://leetcode.com/problems/next-greater-element-ii/).
+
+[← Radix Sort](../radix-sort/index.qmd) · [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd) · [Monotonic Queue →](../monotonic-queue/index.qmd)

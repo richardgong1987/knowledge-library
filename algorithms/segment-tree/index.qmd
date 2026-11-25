@@ -1,65 +1,493 @@
 ---
 title: "Segment Tree"
-description: "CLRS-inspired worked lesson on Segment Tree: numerical substitution, invariants, original code and complexity."
+description: "From a school's class monitors to lazy propagation: nodes that cover ranges [l, r], building with 2n − 1 nodes in a 4n array, why a query touches at most 4 nodes per level, point updates, lazy range updates traced on n = 8, sparse trees, and hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+A segment tree answers range questions ("the sum of positions 2 to 6") **and** accepts changes ("position 3 is now 10"), both in $O(\log n)$ time. Prefix sums are faster for questions but slow for changes; a plain array is the opposite. The segment tree is the balanced middle. This lesson builds one from nothing, counts exactly how many nodes each operation touches, adds lazy propagation for range updates, and then solves three interview problems with it.
 
-**LeetCode 307 — Range Sum Query - Mutable.**
+All code is in [`SegmentTreeLab.java`](SegmentTreeLab.java). Run it from this folder with `java SegmentTreeLab.java`; it checks every number on this page and prints `OK`.
 
-Store the sum of every recursively partitioned interval. A parent stores the combination of its two children; updates change only nodes along one root-to-leaf path.
+## The problem
 
-## First try the obvious approach
+Eight sensors report numbers `a = [5, 8, 6, 3, 2, 7, 2, 6]` (positions 0 to 7). Two kinds of requests arrive, mixed together:
 
-Recompute each requested interval sum by scanning the array. With many mixed point updates and range queries this can cost linear time per operation.
+- **query**: "what is the sum of positions 2 to 6?" Here $6 + 3 + 2 + 7 + 2 = 20$;
+- **update**: "position 3 now reads 10". After that, the same query gives 27.
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+| Method | One query | One update | $10^5$ of each, $n = 10^5$ |
+| --- | --- | --- | --- |
+| plain array | up to $n$ additions | 1 step | about $10^{10}$ steps |
+| prefix sums | 1 subtraction | rebuild, up to $n$ steps | about $10^{10}$ steps |
+| segment tree | about $4 \log_2 n$ nodes | $\log_2 n + 1$ nodes | about $10^7$ steps |
 
-## Mathematical relationship, explained immediately
+Each of the first two is fast at one job and slow at the other. We want both jobs to be fast.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+A school has 8 classes in a row. Each pair of neighbouring classes has a **corridor monitor** who knows how many pupils are in both. Each pair of corridors has a **floor captain** who knows the total for four classes. The **head teacher** knows the whole school.
+
+The head teacher wants the number of pupils in classes 2 to 6. Instead of visiting five classrooms, she asks the monitor of classes 2–3, the monitor of classes 4–5, and class 6 itself. Three answers, added up. For a school with a thousand classes it would still be only a handful of people, because every helper speaks for a whole block.
+
+When a new pupil joins class 3, only the people above class 3 need to change their number: the monitor of classes 2–3, the floor captain of classes 0–3, and the head teacher. With 8 classes that is 3 people plus the class itself, $\log_2 8 + 1 = 4$ numbers.
+
+Every helper's number is the sum of the two numbers just below them. That one rule is the whole data structure.
+
+Jon Bentley invented the segment tree in 1977, in notes on Klee's rectangle problem: the area covered by a set of rectangles. The [Sweep Line](../sweep-line/index.qmd) lesson solves a version of that problem.
+:::
+
+## From simple to advanced
+
+### Level 1: what each simple method costs
+
+With $q$ queries and $u$ updates on $n$ values, the total work is
 
 $$
-S([l,r))=S([l,m))+S([m,r))
+T_{\text{array}} = q \cdot n + u, \qquad T_{\text{prefix}} = q + u \cdot n, \qquad T_{\text{tree}} \approx (q + u) \cdot \log_2 n
 $$
 
-**Symbol by symbol:** S([l,r)) is the sum of entries from index l up to but excluding r; m is an index dividing the interval into left and right parts.
+where:
 
-**Calculate with real numbers:** For [2,1,4,3], parent interval [0,4) stores 10. Children [0,2) and [2,4) store 2+1=3 and 4+3=7, giving 3+7=10. Changing 4→5 makes only its leaf and ancestors change; root becomes 11.
+- $T$ is the total number of basic steps, ignoring constant factors;
+- a plain array adds up to $n$ values per query, and a prefix array rebuilds up to $n$ totals per update;
+- the tree pays about $\log_2 n$ for either kind, because its height is $\log_2 n$.
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+Example: $n = q = u = 10^5$, so $\log_2 n \approx 17$. Then $T_{\text{array}} \approx 10^{10}$, $T_{\text{prefix}} \approx 10^{10}$, and $T_{\text{tree}} \approx 2 \times 10^5 \times 17 = 3.4 \times 10^6$, about 3,000 times less.
 
-## How the algorithm emerges
+### Level 2: the shape, and building it
 
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
+Every node is responsible for a range $[l, r]$ and stores the sum of that range. The root covers everything; a node splits its range in half for its two children:
 
-**Correctness argument:** Intervals form a disjoint partition; combining their sums produces the parent sum exactly. Updating the path preserves the invariant for all ancestors of the changed leaf.
+$$
+m = \left\lfloor \frac{l + r}{2} \right\rfloor, \qquad \text{left child: } [l, m], \qquad \text{right child: } [m+1, r], \qquad t(v) = t(2v) + t(2v + 1)
+$$
 
-## Code, but only after the reasoning
+where:
 
-Here is a standalone, original JavaScript demonstration:
+- $\lfloor \cdot \rfloor$ rounds down, so $m$ is the middle position;
+- a node with $l = r$ is a **leaf** and stores $a_l$ itself;
+- nodes are numbered like a heap: the root is $v = 1$ and node $v$ has children $2v$ and $2v + 1$;
+- $t(v)$ is the sum stored at node $v$.
 
-~~~js
-const data=[2,1,4,3];
-function sum(l,r){ return data.slice(l,r).reduce((a,b)=>a+b,0); }
-console.log(sum(0,4)); // 10; direct baseline before building a tree
-~~~
+Example: for `a = [5, 8, 6, 3, 2, 7, 2, 6]`, the root (node 1) covers $[0, 7]$ and splits at $m = \lfloor 7/2 \rfloor = 3$. Its children are node 2, $[0, 3]$ with $5 + 8 + 6 + 3 = 22$, and node 3, $[4, 7]$ with $2 + 7 + 2 + 6 = 17$. The root stores $22 + 17 = 39$.
 
-This shows a deliberately minimal case; the chapter explains the invariant needed to extend it into a full implementation.
+```text
+                         node 1  [0,7] = 39
+                 /                              \
+        node 2  [0,3] = 22                node 3  [4,7] = 17
+         /             \                   /              \
+  node 4 [0,1]=13  node 5 [2,3]=9   node 6 [4,5]=9   node 7 [6,7]=8
+     /     \         /     \          /     \          /     \
+    5       8       6       3        2       7        2       6      (nodes 8 to 15)
+```
 
-## Count the work rigorously
+**How many nodes, and how big an array?** Every internal node has exactly two children, so a tree with $n$ leaves has $n - 1$ internal nodes:
 
-**Time and memory:** O(n) construction, O(log n) point update, O(log n) range sum query with standard segment tree layout; O(n) storage.
+$$
+\text{nodes} = n + (n - 1) = 2n - 1, \qquad \text{largest index} < 2^{\lceil \log_2 n \rceil + 1} \le 4n
+$$
 
-**The misleading shortcut:** The combination operator must be associative (sum, min, max, etc.). A query must avoid double counting by decomposing into disjoint tree intervals.
+where:
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+- $n$ leaves are the array positions, and $n - 1$ internal nodes each join two parts;
+- $\lceil \log_2 n \rceil$ is the depth of the deepest leaf, and heap numbering at depth $d$ never goes past $2^{d+1} - 1$;
+- $2^{\lceil \log_2 n \rceil} < 2n$, so the bound is below $4n$.
 
-## Practice and source
+Example: for $n = 8$ there are $2 \times 8 - 1 = 15$ nodes, numbered exactly 1 to 15. For $n = 6$ there are $11$ nodes, but the numbering has gaps, and the largest index is 13, below $2^{3+1} = 16 \le 4 \times 6 = 24$. That is why the array has $4n$ slots, not $2n$.
 
-- **Textbook relationship:** CLRS Chapter 17 (augmenting data structures) and Chapter 10 (trees)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 307 — Range Sum Query - Mutable. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+```java
+static final class SegmentTree {
+    final int n;
+    final int[] tree;                                 // tree[node] = sum of the range that node covers
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+    SegmentTree(int[] a) {
+        n = a.length;
+        tree = new int[4 * n];                        // 4n slots always fit every node index
+        build(a, 1, 0, n - 1);
+    }
+
+    void build(int[] a, int node, int l, int r) {
+        if (l == r) { tree[node] = a[l]; return; }
+        int m = (l + r) / 2;
+        build(a, 2 * node, l, m);
+        build(a, 2 * node + 1, m + 1, r);
+        tree[node] = tree[2 * node] + tree[2 * node + 1];
+    }
+```
+
+Building visits each of the $2n - 1$ nodes once: $O(n)$.
+
+### Level 3: answering a range query
+
+A query $[q_l, q_r]$ meets each node in one of three ways:
+
+$$
+\operatorname{query}(v) =
+\begin{cases}
+0 & \text{if } [l, r] \cap [q_l, q_r] = \varnothing \quad \text{(no overlap)} \\
+t(v) & \text{if } [l, r] \subseteq [q_l, q_r] \quad \text{(fully inside)} \\
+\operatorname{query}(2v) + \operatorname{query}(2v + 1) & \text{otherwise} \quad \text{(partial overlap)}
+\end{cases}
+$$
+
+where:
+
+- $[l, r]$ is the range of node $v$ and $[q_l, q_r]$ the range we ask about;
+- $\cap$ is intersection, $\varnothing$ the empty set, and $\subseteq$ "lies inside";
+- only partial overlaps go deeper; the other two cases stop at once.
+
+Example: the query $[2, 6]$ on our tree.
+
+| Level | Node and range | Case | Returns |
+| --- | --- | --- | --- |
+| 0 | 1 $[0, 7]$ | partial | $9 + 11 = 20$ |
+| 1 | 2 $[0, 3]$ | partial | $0 + 9 = 9$ |
+| 1 | 3 $[4, 7]$ | partial | $9 + 2 = 11$ |
+| 2 | 4 $[0, 1]$ | no overlap | 0 |
+| 2 | 5 $[2, 3]$ | inside | 9 |
+| 2 | 6 $[4, 5]$ | inside | 9 |
+| 2 | 7 $[6, 7]$ | partial | $2 + 0 = 2$ |
+| 3 | 14 $[6, 6]$ | inside | 2 |
+| 3 | 15 $[7, 7]$ | no overlap | 0 |
+
+The answer is $9 + 9 + 2 = 20$, from 9 visited nodes. The three "inside" nodes $[2, 3]$, $[4, 5]$, $[6, 6]$ split the query into disjoint blocks.
+
+```java
+int query(int node, int l, int r, int ql, int qr) {
+    if (qr < l || r < ql) return 0;               // no overlap
+    if (ql <= l && r <= qr) return tree[node];    // the node lies fully inside the query
+    int m = (l + r) / 2;
+    return query(2 * node, l, m, ql, qr) + query(2 * node + 1, m + 1, r, ql, qr);
+}
+```
+
+**Why at most 4 nodes per level.** On any level, the node ranges are disjoint and in order. A node overlaps the query *partially* only if it contains one of the two query ends, $q_l$ or $q_r$, so at most 2 nodes per level are partial. Only partial nodes have their children visited, so the next level sees at most $2 \times 2 = 4$ nodes:
+
+$$
+\text{visited} \le 4 \cdot (\lceil \log_2 n \rceil + 1)
+$$
+
+where $\lceil \log_2 n \rceil + 1$ is the number of levels. Example: for $n = 8$ there are 4 levels and the bound is $4 \times 4 = 16$; the query $[2, 6]$ visited $1 + 2 + 4 + 2 = 9$. The lab checks the bound for every range of every $n$ up to 100.
+
+### Level 4: changing one value
+
+To set $a_i$ to a new value, walk from the root to leaf $i$, change it, and recompute every sum on the way back up:
+
+$$
+t(v) = t(2v) + t(2v + 1) \quad \text{for every } v \text{ on the path, bottom to top}, \qquad \text{path length} = \lceil \log_2 n \rceil + 1
+$$
+
+where:
+
+- the path holds exactly one node per level, the one whose range contains $i$;
+- nodes off the path do not contain $i$, so their sums are still right.
+
+Example: set $a_3 = 10$ (it was 3). The path is node 1 $[0, 7]$, node 2 $[0, 3]$, node 5 $[2, 3]$, node 11 $[3, 3]$: $\log_2 8 + 1 = 4$ nodes. Bottom to top: node 11 becomes 10, node 5 becomes $6 + 10 = 16$, node 2 becomes $13 + 16 = 29$, node 1 becomes $29 + 17 = 46$. The query $[2, 6]$ now returns $16 + 9 + 2 = 27$.
+
+```java
+void update(int node, int l, int r, int index, int value) {
+    if (l == r) { tree[node] = value; return; }
+    int m = (l + r) / 2;
+    if (index <= m) update(2 * node, l, m, index, value);
+    else update(2 * node + 1, m + 1, r, index, value);
+    tree[node] = tree[2 * node] + tree[2 * node + 1];
+}
+```
+
+The class in the lab also has two one-line helpers, `sum(ql, qr)` and `set(index, value)`, which call these from the root with `node = 1, l = 0, r = n - 1`.
+
+### Level 5: range updates with lazy propagation
+
+Now the update is "add $v$ to **every** position from $q_l$ to $q_r$". Doing it one leaf at a time costs $O(n \log n)$. The fix is to be **lazy**: when a node lies fully inside the update range, change its own sum and leave a note for its children, instead of visiting them.
+
+$$
+t(v) \mathrel{+}= \delta \cdot (r - l + 1), \qquad p(v) \mathrel{+}= \delta
+$$
+
+where:
+
+- $\delta$ (delta) is the amount added to each position;
+- $r - l + 1$ is how many positions node $v$ covers, so its sum grows by $\delta$ that many times;
+- $p(v)$ is the **pending** note: an add that $t(v)$ already includes but the children have not heard about yet.
+
+Whenever a later operation has to go **below** a node, it first pushes the note down: both children get `apply` with $p(v)$, and $p(v)$ is reset to 0. So notes travel down only when someone needs to look underneath.
+
+Example: on a fresh tree for `a = [5, 8, 6, 3, 2, 7, 2, 6]`, add $\delta = 2$ to positions 2 to 6.
+
+- Node 5 $[2, 3]$ is fully inside: its sum becomes $9 + 2 \times 2 = 13$, and $p = 2$. Its children (6 and 3) are **not** touched.
+- Node 6 $[4, 5]$ is fully inside: $9 + 2 \times 2 = 13$, $p = 2$.
+- Node 7 $[6, 7]$ is partial, so we go down: leaf 14 $[6, 6]$ becomes $2 + 2 = 4$; leaf 15 is outside. Node 7 becomes $4 + 6 = 10$.
+- On the way up: node 2 is $13 + 13 = 26$, node 3 is $13 + 10 = 23$, the root is $26 + 23 = 49$. Check: $39 + 2 \times 5 = 49$.
+
+Now query position 3 alone. The search reaches node 5, which is partial for $[3, 3]$, so it pushes its note: node 10 $[2, 2]$ becomes $6 + 2 = 8$, node 11 $[3, 3]$ becomes $3 + 2 = 5$, and $p(5) = 0$. The answer is **5**, which is $3 + 2$. The query $[2, 6]$ returns $13 + 13 + 4 = 30 = 20 + 2 \times 5$.
+
+```java
+void add(int node, int l, int r, int ql, int qr, int v) {
+    if (qr < l || r < ql) return;
+    if (ql <= l && r <= qr) { apply(node, l, r, v); return; }   // stop here; children hear about it later
+    pushDown(node, l, r);
+    int m = (l + r) / 2;
+    add(2 * node, l, m, ql, qr, v);
+    add(2 * node + 1, m + 1, r, ql, qr, v);
+    sum[node] = sum[2 * node] + sum[2 * node + 1];
+}
+
+void apply(int node, int l, int r, int v) {
+    sum[node] += v * (r - l + 1);                 // each of the r - l + 1 values grows by v
+    pending[node] += v;
+}
+
+void pushDown(int node, int l, int r) {
+    int m = (l + r) / 2;
+    apply(2 * node, l, m, pending[node]);
+    apply(2 * node + 1, m + 1, r, pending[node]);
+    pending[node] = 0;
+}
+```
+
+The lazy `query` is the Level 3 query with one extra line, `pushDown(node, l, r)`, before it goes into the children. A range add now visits the same $O(\log n)$ nodes as a query, at most 4 per level.
+
+### Level 6: other operations, and trees too big to allocate
+
+**Any associative merge works.** Replace $+$ by $\max$, $\min$ or $\gcd$ and the same code answers range maximum, range minimum or range gcd:
+
+$$
+F([l, r]) = F([l, m]) \oplus F([m + 1, r])
+$$
+
+where:
+
+- $\oplus$ is the merge, which only needs to be associative: $(x \oplus y) \oplus z = x \oplus (y \oplus z)$;
+- unlike prefix sums, $\oplus$ needs **no inverse**, which is why range maximum works here and not with prefix sums.
+
+Example: with $\oplus = \max$ on our array, $F([2, 6]) = \max(F([2, 3]), F([4, 5]), F([6, 6])) = \max(6, 7, 2) = 7$.
+
+**Sparse (dynamic) trees.** When positions run from 0 to $10^9$, an array of $4 \times 10^9$ slots is impossible. Create a node only when an operation first touches it, and keep nodes in a hash map keyed by their heap number. An operation still visits at most 4 nodes per level. Example: for the range $[0, 10^9]$ there are $\lceil \log_2(10^9 + 1) \rceil + 1 = 31$ levels, so one operation creates at most $4 \times 31 = 124$ nodes, and 400 operations at most $49{,}600$, instead of $4 \times 10^9$. The heap numbers reach about $2^{31}$, so they must be `long`. Interview problem 3 uses this.
+
+## Why it works and what it costs
+
+**The invariant.** *For every node $v$ covering $[l, r]$, $t(v) = a_l + a_{l+1} + \dots + a_r$.*
+
+- *`build` establishes it* bottom-up: leaves copy $a_l$, and every parent adds its two children, whose ranges are exactly the two halves.
+- *`update` maintains it*: only nodes whose range contains $i$ change, those are exactly the nodes on the root-to-leaf path, and each is recomputed after its child.
+- *`query` is correct*: the "inside" nodes it adds have disjoint ranges (nodes on one level never overlap, and the recursion never adds a node and its ancestor), and together they cover $[q_l, q_r]$, because every position of the query is either inside an "inside" node or inside a partial node that was split further.
+
+**With lazy propagation** the invariant becomes: *$t(v)$ is correct for its range, and any adds missing from the nodes below $v$ are recorded in $p(v)$ or in a note further up.* `apply` keeps $t(v)$ correct, and `pushDown` moves a note one level down before anyone reads below it.
+
+**Costs**, for $n$ values:
+
+| Operation | Time | Nodes touched for $n = 8$ |
+| --- | --- | --- |
+| build | $O(n)$ | 15 |
+| range query | $O(\log n)$ | at most $4 \times 4 = 16$; the query $[2, 6]$ used 9 |
+| point update | $O(\log n)$ | exactly 4 |
+| range add (lazy) | $O(\log n)$ | at most 16 |
+| memory | $4n$ slots, or $O(\text{operations} \cdot \log C)$ when sparse | 32 slots |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Array of size $2n$ | `ArrayIndexOutOfBoundsException` when $n$ is not a power of two ($n = 6$ uses index 13) | Allocate $4n$ |
+| Not recomputing parents after an update | Queries return old totals | Set `tree[node] = left + right` after the recursive call |
+| Forgetting `pushDown` in the lazy query | Children miss earlier range adds | Push before going below a node, in **both** `add` and `query` |
+| `apply` adds $\delta$ instead of $\delta \cdot (r - l + 1)$ | Sums too small after a range add | A node of length $k$ grows by $k\delta$ |
+| `(l + r) / 2` with huge coordinates | `int` overflow near $2^{31}$ | `l + (r - l) / 2` |
+| `int` node ids in a sparse tree | Ids past $2^{31}$ wrap around | Use `long` keys |
+| Using prefix sums when values change | Each update costs $O(n)$ | A segment tree or a [Binary Indexed Tree](../binary-indexed-tree/index.qmd) |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 307: Range Sum Query - Mutable (Medium)
+
+**Problem.** Support `update(index, val)` and `sumRange(left, right)` on an array. For `nums = [1, 3, 5]`: `sumRange(0, 2) = 9`; after `update(1, 2)`, `sumRange(0, 2) = 8`.
+
+**Math first.** Keep the Level 2 invariant, so a query is a sum of disjoint "inside" nodes and an update fixes one root-to-leaf path:
+
+$$
+t(v) = \sum_{i=l_v}^{r_v} a_i, \qquad \text{update cost} \le \lceil \log_2 n \rceil + 1 \text{ nodes}
+$$
+
+where:
+
+- $[l_v, r_v]$ is the range of node $v$;
+- the update path has one node per level, and a leaf may sit one level higher when $n$ is not a power of two.
+
+Example: $n = 3$. The root $[0, 2]$ splits at $m = 1$ into $[0, 1] = 1 + 3 = 4$ and $[2, 2] = 5$, so the root holds $9$. `update(1, 2)` walks leaf $[1, 1]$ ($3 \to 2$), then $[0, 1]$ ($4 \to 1 + 2 = 3$), then the root ($9 \to 3 + 5 = 8$): $\lceil \log_2 3 \rceil + 1 = 3$ nodes. Now `sumRange(0, 2)` reads the root: 8.
+
+**Idea.** Wrap the Level 2–4 `SegmentTree`: `update` calls `set`, `sumRange` calls `sum`.
+
+```java
+static final class NumArray {
+    private final SegmentTree tree;
+
+    NumArray(int[] nums) {
+        tree = new SegmentTree(nums);
+    }
+
+    void update(int index, int val) {
+        tree.set(index, val);
+    }
+
+    int sumRange(int left, int right) {
+        return tree.sum(left, right);
+    }
+}
+```
+
+**Answer.** 9, then 8. Both operations are $O(\log n)$, and the space is $4n$ integers. For the limits ($n = 3 \times 10^4$ and $3 \times 10^4$ calls) that is about $3 \times 10^4 \times 4 \times 16 \approx 2 \times 10^6$ node visits at most, against up to $9 \times 10^8$ with a plain array or with prefix sums. A [Binary Indexed Tree](../binary-indexed-tree/index.qmd) solves the same problem with less code.
+
+### 2. LeetCode 699: Falling Squares (Hard)
+
+**Problem.** Squares fall one at a time onto a line. Square $i$ has left edge `left` and side `side`; it falls until it lands on the x-axis or on top of an earlier square (touching only a side does not count). After each drop, return the height of the tallest stack so far. For `[[1, 2], [2, 3], [6, 1]]` the answer is `[2, 5, 5]`.
+
+**Math first.** Let $H(x)$ be the height of the stack at integer cell $x$. A square with left edge $L$ and side $s$ covers the cells $L$ to $L + s - 1$ (so a square on cells 1 to 2 and one starting at cell 3 only touch sides). It lands on the highest point under it:
+
+$$
+h = \max_{L \le x \le L+s-1} H(x) + s, \qquad H(x) \leftarrow h \text{ for } L \le x \le L+s-1, \qquad \text{answer}_i = \max(\text{answer}_{i-1}, h)
+$$
+
+where:
+
+- $h$ is the height of the new square's top;
+- $\leftarrow$ means "becomes";
+- $\text{answer}_i$ is the tallest stack after $i$ drops, with $\text{answer}_0 = 0$.
+
+Since $h$ is larger than every $H(x)$ under the square, "set to $h$" is the same as "raise to at least $h$": $\max(H(x), h) = h$. Raises never undo each other, so a tag can stay on the node where it was placed, with no push-down: a query takes the max of the tags it passes on the way down.
+
+Example: the cells are $[1, 2]$, $[2, 4]$ and $[6, 6]$.
+
+- Square 1: nothing below, $h = 0 + 2 = 2$. The answer is 2.
+- Square 2: $\max(H(2), H(3), H(4)) = \max(2, 0, 0) = 2$, so $h = 2 + 3 = 5$. The answer is 5.
+- Square 3: $H(6) = 0$, so $h = 1$. The answer stays $\max(5, 1) = 5$.
+
+**Idea.** Only the end cells matter, so *compress* the coordinates: sort the distinct values $\lbrace 1, 2, 4, 6 \rbrace$ and use their positions $0, 1, 2, 3$ in a segment tree. Two cell ranges overlap exactly when the larger left end lies in both, and that left end is in the list. The tree supports "max of a range" and "raise a range to at least $v$".
+
+```java
+static final class RaiseMaxTree {
+    final int[] best, tag;                            // best = max inside the node's range; tag = a raise covering all of it
+
+    RaiseMaxTree(int size) {
+        best = new int[4 * size];
+        tag = new int[4 * size];
+    }
+
+    void raise(int node, int l, int r, int ql, int qr, int v) {
+        if (qr < l || r < ql) return;
+        best[node] = Math.max(best[node], v);         // some point of this range now reaches v
+        if (ql <= l && r <= qr) { tag[node] = Math.max(tag[node], v); return; }
+        int m = (l + r) / 2;
+        raise(2 * node, l, m, ql, qr, v);
+        raise(2 * node + 1, m + 1, r, ql, qr, v);
+    }
+
+    int max(int node, int l, int r, int ql, int qr) {
+        if (qr < l || r < ql) return 0;
+        if (ql <= l && r <= qr) return best[node];
+        int m = (l + r) / 2;
+        int below = Math.max(max(2 * node, l, m, ql, qr), max(2 * node + 1, m + 1, r, ql, qr));
+        return Math.max(tag[node], below);            // a tag here covers every point below it
+    }
+}
+```
+
+```java
+static List<Integer> fallingSquares(int[][] positions) {
+    TreeSet<Integer> edges = new TreeSet<>();
+    for (int[] p : positions) { edges.add(p[0]); edges.add(p[0] + p[1] - 1); }
+    List<Integer> xs = new ArrayList<>(edges);        // compressed coordinates: index -> x
+    int last = xs.size() - 1;
+    RaiseMaxTree heights = new RaiseMaxTree(xs.size());
+    List<Integer> answer = new ArrayList<>();
+    int tallest = 0;
+    for (int[] p : positions) {
+        int l = Collections.binarySearch(xs, p[0]), r = Collections.binarySearch(xs, p[0] + p[1] - 1);
+        int top = heights.max(1, 0, last, l, r) + p[1];   // lands on the highest point under it
+        heights.raise(1, 0, last, l, r, top);
+        tallest = Math.max(tallest, top);
+        answer.add(tallest);
+    }
+    return answer;
+}
+```
+
+**Answer.** `[2, 5, 5]` for the example, `[100, 100]` for `[[100, 100], [200, 100]]` (side by side), and `[2, 5, 6]` for `[[1, 2], [1, 3], [2, 1]]` (each lands on the last). With $n$ squares there are at most $2n$ compressed cells, and each drop is two $O(\log n)$ tree operations: $O(n \log n)$ time and $O(n)$ space. Comparing every square with every earlier one would be $\frac{n(n-1)}{2} \approx 500{,}000$ checks for the limit $n = 1{,}000$; the tree needs about $1{,}000 \times 2 \times 4 \times 12 \approx 10^5$ node visits.
+
+### 3. LeetCode 732: My Calendar III (Hard)
+
+**Problem.** Bookings $[s, e)$ arrive one at a time, with times from 0 to $10^9$. After each booking, return the largest number of bookings that share some moment. For the bookings $[10, 20)$, $[50, 60)$, $[10, 40)$, $[5, 15)$, $[5, 10)$, $[25, 55)$ the answers are $1, 1, 2, 3, 3, 3$.
+
+**Math first.** Let $c(t)$ count the bookings that contain moment $t$. A booking adds 1 to $c$ on the integer times $s$ to $e - 1$, and we want the global maximum:
+
+$$
+c(t) = \#\lbrace i : s_i \le t < e_i \rbrace, \qquad \text{answer} = \max_t c(t), \qquad M(v) = \operatorname{tag}(v) + \max\bigl(M(2v), M(2v + 1)\bigr)
+$$
+
+where:
+
+- $\#\lbrace \dots \rbrace$ counts the bookings in the set;
+- $M(v)$ is the largest count at one moment inside node $v$'s range;
+- $\operatorname{tag}(v)$ counts the bookings that cover node $v$'s **whole** range, which raise every moment in it by one.
+
+We only ever ask about the root, so a tag never needs pushing down: it is simply added once, at its own node, on the way back up.
+
+Example: after the fourth booking $[5, 15)$, consider the moments $10$ to $14$. They lie in $[10, 20)$, $[10, 40)$ and $[5, 15)$, but not in $[50, 60)$, so $c(10) = 3$ and the answer is 3. The fifth booking $[5, 10)$ overlaps $[5, 15)$ only at $5$ to $9$, where $c = 2$, so the answer stays 3.
+
+**Idea.** A sparse segment tree over $[0, 10^9]$ (Level 6) with range "+1" and the root's maximum. Nodes live in two hash maps keyed by their `long` heap number.
+
+```java
+static final class MyCalendarThree {
+    private final Map<Long, Integer> max = new HashMap<>();   // node -> most bookings at one time in its range
+    private final Map<Long, Integer> tag = new HashMap<>();   // node -> bookings that cover its whole range
+
+    int book(int startTime, int endTime) {
+        add(1, 0, 1_000_000_000, startTime, endTime - 1);     // [start, end) is the times start..end-1
+        return max.getOrDefault(1L, 0);
+    }
+
+    private void add(long node, int l, int r, int ql, int qr) {
+        if (qr < l || r < ql) return;
+        if (ql <= l && r <= qr) {
+            max.merge(node, 1, Integer::sum);
+            tag.merge(node, 1, Integer::sum);
+            return;
+        }
+        int m = l + (r - l) / 2;
+        add(2 * node, l, m, ql, qr);
+        add(2 * node + 1, m + 1, r, ql, qr);
+        int below = Math.max(max.getOrDefault(2 * node, 0), max.getOrDefault(2 * node + 1, 0));
+        max.put(node, tag.getOrDefault(node, 0) + below);
+    }
+}
+```
+
+**Answer.** $1, 1, 2, 3, 3, 3$. Each booking visits at most $4 \times 31 = 124$ nodes, so 400 bookings (the limit) cost at most about $50{,}000$ node visits: $O(\log C)$ per booking, where $C = 10^9$ is the time range, and $O(B \log C)$ space for $B$ bookings. The [Sweep Line](../sweep-line/index.qmd) alternative re-scans a sorted map of $+1/-1$ events per booking, $O(B)$ each and $O(B^2) = 160{,}000$ steps in total, which is also fine at this size.
+
+## Mathematical Abstraction
+
+A segment tree stores an associative summary of every range in a balanced split of $[0, n - 1]$:
+
+$$
+F([l, r]) = F([l, m]) \oplus F([m+1, r]), \quad m = \left\lfloor \frac{l+r}{2} \right\rfloor, \qquad \text{nodes} = 2n - 1, \qquad \text{visited per operation} \le 4\,(\lceil \log_2 n \rceil + 1)
+$$
+
+where:
+
+- $F$ is the stored summary (a sum, max, min, gcd) and $\oplus$ the associative merge;
+- each node covers $[l, r]$ and its children cover the two halves;
+- a query or a lazy range update splits at most 2 nodes per level, so it visits at most 4 per level.
+
+Example: for `a = [5, 8, 6, 3, 2, 7, 2, 6]` there are $2 \times 8 - 1 = 15$ nodes, the root holds $F([0, 7]) = 22 + 17 = 39$, and the query $[2, 6]$ visits 9 nodes (bound 16) to return $9 + 9 + 2 = 20$. Lazy propagation adds the pending rule $t(v) \mathrel{+}= \delta (r - l + 1)$: adding 2 to $[2, 6]$ makes the root $39 + 2 \times 5 = 49$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 17, "Augmenting Data Structures", for the idea of storing a summary of each subtree in its node and keeping it correct under updates. CLRS does not cover segment trees by name. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition: the book has no segment-tree section, but the booksite's miscellaneous code includes a Java segment tree with lazy propagation: <https://algs4.cs.princeton.edu/99misc/SegmentTree.java.html>.
+- Jon Louis Bentley, "Solutions to Klee's rectangle problems", unpublished notes, Carnegie Mellon University (1977), where the segment tree first appeared; see the Wikipedia articles on the segment tree and on Klee's measure problem for the citation.
+- Antti Laaksonen, *Competitive Programmer's Handbook*, §9.3 "Segment tree", and Chapter 28 "Segment trees revisited" (§28.1 lazy propagation, §28.2 dynamic trees): <https://cses.fi/book/book.pdf>.
+- cp-algorithms, "Segment Tree": <https://cp-algorithms.com/data_structures/segment_tree.html>.
+- LeetCode: [307. Range Sum Query - Mutable](https://leetcode.com/problems/range-sum-query-mutable/), [699. Falling Squares](https://leetcode.com/problems/falling-squares/), [732. My Calendar III](https://leetcode.com/problems/my-calendar-iii/).
+
+[← Prefix Sum](../prefix-sum/index.qmd) · [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd) · [Binary Indexed Tree →](../binary-indexed-tree/index.qmd)

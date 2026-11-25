@@ -1,66 +1,374 @@
 ---
 title: "Counting Sort"
-description: "CLRS-inspired worked lesson on Counting Sort: numerical substitution, invariants, original code and complexity."
+description: "Sorting without comparing: tally small integer keys in [0, k), turn the counts into positions with prefix sums, place records stably from right to left, handle negative ranges, and know when O(n + k) wins (including where Java itself uses it), with hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+Every sort in the [sorting lesson](../sorting/index.qmd) learned about the keys only by comparing them, and that costs at least about $n \log_2 n$ comparisons. Counting sort never compares two keys. When the keys are small whole numbers, it **counts** how many of each there are and works out every key's final position directly, in $O(n + k)$ time.
 
-**LeetCode 75 — Sort Colors.**
+All code is in [`CountingSortLab.java`](CountingSortLab.java). Run it from this folder with `java CountingSortLab.java`; it checks every number on this page and prints `OK`.
 
-Count occurrences of each key, then rebuild the output in key order. In the stable version, cumulative counts identify output positions for equal keys.
+## The problem
 
-## First try the obvious approach
+Eight children rate a film from 0 to 4 stars: `[3, 1, 4, 1, 0, 3, 2, 1]`. We want the ratings in order.
 
-Generic comparison sorting ignores the fact that values come from a tiny fixed alphabet, such as 0, 1 and 2.
+- Any comparison sort needs $\lceil \log_2 8! \rceil = \lceil \log_2 40{,}320 \rceil = 16$ comparisons on some input.
+- But there are only **5 possible values**. Surely knowing that helps.
+- At national scale the gap is huge: a million exam marks from 0 to 100 need about $10^6 \times \log_2 10^6 \approx 19{,}931{,}569$ comparisons by a comparison sort, while counting needs about $2 \times 10^6 + 101$ simple steps.
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+## Explain it like I'm ten
 
-## Mathematical relationship, explained immediately
+::: {.callout-tip}
+The teacher writes 0, 1, 2, 3, 4 on the board and makes a **tally mark** under the right number for each rating. Afterwards the board says: one 0, three 1s, one 2, two 3s, one 4. Now the sorted list writes itself: one 0, then three 1s, and so on. Nobody ever compared two ratings.
+
+Now suppose each rating comes with the child's name, and the children must line up in order of their rating. The tallies tell you where each group **starts**: one child rated 0, so the 1s start at spot 1; three children rated 1, so the 2s start at spot $1 + 3 = 4$. Every child can walk straight to their spot. Children with the same rating keep the order they arrived in, which makes the sort **stable**.
+
+Harold H. Seward described counting sort, and its use inside radix sort, at MIT in 1954; Knuth credits him in *The Art of Computer Programming*, Volume 3. Sedgewick and Wayne teach the same method under the name **key-indexed counting**.
+:::
+
+## From simple to advanced
+
+### Level 1: tally the keys
+
+When every key is a whole number in $[0, k)$, one array of $k$ counters is enough:
 
 $$
-c[v]=\sum_{i=0}^{n-1}[a_i=v]
+c[v] = \sum_{i=0}^{n-1} [\,a_i = v\,], \qquad v = 0, 1, \dots, k - 1
 $$
 
-**Symbol by symbol:** c[v] is the frequency of value v; n is input length; [condition] is 1 when the condition is true and 0 otherwise.
+where:
 
-**Calculate with real numbers:** For [2,0,2,1,0], c[0]=2, c[1]=1, c[2]=2. Repeating 0 twice, 1 once, 2 twice produces [0,0,1,2,2].
+- $a_0, \dots, a_{n-1}$ are the $n$ keys;
+- $k$ is the number of possible key values, so every key satisfies $0 \le a_i < k$;
+- $[\,a_i = v\,]$ is 1 when the statement is true and 0 when it is false (the *Iverson bracket*);
+- $c[v]$ is the number of keys equal to $v$.
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+Example: for `[3, 1, 4, 1, 0, 3, 2, 1]` with $k = 5$, the counts are $c = [1, 3, 1, 2, 1]$: one 0, three 1s, one 2, two 3s and one 4. They add up to $1 + 3 + 1 + 2 + 1 = 8 = n$. Writing each value $c[v]$ times gives `[0, 1, 1, 1, 2, 3, 3, 4]`.
 
-## How the algorithm emerges
+```java
+static int[] countingSortKeys(int[] a, int k) {   // every key is in [0, k)
+    int[] count = new int[k];
+    for (int x : a) count[x]++;
+    int[] out = new int[a.length];
+    int pos = 0;
+    for (int v = 0; v < k; v++) {
+        for (int c = 0; c < count[v]; c++) out[pos++] = v;
+    }
+    return out;
+}
+```
 
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
+This works only because a key **is** its own data: one 3 is as good as another. If each rating belongs to a child, writing "3" twice loses the names. For that we need positions.
 
-**Correctness argument:** Each input increments exactly one counter. Reconstructing value v exactly c[v] times preserves the multiset, and processing v in ascending order ensures ordering.
+### Level 2: prefix sums turn counts into positions
 
-## Code, but only after the reasoning
+Where does the block of $v$s begin in the sorted output? After every smaller key:
 
-Here is a standalone, original JavaScript demonstration:
+$$
+\text{start}[v] = \sum_{u=0}^{v-1} c[u] = \text{start}[v - 1] + c[v - 1], \qquad \text{start}[0] = 0
+$$
 
-~~~js
-const input=[2,0,2,1,0], counts=[0,0,0];
-for(const x of input) counts[x]++;
-const output=counts.flatMap((count,value)=>Array(count).fill(value));
-console.log(output); // [0,0,1,2,2]
-~~~
+where:
 
-This shows a deliberately minimal case; the chapter explains the invariant needed to extend it into a full implementation.
+- $\text{start}[v]$ is the first output position for key $v$, counting from 0;
+- $\sum_{u=0}^{v-1} c[u]$ counts the keys smaller than $v$;
+- the second form computes all of them in one left-to-right pass, a *prefix sum*.
 
-## Count the work rigorously
+Example: with $c = [1, 3, 1, 2, 1]$:
 
-**Time and memory:** O(n+k) time and O(k) extra counters, with n input length and k key range size.
+| $v$ | $c[v]$ | $\text{start}[v]$ | Output positions for $v$ |
+| --- | --- | --- | --- |
+| 0 | 1 | 0 | 0 |
+| 1 | 3 | $0 + 1 = 1$ | 1, 2, 3 |
+| 2 | 1 | $1 + 3 = 4$ | 4 |
+| 3 | 2 | $4 + 1 = 5$ | 5, 6 |
+| 4 | 1 | $5 + 2 = 7$ | 7 |
 
-**The misleading shortcut:** Counting sort needs a bounded integer key range. When keys span billions of possibilities but only five values occur, a dense count array may waste memory; a map or comparison sort may be better.
+```java
+static int[] startPositions(int[] a, int k) {   // start[v] = how many keys are smaller than v
+    int[] count = new int[k];
+    for (int x : a) count[x]++;
+    int[] start = new int[k];
+    for (int v = 1; v < k; v++) start[v] = start[v - 1] + count[v - 1];
+    return start;
+}
+```
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+The same prefix-sum trick answers "how many values are below $v$?" in one step, which is the heart of the [Prefix Sum](../prefix-sum/index.qmd) lesson.
 
-## Practice and source
+### Level 3: stable placement, right to left
 
-- **Textbook relationship:** CLRS Chapter 8 §8.2 (counting sort)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 75 — Sort Colors. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+Now sort **records**. Eight children, named A to H, gave the ratings above: A3, B1, C4, D1, E0, F3, G2, H1. A stable sort must keep B, D, H (all rated 1) in that order, and A before F (both 3). In the lab each child is a `Card` record holding a `name` and a `key`.
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+The final position of child $i$ is the start of its block plus the number of equal keys that arrived earlier:
+
+$$
+\text{pos}(i) = \text{start}[a_i] + \#\lbrace j < i : a_j = a_i \rbrace
+$$
+
+where:
+
+- $i$ is the child's arrival position and $a_i$ its key;
+- $\text{start}[a_i]$ is where its block begins (Level 2);
+- $\#\lbrace j < i : a_j = a_i \rbrace$ counts the children with the same key who arrived before it.
+
+Example: child H arrived at $i = 7$ with key 1. $\text{start}[1] = 1$, and two earlier children (B and D) also have key 1, so $\text{pos}(H) = 1 + 2 = 3$.
+
+CLRS computes this with one trick: turn the counts into **end** positions, $\text{end}[v] = \text{start}[v] + c[v]$, which is the number of keys $\le v$, and then walk the input **from right to left**. Each record takes the last free slot of its block, and the slot pointer moves down. The last 1 to arrive (H) takes the last slot for 1s, the one before it (D) the slot before that, and so on, so equal keys end up in arrival order.
+
+```java
+static Card[] countingSortStable(Card[] cards, int k) {
+    int[] end = new int[k];
+    for (Card c : cards) end[c.key()]++;
+    for (int v = 1; v < k; v++) end[v] += end[v - 1];   // end[v] = how many keys are <= v
+    Card[] out = new Card[cards.length];
+    for (int i = cards.length - 1; i >= 0; i--) {        // right to left keeps equal keys in order
+        Card c = cards[i];
+        out[--end[c.key()]] = c;
+    }
+    return out;
+}
+```
+
+The trace starts with $\text{end} = [1, 4, 5, 7, 8]$:
+
+| $i$ | Card | `end[key]` before | Placed at | `end[key]` after |
+| --- | --- | --- | --- | --- |
+| 7 | H1 | 4 | 3 | 3 |
+| 6 | G2 | 5 | 4 | 4 |
+| 5 | F3 | 7 | 6 | 6 |
+| 4 | E0 | 1 | 0 | 0 |
+| 3 | D1 | 3 | 2 | 2 |
+| 2 | C4 | 8 | 7 | 7 |
+| 1 | B1 | 2 | 1 | 1 |
+| 0 | A3 | 6 | 5 | 5 |
+
+Output: **E0, B1, D1, H1, G2, A3, F3, C4**. The 1s are B, D, H and the 3s are A, F, both in arrival order. H landed at 3, as the formula said.
+
+Sedgewick and Wayne's key-indexed counting does the mirror image: it uses $\text{start}[v]$ and walks **left to right**, moving the pointer up. Both are stable. What is *not* stable is mixing them: walking left to right while taking slots from the end reverses every group of equal keys.
+
+### Level 4: any range, and the real cost
+
+**Negative or shifted keys.** If keys lie in $[\min, \max]$, subtract $\min$ first, so key $x$ uses counter $x - \min$ and there are $k = \max - \min + 1$ counters:
+
+```java
+static int[] sortAnyRange(int[] a) {   // keys may be negative: shift them into [0, max - min]
+    int min = Arrays.stream(a).min().orElse(0), max = Arrays.stream(a).max().orElse(0);
+    int[] shifted = Arrays.stream(a).map(x -> x - min).toArray();
+    int[] sorted = countingSortKeys(shifted, max - min + 1);
+    return Arrays.stream(sorted).map(x -> x + min).toArray();
+}
+```
+
+For `[3, -2, 0, -2, 1]`, $\min = -2$ and $\max = 3$, so $k = 3 - (-2) + 1 = 6$ counters, and the result is `[-2, -2, 0, 1, 3]`.
+
+**The cost.** Counting sort runs three simple loops: count the $n$ keys, add up $k$ counters, and place the $n$ keys:
+
+$$
+T(n, k) = n + k + n = O(n + k), \qquad \text{memory} = k \text{ counters} + n \text{ output slots}
+$$
+
+where:
+
+- $n$ is the number of keys and $k$ the number of possible values;
+- each of the three terms is one loop doing constant work per step;
+- no step compares two keys, so the $\lceil \log_2 n! \rceil$ lower bound for comparison sorts does not apply.
+
+Example 1: the film ratings, $n = 8$ and $k = 5$: $8 + 5 + 8 = 21$ steps and no comparisons at all.
+
+Example 2: a million exam marks from 0 to 100, $k = 101$: about $2{,}000{,}101$ steps, against about $19{,}931{,}569$ comparisons for a comparison sort.
+
+Example 3, the failure case: all 32-bit integers, $k = 2^{32} = 4{,}294{,}967{,}296$ counters of 4 bytes each, which is 16 GiB of memory, to sort perhaps only 10 numbers. Counting sort pays off only when $k$ is at most about $n$. For wide keys, [radix sort](../radix-sort/index.qmd) runs counting sort on one small digit at a time.
+
+**Java uses it too.** In OpenJDK's `DualPivotQuicksort`, `Arrays.sort(byte[])` switches to counting sort for more than 64 elements, with $k = 2^8 = 256$ counters. `Arrays.sort(char[])` and `Arrays.sort(short[])` switch only above 1,750 elements, because there $k = 2^{16} = 65{,}536$ counters must be cleared and scanned, which only pays off for large arrays.
+
+## Why it works and what it costs
+
+**Correctness of the stable version.** Two facts, one per phase:
+
+- *After the prefix sums*, $\text{end}[v]$ is the number of keys $\le v$. So the keys equal to $v$ must occupy exactly the positions $\text{end}[v] - c[v], \dots, \text{end}[v] - 1$, which is $\text{start}[v]$ up to $\text{end}[v] - 1$.
+- *During placement*, the invariant is: *when record $i$ is reached (going right to left), $\text{end}[a_i]$ equals $\text{start}[a_i]$ plus the number of records with key $a_i$ at positions $\le i$.* Placing at `--end[key]` therefore puts record $i$ exactly at $\text{pos}(i)$ from Level 3, and decrements the pointer for the next equal key to its left.
+
+Every record lands at its own $\text{pos}(i)$, the positions are all different, and they are sorted by key with ties broken by arrival order. That is a stable sort.
+
+**Costs**, counted on the example:
+
+| Phase | Work for the ratings ($n = 8$, $k = 5$) | General |
+| --- | --- | --- |
+| Count | 8 increments | $n$ |
+| Prefix sums | 4 additions (5 counters) | $k$ |
+| Place | 8 placements | $n$ |
+| Extra memory | 5 counters + 8 output slots | $k + n$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Using a negative key as an index | `ArrayIndexOutOfBoundsException` | Shift by the minimum: counter `x - min` |
+| Allocating `max` counters instead of `max - min + 1` | Index out of bounds on the largest key, or wasted memory | $k = \max - \min + 1$ |
+| Counting sort on a huge key range | `OutOfMemoryError`, or far slower than `Arrays.sort` | Use it only when $k \lesssim n$; otherwise radix sort or a comparison sort |
+| Rewriting keys from the counts when keys carry data | Names and other fields are lost | Place whole records with prefix-sum positions (Level 3) |
+| Walking left to right while taking slots from `end` | Equal keys come out reversed: not stable | Right to left with `end`, or left to right with `start` |
+| H-Index with one counter per possible citation count | The counter array grows with the most-cited paper, not with $n$ | Cap every count at $n$: an h-index can never exceed $n$ |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the counts are defined, the code is a few loops.
+
+### 1. LeetCode 1122: Relative Sort Array (Easy)
+
+**Problem.** Reorder `arr1` so that values appear in the order given by `arr2` (whose values are distinct and all occur in `arr1`), with the remaining values at the end in ascending order. Values are in $[0, 1000]$. For `arr1 = [28, 6, 22, 8, 44, 17]` and `arr2 = [22, 28, 8, 6]` the answer is `[22, 28, 8, 6, 17, 44]`.
+
+**Math first.** Count first, then output blocks in a custom key order:
+
+$$
+\text{out} = \underbrace{v_1^{\,c[v_1]}\ v_2^{\,c[v_2]} \cdots v_m^{\,c[v_m]}}_{\text{arr2 order}}\ \underbrace{u_1^{\,c[u_1]}\ u_2^{\,c[u_2]} \cdots}_{\text{the rest, } u_1 < u_2 < \cdots}
+$$
+
+where:
+
+- $v_1, \dots, v_m$ are the values of `arr2`, in its order;
+- $u_1 < u_2 < \cdots$ are the other values that occur in `arr1`;
+- $x^{\,c}$ means "the value $x$ written $c$ times", and $c[x]$ is its count from Level 1.
+
+Example: `arr1 = [2, 3, 1, 3, 2, 4, 6, 7, 9, 2, 19]`, `arr2 = [2, 1, 4, 3, 9, 6]`. The counts are $c[2] = 3$, $c[3] = 2$ and 1 for each of 1, 4, 6, 7, 9, 19. The `arr2` blocks give $2^3\,1\,4\,3^2\,9\,6$, and the rest gives $7\,19$: `[2, 2, 2, 1, 4, 3, 3, 9, 6, 7, 19]`.
+
+**Idea.** One counting pass, then write `arr2`'s values with their counts (zeroing them), then sweep the counters from 0 to 1000 for whatever is left. This is counting sort with the key order rearranged.
+
+```java
+static int[] relativeSortArray(int[] arr1, int[] arr2) {
+    int[] count = new int[1001];                     // values are in [0, 1000]
+    for (int x : arr1) count[x]++;
+    int[] out = new int[arr1.length];
+    int pos = 0;
+    for (int x : arr2) {
+        for (; count[x] > 0; count[x]--) out[pos++] = x;   // every copy of x, in arr2's order
+    }
+    for (int v = 0; v < count.length; v++) {
+        for (; count[v] > 0; count[v]--) out[pos++] = v;   // the rest, ascending
+    }
+    return out;
+}
+```
+
+**Answer.** `[22, 28, 8, 6, 17, 44]` and `[2, 2, 2, 1, 4, 3, 3, 9, 6, 7, 19]`. Time $O(n + m + k)$ with $k = 1001$: at most $1000 + 1000 + 1001 = 3{,}001$ steps at the limits. Space: 1,001 counters. A comparator sort ("position in `arr2`, then value") also works, in $O(n \log n)$.
+
+### 2. LeetCode 274: H-Index (Medium)
+
+**Problem.** A researcher's h-index is the largest $h$ such that at least $h$ papers have at least $h$ citations each. For citations `[3, 0, 6, 1, 5]` the answer is 3.
+
+**Math first.** Let $G(h)$ be the number of papers with at least $h$ citations. $G$ can only fall as $h$ grows, so the answer is the largest $h$ where it is still big enough:
+
+$$
+h^{*} = \max \lbrace h : G(h) \ge h \rbrace, \qquad G(h) = \sum_{c = h}^{n} p[c], \qquad p[c] = \#\lbrace i : \min(c_i, n) = c \rbrace
+$$
+
+where:
+
+- $n$ is the number of papers and $c_i$ the citations of paper $i$;
+- $p[c]$ counts papers with $c$ citations, after **capping** every count at $n$;
+- capping is safe because $h^{*} \le n$ always, and a paper with $n$ or more citations counts towards every $h \le n$ anyway;
+- $G(h)$ adds the counters from the top down, a suffix sum.
+
+Example: `[3, 0, 6, 1, 5]`, $n = 5$. Capping turns 6 into 5, so $p[0] = 1$, $p[1] = 1$, $p[3] = 1$ and $p[5] = 2$. From the top: $G(5) = 2 < 5$, $G(4) = 2 < 4$, $G(3) = 2 + 1 = 3 \ge 3$. So $h^{*} = 3$.
+
+**Idea.** Counting sort with $k = n + 1$ counters, then one scan from the top that stops at the first $h$ with enough papers. No sorting of the citations is needed.
+
+```java
+static int hIndex(int[] citations) {
+    int n = citations.length;
+    int[] papers = new int[n + 1];                   // papers[c] = papers with c citations, c capped at n
+    for (int c : citations) papers[Math.min(c, n)]++;
+    int atLeast = 0;                                 // papers with at least h citations
+    for (int h = n; h >= 0; h--) {
+        atLeast += papers[h];
+        if (atLeast >= h) return h;
+    }
+    return 0;
+}
+```
+
+**Answer.** 3 for `[3, 0, 6, 1, 5]`, 1 for `[1, 3, 1]`, and 1 for a single paper with 100 citations (the cap turns 100 into 1). Time $O(n)$, about $2n = 10{,}000$ steps for $n = 5{,}000$, against about $5{,}000 \times 12.3 \approx 61{,}000$ comparisons to sort first. Space $n + 1$ counters.
+
+### 3. LeetCode 1585: Check If String Is Transformable With Substring Sort Operations (Hard)
+
+**Problem.** `s` and `t` are digit strings of equal length. One operation picks any substring of `s` and sorts it in ascending order. Can `s` be turned into `t`? For `s = "84532"`, `t = "34852"` the answer is true; for `s = "12345"`, `t = "12435"` it is false.
+
+**Math first.** Two observations turn the operation into a counting question.
+
+1. *Sorting a substring is the same as swapping neighbours $x\,y$ with $x > y$*, as many times as you like. Bubble sort sorts any substring using only such swaps, and each such swap is itself the sort of a two-digit substring. So **a digit can move left only by passing larger digits**.
+2. *Equal digits never need to cross*, so the $k$-th copy of digit $d$ in `t` must come from the $k$-th copy of $d$ in `s`. That is exactly the stability of counting sort.
+
+Read `t` from left to right. Its next digit $d$ comes from position $p$ in `s`. Every digit still waiting to the left of $p$ must end up **to the right** of this $d$, so it must be larger than $d$:
+
+$$
+s \to t \iff \text{for each digit } d \text{ of } t:\quad \text{next}_e > p \ \text{ for every } e < d
+$$
+
+where:
+
+- $d$ is the next digit of `t`, and $p$ the position in `s` of the first unused copy of $d$;
+- $\text{next}_e$ is the position in `s` of the first unused copy of digit $e$ ($+\infty$ if none is left);
+- the condition says no smaller digit is still waiting in front of $d$; if one were, $d$ could never pass it.
+
+Each digit's positions are sorted, so only the *first* unused copy of each smaller digit needs checking. Grouping the positions of `s` by digit, in order, is the distribution step of a stable counting sort with $k = 10$ keys.
+
+Example: `s = "84532"`, so the positions are 8: $\lbrace 0 \rbrace$, 4: $\lbrace 1 \rbrace$, 5: $\lbrace 2 \rbrace$, 3: $\lbrace 3 \rbrace$, 2: $\lbrace 4 \rbrace$. Reading `t = "34852"`:
+
+| Digit of `t` | $p$ | Smaller digits still waiting, at | Blocked? |
+| --- | --- | --- | --- |
+| 3 | 3 | 2 at 4 | no, $4 > 3$ |
+| 4 | 1 | 2 at 4 | no |
+| 8 | 0 | 2 at 4, 5 at 2 | no |
+| 5 | 2 | 2 at 4 | no |
+| 2 | 4 | none | no |
+
+So the answer is **true**. For `s = "12345"`, `t = "12435"`: 1 and 2 match, then $d = 4$ comes from $p = 3$, but the digit 3 is still waiting at position $2 < 3$. The 4 can never pass the smaller 3, so the answer is **false**.
+
+**Idea.** Build ten queues of positions, one per digit, filled left to right. For each digit of `t`, take the front of its queue and check the fronts of the queues of the smaller digits.
+
+```java
+static boolean isTransformable(String s, String t) {
+    List<Deque<Integer>> positions = new ArrayList<>();   // positions.get(d) = where digit d sits in s, left to right
+    for (int d = 0; d < 10; d++) positions.add(new ArrayDeque<>());
+    for (int i = 0; i < s.length(); i++) positions.get(s.charAt(i) - '0').addLast(i);
+    for (char ch : t.toCharArray()) {
+        int d = ch - '0';
+        if (positions.get(d).isEmpty()) return false;     // t uses more copies of d than s has
+        int p = positions.get(d).pollFirst();             // the k-th d of t comes from the k-th d of s
+        for (int smaller = 0; smaller < d; smaller++) {
+            Deque<Integer> waiting = positions.get(smaller);
+            if (!waiting.isEmpty() && waiting.peekFirst() < p) return false;   // a smaller digit blocks d
+        }
+    }
+    return true;
+}
+```
+
+**Answer.** True for `("84532", "34852")` and `("34521", "23415")`; false for `("12345", "12435")`. Each digit of `t` checks at most 9 queue fronts, so the time is at most $10n$: $10^6$ steps for $n = 10^5$. Space $O(n)$ for the stored positions. Simulating actual sorts would be hopeless, since each one can cost $O(n \log n)$ and there is no bound on how many are needed.
+
+## Mathematical Abstraction
+
+Counting sort computes every record's final position from counts alone:
+
+$$
+\text{pos}(i) = \underbrace{\sum_{u < a_i} c[u]}_{\text{start}[a_i]} + \#\lbrace j < i : a_j = a_i \rbrace, \qquad T(n, k) = O(n + k)
+$$
+
+where:
+
+- $c[u]$ is the number of keys equal to $u$, for $u \in \lbrace 0, \dots, k-1 \rbrace$;
+- the sum counts the keys smaller than $a_i$, which all go first;
+- the second term counts earlier equal keys, which makes the order stable;
+- $T(n, k)$ is the running time: two passes over the $n$ keys and one over the $k$ counters.
+
+Example: for the ratings `[3, 1, 4, 1, 0, 3, 2, 1]`, child H (key 1, arrival 7) gets $\text{pos} = c[0] + 2 = 1 + 2 = 3$, and the whole sort costs $8 + 5 + 8 = 21$ steps. The method shines when $k \lesssim n$, and it becomes the per-digit workhorse of radix sort when $k$ is large.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 8, "Sorting in Linear Time" (Section 8.1, lower bounds for sorting; Section 8.2, counting sort). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §5.1 "String Sorts", which opens with key-indexed counting: <https://algs4.cs.princeton.edu/51radix/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 3, *Sorting and Searching*, 2nd edition (Addison-Wesley, 1998), Section 5.2, which credits Harold H. Seward (MIT, 1954) with distribution counting.
+- OpenJDK `java.util.DualPivotQuicksort` (`MIN_BYTE_COUNTING_SORT_SIZE = 64`, `MIN_SHORT_OR_CHAR_COUNTING_SORT_SIZE = 1750`): <https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/DualPivotQuicksort.java>.
+- LeetCode: [1122. Relative Sort Array](https://leetcode.com/problems/relative-sort-array/), [274. H-Index](https://leetcode.com/problems/h-index/), [1585. Check If String Is Transformable With Substring Sort Operations](https://leetcode.com/problems/check-if-string-is-transformable-with-substring-sort-operations/).
+
+[← Merge Sort](../merge-sort/index.qmd) · [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd) · [Bucket Sort →](../bucket-sort/index.qmd)

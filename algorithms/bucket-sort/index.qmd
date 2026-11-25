@@ -1,66 +1,388 @@
 ---
 title: "Bucket Sort"
-description: "CLRS-inspired worked lesson on Bucket Sort: numerical substitution, invariants, original code and complexity."
+description: "Sorting evenly spread values by dropping them into buckets: the scatter-sort-gather method on [0, 1), why the expected time is O(n) (E[n_i²] = 2 − 1/n), the quadratic worst case and its fixes, integer buckets of a fixed width, buckets that keep only a summary (the pigeonhole bound), and hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+Bucket sort guesses where each value belongs **before** comparing anything. If the values are spread evenly, each one lands in a bucket with only about one other value, the buckets are tiny, and the whole sort takes linear time on average. The same idea, "split the range into equal slices", also solves problems that are not about sorting at all.
 
-**LeetCode 164 — Maximum Gap (sorting ideas).**
+All code is in [`BucketSortLab.java`](BucketSortLab.java). Run it from this folder with `java BucketSortLab.java`; it checks every number on this page and prints `OK`.
 
-Map each key to a bucket, sort the content of each bucket, then concatenate in bucket order. The mapping must preserve ordering between buckets.
+## The problem
 
-## First try the obvious approach
+Eight runners' reaction times, in seconds, are `[0.61, 0.17, 0.92, 0.34, 0.08, 0.55, 0.39, 0.73]`. All of them are between 0 and 1, and they are spread fairly evenly. We want them sorted.
 
-Sorting by repeated pairwise comparisons ignores the possibility that the numeric domain is small or input distribution is reasonably spread out.
+- [Counting sort](../counting-sort/index.qmd) cannot help: these are not small whole numbers, and between 0 and 1 there are infinitely many possible values.
+- A comparison sort needs $\lceil \log_2 8! \rceil = 16$ comparisons on some input, and about $n \log_2 n$ in general.
+- But we know something extra: the values are **spread out**. A value of 0.92 obviously belongs near the end. Can we use that to put each value almost in place at once?
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+## Explain it like I'm ten
 
-## Mathematical relationship, explained immediately
+::: {.callout-tip}
+The school paints 8 zones on the playground for a height line-up: zone 0 for the shortest heights, zone 7 for the tallest, each zone covering an equal slice of heights. Every child walks straight to their zone. Most zones get one child, a few get two, some none. Each zone sorts its one or two children in a second, and then the zones line up from 0 to 7. Done, and nobody compared themselves with the whole class.
+
+A post office does the same with **pigeonholes**: letters go into holes by postcode area, and only the small pile in each hole needs careful sorting.
+
+The trick only works if children spread out across the zones. If the whole class is the same height, they all crowd into one zone, and that zone has to sort everyone by hand.
+
+CLRS presents this algorithm in Section 8.4, with exactly this analysis of evenly spread inputs. An early version, "sorting by address calculation", was published by E. J. Isaac and R. C. Singleton in the *Journal of the ACM* in 1956.
+:::
+
+## From simple to advanced
+
+### Level 1: scatter, sort each bucket, gather
+
+Use $n$ buckets for $n$ values in $[0, 1)$. Bucket $i$ holds the slice $\left[\frac{i}{n}, \frac{i+1}{n}\right)$, so a value goes to
 
 $$
-b(x)=\min(k-1,\lfloor kx\rfloor)
+b(x) = \lfloor n \cdot x \rfloor
 $$
 
-**Symbol by symbol:** x is an input number in the interval [0,1]; k is the positive number of equally sized buckets; b(x) is the bucket index from 0 through k−1.
+where:
 
-**Calculate with real numbers:** For k=4 and x=0.63, kx=2.52 and floor gives 2, so x enters bucket 2. For x=1, the min caps 4 to bucket 3, avoiding an out-of-range index.
+- $x$ is a value with $0 \le x < 1$;
+- $n$ is the number of values, and also the number of buckets;
+- $\lfloor \cdot \rfloor$ rounds down to a whole number, so $b(x)$ is in $\lbrace 0, \dots, n - 1 \rbrace$.
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+Example: with $n = 8$:
 
-## How the algorithm emerges
+| $x$ | $8x$ | Bucket $b(x)$ |
+| --- | --- | --- |
+| 0.61 | 4.88 | 4 |
+| 0.17 | 1.36 | 1 |
+| 0.92 | 7.36 | 7 |
+| 0.34 | 2.72 | 2 |
+| 0.08 | 0.64 | 0 |
+| 0.55 | 4.40 | **4** |
+| 0.39 | 3.12 | 3 |
+| 0.73 | 5.84 | 5 |
 
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
+Bucket 4 receives two values, 0.61 and 0.55, and bucket 6 none. Sort bucket 4 into 0.55, 0.61, then read the buckets in order: `[0.08, 0.17, 0.34, 0.39, 0.55, 0.61, 0.73, 0.92]`.
 
-**Correctness argument:** If x lies in a smaller bucket than y, x≤y. Sorting within each bucket fixes local ordering; concatenation then fixes global ordering.
+```java
+static double[] bucketSort(double[] a) {   // every value is in [0, 1)
+    int n = a.length;
+    List<List<Double>> buckets = new ArrayList<>();
+    for (int i = 0; i < n; i++) buckets.add(new ArrayList<>());
+    for (double x : a) buckets.get((int) (n * x)).add(x);   // bucket i holds [i/n, (i+1)/n)
+    double[] out = new double[n];
+    int k = 0;
+    for (List<Double> bucket : buckets) {
+        Collections.sort(bucket);                            // tiny lists: a binary insertion sort
+        for (double x : bucket) out[k++] = x;
+    }
+    return out;
+}
+```
 
-## Code, but only after the reasoning
+Why is gathering correct? Every value in bucket $i$ is below $\frac{i+1}{n}$, and every value in bucket $i + 1$ is at least $\frac{i+1}{n}$. So whole buckets are already in the right order; only the inside of each bucket needs sorting. And since values enter each bucket in input order and `Collections.sort` is stable, the whole sort is stable.
 
-Here is a standalone, original JavaScript demonstration:
+### Level 2: why it is linear on average
 
-~~~js
-const a=[.63,.12,.75,.28];
-const buckets=Array.from({length:4},()=>[]);
-for(const x of a) buckets[Math.min(3,Math.floor(4*x))].push(x);
-console.log(buckets.flatMap(b=>b.sort((x,y)=>x-y)));
-~~~
+Scattering and gathering cost $O(n)$. The only uncertain part is sorting inside the buckets. CLRS sorts each bucket with insertion sort, which costs about $n_i^2$ for a bucket of $n_i$ values, so
 
-This shows a deliberately minimal case; the chapter explains the invariant needed to extend it into a full implementation.
+$$
+T(n) = \Theta(n) + \sum_{i=0}^{n-1} O(n_i^2)
+$$
 
-## Count the work rigorously
+where:
 
-**Time and memory:** Under roughly uniform independent inputs and simple bucket sorts, expected O(n+k) plus local sorting overhead; worst-case can be much larger.
+- $n_i$ is the number of values that land in bucket $i$;
+- $\Theta(n)$ is the scatter and gather work;
+- $O(n_i^2)$ is the insertion sort of bucket $i$: at most $\frac{n_i (n_i - 1)}{2}$ shifts.
 
-**The misleading shortcut:** Expected linear behaviour relies on assumptions about distribution and bucket size. If all entries fall in one bucket, its internal sort dominates.
+Example: in Level 1 the bucket sizes are $1, 1, 1, 1, 2, 1, 0, 1$, so $\sum n_i^2 = 1 + 1 + 1 + 1 + 4 + 1 + 0 + 1 = 10$.
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+```java
+static int sumOfSquaredBucketSizes(double[] a) {
+    int n = a.length;
+    int[] size = new int[n];
+    for (double x : a) size[(int) (n * x)]++;
+    int sum = 0;
+    for (int s : size) sum += s * s;
+    return sum;
+}
+```
 
-## Practice and source
+Now suppose each value is independent and **uniformly random** in $[0, 1)$. Each of the $n$ values lands in bucket $i$ with probability $\frac{1}{n}$, so $n_i$ counts successes in $n$ tries. Its average is $E[n_i] = n \cdot \frac{1}{n} = 1$ and its variance is $n \cdot \frac{1}{n} \cdot \left(1 - \frac{1}{n}\right) = 1 - \frac{1}{n}$. Since a square's average is the variance plus the squared average:
 
-- **Textbook relationship:** CLRS Chapter 8 §8.4 (bucket sort)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 164 — Maximum Gap (sorting ideas). Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+$$
+E[n_i^2] = \operatorname{Var}[n_i] + \big(E[n_i]\big)^2 = \left(1 - \frac{1}{n}\right) + 1 = 2 - \frac{1}{n}
+$$
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+where:
+
+- $E[\cdot]$ is the average over all random inputs;
+- $\operatorname{Var}[n_i] = E[n_i^2] - (E[n_i])^2$ measures how much $n_i$ spreads around its average;
+- the result does not grow with $n$: a bucket's expected squared size stays below 2.
+
+Example: for $n = 8$, $E[n_i^2] = 2 - \frac{1}{8} = 1.875$. Adding over all 8 buckets gives an expected $\sum n_i^2 = 8 \times 1.875 = 15 = 2n - 1$. Our example scored 10, a little luckier than average. The lab sorts 100,000 random 8-value inputs and measures an average of 15 (to within 0.1). For a million values the expected total is $2 \times 10^6 - 1$, so the bucket sorts cost $O(n)$ and so does the whole algorithm:
+
+$$
+E[T(n)] = \Theta(n) + n \cdot O\!\left(2 - \frac{1}{n}\right) = \Theta(n)
+$$
+
+where $E[T(n)]$ is the expected running time over random inputs, and $n \cdot O(2 - \frac{1}{n})$ is the sum of $n$ bucket costs, each of expected size below 2. Example: for $n = 8$ this is 8 scatter steps, 8 gather steps and about 15 units of bucket sorting, all proportional to $n$.
+
+Notice what the argument needs: not that the input is perfectly even, only that the **sum of squared bucket sizes is linear** in $n$.
+
+### Level 3: the worst case, and how to avoid it
+
+If every value falls into one bucket, that bucket has $n_0 = n$ values and $\sum n_i^2 = n^2$. Insertion sort then pays $\frac{n(n-1)}{2}$ shifts, just like sorting without buckets.
+
+Example: `[0.08, 0.02, 0.07, 0.01, 0.05, 0.03, 0.06, 0.04]` are all below $\frac{1}{8}$, so all 8 land in bucket 0, and $\sum n_i^2 = 64$ instead of about 15. Insertion sort could need $\frac{8 \times 7}{2} = 28$ shifts there. With $n = 100{,}000$ crowded values that is about $5 \times 10^9$ shifts.
+
+Three standard fixes:
+
+- **Sort inside buckets with an $O(m \log m)$ sort.** The code above already does: `Collections.sort` is TimSort, which sorts lists shorter than 32 by binary insertion and longer ones by merging sorted runs. A bucket of $m$ values then costs at most about $m \log_2 m$ comparisons, so the worst case of the whole sort is $O(n \log n)$: for 100,000 crowded values, about $100{,}000 \times 17 = 1.7 \times 10^6$ comparisons.
+- **Choose bucket boundaries from the data.** *Sample sort* first sorts a small random sample and uses its evenly spaced values as bucket boundaries, so each bucket gets about the same number of values even when the data is skewed. Parallel and external sorts use this.
+- **Transform the values first.** If you know the distribution, map each value through it (its cumulative distribution function) so that the results are uniform, then bucket those.
+
+### Level 4: integer buckets of a fixed width
+
+Buckets need not split $[0, 1)$. For integers, fix a **width** $w$ and use
+
+$$
+\text{id}(x) = \left\lfloor \frac{x}{w} \right\rfloor
+$$
+
+where:
+
+- $x$ is any integer, possibly negative;
+- $w \ge 1$ is the width, so bucket $j$ holds $jw, jw + 1, \dots, jw + w - 1$;
+- $\lfloor \cdot \rfloor$ rounds **down**, also for negative numbers.
+
+Two facts follow, and they are all that interview problems 2 and 3 need:
+
+- **Same bucket** means $\lvert x - y \rvert \le w - 1$: one bucket spans only $w$ consecutive integers.
+- **Bucket ids two or more apart** means $\lvert x - y \rvert \ge w + 1$: at least one whole bucket lies between them.
+
+Only **neighbouring** buckets need a real comparison.
+
+Example: $w = 4$. Then $\text{id}(-3) = \lfloor -0.75 \rfloor = -1$, $\text{id}(-1) = -1$, $\text{id}(0) = 0$, $\text{id}(3) = 0$, $\text{id}(4) = 1$. So $-3$ and $3$ are in neighbouring buckets $-1$ and $0$, and must be compared: they differ by 6.
+
+```java
+static long bucketId(long x, long width) {
+    return Math.floorDiv(x, width);
+}
+```
+
+`Math.floorDiv` matters here exactly as `Math.floorMod` mattered in the [hash table](../hash-table/index.qmd) lesson. Java's `/` rounds **toward zero**, so `-3 / 4` is `0`, which would put $-3$ into the same bucket as $3$ and wrongly report them as close.
+
+### Level 5: buckets that keep only a summary
+
+Sometimes we do not need the order inside a bucket at all, only its smallest and largest value. The key is the **pigeonhole principle**: if $n$ numbers lie between $\min$ and $\max$, the $n - 1$ gaps between neighbours (in sorted order) add up to $\max - \min$, so they cannot all be small:
+
+$$
+\max_i\, (s_{i+1} - s_i) \ \ge\ \left\lceil \frac{\max - \min}{n - 1} \right\rceil
+$$
+
+where:
+
+- $s_0 \le s_1 \le \dots \le s_{n-1}$ are the numbers in sorted order (which we never actually compute);
+- $s_{i+1} - s_i$ is the gap between neighbours, and there are $n - 1$ of them;
+- if every gap were smaller than the average $\frac{\max - \min}{n - 1}$, they could not add up to $\max - \min$; the round-up $\lceil \cdot \rceil$ is allowed because the gaps are whole numbers.
+
+Example: `[3, 6, 9, 1]` has $\min = 1$, $\max = 9$ and $n - 1 = 3$ gaps adding up to 8. So the largest gap is at least $\lceil 8 / 3 \rceil = \lceil 2.67 \rceil = 3$. Indeed, sorted it is $1, 3, 6, 9$, with gaps $2, 3, 3$.
+
+So choose a bucket width $w$ no bigger than that bound. Two numbers in the same bucket differ by at most $w - 1$, which is smaller than the largest gap, so **the largest gap always runs from one bucket's maximum to the next non-empty bucket's minimum**. Each bucket only needs to remember those two numbers. Interview problem 2 turns this into code.
+
+## Why it works and what it costs
+
+**Correctness.** Bucket boundaries are increasing: every value in bucket $i$ is smaller than every value in bucket $i + 1$, because $b(x) = \lfloor n x \rfloor$ never decreases as $x$ grows. So concatenating the buckets in order, each sorted internally, gives a sorted list. If the internal sort is stable, so is the whole sort.
+
+**Costs**, on the example and in general:
+
+| Measure | Example ($n = 8$) | Uniform random input | Worst case |
+| --- | --- | --- | --- |
+| Scatter + gather | 16 steps | $2n$ | $2n$ |
+| $\sum n_i^2$ (insertion-sort work) | 10 | $2n - 1$ on average | $n^2$ |
+| Time with insertion sort in buckets | $O(n)$ | $O(n)$ expected | $O(n^2)$ |
+| Time with TimSort in buckets | $O(n)$ | $O(n)$ expected | $O(n \log n)$ |
+| Extra memory | 8 buckets + 8 values | $O(n)$ | $O(n)$ |
+
+Bucket sort does not contradict the $n \log_2 n$ lower bound for comparison sorts: it computes $\lfloor n x \rfloor$ from the value itself, which a comparison sort is not allowed to do, and its linear time is an **average** over an assumed input distribution.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| A value equal to 1.0 (or above) | `IndexOutOfBoundsException`: $\lfloor n \cdot 1.0 \rfloor = n$ | Scale into $[0, 1)$ first, for example divide by $\max + 1$, or clamp to $n - 1$ |
+| Skewed data with fixed equal-width buckets | One bucket gets almost everything; insertion sort turns quadratic | $O(m \log m)$ sort inside buckets, or boundaries from a sample |
+| `x / w` for negative integers | $-3$ and $3$ share bucket 0 and look close | `Math.floorDiv(x, w)` |
+| `valueDiff + 1` in `int` | Overflows when `valueDiff` is `Integer.MAX_VALUE` | Compute the width as a `long` |
+| Bucket width 0 in Maximum Gap | `ArithmeticException: / by zero` when $\max - \min < n - 1$ | `Math.max(1, (max - min) / (n - 1))` |
+| Forgetting to drop the value that leaves the window | Reports pairs that are more than `indexDiff` apart | Remove `nums[i - indexDiff]` from its bucket each step |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the buckets are defined, the code is short.
+
+### 1. LeetCode 347: Top K Frequent Elements (Medium)
+
+**Problem.** Return the $k$ most frequent values, in better than $O(n \log n)$ time. For `[1, 1, 1, 2, 2, 3]` and $k = 2$ the answer is `[1, 2]`.
+
+**Math first.** Bucket the values by **frequency** instead of by value. A frequency is a whole number between 1 and $n$, so $n$ buckets suffice:
+
+$$
+B_f = \lbrace v : \text{freq}(v) = f \rbrace, \qquad f = 1, 2, \dots, n
+$$
+
+where:
+
+- $\text{freq}(v)$ is how many times value $v$ occurs, counted with a hash map;
+- $B_f$ is the bucket of values that occur exactly $f$ times;
+- $n$ is the length of the array, the largest possible frequency.
+
+Then read the buckets from $f = n$ down to $1$ and stop after $k$ values.
+
+Example: `[1, 1, 1, 2, 2, 3]`, $n = 6$: $\text{freq}(1) = 3$, $\text{freq}(2) = 2$, $\text{freq}(3) = 1$. So $B_3 = \lbrace 1 \rbrace$, $B_2 = \lbrace 2 \rbrace$, $B_1 = \lbrace 3 \rbrace$, and the others are empty. Reading from $f = 6$ down: $B_6, B_5, B_4$ are empty, $B_3$ gives 1, $B_2$ gives 2, and now $k = 2$ values are found.
+
+**Idea.** Count with a `HashMap`, drop each distinct value into its frequency bucket, then scan the buckets from the top. No comparison of frequencies is ever needed.
+
+```java
+static int[] topKFrequent(int[] nums, int k) {
+    Map<Integer, Integer> frequency = new HashMap<>();
+    for (int x : nums) frequency.merge(x, 1, Integer::sum);
+    List<List<Integer>> byFrequency = new ArrayList<>();      // byFrequency.get(f) = values seen exactly f times
+    for (int f = 0; f <= nums.length; f++) byFrequency.add(new ArrayList<>());
+    frequency.forEach((value, f) -> byFrequency.get(f).add(value));
+    int[] top = new int[k];
+    int found = 0;
+    for (int f = nums.length; f >= 1 && found < k; f--) {
+        for (int value : byFrequency.get(f)) {
+            if (found < k) top[found++] = value;
+        }
+    }
+    return top;
+}
+```
+
+**Answer.** `[1, 2]`; `[1]` for `[1]` with $k = 1$. Time $O(n)$: one counting pass, one pass over the distinct values, and at most $n$ buckets, about $3 \times 10^5$ steps at $n = 10^5$. Space $O(n)$. A heap of size $k$ gives $O(n \log k)$ instead, and sorting the distinct values by frequency $O(n \log n)$.
+
+### 2. LeetCode 164: Maximum Gap (Medium)
+
+**Problem.** Return the largest difference between neighbours in the **sorted** order of the array, in linear time and space; return 0 for fewer than 2 numbers. For `[3, 6, 9, 1]` the answer is 3.
+
+**Math first.** By the pigeonhole bound of Level 5, the answer $G$ satisfies
+
+$$
+G \ \ge\ \left\lceil \frac{\max - \min}{n - 1} \right\rceil \ \ge\ w = \max\!\left(1, \left\lfloor \frac{\max - \min}{n - 1} \right\rfloor\right)
+$$
+
+where:
+
+- $G$ is the maximum gap we want;
+- $n$ is the number of values, and $\max$, $\min$ the largest and smallest;
+- $w$ is the bucket width we choose; it is at least 1 so that we never divide by zero, and $G \ge 1$ anyway whenever $\max > \min$.
+
+Buckets of width $w$ starting at $\min$ hold numbers that differ by at most $w - 1 < G$, so the maximum gap is never inside a bucket. It is always $\text{low}[\text{next}] - \text{high}[\text{prev}]$ between consecutive **non-empty** buckets. There are $\left\lfloor \frac{\max - \min}{w} \right\rfloor + 1$ buckets, never more than $2n - 1$.
+
+Example: `[3, 6, 9, 1]`: $\min = 1$, $\max = 9$, $n = 4$, so $w = \lfloor 8 / 3 \rfloor = 2$ and there are $\lfloor 8 / 2 \rfloor + 1 = 5$ buckets. Number $x$ goes to bucket $\lfloor (x - 1) / 2 \rfloor$: 1 → 0, 3 → 1, 6 → 2, 9 → 4, and bucket 3 is empty. The gaps between neighbouring non-empty buckets are $3 - 1 = 2$, $6 - 3 = 3$ and $9 - 6 = 3$ (across the empty bucket). The answer is **3**.
+
+**Idea.** Find $\min$ and $\max$, choose $w$, and for each bucket keep only its lowest and highest number. Then walk the buckets once, skipping empty ones.
+
+```java
+static int maximumGap(int[] nums) {
+    int n = nums.length;
+    int min = Arrays.stream(nums).min().getAsInt(), max = Arrays.stream(nums).max().getAsInt();
+    if (n < 2 || min == max) return 0;
+    int width = Math.max(1, (max - min) / (n - 1));       // the largest gap is at least this wide
+    int count = (max - min) / width + 1;
+    int[] low = new int[count], high = new int[count];
+    Arrays.fill(low, Integer.MAX_VALUE);
+    Arrays.fill(high, Integer.MIN_VALUE);
+    for (int x : nums) {
+        int b = (x - min) / width;
+        low[b] = Math.min(low[b], x);
+        high[b] = Math.max(high[b], x);
+    }
+    int best = 0, previousHigh = min;
+    for (int b = 0; b < count; b++) {
+        if (low[b] == Integer.MAX_VALUE) continue;        // empty bucket: the gap stretches across it
+        best = Math.max(best, low[b] - previousHigh);
+        previousHigh = high[b];
+    }
+    return best;
+}
+```
+
+**Answer.** 3 for `[3, 6, 9, 1]`; 0 for `[10]` and for `[1, 1, 1]`. Time $O(n)$: for $n = 10^5$ values up to $10^9$, $w = \lfloor 10^9 / 99{,}999 \rfloor = 10{,}000$ and there are $100{,}001$ buckets, so a few hundred thousand steps. Space $O(n)$ for the two bucket arrays. The [radix sort](../radix-sort/index.qmd) lesson solves the same problem by sorting in linear time instead.
+
+### 3. LeetCode 220: Contains Duplicate III (Hard)
+
+**Problem.** Are there two positions $i \ne j$ with $\lvert i - j \rvert \le$ `indexDiff` and $\lvert a_i - a_j \rvert \le$ `valueDiff`? For `[1, 2, 3, 1]`, `indexDiff = 3`, `valueDiff = 0` the answer is true (the two 1s); for `[1, 5, 9, 1, 5, 9]`, `indexDiff = 2`, `valueDiff = 3` it is false.
+
+**Math first.** Two conditions: closeness in **position** is a sliding window, and closeness in **value** is a bucket question. With $t$ = `indexDiff`, $v$ = `valueDiff` and buckets of width $w = v + 1$:
+
+$$
+\text{id}(x) = \left\lfloor \frac{x}{v + 1} \right\rfloor, \qquad
+\begin{cases}
+\text{same id} & \Rightarrow \lvert x - y \rvert \le v \quad \text{(answer found)} \\
+\text{ids differ by } 1 & \Rightarrow \text{compare } \lvert x - y \rvert \le v \\
+\text{ids differ by} \ge 2 & \Rightarrow \lvert x - y \rvert \ge v + 2 > v \quad \text{(never)}
+\end{cases}
+$$
+
+where:
+
+- $x$ is the new value and $y$ any value among the last $t$ values (the window);
+- $\text{id}$ is the bucket of Level 4 with width $w = v + 1$, so one bucket spans exactly $v + 1$ integers;
+- the three cases are the two facts of Level 4 with $w - 1 = v$ and $w + 1 = v + 2$.
+
+Because a second value in the same bucket would already have answered "true", **each bucket holds at most one window value**. So each new value needs only three lookups: its own bucket and its two neighbours.
+
+Example: `[1, 5, 9, 1, 5, 9]` with $t = 2$, $v = 3$, so $w = 4$ and the ids are $0, 1, 2, 0, 1, 2$.
+
+- 1 (id 0): window empty; store it.
+- 5 (id 1): neighbour id 0 holds 1, and $5 - 1 = 4 > 3$; store it.
+- 9 (id 2): neighbour id 1 holds 5, and $9 - 5 = 4 > 3$; store it, then drop the value leaving the window, 1 (id 0).
+- 1 (id 0): neighbour id 1 holds 5, $4 > 3$; store; drop 5.
+- 5 (id 1): neighbours hold 1 and 9, both 4 away; store; drop 9.
+- 9 (id 2): neighbour id 1 holds 5, $4 > 3$. Nothing found, so the answer is **false**.
+
+**Idea.** One pass with a `HashMap` from bucket id to the single value in that bucket, removing the value that slides out of the window. Use `long` for the width and the values, and `Math.floorDiv` for negative numbers.
+
+```java
+static boolean containsNearbyAlmostDuplicate(int[] nums, int indexDiff, int valueDiff) {
+    long width = (long) valueDiff + 1;                     // two values in one bucket differ by <= valueDiff
+    Map<Long, Long> window = new HashMap<>();              // bucket id -> the one window value in it
+    for (int i = 0; i < nums.length; i++) {
+        long x = nums[i], id = bucketId(x, width);
+        if (window.containsKey(id)) return true;
+        Long left = window.get(id - 1), right = window.get(id + 1);
+        if (left != null && x - left <= valueDiff) return true;
+        if (right != null && right - x <= valueDiff) return true;
+        window.put(id, x);
+        if (i >= indexDiff) window.remove(bucketId(nums[i - indexDiff], width));   // slide the window
+    }
+    return false;
+}
+```
+
+**Answer.** True for `[1, 2, 3, 1]` (the second 1 finds the first in its own bucket), false for `[1, 5, 9, 1, 5, 9]`. `[-3, 3]` with $v = 3$ gives false, because `floorDiv` puts them in buckets $-1$ and $0$ and $6 > 3$; truncating division would have put both in bucket 0 and wrongly said true. Time $O(n)$ with at most about 5 hash operations per value, about $5 \times 10^5$ for $n = 10^5$; space $O(\min(n, t))$ for the window. A `TreeSet` window gives $O(n \log t)$ instead.
+
+## Mathematical Abstraction
+
+Bucket sort is a function from values to bucket numbers that respects order, plus a bound on how crowded the buckets get:
+
+$$
+\text{id}(x) = \left\lfloor \frac{x - \min}{w} \right\rfloor, \qquad
+E\Big[\sum_{i} n_i^2\Big] = n \left(2 - \frac{1}{n}\right) = 2n - 1 \quad \text{(uniform input, } n \text{ buckets)}
+$$
+
+where:
+
+- $x$ is a value, $\min$ the smallest value and $w$ the bucket width, so $x \le y$ implies $\text{id}(x) \le \text{id}(y)$;
+- $n_i$ is the size of bucket $i$, and $\sum_i n_i^2$ bounds the work of sorting inside the buckets;
+- $E[\cdot]$ averages over inputs whose values are independent and uniformly spread.
+
+Example: the eight reaction times in $[0, 1)$ use $w = \frac{1}{8}$ and $\min = 0$, so $\text{id}(0.61) = \lfloor 4.88 \rfloor = 4$; their bucket sizes give $\sum n_i^2 = 10$, against an expected $2 \cdot 8 - 1 = 15$ and a worst case of $8^2 = 64$. With integers, a width of $w = v + 1$ makes "same bucket" mean "within $v$" (LeetCode 220), and a width of at most $\left\lceil \frac{\max - \min}{n - 1} \right\rceil$ keeps the maximum gap between buckets (LeetCode 164).
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 8, "Sorting in Linear Time" (Section 8.4, bucket sort, with the $E[n_i^2] = 2 - 1/n$ analysis); Chapter 5, "Probabilistic Analysis and Randomized Algorithms", for indicator random variables. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- E. J. Isaac and R. C. Singleton, "Sorting by Address Calculation", *Journal of the ACM* 3(3), 1956, pages 169–174.
+- OpenJDK `java.util.TimSort` (binary insertion sort below `MIN_MERGE = 32`), used by `Collections.sort`: <https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/TimSort.java>.
+- LeetCode: [347. Top K Frequent Elements](https://leetcode.com/problems/top-k-frequent-elements/), [164. Maximum Gap](https://leetcode.com/problems/maximum-gap/), [220. Contains Duplicate III](https://leetcode.com/problems/contains-duplicate-iii/).
+
+[← Counting Sort](../counting-sort/index.qmd) · [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd) · [Radix Sort →](../radix-sort/index.qmd)

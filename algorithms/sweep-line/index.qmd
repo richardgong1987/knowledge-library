@@ -1,65 +1,389 @@
 ---
 title: "Sweep Line"
-description: "CLRS-inspired worked lesson on Sweep Line: numerical substitution, invariants, original code and complexity."
+description: "From a bus driver counting passengers to the skyline and the area of overlapping rectangles: events sorted by coordinate, +1 at a start and −1 at an end, ties, an active multiset, the length of a union, slabs in two dimensions, and hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+A sweep line turns a problem about many overlapping intervals into one walk from left to right. Every interval becomes two **events**, a start and an end. Sort the events, then move an imaginary vertical line across them, keeping only what is true **at the line**: how many intervals are open, or which ones. This lesson builds the idea from counting overlaps, handles ties, keeps an active set, measures a union, and then sweeps the plane to find a city skyline and the area covered by rectangles.
 
-**LeetCode 253 — Meeting Rooms II (classic interval overlap).**
+All code is in [`SweepLineLab.java`](SweepLineLab.java). Run it from this folder with `java SweepLineLab.java`; it checks every number on this page and prints `OK`.
 
-Sort only significant endpoints. A start increases the number of active intervals, an end decreases it. The maximum running count is the minimum number of concurrent rooms needed.
+## The problem
 
-## First try the obvious approach
+Four meetings book the same room, each as a half-open time interval $[\text{start}, \text{end})$: $[1, 4)$, $[2, 6)$, $[3, 5)$ and $[7, 8)$. How many rooms do we need, that is, what is the largest number of meetings running at the same moment?
 
-For every minute of a large time range, count all active meetings. Runtime then depends on irrelevant gaps with no events.
+```text
+time:      1   2   3   4   5   6   7   8
+[1, 4)     |-----------)
+[2, 6)         |---------------)
+[3, 5)             |-------)
+[7, 8)                             |---)
+running:   1   2   3   2   1   0   1   0
+```
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+The answer is **3**, during $[3, 4)$.
 
-## Mathematical relationship, explained immediately
+- Checking every pair of meetings costs $\frac{n(n-1)}{2}$ comparisons ($6$ for $n = 4$), and pairs alone do not even tell you whether three overlap at once.
+- Checking every moment costs one pass per time unit, which is hopeless when times go up to $10^9$.
+- A sweep sorts the $2n$ events once, $O(n \log n)$, and then reads the answer off in a single pass.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+A bus drives along a road with stops. At every stop some people get **on** and some get **off**. The driver does not remember anybody's name. She keeps one number in her head: how many people are on the bus now. Someone gets on: $+1$. Someone gets off: $-1$.
+
+If you want to know when the bus was fullest, you don't need to remember every passenger's whole journey. You only need the list of stops in order, with the ons and offs at each, and that one running number.
+
+That is a sweep line. The bus is the line moving along the road, the stops are the **events**, and the number in the driver's head is the **state**. If people get off and on at the same stop, let them get **off first**, so the bus is never counted as fuller than it really was.
+
+Michael Shamos and Dan Hoey made the sweep a standard tool of computational geometry in 1976, when they used it to test whether any two of $n$ line segments cross in $O(n \log n)$ time. A year later Jon Bentley swept a line across rectangles to measure the area they cover, the problem of Interview problem 3.
+:::
+
+## From simple to advanced
+
+### Level 1: events and a running count
+
+Turn each interval $[s_i, e_i)$ into two events: $(s_i, +1)$ and $(e_i, -1)$. After sorting by coordinate, the number of open intervals at coordinate $x$ is the sum of all events at or before $x$:
 
 $$
-A(t)=\sum_{i=1}^{n}[\,start_i\leq t<end_i\,]
+c(x) = \sum_{\text{events } (x_k, \delta_k) \text{ with } x_k \le x} \delta_k, \qquad \text{answer} = \max_x c(x)
 $$
 
-**Symbol by symbol:** A(t) is the number of meetings active at time t; n is meeting count; start_i and end_i are start/end times; [condition] equals 1 if true, otherwise 0.
+where:
 
-**Calculate with real numbers:** Meetings [1,4), [2,3), [3,5): at t=2.5, first two count (A=2). At t=3, the second has ended and third starts, so still A=2, not 3, under half-open interval semantics.
+- $x_k$ is the coordinate of event $k$ and $\delta_k \in \lbrace +1, -1 \rbrace$ its change;
+- $c(x)$ is the number of intervals that contain $x$: started at or before $x$, and not yet ended;
+- the maximum only needs checking right after each event, because $c$ changes nowhere else.
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+Example: the sorted events are $(1, +1), (2, +1), (3, +1), (4, -1), (5, -1), (6, -1), (7, +1), (8, -1)$. The running count after each is $1, 2, 3, 2, 1, 0, 1, 0$, so the maximum is $c(3) = 1 + 1 + 1 = 3$.
 
-## How the algorithm emerges
+```java
+static int maxOverlap(int[][] intervals) {             // half-open intervals [start, end)
+    List<int[]> events = new ArrayList<>();
+    for (int[] interval : intervals) {
+        events.add(new int[] {interval[0], +1});
+        events.add(new int[] {interval[1], -1});
+    }
+    events.sort(Comparator.<int[]>comparingInt(e -> e[0]).thenComparingInt(e -> e[1]));   // at a tie, -1 comes first
+    int active = 0, best = 0;
+    for (int[] e : events) {
+        active += e[1];
+        best = Math.max(best, active);
+    }
+    return best;
+}
+```
 
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
+### Level 2: ties at the same coordinate
 
-**Correctness argument:** A(t) changes only when an endpoint occurs. Sorting endpoints and applying the correct end-before-start tie rule for half-open meetings finds every possible maximum count.
+When an end and a start share a coordinate, the order decides the answer. Take $[1, 3)$ and $[3, 5)$. At $x = 3$ one meeting ends and the next begins; they never run together, so the answer must be 1.
 
-## Code, but only after the reasoning
+$$
+\text{order at equal } x = \begin{cases}
+\text{ends } (-1) \text{ before starts } (+1) & \text{half-open intervals } [s, e) \\
+\text{starts } (+1) \text{ before ends } (-1) & \text{closed intervals } [s, e]
+\end{cases}
+$$
 
-Use the tested [algorithm lab](../examples/patterns.mjs), which exports `maxNonOverlapping`:
+where:
 
-~~~js
-import { maxNonOverlapping } from '../examples/patterns.mjs';
+- a half-open interval $[s, e)$ does not contain its end $e$, so it must be closed before anything starting at $e$ is opened;
+- a closed interval $[s, e]$ contains $e$, so an interval starting at $e$ really does overlap it.
 
-console.log(maxNonOverlapping([[1,4],[2,3],[3,5]]));
-~~~
+Example: for the half-open pair, sorting by $(x, \delta)$ gives $(1, +1), (3, -1), (3, +1), (5, -1)$, and the counts are $1, 0, 1, 0$: maximum **1**. With starts first, $(3, +1)$ would come before $(3, -1)$, the counts would be $1, 2, 1, 0$, and the answer would be a wrong 2. Sorting by the pair $(x, \delta)$ puts $-1$ before $+1$ automatically, which is why the code needs no special case.
 
-Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
+**Small integer coordinates need no sort at all.** If every coordinate is an integer from 0 to $C$, put the events in an array `change[0..C]` and take a running sum: that is the difference array of [Prefix Sum](../prefix-sum/index.qmd), $O(n + C)$ instead of $O(n \log n)$. All events at one coordinate are added together before anyone reads the count, which handles ties for free. Interview problem 1 does this.
 
-## Count the work rigorously
+### Level 3: keep the active set, not just its size
 
-**Time and memory:** O(n log n) for sorting 2n events and O(n) for scanning; n is number of intervals.
+Sometimes the count is not enough: we need to know **which** intervals are open, for example the tallest building at the line. Keep the active values in an ordered **multiset**, a `TreeMap` from value to how many copies are active:
 
-**The misleading shortcut:** Tie-breaking decides whether two intervals meeting exactly at an endpoint overlap. Always specify open/closed boundaries before sorting events.
+$$
+\operatorname{top}(x) = \max\bigl(\lbrace 0 \rbrace \cup \lbrace h_i : s_i \le x < e_i \rbrace\bigr)
+$$
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+where:
 
-## Practice and source
+- $h_i$ is the value carried by interval $i$, such as a building's height;
+- $\cup$ is set union, and the extra 0 stands for the ground, so the maximum always exists;
+- the multiset supports add, remove and maximum in $O(\log n)$ each.
 
-- **Textbook relationship:** CLRS Chapter 15 (interval selection); the sweep-line technique is a broader computational-geometry pattern., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 253 — Meeting Rooms II (classic interval overlap). Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+Example: three buildings $[2, 9)$ of height 10, $[3, 7)$ of height 15, and $[5, 12)$ of height 12. At $x = 6$ all three are active, so $\operatorname{top}(6) = \max(0, 10, 15, 12) = 15$. At $x = 8$ the 15 has ended, so $\operatorname{top}(8) = \max(0, 10, 12) = 12$.
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+```java
+static void addOne(TreeMap<Integer, Integer> bag, int key) {
+    bag.merge(key, 1, Integer::sum);
+}
+
+static void removeOne(TreeMap<Integer, Integer> bag, int key) {
+    if (bag.merge(key, -1, Integer::sum) == 0) bag.remove(key);
+}
+```
+
+**Why a multiset and not a set?** If two active buildings both have height 12 and one of them ends, height 12 must stay. A plain `TreeSet` would delete it. With counts, the 12 goes from 2 copies to 1 and stays the maximum. `bag.lastKey()` is the largest active value.
+
+### Level 4: the length of a union
+
+How much of the line is covered by **at least one** interval? Sweep the intervals in order of their start, remembering how far right the covered part reaches so far:
+
+$$
+\text{new}_i = \max\bigl(0,\; e_i - \max(s_i, \rho_{i-1})\bigr), \qquad \rho_i = \max(\rho_{i-1}, e_i), \qquad \text{length} = \sum_i \text{new}_i
+$$
+
+where:
+
+- intervals are taken in order of increasing start $s_i$;
+- $\rho_{i-1}$ (rho) is the right end of everything covered by the earlier intervals, starting at $-\infty$;
+- $\text{new}_i$ is the part of interval $i$ that sticks out to the right of $\rho_{i-1}$, which is all that it adds.
+
+Example: the four meetings, sorted by start.
+
+- $[1, 4)$: nothing covered yet, new $= 4 - 1 = 3$, reach becomes 4.
+- $[2, 6)$: new $= 6 - \max(2, 4) = 2$, reach becomes 6.
+- $[3, 5)$: $5 \le 6$, new $= 0$.
+- $[7, 8)$: new $= 8 - \max(7, 6) = 1$, reach becomes 8.
+
+The covered length is $3 + 2 + 0 + 1 = 6$, which is $[1, 6)$ plus $[7, 8)$, or $5 + 1$.
+
+```java
+static long unionLength(List<int[]> spans) {
+    spans.sort(Comparator.comparingInt(s -> s[0]));
+    long length = 0;
+    int reach = Integer.MIN_VALUE;                     // right end of everything covered so far
+    for (int[] s : spans) {
+        if (s[1] > reach) {
+            length += s[1] - Math.max(s[0], reach);    // only the part beyond reach is new
+            reach = s[1];
+        }
+    }
+    return length;
+}
+```
+
+### Level 5: sweeping the plane
+
+In two dimensions, sweep a vertical line across $x$. Between two consecutive $x$-coordinates where something starts or ends, the set of rectangles under the line does not change, so that vertical strip (a **slab**) has a constant covered height:
+
+$$
+A = \sum_{t} (x_{t+1} - x_t) \cdot L_t
+$$
+
+where:
+
+- $x_0 < x_1 < \dots$ are the distinct left and right edges of all rectangles;
+- $L_t$ is the length of the union of the $y$-ranges of the rectangles that span the whole slab $[x_t, x_{t+1}]$, computed with Level 4;
+- each slab contributes width times covered height, and the slabs do not overlap.
+
+Example: squares $[0, 2] \times [0, 2]$ and $[1, 3] \times [1, 3]$, which overlap in one unit cell. The edges are $0, 1, 2, 3$.
+
+- Slab $[0, 1]$: only the first square, $y$ from 0 to 2, so $1 \times 2 = 2$.
+- Slab $[1, 2]$: both squares, $y$-ranges $[0, 2)$ and $[1, 3)$, union length 3, so $1 \times 3 = 3$.
+- Slab $[2, 3]$: only the second, $y$ from 1 to 3, so $1 \times 2 = 2$.
+
+The area is $2 + 3 + 2 = 7$, which is $4 + 4 - 1$. Interview problem 3 is this formula in code. Computing each $L_t$ from scratch costs $O(n \log n)$ per slab; Bentley's 1977 method keeps the $y$-coverage in a [segment tree](../segment-tree/index.qmd) instead, so each event costs $O(\log n)$.
+
+## Why it works and what it costs
+
+**The invariant.** *After processing every event with coordinate less than or equal to $x$, the state (the counter, or the active multiset) describes exactly the intervals that contain $x$.*
+
+- *Initially*, before any event, no interval has started, and the state is empty.
+- *Each event maintains it*: a start adds its interval, an end removes it. Between two consecutive event coordinates no interval starts or ends, so the state is right for every $x$ in between too.
+- *With the tie rule* the state at a shared coordinate $x$ matches the intervals that really contain $x$: half-open intervals ending at $x$ are gone before new ones arrive.
+
+So the sweep checks every distinct situation exactly once, and there are at most $2n$ of them.
+
+**Costs**, for $n$ intervals:
+
+| Method | Time | Space | For $n = 4$ |
+| --- | --- | --- | --- |
+| compare every pair | $O(n^2)$, and misses triple overlaps | $O(1)$ | 6 pairs |
+| sweep with a counter | $O(n \log n)$ to sort, $O(n)$ to scan | $O(n)$ events | 8 events |
+| sweep with a multiset | $O(n \log n)$ | $O(n)$ | 8 events, each $O(\log n)$ |
+| difference array, integer coordinates up to $C$ | $O(n + C)$ | $O(C)$ | — |
+| plane sweep with slabs (Level 5) | $O(n^2 \log n)$ | $O(n)$ | — |
+| plane sweep with a segment tree | $O(n \log n)$ | $O(n)$ | — |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Wrong order at equal coordinates | Touching intervals counted as overlapping, or the reverse | Decide whether intervals are half-open or closed, then sort ties accordingly (Level 2) |
+| A `TreeSet` as the active set | Equal values vanish too early (two buildings of height 12) | A `TreeMap` from value to count |
+| Forgetting the ground (height 0) | `lastKey()` throws on an empty map | Seed the multiset with one 0 |
+| Reading the answer after each event inside a tie | Two key points at the same $x$ in the skyline | Order events so that only the final change at an $x$ is visible, or read after the whole group |
+| `int` area | Overflow: one rectangle can be $10^9 \times 10^9$ | Accumulate in `long`, then take the modulus |
+| Sorting events by coordinate only | Results depend on input order | Sort by coordinate, then by the tie-breaking value |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 1094: Car Pooling (Medium)
+
+**Problem.** A car with `capacity` seats drives east. Each trip `[people, from, to]` picks up `people` at `from` and drops them at `to`, and drop-offs happen before pick-ups at the same place. Locations are 0 to 1000. Can the car do every trip? For `trips = [[2, 1, 5], [3, 3, 7]]` the answer is false with capacity 4 and true with capacity 5.
+
+**Math first.** The load at location $x$ is the sum of all trips that are on board there:
+
+$$
+c(x) = \sum_{i \,:\, f_i \le x < t_i} p_i, \qquad \text{feasible} \iff c(x) \le \text{capacity for every } x
+$$
+
+where:
+
+- $p_i$, $f_i$ and $t_i$ are the passengers, pick-up and drop-off of trip $i$;
+- $f_i \le x < t_i$ is a half-open interval, because people dropped at $t_i$ have left before anyone is picked up there;
+- $c$ is the running sum of a difference array with $+p_i$ at $f_i$ and $-p_i$ at $t_i$.
+
+Example: the change array has $+2$ at 1, $+3$ at 3, $-2$ at 5 and $-3$ at 7. The running load is $c(1) = 2$, $c(3) = 2 + 3 = 5$, $c(5) = 5 - 2 = 3$, $c(7) = 0$. The peak is 5, so capacity 4 fails and capacity 5 works.
+
+**Idea.** The locations are small integers, so skip sorting: fill a `change` array of size 1001 and take a running sum, stopping as soon as the load passes the capacity. Adding all the changes of one location together handles "drop off first" automatically.
+
+```java
+static boolean carPooling(int[][] trips, int capacity) {
+    int[] change = new int[1001];                      // locations are 0..1000
+    for (int[] trip : trips) {
+        change[trip[1]] += trip[0];                    // passengers get on at "from"
+        change[trip[2]] -= trip[0];                    // and off at "to"
+    }
+    int onBoard = 0;
+    for (int delta : change) {
+        onBoard += delta;
+        if (onBoard > capacity) return false;
+    }
+    return true;
+}
+```
+
+**Answer.** False for capacity 4, true for capacity 5, and true for `[[2, 1, 5], [3, 5, 7]]` with capacity 3, where everyone from the first trip leaves at 5 before the next 3 get on. $O(n + C)$ time and $O(C)$ space with $C = 1001$: for $n = 1000$ trips, about $2{,}000$ updates plus $1{,}001$ additions.
+
+### 2. LeetCode 218: The Skyline Problem (Hard)
+
+**Problem.** Buildings are rectangles `[left, right, height]` standing on flat ground. Return the outline of the city as **key points** `[x, height]`, one at every $x$ where the outline's height changes. For `[[2, 9, 10], [3, 7, 15], [5, 12, 12], [15, 20, 10], [19, 24, 8]]` the answer is `[[2, 10], [3, 15], [7, 12], [12, 0], [15, 10], [20, 8], [24, 0]]`.
+
+**Math first.** The outline height at $x$ is the tallest building over $x$, and a key point is where that value changes:
+
+$$
+H(x) = \max\bigl(\lbrace 0 \rbrace \cup \lbrace h_i : l_i \le x < r_i \rbrace\bigr), \qquad \text{key point at } x \iff H(x) \ne H(x^-)
+$$
+
+where:
+
+- $l_i$, $r_i$ and $h_i$ are building $i$'s left edge, right edge and height;
+- the 0 is the ground;
+- $H(x^-)$ is the height just to the left of $x$; $H$ can only change at an edge, so only edges need checking.
+
+Example: at $x = 7$ the 15-high building ends. Just before 7 the active heights are $\lbrace 10, 15, 12 \rbrace$, so $H(7^-) = 15$. At 7 they are $\lbrace 10, 12 \rbrace$, so $H(7) = 12 \ne 15$, and $(7, 12)$ is a key point. At $x = 9$ the 10 ends but 12 is still standing, so $H$ stays 12 and there is no key point.
+
+**Idea.** Make a start event $(l, -h)$ and an end event $(r, h)$ for each building, and sort by $x$ and then by the second number. The negative sign makes starts come before ends at the same $x$ and taller starts before shorter ones, while shorter ends come before taller ends. Then only the final height at each $x$ produces a key point. Keep the active heights in the Level 3 multiset and emit $(x, H)$ whenever the maximum changes.
+
+```java
+static List<List<Integer>> getSkyline(int[][] buildings) {
+    List<int[]> events = new ArrayList<>();
+    for (int[] b : buildings) {
+        events.add(new int[] {b[0], -b[2]});           // a start, stored as a negative height
+        events.add(new int[] {b[1], b[2]});            // an end
+    }
+    // Same x: starts before ends, taller starts first, lower ends first.
+    events.sort(Comparator.<int[]>comparingInt(e -> e[0]).thenComparingInt(e -> e[1]));
+    TreeMap<Integer, Integer> active = new TreeMap<>(Map.of(0, 1));   // the ground, height 0, is always there
+    List<List<Integer>> skyline = new ArrayList<>();
+    int height = 0;
+    for (int[] e : events) {
+        if (e[1] < 0) addOne(active, -e[1]);
+        else removeOne(active, e[1]);
+        if (active.lastKey() != height) {              // the tallest active building changed
+            height = active.lastKey();
+            skyline.add(List.of(e[0], height));
+        }
+    }
+    return skyline;
+}
+```
+
+**Answer.** The trace of the ten events:
+
+| Event | Active heights after | Max | Key point |
+| --- | --- | --- | --- |
+| start 10 at 2 | 0, 10 | 10 | $(2, 10)$ |
+| start 15 at 3 | 0, 10, 15 | 15 | $(3, 15)$ |
+| start 12 at 5 | 0, 10, 12, 15 | 15 | — |
+| end 15 at 7 | 0, 10, 12 | 12 | $(7, 12)$ |
+| end 10 at 9 | 0, 12 | 12 | — |
+| end 12 at 12 | 0 | 0 | $(12, 0)$ |
+| start 10 at 15 | 0, 10 | 10 | $(15, 10)$ |
+| start 8 at 19 | 0, 8, 10 | 10 | — |
+| end 10 at 20 | 0, 8 | 8 | $(20, 8)$ |
+| end 8 at 24 | 0 | 0 | $(24, 0)$ |
+
+That is the expected outline. Two buildings of height 3 touching at $x = 2$, `[[0, 2, 3], [2, 5, 3]]`, give `[[0, 3], [5, 0]]` with no key point at 2, because the start at 2 is processed before the end. $2n$ events, each $O(\log n)$: $O(n \log n)$ time and $O(n)$ space. For the limit $n = 10^4$ that is $2 \times 10^4$ events and about $2 \times 10^4 \times 14 \approx 3 \times 10^5$ steps.
+
+### 3. LeetCode 850: Rectangle Area II (Hard)
+
+**Problem.** Given axis-aligned rectangles `[x1, y1, x2, y2]`, return the total area they cover, counting overlaps once, modulo $10^9 + 7$. For `[[0, 0, 2, 2], [1, 0, 2, 3], [1, 0, 3, 1]]` the answer is 6.
+
+**Math first.** This is Level 5: cut the plane at every distinct $x$-edge, and in each slab multiply the width by the covered $y$-length:
+
+$$
+A = \sum_{t} (x_{t+1} - x_t) \cdot L_t, \qquad L_t = \Bigl\lvert \bigcup_{i \,:\, x^{(1)}_i \le x_t,\; x_{t+1} \le x^{(2)}_i} [y^{(1)}_i, y^{(2)}_i) \Bigr\rvert
+$$
+
+where:
+
+- $x_t$ are the sorted distinct values among all $x_1$ and $x_2$;
+- rectangle $i$ spans from $x^{(1)}_i$ to $x^{(2)}_i$ horizontally and from $y^{(1)}_i$ to $y^{(2)}_i$ vertically;
+- $\bigcup$ is the union of the $y$-ranges of the rectangles that cover the whole slab, and $\lvert \cdot \rvert$ its total length (Level 4).
+
+Example: the edges are $0, 1, 2, 3$.
+
+- Slab $[0, 1]$: only rectangle 1 spans it, $y$ in $[0, 2)$: $L = 2$, area $1 \times 2 = 2$.
+- Slab $[1, 2]$: all three, $y$ in $[0, 2)$, $[0, 3)$, $[0, 1)$: $L = 3$, area $1 \times 3 = 3$.
+- Slab $[2, 3]$: only rectangle 3, $y$ in $[0, 1)$: $L = 1$, area $1 \times 1 = 1$.
+
+The total is $2 + 3 + 1 = 6$.
+
+**Idea.** Collect and sort the $x$-edges. For each slab, gather the $y$-ranges of the rectangles that span it and measure their union with `unionLength`. Accumulate in `long`, and take the modulus at the end.
+
+```java
+static int rectangleArea(int[][] rectangles) {
+    TreeSet<Integer> xSet = new TreeSet<>();
+    for (int[] r : rectangles) { xSet.add(r[0]); xSet.add(r[2]); }
+    List<Integer> xs = new ArrayList<>(xSet);
+    long area = 0;
+    for (int i = 0; i + 1 < xs.size(); i++) {
+        int left = xs.get(i), right = xs.get(i + 1);
+        List<int[]> spans = new ArrayList<>();         // y-ranges of the rectangles that cover this whole slab
+        for (int[] r : rectangles) if (r[0] <= left && right <= r[2]) spans.add(new int[] {r[1], r[3]});
+        area += (right - left) * unionLength(spans);
+    }
+    return (int) (area % 1_000_000_007);
+}
+```
+
+**Answer.** 6 for the example. A single square $[0, 10^9]^2$ covers $10^{18}$, which is $49$ modulo $10^9 + 7$, and the `long` holds $10^{18}$ without overflow because $10^{18} < 9.2 \times 10^{18}$. With $n$ rectangles there are at most $2n - 1$ slabs, each costing $O(n \log n)$, so the time is $O(n^2 \log n)$ and the space $O(n)$. For the limit $n = 200$: about $400 \times 200 \times 8 = 6.4 \times 10^5$ steps. A sweep that keeps the $y$-coverage in a segment tree brings this down to $O(n \log n)$, which matters only for much larger inputs.
+
+## Mathematical Abstraction
+
+A sweep line processes events in sorted order and keeps a state that describes exactly the objects crossing the line:
+
+$$
+S_{k+1} = U(S_k, e_k), \qquad x(e_1) \le x(e_2) \le \dots \le x(e_{2n}), \qquad c(x) = \sum_{x_k \le x} \delta_k
+$$
+
+where:
+
+- $e_k$ is the $k$-th event in sorted order and $x(e_k)$ its coordinate, with ties broken by a rule that matches the problem (Level 2);
+- $S_k$ is the state before event $k$ (a counter, or a multiset of active values) and $U$ applies one event to it;
+- for counting, the state is $c(x)$, the running sum of the changes $\delta_k = \pm 1$ (or $\pm p_k$ for weights).
+
+Example: the meetings $[1, 4)$, $[2, 6)$, $[3, 5)$, $[7, 8)$ give 8 events and running counts $1, 2, 3, 2, 1, 0, 1, 0$, so 3 rooms are needed. In the plane, the same sweep over $x$ with a union length in $y$ gives the area $\sum_t (x_{t+1} - x_t) L_t$, such as $2 + 3 + 1 = 6$ for LeetCode 850.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 3rd edition (MIT Press, 2009), Chapter 33, "Computational Geometry", which uses a sweeping vertical line to decide whether any two segments intersect. The 4th edition (2022) no longer has this chapter; its Chapter 15, "Greedy Algorithms", still treats interval scheduling (activity selection). [4th edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, lecture "Geometric Applications of BSTs", which sweeps a vertical line to find orthogonal segment intersections: <https://algs4.cs.princeton.edu/lectures/keynote/99GeometricSearch.pdf>.
+- Michael Ian Shamos and Dan Hoey, "Geometric Intersection Problems", *Proceedings of the 17th IEEE Symposium on Foundations of Computer Science* (1976), 208–215.
+- Jon Louis Bentley, "Solutions to Klee's rectangle problems", unpublished notes, Carnegie Mellon University (1977): the area of a union of rectangles by a sweep with a segment tree.
+- Mark de Berg, Otfried Cheong, Marc van Kreveld and Mark Overmars, *Computational Geometry: Algorithms and Applications*, 3rd edition (Springer, 2008), Chapter 2, "Line Segment Intersection", for the plane sweep in general.
+- Antti Laaksonen, *Competitive Programmer's Handbook*, Chapter 30, "Sweep line algorithms": <https://cses.fi/book/book.pdf>.
+- LeetCode: [1094. Car Pooling](https://leetcode.com/problems/car-pooling/), [218. The Skyline Problem](https://leetcode.com/problems/the-skyline-problem/), [850. Rectangle Area II](https://leetcode.com/problems/rectangle-area-ii/).
+
+[← Binary Indexed Tree](../binary-indexed-tree/index.qmd) · [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd)

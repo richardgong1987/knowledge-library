@@ -1,66 +1,416 @@
 ---
 title: "Radix Sort"
-description: "CLRS-inspired worked lesson on Radix Sort: numerical substitution, invariants, original code and complexity."
+description: "Sorting numbers and strings digit by digit: digits in base b, one stable counting-sort pass per digit, LSD radix sort and why stability makes it correct, the cost d(n + b) and how to choose the base, MSD radix sort for strings, and hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+[Counting sort](../counting-sort/index.qmd) is fast only when keys have few possible values: sorting 32-bit numbers with it would need four billion counters. Radix sort fixes that by sorting on **one small digit at a time**, with a stable counting sort for each digit. Three passes over the digits of three-digit numbers, four passes over the bytes of 32-bit numbers, and the keys are sorted, without a single comparison between two keys.
 
-**LeetCode 164 — Maximum Gap (integer sorting strategies).**
+All code is in [`RadixSortLab.java`](RadixSortLab.java). Run it from this folder with `java RadixSortLab.java`; it checks every number on this page and prints `OK`.
 
-Sort keys one digit at a time using a STABLE digit sort. Least-significant-digit order works because later higher-digit passes preserve previous lower-digit ordering for ties.
+## The problem
 
-## First try the obvious approach
+A library labels its books with three-digit numbers. Eight books come back: `[253, 146, 512, 340, 418, 237, 651, 124]`. We want them in order for the shelf.
 
-If keys have fixed-width digits, a comparison tree does more general work than required.
+- Counting sort with one counter per possible number needs 1,000 counters for 8 books. For 32-bit numbers it would need $2^{32} \approx 4.3$ billion counters, 16 GiB of memory.
+- A comparison sort needs about $n \log_2 n$ comparisons: about 20 million for a million books.
+- But each number is made of **digits**, and a digit has only 10 possible values. Counting sort is perfect for 10 values. Can we sort by digits, one at a time, and still get the right order for the whole number?
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+## Explain it like I'm ten
 
-## Mathematical relationship, explained immediately
+::: {.callout-tip}
+Sort a messy deck of cards by suit and then by rank inside each suit. Here is a strange way that works. First deal the cards into 13 piles by **rank** (A, 2, 3, …, K) and stack the piles in order. Then deal that stack into 4 piles by **suit**, always placing each card on top of its pile. Pick the piles up in suit order: every suit is now in rank order too. The second dealing never mixed up the ranks, because cards went into each pile in the order they came, and that order was already by rank.
+
+That is **least significant digit first** radix sort: sort by the *least* important part first, then by the more important parts, and never disturb ties. For three-digit numbers: deal by the ones digit into 10 piles, then by the tens, then by the hundreds.
+
+This is how punched-card sorting machines worked: they sorted a deck on one column at a time, so a three-digit field took three runs through the machine. Radix sorting goes back to Herman Hollerith's tabulating machines, built for the 1890 United States census, and CLRS opens Section 8.3 with these card sorters. Harold H. Seward showed at MIT in 1954 how to do each pass with counting sort on a computer, and Sedgewick and Wayne teach both the LSD and MSD versions in §5.1 of their *Algorithms*.
+:::
+
+## From simple to advanced
+
+### Level 1: numbers are made of digits
+
+In base $b$, every non-negative integer is a sum of digits times powers of $b$:
 
 $$
-x=\sum_{j=0}^{d-1} x_j B^j
+x = \sum_{j=0}^{d-1} d_j(x)\, b^{j}, \qquad d_j(x) = \left\lfloor \frac{x}{b^{j}} \right\rfloor \bmod b
 $$
 
-**Symbol by symbol:** x is a nonnegative integer, B is numeric base (10 for decimal), d number of digits, x_j digit at position j counted from the right.
+where:
 
-**Calculate with real numbers:** For 237 in base 10, digits are x₀=7, x₁=3, x₂=2. Therefore 237=7×10⁰+3×10¹+2×10²=7+30+200.
+- $b$ is the base, for example 10 for decimal digits or 256 for bytes;
+- $d$ is the number of digits each key has, padding short keys with leading zeros;
+- $d_j(x)$ is digit number $j$ of $x$, counting from $j = 0$ for the least significant (rightmost) digit;
+- $\lfloor x / b^j \rfloor$ drops the last $j$ digits, and $\bmod\ b$ keeps the next one.
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+Example: $253 = 2 \cdot 100 + 5 \cdot 10 + 3 \cdot 1$. So $d_0 = 3$, $d_1 = \lfloor 253 / 10 \rfloor \bmod 10 = 25 \bmod 10 = 5$, and $d_2 = \lfloor 253 / 100 \rfloor \bmod 10 = 2$.
 
-## How the algorithm emerges
+```java
+static int digit(long x, long place) {
+    return (int) (x / place % 10);
+}
+```
 
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
+`place` is $b^j$: 1, 10, 100, and so on. It is a `long`, because for 10-digit numbers it must reach $10^{10}$, which does not fit in an `int`.
 
-**Correctness argument:** After sorting by the first j digits, the array is ordered by those positions. A stable sort of digit j preserves lower-position order among keys that share this higher digit.
+### Level 2: one stable pass on one digit
 
-## Code, but only after the reasoning
+Sorting by a single decimal digit is counting sort with $k = 10$ keys. It must be **stable**: numbers with the same digit keep their current order. The [counting sort](../counting-sort/index.qmd) lesson shows why placing from right to left with end positions achieves that.
 
-Here is a standalone, original JavaScript demonstration:
+```java
+static int[] sortByDigit(int[] a, long place) {
+    int[] end = new int[10];
+    for (int x : a) end[digit(x, place)]++;
+    for (int d = 1; d < 10; d++) end[d] += end[d - 1];   // end[d] = how many digits are <= d
+    int[] out = new int[a.length];
+    for (int i = a.length - 1; i >= 0; i--) {            // right to left keeps equal digits in order
+        out[--end[digit(a[i], place)]] = a[i];
+    }
+    return out;
+}
+```
 
-~~~js
-const a=[21,13,12,22];
-const byOnes=[...a].sort((x,y)=>(x%10)-(y%10));
-const result=byOnes.sort((x,y)=>(Math.floor(x/10)%10)-(Math.floor(y/10)%10));
-console.log(result); // [12,13,21,22] (modern JS sort is stable)
-~~~
+Example: sorting `[253, 146, 512, 340, 418, 237, 651, 124]` by the ones digit (3, 6, 2, 0, 8, 7, 1, 4) gives `[340, 651, 512, 253, 124, 146, 237, 418]`. One pass costs $n + 10 + n$ simple steps: 26 for these 8 numbers.
 
-This shows a deliberately minimal case; the chapter explains the invariant needed to extend it into a full implementation.
+### Level 3: LSD radix sort, least significant digit first
 
-## Count the work rigorously
+Run the stable pass once per digit, **starting from the rightmost**:
 
-**Time and memory:** O(d(n+B)) time with counting sort per digit; n numbers, d digits, B possible digit values.
+```java
+static int[] lsdRadixSort(int[] a) {   // non-negative ints
+    int max = Arrays.stream(a).max().orElse(0);
+    for (long place = 1; max / place > 0; place *= 10) a = sortByDigit(a, place);
+    return a;
+}
+```
 
-**The misleading shortcut:** If the per-digit sort is unstable, lower-digit results can be destroyed; negative integers and variable-width strings need an explicit representation policy.
+The full trace on the library numbers:
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+| Pass | Sort by | Result |
+| --- | --- | --- |
+| start | | `253 146 512 340 418 237 651 124` |
+| 1 | ones digit | `340 651 512 253 124 146 237 418` |
+| 2 | tens digit | `512 418 124 237 340 146 651 253` |
+| 3 | hundreds digit | `124 146 237 253 340 418 512 651` |
 
-## Practice and source
+Watch the ties. In pass 2, 512 and 418 both have tens digit 1; 512 stays first because pass 1 put it first (ones digit $2 < 8$). In pass 3, 124 and 146 both have hundreds digit 1; 124 stays first because pass 2 put it first (tens digit $2 < 4$). **Each pass decides the main order, and stability lets the earlier passes break its ties.** With an unstable pass 3, 146 could land before 124 and the result would be wrong.
 
-- **Textbook relationship:** CLRS Chapter 8 §8.3 (radix sort)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 164 — Maximum Gap (integer sorting strategies). Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+The invariant, which the next section proves, is:
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+$$
+\text{after pass } p:\quad \text{keys are sorted by } \big(d_{p-1}(x), \dots, d_1(x), d_0(x)\big)
+$$
+
+where:
+
+- $p$ is the number of passes done so far, $1 \le p \le d$;
+- $(d_{p-1}, \dots, d_0)$ is the number formed by the last $p$ digits, compared like a dictionary word, most significant first;
+- after $p = d$ passes this is the whole key, so the array is sorted.
+
+Example: after pass 2 the order 512, 418, 124, 237, 340, 146, 651, 253 is sorted by the last two digits 12, 18, 24, 37, 40, 46, 51, 53.
+
+The cost is $d$ passes, each counting $n$ keys into $b$ buckets:
+
+$$
+T = d\,(n + b)
+$$
+
+where:
+
+- $d$ is the number of digits per key;
+- $n$ is the number of keys;
+- $b$ is the base, so each pass clears and adds up $b$ counters as well as moving $n$ keys.
+
+Example: 8 three-digit numbers in base 10: $T = 3 \times (8 + 10) = 54$ units of work, and no key is ever compared with another key.
+
+### Level 4: choosing the base
+
+Bigger digits mean fewer passes, but more counters per pass. Splitting a $w$-bit key into digits of $r$ bits gives base $b = 2^r$ and $d = \lceil w / r \rceil$ passes:
+
+$$
+T(r) = \left\lceil \frac{w}{r} \right\rceil \left( n + 2^{r} \right)
+$$
+
+where:
+
+- $w$ is the key width in bits, 32 for an `int`;
+- $r$ is the number of bits per digit, so each digit is a number in $[0, 2^r)$;
+- $\lceil w / r \rceil$ is the number of passes and $n + 2^r$ the work per pass.
+
+Example: sort $n = 10^6$ 32-bit keys.
+
+| $r$ (bits per digit) | Passes | Work $\lceil 32/r \rceil (10^6 + 2^r)$ |
+| --- | --- | --- |
+| 4 | 8 | $8 \times (10^6 + 16) = 8{,}000{,}128$ |
+| 8 (bytes) | 4 | $4 \times (10^6 + 256) = 4{,}001{,}024$ |
+| 16 | 2 | $2 \times (10^6 + 65{,}536) = 2{,}131{,}072$ |
+| 32 | 1 | $10^6 + 2^{32} \approx 4.3 \times 10^9$ (that is just counting sort) |
+
+All the sensible choices beat a comparison sort's $10^6 \times \log_2 10^6 \approx 19{,}931{,}569$ comparisons. CLRS shows the best $r$ is about $\log_2 n$ (here about 20), as long as that is not more than $w$. In practice $r = 8$ (one byte) is a common choice: 256 counters fit easily in the fastest cache, and bytes are cheap to extract with a shift and a mask.
+
+```java
+static long radixCost(long n, int keyBits, int r) {
+    long passes = (keyBits + r - 1) / r;                 // d = ceil(keyBits / r)
+    return passes * (n + (1L << r));                     // each pass: n keys plus b = 2^r counters
+}
+```
+
+**Negative integers.** In two's complement, negative numbers have the top bit set, so as unsigned bytes they would sort *after* the positives. The usual fix is to flip the sign bit (`x ^ Integer.MIN_VALUE`) before sorting and flip it back afterwards; that maps $-2^{31}, \dots, 2^{31} - 1$ onto $0, \dots, 2^{32} - 1$ in order.
+
+### Level 5: MSD radix sort and strings
+
+LSD needs every key to have the same number of digits. Words do not: "do" has 2 letters and "dog" has 3. **Most significant digit first** (MSD) radix sort works top-down instead, like looking a word up in a dictionary:
+
+1. Split the words into buckets by their **first** letter.
+2. Sort each bucket separately, by the **second** letter, and so on.
+3. A word that has run out of letters is a prefix of the others in its bucket, so it goes first: "do" < "dog".
+
+```java
+static List<String> msdSort(List<String> words, int pos) {   // all words agree on their first pos characters
+    if (words.size() <= 1) return words;
+    List<String> sorted = new ArrayList<>();                 // words that end here come first: "do" < "dog"
+    List<List<String>> buckets = new ArrayList<>();
+    for (int c = 0; c < 26; c++) buckets.add(new ArrayList<>());
+    for (String w : words) {
+        if (w.length() == pos) sorted.add(w);
+        else buckets.get(w.charAt(pos) - 'a').add(w);
+    }
+    for (List<String> bucket : buckets) sorted.addAll(msdSort(bucket, pos + 1));
+    return sorted;
+}
+```
+
+Example: `[dog, cat, do, car, dot, a]`. By the first letter: `a` → [a], `c` → [cat, car], `d` → [dog, do, dot]. Bucket `c` by the second letter is one bucket `a`, then by the third: `r` before `t`, giving car, cat. Bucket `d`: after "do" the word "do" has ended, so it comes first, then `g` before `t`: do, dog, dot. Result: **a, car, cat, do, dog, dot**.
+
+LSD versus MSD:
+
+| | LSD | MSD |
+| --- | --- | --- |
+| Order of passes | last digit to first | first digit to last, recursively |
+| Keys | fixed length (numbers, fixed-width codes) | any length (words, URLs) |
+| Work | always all $d$ digits of every key | only up to the first digit where a key differs from the others |
+| Weak spot | must pad variable-length keys | many tiny buckets near the bottom: real code switches to insertion sort for small buckets |
+
+The recursion tree of MSD radix sort is exactly a [trie](../trie/index.qmd): each bucket is a node, and each letter is an edge. When the keys are numbers in binary, the same tree with base 2 is a **binary trie**, and the elements that share their top bits form one contiguous block of the sorted array. Interview problem 3 uses that fact.
+
+## Why it works and what it costs
+
+**LSD radix sort is correct**, by induction on the number of passes $p$. The claim is the invariant of Level 3: after pass $p$, the keys are sorted by their last $p$ digits.
+
+- *After pass 1*: one stable counting sort on digit 0 sorts by the last digit.
+- *From $p$ to $p + 1$*: pass $p + 1$ sorts by digit $p$. Take two keys $x$ and $y$. If their digit $p$ differs, the pass puts the smaller digit first, which is right for the last $p + 1$ digits. If their digit $p$ is equal, the pass is stable, so they stay in the order of the previous pass, which by induction is the order of their last $p$ digits. Either way they are ordered by their last $p + 1$ digits.
+- *After $d$ passes*: sorted by all digits, that is, by value.
+
+The proof uses stability in exactly one place, the "equal digit" case, and that is why each pass must be stable.
+
+**MSD radix sort is correct** because the first digit where two keys differ decides their order: keys in different first-letter buckets are already in order, and keys in the same bucket are sorted by the rest, recursively.
+
+**Costs**, on the example and in general:
+
+| Measure | 8 three-digit numbers, base 10 | General |
+| --- | --- | --- |
+| Passes | 3 | $d$ |
+| Work | $3 \times (8 + 10) = 54$ | $d\,(n + b)$ |
+| Extra memory | 10 counters + 8 output slots | $b + n$ |
+| Key comparisons | 0 | 0 |
+
+Radix sort is linear when $d$ is a constant, as it is for fixed-width integers: 4 passes of 8 bits sort any amount of 32-bit `int` values. It does not break the $n \log n$ lower bound for comparison sorts, because it reads digits instead of comparing whole keys.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| LSD passes in the wrong order (first digit first, without recursion) | Sorted only by the last digit processed | LSD goes from the least significant digit up; to go from the top, use MSD recursion |
+| An unstable pass, such as an in-place swap-based partition | Earlier digits' order is scrambled; for example 146 before 124 | Stable counting sort for every pass |
+| `int place` with 10-digit numbers | `place *= 10` overflows past $10^9$; the loop runs on garbage | `long place`, or loop exactly $d$ times |
+| Negative numbers | Negative digit, then `ArrayIndexOutOfBoundsException` | Shift by the minimum, or flip the sign bit for byte-wise sorting |
+| LSD on strings of different lengths | "dog" compared with "do" reads past the end | Pad with a character smaller than every letter, or use MSD |
+| MSD creating 26 (or 256) buckets for every tiny group | Correct but very slow, mostly allocating empty lists | Switch to insertion sort below a cutoff, such as 15 keys |
+| A huge base, such as $2^{32}$ | 16 GiB of counters | $r \approx 8$ to 16 bits per digit |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the digit order is clear, the code is a few loops.
+
+### 1. LeetCode 2343: Query Kth Smallest Trimmed Number (Medium)
+
+**Problem.** `nums` holds digit strings of equal length. A query `[k, trim]` keeps only the rightmost `trim` digits of every string and asks for the index of the $k$-th smallest result; ties go to the smaller index. For `nums = ["102", "473", "251", "814"]` and queries `[[1,1],[2,3],[4,2],[1,2]]` the answer is `[2, 2, 1, 0]`. The follow-up asks for radix sort.
+
+**Math first.** "Keep the last `trim` digits and sort" is **exactly the LSD invariant**. Start from the index order $0, 1, \dots, n - 1$ and run stable digit passes from the right:
+
+$$
+\text{order}_p = \text{the indices sorted by } (\text{last } p \text{ digits}, \text{ index}), \qquad \text{answer}(k, p) = \text{order}_p[k - 1]
+$$
+
+where:
+
+- $p$ is the number of LSD passes done, which is the query's `trim`;
+- $\text{order}_p$ is the index order after $p$ passes;
+- ties are broken by index because the passes are stable and the starting order is by index;
+- $k - 1$ converts the 1-based $k$ to an array position.
+
+One LSD run produces every $\text{order}_p$, so all queries are answered from the same passes.
+
+Example: the last digits of the four strings are 2, 3, 1, 4.
+
+- $p = 1$: order by last digit: 251 (index 2), 102 (0), 473 (1), 814 (3), so $\text{order}_1 = [2, 0, 1, 3]$. Query `[1, 1]` → index **2**.
+- $p = 2$: the last two digits are 02, 73, 51, 14, giving $\text{order}_2 = [0, 3, 2, 1]$. Query `[4, 2]` → **1**, query `[1, 2]` → **0**.
+- $p = 3$: whole strings, $\text{order}_3 = [0, 2, 1, 3]$. Query `[2, 3]` → **2**.
+
+**Idea.** Run LSD on an array of indices, one stable counting pass per character from the right, and save the order after every pass.
+
+```java
+static int[] smallestTrimmedNumbers(String[] nums, int[][] queries) {
+    int n = nums.length, len = nums[0].length();
+    int[][] orderAfter = new int[len + 1][];                 // orderAfter[p] = indices sorted by the last p digits
+    int[] order = new int[n];
+    for (int i = 0; i < n; i++) order[i] = i;                // ties go to the smaller index
+    orderAfter[0] = order;
+    for (int pass = 1; pass <= len; pass++) {
+        int pos = len - pass;                                // the next character from the right
+        int[] end = new int[10];
+        for (int i : order) end[nums[i].charAt(pos) - '0']++;
+        for (int d = 1; d < 10; d++) end[d] += end[d - 1];
+        int[] next = new int[n];
+        for (int j = n - 1; j >= 0; j--) next[--end[nums[order[j]].charAt(pos) - '0']] = order[j];
+        orderAfter[pass] = order = next;
+    }
+    int[] answer = new int[queries.length];
+    for (int q = 0; q < queries.length; q++) answer[q] = orderAfter[queries[q][1]][queries[q][0] - 1];
+    return answer;
+}
+```
+
+**Answer.** `[2, 2, 1, 0]`; and `["24", "37", "96", "04"]` with `[[2,1],[2,2]]` gives `[3, 0]` (the tie between 24 and 04 on the last digit goes to the smaller index, 0). Time $L(n + 10) + Q$ for strings of length $L$ and $Q$ queries: $3 \times 14 + 4 = 46$ steps here, and at most $100 \times 110 + 100 = 11{,}100$ at the limits. Space $L \times n$ saved orders, at most $10^4$ integers. Sorting the trimmed strings separately for each query would cost $Q \cdot n \log n \cdot L$ character comparisons instead.
+
+### 2. LeetCode 164: Maximum Gap (Medium)
+
+**Problem.** Return the largest difference between neighbours in sorted order, in linear time; 0 for fewer than 2 numbers. For `[3, 6, 9, 1]` the answer is 3. The [bucket sort](../bucket-sort/index.qmd) lesson solves it with the pigeonhole principle; here we simply sort in linear time.
+
+**Math first.** Once sorted as $s_0 \le s_1 \le \dots \le s_{n-1}$:
+
+$$
+G = \max_{1 \le i < n} (s_i - s_{i-1}), \qquad T = d\,(n + 10) \text{ with } d \le 10
+$$
+
+where:
+
+- $G$ is the maximum gap and $s_i - s_{i-1}$ one neighbour gap;
+- $T$ is the cost of LSD radix sort in base 10;
+- $d$ is the number of decimal digits of the largest value: values up to $10^9$ have at most 10 digits.
+
+Example: `[3, 6, 9, 1]` sorts in $d = 1$ pass to `[1, 3, 6, 9]`, with gaps $2, 3, 3$, so $G = 3$.
+
+**Idea.** Radix sort a copy, then one scan over neighbours.
+
+```java
+static int maximumGap(int[] nums) {
+    int[] sorted = lsdRadixSort(nums.clone());
+    int best = 0;
+    for (int i = 1; i < sorted.length; i++) best = Math.max(best, sorted[i] - sorted[i - 1]);
+    return best;
+}
+```
+
+**Answer.** 3 for `[3, 6, 9, 1]`, 0 for `[10]`, and $10^9$ for `[1000000000, 0]`. For $n = 10^5$ values up to $10^9$: $10 \times (10^5 + 10) \approx 10^6$ steps for the sort plus $10^5$ for the scan, which is linear because $d$ is bounded by the 32-bit key size. Space $O(n)$.
+
+### 3. LeetCode 1707: Maximum XOR With an Element From Array (Hard)
+
+**Problem.** For each query $[x, m]$, find the largest $x \oplus y$ over the elements $y$ of `nums` with $y \le m$, or $-1$ if there are none. For `nums = [5, 2, 4, 6, 6, 3]` and queries `[[12,4],[8,1],[6,3]]` the answer is `[15, -1, 5]`.
+
+**Math first.** Two facts.
+
+*A higher bit beats all lower bits together:*
+
+$$
+2^{j} > 2^{j-1} + 2^{j-2} + \dots + 2^{0} = 2^{j} - 1
+$$
+
+where $j$ is a bit position, counted from 0 at the right. So to maximise $x \oplus y$, decide the bits of $y$ **from the top down** (MSD order), and at each bit choose the opposite of $x$'s bit whenever some allowed $y$ still has it. Example: bit 3 is worth $8 > 4 + 2 + 1 = 7$.
+
+*MSD buckets are blocks of the sorted array.* All numbers whose bits above position $j$ equal a fixed prefix $P$ lie in the value range $[P, P + 2^{j+1} - 1]$, which is one contiguous block after sorting, exactly a bucket of MSD radix sort in base 2. So "does an allowed $y$ continue this prefix with bit $j$?" becomes:
+
+$$
+\exists\, y \in S:\ \text{want} \le y \le \min\!\big(m,\ \text{want} + 2^{j} - 1\big), \qquad \text{want} = P + (1 - x_j)\, 2^{j}
+$$
+
+where:
+
+- $S$ is the sorted array, and $P$ the bits of $y$ chosen so far (the bits above $j$, with zeros below);
+- $x_j$ is bit $j$ of $x$, so $1 - x_j$ is the opposite bit, the one that makes bit $j$ of the XOR equal to 1;
+- $\text{want}$ is the smallest number with prefix $P$ followed by that opposite bit, and $\text{want} + 2^j - 1$ the largest;
+- $\exists$ means "there is", and one binary search on $S$ answers it.
+
+If no such $y$ exists, $y$ must take $x$'s own bit there, and that block is guaranteed to be non-empty because the parent block was.
+
+Example: query $[12, 4]$ with $S = [2, 3, 4, 5, 6, 6]$; only bits 3 to 0 matter, and $12 = 1100_2$.
+
+| Bit $j$ | $x_j$ | Want block | Allowed $y$ in it ($\le 4$)? | Prefix $P$ |
+| --- | --- | --- | --- | --- |
+| 3 | 1 | $[0, 7]$ | yes (2, 3, 4) | $0000_2$ |
+| 2 | 1 | $[0, 3]$ | yes (2, 3) | $0000_2$ |
+| 1 | 0 | $[2, 3]$ | yes (2, 3) | $0010_2$ |
+| 0 | 0 | $[3, 3]$ | yes (3) | $0011_2 = 3$ |
+
+So $y = 3$ and the answer is $12 \oplus 3 = 1100_2 \oplus 0011_2 = 1111_2 = \mathbf{15}$. Query $[8, 1]$: the smallest element, 2, is above 1, so the answer is $-1$.
+
+**Idea.** Radix sort `nums` once. For each query, walk the 30 bits from the top, testing each wanted block with a binary search, and finish with $x \oplus y$.
+
+```java
+static int[] maximizeXor(int[] nums, int[][] queries) {
+    int[] sorted = lsdRadixSort(nums.clone());
+    int[] answer = new int[queries.length];
+    for (int q = 0; q < queries.length; q++) {
+        int x = queries[q][0], limit = queries[q][1];
+        if (sorted[0] > limit) { answer[q] = -1; continue; }
+        int prefix = 0;                                      // high bits of the element chosen so far
+        for (int bit = 29; bit >= 0; bit--) {                // values are below 2^30
+            int xBit = (x >>> bit) & 1;
+            int want = prefix | ((1 - xBit) << bit);         // the opposite bit makes this XOR bit 1
+            if (anyInRange(sorted, want, Math.min(limit, want + (1 << bit) - 1))) prefix = want;
+            else prefix |= xBit << bit;
+        }
+        answer[q] = x ^ prefix;
+    }
+    return answer;
+}
+
+static boolean anyInRange(int[] sorted, int lo, int hi) {   // is some element in [lo, hi]?
+    int left = 0, right = sorted.length;                     // find the first element >= lo
+    while (left < right) {
+        int mid = (left + right) >>> 1;
+        if (sorted[mid] < lo) left = mid + 1;
+        else right = mid;
+    }
+    return left < sorted.length && sorted[left] <= hi;
+}
+```
+
+**Answer.** `[15, -1, 5]` for the example, and `[3, 3, 7]` for `nums = [0, 1, 2, 3, 4]` with `[[3,1],[1,3],[5,6]]`. Values are at most $10^9 < 2^{30} = 1{,}073{,}741{,}824$, so 30 bits suffice. Time: the radix sort is about $10(n + 10)$ steps, and each query does 30 binary searches of about $\log_2 n \approx 17$ steps: for $n = Q = 10^5$, about $10^5 \times 30 \times 17 \approx 5 \times 10^7$ steps. Space $O(n)$. The textbook alternative stores the same MSD buckets explicitly as a binary trie, inserting elements in order of value while the queries are processed in order of $m$.
+
+## Mathematical Abstraction
+
+Radix sort treats a key as a tuple of digits and sorts the tuple one coordinate at a time:
+
+$$
+x = \sum_{j=0}^{d-1} d_j(x)\, b^{j}, \qquad
+\text{after pass } p:\ \text{sorted by } \big(d_{p-1}(x), \dots, d_0(x)\big), \qquad
+T = d\,(n + b)
+$$
+
+where:
+
+- $b$ is the base and $d_j(x) \in \lbrace 0, \dots, b - 1 \rbrace$ is digit $j$ of $x$, from the least significant;
+- each pass is a stable counting sort on one digit, so after $p$ passes the keys are ordered by their last $p$ digits, compared most significant first;
+- $T$ is the total work for $n$ keys of $d$ digits.
+
+Example: `[253, 146, 512, 340, 418, 237, 651, 124]` in base 10 has $d = 3$; after pass 2 the keys are ordered by their last two digits (12, 18, 24, 37, 40, 46, 51, 53), after pass 3 they are sorted, and the work is $3 \times (8 + 10) = 54$. For a million 32-bit keys in bytes, $T = 4 \times (10^6 + 256) = 4{,}001{,}024$, about five times less than the $\approx 2 \times 10^7$ comparisons of a comparison sort.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 8, "Sorting in Linear Time" (Section 8.2, counting sort; Section 8.3, radix sort, including how to choose the digit size). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §5.1 "String Sorts": key-indexed counting, LSD and MSD string sorts, with Java code (`LSD.java`, `MSD.java`): <https://algs4.cs.princeton.edu/51radix/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 3, *Sorting and Searching*, 2nd edition (Addison-Wesley, 1998), Section 5.2.5, "Sorting by Distribution", which describes radix sorting and its punched-card history.
+- "Radix sort", Wikipedia, history section (Hollerith's tabulating machines; Seward, MIT, 1954): <https://en.wikipedia.org/wiki/Radix_sort>.
+- LeetCode: [2343. Query Kth Smallest Trimmed Number](https://leetcode.com/problems/query-kth-smallest-trimmed-number/), [164. Maximum Gap](https://leetcode.com/problems/maximum-gap/), [1707. Maximum XOR With an Element From Array](https://leetcode.com/problems/maximum-xor-with-an-element-from-array/).
+
+[← Bucket Sort](../bucket-sort/index.qmd) · [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd) · [Monotonic Stack →](../monotonic-stack/index.qmd)

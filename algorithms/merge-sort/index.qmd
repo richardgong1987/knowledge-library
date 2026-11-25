@@ -1,95 +1,432 @@
 ---
 title: "Merge Sort"
-description: "CLRS-inspired worked lesson on Merge Sort: numerical substitution, invariants, original code and complexity."
+description: "From merging two sorted piles of cards to n log n sorting: the merge step and its comparison count, the recursion tree and T(n) = 2T(n/2) + n, stability and extra memory, bottom-up merge sort, counting inversions during the merge, and hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+Merge sort is the cleanest example of **divide and conquer**: split the job in half, solve each half the same way, and combine the answers. The combining step, *merging* two sorted lists, is so cheap that the whole sort costs only $n \log_2 n$ steps on every input. The same merge also counts things for free, which is why merge sort keeps returning in hard interview problems.
 
-**LeetCode 912 — Sort an Array.**
+All code is in [`MergeSortLab.java`](MergeSortLab.java). Run it from this folder with `java MergeSortLab.java`; it checks every number on this page and prints `OK`.
 
-Merge is the essential operation: at every step take the smaller head of two already sorted sequences. Induction connects local choices to the globally sorted output.
+## The problem
 
-## First try the obvious approach
+Eight runners finish a race and their bib numbers arrive in the order `[8, 3, 5, 1, 7, 2, 6, 4]`. We want them sorted.
 
-Splitting an array into halves is easy, but naïvely concatenating two individually sorted halves does not sort their union.
+- [Insertion sort](../sorting/index.qmd) moves one key one step at a time, so it pays one step per pair that is out of order. This list has 16 such pairs, and a reversed list of 8 has 28. For a million keys in reverse order that is about $5 \times 10^{11}$ steps.
+- Quicksort is fast on average but can be pushed to the same $\frac{n^2}{2}$ by unlucky pivots.
+- We want a method that is **always** about $n \log_2 n$: for a million keys, about $2 \times 10^7$ steps, whatever the input looks like.
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+## Explain it like I'm ten
 
-## Mathematical relationship, explained immediately
+::: {.callout-tip}
+Two friends each hold a **sorted** pile of cards, face up, smallest on top. To make one sorted pile, look at the two top cards, take the smaller one, and put it on your new pile. Repeat until both piles are empty. You never have to look below the top cards. That is **merging**.
 
-$$
-T(n)=2T(n/2)+\Theta(n)
-$$
+Now somebody hands you a big messy pile. Split it in half and give each half to a friend. Each friend splits *their* half and hands it on, until everyone holds a single card, and one card is always sorted. Then everybody merges back up: pairs of cards, then piles of four, then eight. That is **merge sort**.
 
-**Symbol by symbol:** T(n) is total running time on n entries; 2T(n/2) represents sorting two halves; Θ(n) is the linear work to merge them.
+In 1945 John von Neumann wrote a merging routine for the EDVAC, one of the first stored-program computer designs, as the heart of a sorting program; Donald Knuth credits him with merge sort in *The Art of Computer Programming*, Volume 3, Section 5.2.4, "Sorting by Merging".
+:::
 
-**Calculate with real numbers:** For n=8, merging all values costs about 8 comparisons/steps per level. There are log₂8=3 levels, so roughly 8×3=24 units of merge work plus small base cases. This leads to n log n growth.
+## From simple to advanced
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+### Level 1: merging two sorted runs
 
-## How the algorithm emerges
+A **run** is a list that is already sorted. To merge two runs, compare their front keys, move the smaller one out, and repeat. When one run is empty, copy the rest of the other.
 
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
-
-**Correctness argument:** Assume both halves sorted by recursion. Their smallest remaining elements are at the heads; choosing the smaller cannot put a larger element before a smaller one.
-
-## Code, but only after the reasoning
-
-Use the tested [algorithm lab](../examples/patterns.mjs), which exports `mergeSort`:
-
-~~~js
-import { mergeSort } from '../examples/patterns.mjs';
-
-console.log(mergeSort([5,1,4,1,3]));
-~~~
-
-Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function mergeSort(a) {
-  if (a.length <= 1) return [...a];
-  const m = Math.floor(a.length / 2);
-  const l = mergeSort(a.slice(0, m)), r = mergeSort(a.slice(m));
-  const result = [];
-  let i = 0, j = 0;
-  while (i < l.length || j < r.length) {
-    if (j === r.length || (i < l.length && l[i] <= r[j]))
-      result.push(l[i++]);
-    else result.push(r[j++]);
-  }
-  return result;
+```java
+static int[] merge(int[] left, int[] right) {
+    int[] out = new int[left.length + right.length];
+    int i = 0, j = 0, k = 0;
+    while (i < left.length && j < right.length) {
+        comparisons++;
+        out[k++] = left[i] <= right[j] ? left[i++] : right[j++];   // <= takes the left key on a tie: stable
+    }
+    while (i < left.length) out[k++] = left[i++];
+    while (j < right.length) out[k++] = right[j++];
+    return out;
 }
-~~~
+```
 
-**Walk through the important lines:**
+The `comparisons` counter is there only so the lab can check the numbers below. Every comparison moves one key out, and the last key never needs one, so
 
-1. A sequence of one item is already sorted, so it is the recursion base case.
-2. Recursively sort the left and right halves independently.
-3. The merge compares only the two current heads, choosing the smaller.
-4. Using `<=` to prefer the left head when values are equal preserves stable order.
-5. `[5,1,4,1,3]` merges into **[1,1,3,4,5]**, with each level processing all five entries once.
+$$
+\min(p, q) \le C_{\text{merge}} \le p + q - 1
+$$
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+where:
 
-## Count the work rigorously
+- $p$ and $q$ are the lengths of the two runs;
+- $C_{\text{merge}}$ is the number of comparisons the merge makes;
+- the lower end happens when one run is used up first, for example every left key is smaller than every right key;
+- the upper end happens when the runs interleave, so only one key is left over at the end.
 
-**Time and memory:** O(n log n) time and O(n) auxiliary memory, where n is number of elements.
+Example 1: `[1, 3, 5, 8]` and `[2, 4, 6, 7]` interleave. The comparisons are 1:2, 3:2, 3:4, 5:4, 5:6, 8:6, 8:7, and then only 8 is left: $7 = 4 + 4 - 1$ comparisons.
 
-**The misleading shortcut:** The <= comparison favours the left equal-key element, preserving stability. Replacing with < can reverse equal-key order across halves.
+Example 2: `[1, 2, 3, 4]` and `[5, 6, 7, 8]`: 1, 2, 3 and 4 each win against 5, then the right run is copied: $4 = \min(4, 4)$ comparisons.
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+Either way, the merge **moves** each of the $p + q$ keys exactly once.
 
-## Practice and source
+### Level 2: split, recurse, merge
 
-- **Textbook relationship:** CLRS Chapter 2 (merge sort) and Chapter 4 (recurrences)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 912 — Sort an Array. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+```java
+static int[] mergeSort(int[] a) {
+    if (a.length <= 1) return a;
+    int mid = a.length / 2;
+    int[] left = mergeSort(Arrays.copyOfRange(a, 0, mid));
+    int[] right = mergeSort(Arrays.copyOfRange(a, mid, a.length));
+    return merge(left, right);
+}
+```
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+Here is the whole **recursion tree** for `[8, 3, 5, 1, 7, 2, 6, 4]`:
+
+```text
+split:    [8 3 5 1 7 2 6 4]
+split:    [8 3 5 1]           [7 2 6 4]
+split:    [8 3]   [5 1]       [7 2]   [6 4]
+leaves:   [8] [3] [5] [1]     [7] [2] [6] [4]
+merge 1:  [3 8]   [1 5]       [2 7]   [4 6]        4 merges x 1 comparison  = 4
+merge 2:  [1 3 5 8]           [2 4 6 7]            2 merges x 3 comparisons = 6
+merge 3:  [1 2 3 4 5 6 7 8]                        1 merge  x 7 comparisons = 7
+```
+
+There are $\log_2 8 = 3$ merge levels, and **each level moves all 8 keys once**, so the work is $3 \times 8 = 24$ moves. Written as a recurrence:
+
+$$
+T(n) = 2\,T\!\left(\frac{n}{2}\right) + n, \qquad T(1) = 0 \qquad \Longrightarrow \qquad T(n) = n \log_2 n
+$$
+
+where:
+
+- $T(n)$ is the number of key moves to merge-sort $n$ keys, with $n$ a power of two;
+- $2\,T(n/2)$ is the cost of sorting the two halves;
+- $+\,n$ is the merge, which moves every key once;
+- $T(1) = 0$ because a single key is already sorted.
+
+Example: unfold it for $n = 8$:
+
+$$
+T(8) = 2\,T(4) + 8 = 2\,(2\,T(2) + 4) + 8 = 2\,(2\,(2 \cdot 0 + 2) + 4) + 8 = 2 \cdot 8 + 8 = 24 = 8 \log_2 8
+$$
+
+For $n = 1024$ it is $1024 \times 10 = 10{,}240$, and for a million keys about $10^6 \times 20 = 2 \times 10^7$. CLRS calls this the *recursion-tree method* (Section 4.4); the *master method* (Section 4.5) gives the same answer, because the merge cost $n$ equals $n^{\log_2 2} = n^1$, the "balanced" case.
+
+**Comparisons**, rather than moves, follow from Level 1. Level $\ell$ has $n / 2^\ell$ merges of two runs of length $2^{\ell - 1}$, each costing at most $2^\ell - 1$:
+
+$$
+W(n) = \sum_{\ell=1}^{\log_2 n} \frac{n}{2^\ell}\,(2^\ell - 1) = n \log_2 n - n + 1
+$$
+
+where:
+
+- $W(n)$ is the worst-case number of comparisons, for $n$ a power of two;
+- $\ell = 1, 2, \dots, \log_2 n$ numbers the merge levels from the bottom;
+- $\frac{n}{2^\ell}$ is the number of merges on level $\ell$, and $2^\ell - 1$ the most comparisons each can need;
+- the sum is $n$ per level minus the number of merges, $\frac{n}{2} + \frac{n}{4} + \dots + 1 = n - 1$.
+
+Example: for $n = 8$, $W(8) = 24 - 8 + 1 = 17$, exactly the $4 + 6 + 7$ in the tree above, because every merge in this example interleaves completely. The [comparison lower bound](../sorting/index.qmd) for 8 keys is $\lceil \log_2 40{,}320 \rceil = 16$, so merge sort is within one comparison of the best possible. On already sorted input every merge takes the Example 2 shape: $4 \times 1 + 2 \times 2 + 1 \times 4 = 12$ comparisons.
+
+### Level 3: stability and extra memory
+
+**Stable.** On a tie, `merge` takes the key from the **left** run (`<=`, not `<`). Every left key started before every right key, so equal keys keep their original order, and so does the whole sort by induction. Two runners both timed 12.5 seconds stay in the order they crossed the line. Change `<=` to `<` and that guarantee is gone.
+
+**Extra memory.** Merging needs somewhere to put the output: you cannot merge two halves of one array in place cheaply. So merge sort uses about $n$ extra slots. The teaching version above allocates fresh arrays at every call, which is easy to read but creates a lot of garbage, even though only $O(n)$ slots are in use at any moment. Production code (Sedgewick and Wayne's `Merge.java`, or Java's TimSort) allocates one helper array once and reuses it.
+
+| | Merge sort | Quicksort | Heapsort |
+| --- | --- | --- | --- |
+| Worst-case time | $n \log_2 n$ | $\frac{n^2}{2}$ | $\approx 2 n \log_2 n$ |
+| Extra memory | $n$ slots (arrays), $O(1)$ for linked lists | $O(\log n)$ stack | $O(1)$ |
+| Stable | **yes** | no | no |
+
+**Linked lists change the picture.** Merging two linked lists only relinks `next` pointers, so it needs **no** extra array. That makes merge sort the standard way to sort a linked list (interview problem 1).
+
+### Level 4: bottom-up merge sort
+
+The recursion only decides *which* runs to merge. You can decide that with loops instead: first merge neighbouring runs of width 1, then width 2, then 4, until one run covers everything.
+
+```java
+static int bottomUpSort(int[] a) {
+    int n = a.length, passes = 0;
+    for (int width = 1; width < n; width *= 2, passes++) {
+        for (int lo = 0; lo + width < n; lo += 2 * width) {
+            int mid = lo + width, hi = Math.min(lo + 2 * width, n);
+            int[] merged = merge(Arrays.copyOfRange(a, lo, mid), Arrays.copyOfRange(a, mid, hi));
+            System.arraycopy(merged, 0, a, lo, merged.length);
+        }
+    }
+    return passes;
+}
+```
+
+The width doubles each pass, so the number of passes is
+
+$$
+\text{passes} = \lceil \log_2 n \rceil
+$$
+
+where $n$ is the number of keys and $\lceil x \rceil$ rounds up. Example: $n = 8$ needs widths 1, 2, 4, that is $\log_2 8 = 3$ passes; $n = 5$, `[5, 1, 4, 2, 3]`, also needs widths 1, 2, 4, because $\lceil \log_2 5 \rceil = \lceil 2.32 \rceil = 3$. A short last run, such as the lone `3` in the first pass, simply waits for a later pass.
+
+Bottom-up merge sort uses no recursion, so it suits linked lists and external sorting, where huge files are merged in passes from disk. Its grown-up form is **TimSort**, Java's sort for objects: instead of starting from runs of width 1, it starts from the runs already present in the data. A sorted array is one run and costs only $n - 1$ comparisons.
+
+### Level 5: counting inversions during the merge
+
+An **inversion** is a pair of positions $i < j$ with $a_i > a_j$: a pair that is out of order. Counting them directly checks all $\frac{n(n-1)}{2}$ pairs. The merge can count them in $n \log_2 n$ steps, because every pair is either inside the left half, inside the right half, or **split** across the two:
+
+$$
+I(a) = I(L) + I(R) + \sum_{r \in R} \#\lbrace \ell \in L : \ell > r \rbrace
+$$
+
+where:
+
+- $L$ and $R$ are the left and right halves of the array $a$;
+- $I(\cdot)$ is the number of inversions inside a list;
+- the sum counts split pairs: for each right key $r$, the left keys bigger than it.
+
+When both halves are sorted, the split pairs are visible during the merge: at the moment a right key is taken, **every left key still waiting is bigger than it**, so it forms an inversion with each of them.
+
+Example: `[2, 4, 1, 3, 5]` splits into $L = [2, 4]$ and $R = [1, 3, 5]$, both already sorted, so $I(L) = I(R) = 0$.
+
+- Take 1 from $R$: two left keys, 2 and 4, are waiting, so add 2.
+- Take 2 from $L$.
+- Take 3 from $R$: one left key, 4, is waiting, so add 1.
+- Take 4 from $L$, then 5.
+
+Total: $0 + 0 + 2 + 1 = 3$, which are the pairs $(2,1)$, $(4,1)$ and $(4,3)$.
+
+```java
+static long sortAndCount(int[] a, int lo, int hi) {   // sorts a[lo, hi) and returns its inversions
+    if (hi - lo <= 1) return 0;
+    int mid = (lo + hi) / 2;
+    long count = sortAndCount(a, lo, mid) + sortAndCount(a, mid, hi);
+    int[] left = Arrays.copyOfRange(a, lo, mid);
+    int i = 0, j = mid, k = lo;
+    while (i < left.length) {
+        if (j < hi && a[j] < left[i]) {
+            count += left.length - i;   // a[j] jumps over every left key still waiting
+            a[k++] = a[j++];
+        } else {
+            a[k++] = left[i++];
+        }
+    }
+    return count;
+}
+```
+
+This version copies only the left half: right keys are already in `a`, and they are never overwritten before they are read, because the write position `k` stays at or behind `j`. When the left copy is used up, the remaining right keys are already in their places. On the race example `[8, 3, 5, 1, 7, 2, 6, 4]` it counts 16 inversions; on `[8, 7, ..., 1]` it counts all $\frac{8 \times 7}{2} = 28$.
+
+Inversions measure *how unsorted* a list is. They also compare two rankings: if two judges rank the same 8 runners, the number of inversions between their orders is the *Kendall tau distance*.
+
+## Why it works and what it costs
+
+**The merge is correct.** The invariant is: *`out[0..k)` holds the $k$ smallest keys of the two runs, in sorted order, and each run's unused keys are its largest ones.*
+
+- *Initially* $k = 0$, which is trivially true.
+- *Each step keeps it*: both runs are sorted, so the smallest unused key overall is one of the two front keys, and the merge takes the smaller of those.
+- *At the end* $k = p + q$, so `out` is the sorted union.
+
+**Merge sort is correct** by induction on $n$. One key is sorted. For $n \ge 2$, both halves are shorter, so by induction they come back sorted, and the correct merge combines them.
+
+**What it costs**, counted on the example and in general:
+
+| Measure | $n = 8$ example | General |
+| --- | --- | --- |
+| Key moves | $3 \times 8 = 24$ | $n \log_2 n$ |
+| Comparisons, worst case | 17 | $n \log_2 n - n + 1$ |
+| Comparisons, sorted input | 12 | $\frac{n}{2} \log_2 n$ |
+| Recursion depth | 3 | $\lceil \log_2 n \rceil$ |
+| Extra memory | 8 slots | $n$ slots |
+
+For $n = 10^6$: about $2 \times 10^7$ moves, 20 levels of recursion, and one helper array of a million slots. The running time is the same on every input, which is why merge sort is chosen when a *guaranteed* bound or stability matters.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `<` instead of `<=` when comparing the two fronts | The sort is no longer stable: equal keys swap order | Take from the left run on a tie |
+| Forgetting to copy the leftover run | Keys silently disappear from the output | After the main loop, copy whatever remains in either run |
+| `mid = (lo + hi) / 2` on arrays over a billion elements | `lo + hi` overflows and goes negative | `lo + (hi - lo) / 2` or `(lo + hi) >>> 1` |
+| A new helper array in every merge call | Correct but slow; lots of garbage collection | Allocate one helper array of size $n$ once and pass it down |
+| Counting inversions in an `int` | Wrong counts on large inputs: $10^5$ reversed keys have $\approx 5 \times 10^9 > 2^{31}$ inversions | Use `long` for the count |
+| Linked-list middle with `fast = head` | Two-node lists never split, so the recursion never ends | Start `fast = head.next`, so the first half has $\lceil n/2 \rceil$ nodes |
+| Counting a non-merge condition (such as $a_i > 2a_j$) inside the merge | Some pairs are missed or counted twice | Count split pairs in a separate pass over the two sorted halves, then merge |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the counting rule is right, the code is the merge from Level 5 with one line changed.
+
+### 1. LeetCode 148: Sort List (Medium)
+
+**Problem.** Sort a singly linked list in $O(n \log n)$ time. For `4 → 2 → 1 → 3` the answer is `1 → 2 → 3 → 4`.
+
+**Math first.** A linked list has no index, so quicksort's swaps and heapsort's jumps are awkward, but merging only needs the two fronts. Find the middle with two pointers: after $k$ steps, `slow` is at node $k$ and `fast` at node $2k + 1$, so `fast` reaches the end when `slow` is halfway:
+
+$$
+\lvert \text{first half} \rvert = \left\lceil \frac{n}{2} \right\rceil, \qquad T(n) = 2\,T\!\left(\frac{n}{2}\right) + n = n \log_2 n
+$$
+
+where:
+
+- $n$ is the number of nodes, counted from 0 at the head;
+- $\lvert \text{first half} \rvert$ is the number of nodes up to and including `slow`;
+- $T(n)$ is the work, the recurrence of Level 2, with $n$ for walking to the middle and merging.
+
+Example: for `4 → 2 → 1 → 3`, $n = 4$: the halves are `4 → 2` and `1 → 3` ($\lceil 4/2 \rceil = 2$ nodes first). They sort to `2 → 4` and `1 → 3` and merge to `1 → 2 → 3 → 4`. For `-1 → 5 → 3 → 4 → 0`, $n = 5$, the first half has $\lceil 5/2 \rceil = 3$ nodes.
+
+**Idea.** Split at the middle, cut the link, sort each half recursively, and merge by relinking nodes behind a dummy head. No node is copied.
+
+```java
+static ListNode sortList(ListNode head) {
+    if (head == null || head.next == null) return head;
+    ListNode slow = head, fast = head.next;   // fast moves two steps for each step of slow
+    while (fast != null && fast.next != null) {
+        slow = slow.next;
+        fast = fast.next.next;
+    }
+    ListNode second = slow.next;
+    slow.next = null;                         // cut the list into two halves
+    return mergeLists(sortList(head), sortList(second));
+}
+
+static ListNode mergeLists(ListNode a, ListNode b) {
+    ListNode dummy = new ListNode(0, null), tail = dummy;
+    while (a != null && b != null) {
+        if (a.val <= b.val) { tail.next = a; a = a.next; }
+        else { tail.next = b; b = b.next; }
+        tail = tail.next;
+    }
+    tail.next = (a != null) ? a : b;          // relink the leftover run, no copying
+    return dummy.next;
+}
+```
+
+**Answer.** `1 → 2 → 3 → 4`, and `-1 → 0 → 3 → 4 → 5` for the second example; an empty list stays empty. Time $O(n \log n)$: for $5 \times 10^4$ nodes, about $16$ levels of $5 \times 10^4$ steps. Space: no arrays, only the recursion stack of $\lceil \log_2 n \rceil = 16$ frames. The follow-up asks for $O(1)$ space: run the bottom-up version of Level 4 on the list, merging sublists of length 1, 2, 4, … with a loop instead of recursion.
+
+### 2. LeetCode 315: Count of Smaller Numbers After Self (Hard)
+
+**Problem.** For each element, count the elements to its **right** that are smaller. For `[5, 2, 6, 1]` the answer is `[2, 1, 1, 0]`.
+
+**Math first.** This is the inversion count of Level 5, split up by the left key of each pair:
+
+$$
+\text{smaller}(i) = \#\lbrace j > i : a_j < a_i \rbrace = \sum_{\text{merges with } i \in L} \#\lbrace j \in R : a_j < a_i \rbrace
+$$
+
+where:
+
+- $\text{smaller}(i)$ is the answer for position $i$;
+- each pair $i < j$ is split apart in exactly one merge, the first one that puts $i$ in the left half $L$ and $j$ in the right half $R$;
+- so summing over the merges counts every smaller right key exactly once.
+
+During a merge, when the left key $a_i$ is finally taken, the right keys already taken are exactly the right keys smaller than it. If the right pointer has advanced from `mid` to $j$, that is $j - \text{mid}$ keys.
+
+Example: `[5, 2, 6, 1]`.
+
+- Merge `[5] | [2]`: 2 is taken first, then 5, with $1$ right key passed, so $\text{smaller}(5) \mathrel{+}= 1$. Result `[2, 5]`.
+- Merge `[6] | [1]`: 1 first, then 6 with 1 passed, so $\text{smaller}(6) \mathrel{+}= 1$. Result `[1, 6]`.
+- Merge `[2, 5] | [1, 6]`: 1 is taken; then 2 is taken with 1 right key passed, so $\text{smaller}(2) \mathrel{+}= 1$; then 5 with 1 passed, so $\text{smaller}(5) \mathrel{+}= 1$; 6 is never passed by anything.
+
+Totals: $\text{smaller} = [1 + 1, 1, 1, 0] = [2, 1, 1, 0]$.
+
+**Idea.** Values move during sorting, so sort an array of **indices** by their values and add counts to `smaller[index]`. Use strict `<`, so equal values do not count as smaller.
+
+```java
+static void sortIndices(int[] nums, int[] index, int[] smaller, int lo, int hi) {   // sorts index[lo, hi) by value
+    if (hi - lo <= 1) return;
+    int mid = (lo + hi) / 2;
+    sortIndices(nums, index, smaller, lo, mid);
+    sortIndices(nums, index, smaller, mid, hi);
+    int[] left = Arrays.copyOfRange(index, lo, mid);
+    int i = 0, j = mid, k = lo;
+    while (i < left.length) {
+        if (j < hi && nums[index[j]] < nums[left[i]]) {
+            index[k++] = index[j++];          // a smaller right key passes the waiting left keys
+        } else {
+            smaller[left[i]] += j - mid;      // j - mid smaller right keys have passed this one
+            index[k++] = left[i++];
+        }
+    }
+}
+```
+
+The wrapper sets `index = [0, 1, ..., n-1]`, calls `sortIndices(nums, index, smaller, 0, n)`, and returns `smaller` as a list.
+
+**Answer.** `[2, 1, 1, 0]`, and `[-1, -1]` gives `[0, 0]`. The brute force checks all $\frac{n(n-1)}{2}$ pairs, about $5 \times 10^9$ for $n = 10^5$; merge sort needs about $n \log_2 n \approx 10^5 \times 17 = 1.7 \times 10^6$ steps. Space $O(n)$ for the index, count and copy arrays.
+
+### 3. LeetCode 493: Reverse Pairs (Hard)
+
+**Problem.** Count pairs $i < j$ with $a_i > 2 a_j$. For `[1, 3, 2, 3, 1]` the answer is 2: both 3s are more than twice the last 1.
+
+**Math first.** The same split as inversions, with a different condition:
+
+$$
+P(a) = P(L) + P(R) + \#\lbrace (\ell, r) \in L \times R : \ell > 2r \rbrace
+$$
+
+where:
+
+- $P(\cdot)$ is the number of reverse pairs inside a list;
+- $L \times R$ is every pair of one key from the left half and one from the right half;
+- the condition $\ell > 2r$ is the problem's definition of a reverse pair.
+
+With both halves sorted, the split pairs can be counted with **two pointers that only move forward**: if $\ell > 2r$ and $\ell' \ge \ell$, then $\ell' > 2r$ too. So as the left key grows, the count of right keys it beats can only grow. This count cannot be folded into the merge itself, because the merge orders keys by $\ell$ versus $r$, not by $\ell$ versus $2r$: when 3 meets 2, the merge takes 2 first, but $3 > 2 \cdot 2 = 4$ is false. So: count first, then merge.
+
+Example: `[2, 4, 3, 5, 1]` splits into `[2, 4]` and `[3, 5, 1]`.
+
+- $P([2, 4]) = 0$, because $2 > 8$ is false.
+- $P([3, 5, 1])$: inside `[5, 1]`, $5 > 2$, so 1 pair; then `[3]` against the sorted `[1, 5]`: $3 > 2$, so 1 more. Total 2, and that half becomes `[1, 3, 5]`.
+- Split pairs between `[2, 4]` and `[1, 3, 5]`: for 2, $2 > 2 \cdot 1 = 2$ is false, so 0; for 4, $4 > 2$ is true and $4 > 6$ is false, so 1.
+
+Total: $0 + 2 + 1 = 3$.
+
+**Idea.** Recurse, count split pairs with the moving pointer, then merge the halves so the parent call sees a sorted range. Compute $2 a_j$ as a `long`: for $a_j = -2^{31} + 1$ the doubled value does not fit in an `int`.
+
+```java
+static int sortAndCountReverse(int[] a, int lo, int hi) {   // sorts a[lo, hi), returns its reverse pairs
+    if (hi - lo <= 1) return 0;
+    int mid = (lo + hi) / 2;
+    int count = sortAndCountReverse(a, lo, mid) + sortAndCountReverse(a, mid, hi);
+    for (int i = lo, j = mid; i < mid; i++) {
+        while (j < hi && a[i] > 2L * a[j]) j++;   // 2L: doubling an int can overflow
+        count += j - mid;
+    }
+    mergeHalves(a, lo, mid, hi);
+    return count;
+}
+
+static void mergeHalves(int[] a, int lo, int mid, int hi) {   // a[lo, mid) and a[mid, hi) are sorted
+    int[] left = Arrays.copyOfRange(a, lo, mid);
+    int i = 0, j = mid, k = lo;
+    while (i < left.length) {
+        if (j < hi && a[j] < left[i]) a[k++] = a[j++];
+        else a[k++] = left[i++];
+    }
+}
+```
+
+**Answer.** 2 for `[1, 3, 2, 3, 1]` and 3 for `[2, 4, 3, 5, 1]`. Each level does one counting pass and one merge, both $O(n)$, over $\lceil \log_2 n \rceil$ levels: for $n = 5 \times 10^4$, about $2 \times 5 \times 10^4 \times 16 = 1.6 \times 10^6$ steps, against $1.25 \times 10^9$ pairs for the brute force. Space $O(n)$.
+
+## Mathematical Abstraction
+
+Merge sort is one recurrence, and its merge step carries a second one for counting split pairs:
+
+$$
+T(n) = 2\,T\!\left(\frac{n}{2}\right) + n = n \log_2 n, \qquad
+I(a) = I(L) + I(R) + \sum_{r \in R} \#\lbrace \ell \in L : \ell > r \rbrace
+$$
+
+where:
+
+- $T(n)$ is the number of key moves for $n$ keys, $n$ a power of two, with $T(1) = 0$;
+- $L$ and $R$ are the two halves, and $I(\cdot)$ counts inversions;
+- the sum counts the pairs that straddle the split, which the merge sees for free.
+
+Example: for `[8, 3, 5, 1, 7, 2, 6, 4]`, $T(8) = 24$ moves over $\log_2 8 = 3$ levels, the merges make $4 + 6 + 7 = 17 = 8 \cdot 3 - 8 + 1$ comparisons, and the inversion count comes out as 16. Replace the split-pair condition $\ell > r$ with any condition that is monotone in sorted order, such as $\ell > 2r$, and the same recursion solves LeetCode 315 and 493.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 2, "Getting Started" (Section 2.3, "Designing algorithms", which develops merge sort); Chapter 4, "Divide-and-Conquer" (Section 4.4, the recursion-tree method, and Section 4.5, the master method). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §2.2 "Mergesort", with top-down and bottom-up Java implementations: <https://algs4.cs.princeton.edu/22mergesort/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 3, *Sorting and Searching*, 2nd edition (Addison-Wesley, 1998), Section 5.2.4, "Sorting by Merging", including the history of von Neumann's 1945 program.
+- Jon Kleinberg and Éva Tardos, *Algorithm Design* (Pearson, 2005), Chapter 5, "Divide and Conquer", which counts inversions with merge sort.
+- OpenJDK `java.util.TimSort`, the natural-run merge sort behind `Arrays.sort` for objects: <https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/TimSort.java>.
+- LeetCode: [148. Sort List](https://leetcode.com/problems/sort-list/), [315. Count of Smaller Numbers After Self](https://leetcode.com/problems/count-of-smaller-numbers-after-self/), [493. Reverse Pairs](https://leetcode.com/problems/reverse-pairs/).
+
+[← Sorting](../sorting/index.qmd) · [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd) · [Counting Sort →](../counting-sort/index.qmd)

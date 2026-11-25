@@ -1,65 +1,415 @@
 ---
 title: "Binary Indexed Tree"
-description: "CLRS-inspired worked lesson on Binary Indexed Tree: numerical substitution, invariants, original code and complexity."
+description: "From measuring with rulers of 1, 2, 4 and 8 to counting inversions: lowbit(i) = i & (−i) in binary, boxes that cover (i − lowbit(i), i], prefix queries and updates traced for n = 8, range updates with a difference tree, a comparison with the segment tree, and hard interview problems solved math-first."
 ---
 
-## Understand the actual problem
+A binary indexed tree, also called a **Fenwick tree**, keeps running totals of an array that keeps changing. It answers "sum of the first $i$ values" and accepts "add $\delta$ to position $i$", both in at most $\lfloor \log_2 n \rfloor + 1$ steps, using one plain array of $n + 1$ numbers and about ten lines of code. The trick is to read the binary digits of a position. This lesson builds it from the one bit operation it needs, traces every step on eight numbers, compares it with the segment tree, and then uses it to count things in two hard problems.
 
-**LeetCode 307 — Range Sum Query - Mutable.**
+All code is in [`BinaryIndexedTreeLab.java`](BinaryIndexedTreeLab.java). Run it from this folder with `java BinaryIndexedTreeLab.java`; it checks every number on this page and prints `OK`.
 
-Fenwick/Binary Indexed Tree stores carefully chosen disjoint powers-of-two ranges. Index lowbit reveals how far to jump while querying or updating.
+## The problem
 
-## First try the obvious approach
+Eight values `a = [5, 8, 6, 3, 2, 7, 2, 6]` sit at positions **1 to 8** (a Fenwick tree counts from 1). Requests arrive mixed together:
 
-Maintain prefix sums explicitly but update them all after changing one entry. A single value change near the beginning invalidates almost every later prefix.
+- "what is the sum of positions 1 to 7?" Here $5 + 8 + 6 + 3 + 2 + 7 + 2 = 33$;
+- "add 4 to position 3", after which the same question gives 37.
 
-The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
+Prefix sums answer the first in one step but need up to $n$ steps to repair after each change. A plain array is the other way round. With $n = 10^5$ values and $10^5$ requests of each kind, either costs about $10^{10}$ steps. A Fenwick tree does both in at most $\lfloor \log_2 10^5 \rfloor + 1 = 17$ steps, about $3.4 \times 10^6$ in total.
 
-## Mathematical relationship, explained immediately
+## Explain it like I'm ten
+
+::: {.callout-tip}
+You have rulers of length 1, 2, 4 and 8. To measure 7 you lay down a 4, then a 2, then a 1, because $7 = 4 + 2 + 1$. That is just 7 written in binary, `111`. You never need more rulers than the number has binary digits.
+
+A Fenwick tree stores the array in **boxes** whose sizes are powers of two. Box 7 holds the last 1 value (position 7), box 6 holds the 2 values before it (positions 5 and 6), and box 4 holds the 4 values before that (positions 1 to 4). So "the total of the first 7" is three boxes added up, exactly like three rulers.
+
+When one value changes, only the boxes that contain it need fixing. Position 3 lies inside box 3, box 4 and box 8, so three boxes change and nothing else.
+
+Peter Fenwick published the structure in 1994 to keep running symbol counts for data compression, and named it the *binary indexed tree*. Boris Ryabko had described the same idea in 1989.
+:::
+
+## From simple to advanced
+
+### Level 1: the lowest set bit, $i \mathbin{\&} (-i)$
+
+Everything rests on one number: the value of the **lowest 1-bit** of $i$.
 
 $$
-\operatorname{lowbit}(i)=i\mathbin{\&}(-i)
+\operatorname{lowbit}(i) = i \mathbin{\&} (-i) = 2^{k}, \qquad k = \text{the number of trailing zeros of } i \text{ in binary}
 $$
 
-**Symbol by symbol:** i is a POSITIVE one-based integer index; & is bitwise AND; lowbit(i) isolates the least significant binary 1 bit, indicating the size of the interval stored at position i.
+where:
 
-**Calculate with real numbers:** For i=12, binary is 1100; -12 in two's complement has low bits ...0100, so lowbit(12)=4. Position 12 stores the aggregate of four positions ending at 12 (indices 9–12).
+- $\&$ is bitwise AND: a bit is 1 only if it is 1 in both numbers;
+- $-i$ is stored in *two's complement*, $-i = \lnot i + 1$, where $\lnot i$ flips every bit;
+- flipping turns the trailing zeros of $i$ into ones and its lowest 1 into a 0; adding 1 carries through those ones and sets that bit back to 1, while every higher bit stays flipped. So $i$ and $-i$ share exactly one 1-bit.
 
-Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
+Example: $i = 6$ in 8 bits.
 
-## How the algorithm emerges
+| | Binary | Decimal |
+| --- | --- | --- |
+| $i$ | `00000110` | 6 |
+| $\lnot i$ | `11111001` | |
+| $-i = \lnot i + 1$ | `11111010` | $-6$ |
+| $i \mathbin{\&} (-i)$ | `00000010` | **2** |
 
-1. Identify what answer you would compute by hand for the smallest instance.
-2. Store exactly that piece of information when moving to the next step.
-3. Update the stored information after one input event or query.
-4. Check the invariant before returning a result; consider boundary values and ties.
+For $i = 1$ to $8$: $\operatorname{lowbit} = 1, 2, 1, 4, 1, 2, 1, 8$. Odd numbers give 1, and a power of two gives itself.
 
-**Correctness argument:** A prefix query repeatedly subtracts lowbit(i), decomposing [1,i] into non-overlapping blocks; an update repeatedly adds lowbit(i) to visit exactly blocks containing the changed position.
+```java
+static int lowbit(int i) {
+    return i & -i;
+}
+```
 
-## Code, but only after the reasoning
+### Level 2: what each box holds
 
-Use the tested [algorithm lab](../examples/patterns.mjs), which exports `prefixSums`:
+Box $i$ stores the sum of the $\operatorname{lowbit}(i)$ values that **end** at position $i$:
 
-~~~js
-import { prefixSums } from '../examples/patterns.mjs';
+$$
+T_i = \sum_{t = i - \operatorname{lowbit}(i) + 1}^{i} a_t, \qquad \text{that is, the positions in } (i - \operatorname{lowbit}(i),\; i\,]
+$$
 
-console.log(prefixSums([2,1,4,3]));
-~~~
+where:
 
-Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
+- $T_i$ is the number stored in `tree[i]`;
+- $a_t$ is the value at position $t$, counting from 1;
+- $(x, y]$ means "greater than $x$, up to and including $y$".
 
-## Count the work rigorously
+Example: for `a = [5, 8, 6, 3, 2, 7, 2, 6]`:
 
-**Time and memory:** O(log n) query and point update, O(n) storage; n is number of indexed values.
+| $i$ | Binary | $\operatorname{lowbit}(i)$ | Covers | $T_i$ |
+| --- | --- | --- | --- | --- |
+| 1 | `0001` | 1 | $(0, 1]$ | 5 |
+| 2 | `0010` | 2 | $(0, 2]$ | $5 + 8 = 13$ |
+| 3 | `0011` | 1 | $(2, 3]$ | 6 |
+| 4 | `0100` | 4 | $(0, 4]$ | $5 + 8 + 6 + 3 = 22$ |
+| 5 | `0101` | 1 | $(4, 5]$ | 2 |
+| 6 | `0110` | 2 | $(4, 6]$ | $2 + 7 = 9$ |
+| 7 | `0111` | 1 | $(6, 7]$ | 2 |
+| 8 | `1000` | 8 | $(0, 8]$ | 39 |
 
-**The misleading shortcut:** Do not mix 0-based input arrays with the tree's 1-based internal indexing. Using index zero in the update loop would never advance.
+```java
+static final class FenwickTree {
+    final int[] tree;
 
-A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+    FenwickTree(int n) {
+        tree = new int[n + 1];                        // tree[0] is unused
+    }
 
-## Practice and source
+    FenwickTree(int[] a) {                            // a[0] goes to position 1
+        this(a.length);
+        for (int i = 1; i <= a.length; i++) add(i, a[i - 1]);
+    }
+```
 
-- **Textbook relationship:** Fenwick trees are not a named CLRS 4e chapter; related aggregation principles appear in Chapter 17., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode practice:** LeetCode 307 — Range Sum Query - Mutable. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
-- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+The constructor simply adds each value with Level 4's `add`, which costs $O(n \log n)$. A linear build also exists: walk $i = 1, \dots, n$ and, once box $i$ is complete, add it into box $i + \operatorname{lowbit}(i)$.
 
-[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)
+### Level 3: a prefix query walks down
+
+To add up positions $1$ to $i$, take box $i$, jump to just before it, and repeat. Each jump **removes the lowest 1-bit**:
+
+$$
+\operatorname{prefix}(i) = T_i + \operatorname{prefix}\bigl(i - \operatorname{lowbit}(i)\bigr), \qquad \operatorname{prefix}(0) = 0
+$$
+
+where:
+
+- box $i$ covers $(i - \operatorname{lowbit}(i), i]$, so what is left is exactly positions $1$ to $i - \operatorname{lowbit}(i)$;
+- every jump clears one 1-bit, so the number of boxes read is the number of 1-bits of $i$, at most $\lfloor \log_2 n \rfloor + 1$.
+
+Example: $\operatorname{prefix}(7)$.
+
+- $i = 7$ = `111`: add $T_7 = 2$, which covers $(6, 7]$. Jump to $7 - 1 = 6$.
+- $i = 6$ = `110`: add $T_6 = 9$, which covers $(4, 6]$. Jump to $6 - 2 = 4$.
+- $i = 4$ = `100`: add $T_4 = 22$, which covers $(0, 4]$. Jump to $4 - 4 = 0$ and stop.
+
+Total $2 + 9 + 22 = 33$, from 3 boxes, one for each 1-bit of `111`. $\operatorname{prefix}(8)$ reads only box 8, because `1000` has one 1-bit.
+
+```java
+int prefix(int i) {
+    int sum = 0;
+    for (; i > 0; i -= lowbit(i)) sum += tree[i];    // boxes that tile (0, i], right to left
+    return sum;
+}
+
+int rangeSum(int l, int r) {
+    return prefix(r) - prefix(l - 1);
+}
+```
+
+A range is two prefixes, exactly as in [Prefix Sum](../prefix-sum/index.qmd). Example: positions 3 to 6 give $\operatorname{prefix}(6) - \operatorname{prefix}(2) = (T_6 + T_4) - T_2 = (9 + 22) - 13 = 18$, which is $6 + 3 + 2 + 7$.
+
+### Level 4: an update walks up
+
+Adding $\delta$ to position $i$ must change every box that **contains** $i$. Box $i$ does, and the next box that contains it is found by **adding** the lowest 1-bit:
+
+$$
+i \to i + \operatorname{lowbit}(i) \to \dots \quad \text{while } i \le n, \qquad T_j \mathrel{+}= \delta \text{ for each visited } j
+$$
+
+where:
+
+- $\delta$ is the amount added and $n$ is the number of positions;
+- adding $\operatorname{lowbit}(i)$ carries into a higher bit, which gives the smallest larger box whose range still reaches down past $i$;
+- each step moves the lowest 1-bit at least one place up, so there are at most $\lfloor \log_2 n \rfloor + 1$ steps.
+
+Example: add 4 to position 3 (its value goes from 6 to 10).
+
+- $i = 3$ = `0011`: $T_3 = 6 + 4 = 10$. Next $3 + 1 = 4$.
+- $i = 4$ = `0100`: $T_4 = 22 + 4 = 26$. Next $4 + 4 = 8$.
+- $i = 8$ = `1000`: $T_8 = 39 + 4 = 43$. Next $8 + 8 = 16 > 8$, stop.
+
+Boxes 1, 2, 5, 6 and 7 do not contain position 3, and they are not touched. Positions 3 to 6 now sum to $22$, and the whole array to 43. Starting from position 1 is the longest walk: $1 \to 2 \to 4 \to 8$, which is $\log_2 8 + 1 = 4$ boxes.
+
+```java
+void add(int i, int delta) {
+    for (; i < tree.length; i += lowbit(i)) tree[i] += delta;   // every box that contains position i
+}
+```
+
+The tree only knows how to **add**. To *set* a position to a new value, add the difference: new value minus old value.
+
+### Level 5: range updates, point queries
+
+Turn the tree around by storing a **difference array** in it (Level 4 of [Prefix Sum](../prefix-sum/index.qmd)). Then "add $v$ to positions $l$ to $r$" is two point updates, and a single value is a prefix sum:
+
+$$
+D_l \mathrel{+}= v, \qquad D_{r+1} \mathrel{-}= v, \qquad a_i = \operatorname{prefix}_D(i)
+$$
+
+where:
+
+- $D$ is the difference array held in the tree, starting at all zeros;
+- the $+v$ switches the change on at $l$, and the $-v$ switches it off after $r$;
+- $\operatorname{prefix}_D(i)$ adds the switches up to $i$, which is the value at position $i$.
+
+Example: eight zeros, then add 2 to positions 2 to 6, and add 3 to positions 5 to 8. The second $-3$ would go to position 9, which is past the end, so it is simply skipped. Position 5 reads $\operatorname{prefix}_D(5) = 2 + 3 = 5$; position 7 reads $2 - 2 + 3 = 3$. All eight values are $[0, 2, 2, 2, 5, 5, 3, 3]$.
+
+```java
+void rangeAdd(int l, int r, int v) {
+    diff.add(l, v);
+    diff.add(r + 1, -v);                          // when r = n this lands past the end and does nothing
+}
+
+int valueAt(int i) {
+    return diff.prefix(i);
+}
+```
+
+With **two** such trees you can even support range add **and** range sum (cp-algorithms, in the references, shows the bookkeeping). That is the usual limit: beyond it, reach for a segment tree.
+
+### Level 6: Fenwick tree or segment tree?
+
+Both answer range sums with updates in $O(\log n)$. The difference is in what else they can do and what they cost:
+
+| | Fenwick tree | Segment tree |
+| --- | --- | --- |
+| memory | $n + 1$ numbers (9 for $n = 8$) | $4n$ slots (32 for $n = 8$) |
+| code | about 10 lines | about 30 lines, more with lazy propagation |
+| sum of positions 3 to 7 ($n = 8$) | $\operatorname{prefix}(7) - \operatorname{prefix}(2)$: $3 + 1 = 4$ box reads | 9 node visits (see [Segment Tree](../segment-tree/index.qmd)) |
+| operation must have an inverse | yes, because a range is $\operatorname{prefix}(r) - \operatorname{prefix}(l-1)$ | no |
+| range max or min with arbitrary updates | no | yes |
+| range assign, range add with range sum | awkward, or impossible | yes, with lazy propagation |
+
+Rule of thumb: **sums and counts** with point updates, or **counting how many earlier values are smaller**, take a Fenwick tree. **Max, min, assignments** or anything fancy take a segment tree.
+
+## Why it works and what it costs
+
+**The prefix walk tiles $(0, i]$ exactly.** Write $i$ in binary as a sum of powers of two, largest first. For $i = 7 = 4 + 2 + 1$, the boxes visited are $7$, $6$, $4$, covering $(6, 7]$, $(4, 6]$ and $(0, 4]$. Each box starts exactly where the next one ends, because $i - \operatorname{lowbit}(i)$ is both the left edge of box $i$ and the index of the next box. The walk stops at 0, so the pieces cover $(0, i]$ with no gaps and no overlaps.
+
+**The update walk finds every box containing $i$.** A box $j$ contains $i$ when $j - \operatorname{lowbit}(j) < i \le j$. Starting at $j = i$ and adding $\operatorname{lowbit}(j)$ each time produces those $j$ in increasing order; a box that is skipped either ends before $i$ or starts after it. For $i = 3$ the boxes containing 3 are exactly 3, 4 and 8; boxes 5, 6 and 7 start at positions 5, 5 and 7.
+
+**Costs**, for $n$ positions:
+
+| Operation | Time | Steps for $n = 8$ |
+| --- | --- | --- |
+| `prefix(i)` | $O(\log n)$: the number of 1-bits of $i$ | 3 for $i = 7$, 1 for $i = 8$ |
+| `add(i, delta)` | $O(\log n)$ | 3 for $i = 3$, 4 for $i = 1$ |
+| `rangeSum(l, r)` | two prefixes, $O(\log n)$ | 4 for positions 3 to 7 |
+| build | $O(n \log n)$ by adds, $O(n)$ linear | |
+| memory | $n + 1$ integers | 9 |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Using position 0 | `lowbit(0) = 0`, so the loop never moves and runs for ever | Shift by one: LeetCode index `i` is tree position `i + 1` |
+| Setting a value with `add(i, val)` | The old value is still counted | Pass the difference `val - old`, and remember the old value |
+| `rangeSum(l, r)` as `prefix(r) - prefix(l)` | Position $l$ is missing | Subtract `prefix(l - 1)` |
+| Tree of size `n` instead of `n + 1` | The last position is out of bounds | `new int[n + 1]` |
+| Indexing by raw values up to $10^9$ | Out of memory | Compress the values to their ranks first |
+| Trying range maximum with arbitrary updates | Wrong answers after a value decreases | A segment tree |
+| `int` overflow when counting pairs or triplets | Negative totals | Use `long` for the products and the total |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 307: Range Sum Query - Mutable (Medium)
+
+**Problem.** Support `update(index, val)` and `sumRange(left, right)`, both counting from 0. For `nums = [1, 3, 5]`: `sumRange(0, 2) = 9`; after `update(1, 2)`, `sumRange(0, 2) = 8`.
+
+**Math first.** Shift every index by one and turn "set" into "add the difference":
+
+$$
+\operatorname{update}(k, v): \operatorname{add}\bigl(k + 1,\; v - a_k\bigr), \qquad \operatorname{sumRange}(l, r) = \operatorname{prefix}(r + 1) - \operatorname{prefix}(l)
+$$
+
+where:
+
+- $k$, $l$ and $r$ are LeetCode's 0-based indices, and $k + 1$ is the tree position;
+- $a_k$ is the current value, which we must remember to compute the difference;
+- $\operatorname{prefix}(l)$ is the same as $\operatorname{prefix}((l + 1) - 1)$, the part before the range.
+
+Example: the boxes for positions 1 to 3 are $T_1 = 1$, $T_2 = 1 + 3 = 4$, $T_3 = 5$. Then $\operatorname{sumRange}(0, 2) = \operatorname{prefix}(3) - \operatorname{prefix}(0) = (T_3 + T_2) - 0 = 5 + 4 = 9$. `update(1, 2)` adds $2 - 3 = -1$ at position 2, which changes $T_2$ to 3 (box 4 is past the end). Now $\operatorname{prefix}(3) = 5 + 3 = 8$.
+
+**Idea.** Keep a copy of the values and a Fenwick tree; `update` passes the difference, and `sumRange` shifts the indices.
+
+```java
+static final class NumArray {
+    private final int[] nums;
+    private final FenwickTree tree;
+
+    NumArray(int[] nums) {
+        this.nums = nums.clone();
+        tree = new FenwickTree(nums);
+    }
+
+    void update(int index, int val) {
+        tree.add(index + 1, val - nums[index]);       // the tree only takes changes, so pass the difference
+        nums[index] = val;
+    }
+
+    int sumRange(int left, int right) {
+        return tree.rangeSum(left + 1, right + 1);    // LeetCode counts from 0, the tree from 1
+    }
+}
+```
+
+**Answer.** 9, then 8. Both operations are $O(\log n)$: for the limit $n = 3 \times 10^4$, at most $\lfloor \log_2 (3 \times 10^4) \rfloor + 1 = 15$ boxes per prefix. The space is $2n + 1$ integers.
+
+### 2. LeetCode 1649: Create Sorted Array through Instructions (Hard)
+
+**Problem.** Insert the numbers of `instructions` one by one into a sorted container. Inserting $x$ costs $\min(\text{how many are} < x,\; \text{how many are} > x)$. Return the total cost modulo $10^9 + 7$. For `[1, 5, 6, 2]` the answer is 1.
+
+**Math first.** Let $C(v)$ be how many inserted numbers are $\le v$. Before inserting the $i$-th number $x_i$ (counting from 0), exactly $i$ numbers are in:
+
+$$
+\text{less}_i = C(x_i - 1), \qquad \text{greater}_i = i - C(x_i), \qquad \text{cost} = \sum_i \min(\text{less}_i, \text{greater}_i)
+$$
+
+where:
+
+- $C(v)$ is a prefix sum over a count array indexed by **value**, kept in a Fenwick tree;
+- $C(x_i - 1)$ counts the numbers strictly below $x_i$, and $i - C(x_i)$ the numbers strictly above;
+- after the insertion, add 1 at position $x_i$.
+
+Example: `[1, 5, 6, 2]`.
+
+- Insert 1 ($i = 0$): less $= C(0) = 0$, greater $= 0 - C(1) = 0$, cost 0.
+- Insert 5 ($i = 1$): less $= C(4) = 1$, greater $= 1 - C(5) = 0$, cost 0.
+- Insert 6 ($i = 2$): less $= C(5) = 2$, greater $= 2 - C(6) = 0$, cost 0.
+- Insert 2 ($i = 3$): less $= C(1) = 1$, greater $= 3 - C(2) = 3 - 1 = 2$, cost $\min(1, 2) = 1$.
+
+The total is $0 + 0 + 0 + 1 = 1$.
+
+**Idea.** The values are at most $10^5$, so a Fenwick tree over values $1$ to $\max$ counts them directly. Each insertion is two prefix queries and one add.
+
+```java
+static int createSortedArray(int[] instructions) {
+    int maxValue = Arrays.stream(instructions).max().getAsInt();
+    FenwickTree count = new FenwickTree(maxValue);    // count.prefix(v) = inserted values that are <= v
+    long cost = 0;
+    for (int i = 0; i < instructions.length; i++) {
+        int x = instructions[i];
+        int less = count.prefix(x - 1);
+        int greater = i - count.prefix(x);            // i values are already inserted
+        cost += Math.min(less, greater);
+        count.add(x, 1);
+    }
+    return (int) (cost % 1_000_000_007);
+}
+```
+
+**Answer.** 1 for the example, 3 for `[1, 2, 3, 6, 5, 4]`, 4 for `[1, 3, 3, 3, 2, 4, 2, 1, 2]`. With $n$ instructions and values up to $V$, the time is $O(n \log V)$ and the space $O(V)$. For $n = V = 10^5$: about $10^5 \times 3 \times 17 \approx 5 \times 10^6$ steps, while inserting into a real sorted list would shift up to $\frac{n^2}{2} = 5 \times 10^9$ elements.
+
+### 3. LeetCode 2179: Count Good Triplets in an Array (Hard)
+
+**Problem.** `nums1` and `nums2` are both permutations of $0, \dots, n-1$. Count the triples of values that appear in the same order in both arrays. For `nums1 = [2, 0, 1, 3]` and `nums2 = [0, 1, 2, 3]` the answer is 1: the triple $(0, 1, 3)$.
+
+**Math first.** Rename every value by its position in `nums2`: $p_j = \operatorname{pos}_2(\text{nums1}_j)$. A triple is good exactly when its $p$-values increase from left to right in `nums1`. Count the triples by their **middle** element $j$:
+
+$$
+\text{answer} = \sum_{j} L_j \cdot R_j, \qquad L_j = \#\lbrace i < j : p_i < p_j \rbrace, \qquad R_j = (n - 1 - p_j) - (j - L_j)
+$$
+
+where:
+
+- $L_j$ counts the earlier elements that are also earlier in `nums2`: a prefix query on a Fenwick tree that marks the $p$-values seen so far;
+- $n - 1 - p_j$ counts **all** elements later than $p_j$ in `nums2`, because $p$ is a permutation of $0, \dots, n - 1$;
+- $j - L_j$ of those are already to the left of $j$ in `nums1` (there are $j$ elements to the left, and $L_j$ of them are smaller), so the rest, $R_j$, are to the right.
+
+Example: `nums2` is $0, 1, 2, 3$ in order, so $p = [2, 0, 1, 3]$ and $n = 4$.
+
+| $j$ | $p_j$ | $L_j$ | $R_j = (3 - p_j) - (j - L_j)$ | $L_j R_j$ |
+| --- | --- | --- | --- | --- |
+| 0 | 2 | 0 | $(3 - 2) - 0 = 1$ | 0 |
+| 1 | 0 | 0 | $(3 - 0) - 1 = 2$ | 0 |
+| 2 | 1 | 1 (the 0) | $(3 - 1) - (2 - 1) = 1$ | **1** |
+| 3 | 3 | 3 | $(3 - 3) - 0 = 0$ | 0 |
+
+The total is $0 + 0 + 1 + 0 = 1$: the middle is $p = 1$, which is value 1, with value 0 before it and value 3 after it.
+
+**Idea.** Build `pos2`, then walk `nums1` once. For each $j$, read $L_j$ with one prefix query, compute $R_j$ with the formula, add $L_j R_j$, and mark $p_j$.
+
+```java
+static long goodTriplets(int[] nums1, int[] nums2) {
+    int n = nums1.length;
+    int[] pos2 = new int[n];                          // pos2[v] = where value v sits in nums2
+    for (int i = 0; i < n; i++) pos2[nums2[i]] = i;
+    FenwickTree seen = new FenwickTree(n);            // marks the nums2 positions of values already passed in nums1
+    long total = 0;
+    for (int j = 0; j < n; j++) {
+        int p = pos2[nums1[j]];
+        long left = seen.prefix(p);                   // before j in nums1 and before p in nums2
+        long right = (n - 1 - p) - (j - left);        // after p in nums2, minus those already passed in nums1
+        total += left * right;
+        seen.add(p + 1, 1);
+    }
+    return total;
+}
+```
+
+`seen.prefix(p)` reads tree positions 1 to $p$, which are the `nums2` positions 0 to $p - 1$: exactly the ones smaller than $p$.
+
+**Answer.** 1 for the example, and 4 for `nums1 = [4, 0, 1, 3, 2]`, `nums2 = [4, 1, 0, 2, 3]`. $O(n \log n)$ time and $O(n)$ space. For $n = 10^5$ that is about $2 \times 10^5 \times 17 \approx 3.4 \times 10^6$ steps, while checking every triple would be $\binom{n}{3} \approx 1.7 \times 10^{14}$. The answer itself can reach $\binom{10^5}{3}$, so it must be a `long`.
+
+## Mathematical Abstraction
+
+A Fenwick tree stores, at every position $i$, the sum of a block whose length is the lowest set bit of $i$, and both operations walk the binary digits of $i$:
+
+$$
+T_i = \sum_{t = i - \operatorname{lowbit}(i) + 1}^{i} a_t, \qquad
+\operatorname{prefix}(i) = \sum_{j \in \text{down}(i)} T_j, \qquad
+\operatorname{lowbit}(i) = i \mathbin{\&} (-i)
+$$
+
+where:
+
+- $a_t$ is the value at position $t$, from 1 to $n$, and $T_i$ is box $i$;
+- $\text{down}(i)$ is the sequence $i, i - \operatorname{lowbit}(i), \dots$ until 0, one step per 1-bit of $i$;
+- an update at $i$ walks the other way, $i, i + \operatorname{lowbit}(i), \dots$ while at most $n$.
+
+Example: for `a = [5, 8, 6, 3, 2, 7, 2, 6]`, $\text{down}(7) = 7, 6, 4$, so $\operatorname{prefix}(7) = 2 + 9 + 22 = 33$, and an update at 3 climbs $3 \to 4 \to 8$. Both are at most $\lfloor \log_2 8 \rfloor + 1 = 4$ steps, in $n + 1 = 9$ integers of memory.
+
+## References
+
+- Peter M. Fenwick, "A New Data Structure for Cumulative Frequency Tables", *Software: Practice and Experience* 24(3), 327–336 (1994).
+- Boris Ryabko, "A fast on-line code", *Soviet Mathematics Doklady* 39(3), 533–537 (1989), an earlier description of the same structure.
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 17, "Augmenting Data Structures", for keeping subtree summaries correct under updates. CLRS does not cover Fenwick trees by name. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition: the book has no Fenwick-tree section, but the booksite's miscellaneous code includes one in Java: <https://algs4.cs.princeton.edu/99misc/FenwickTree.java.html>.
+- Antti Laaksonen, *Competitive Programmer's Handbook*, §9.2 "Binary indexed tree": <https://cses.fi/book/book.pdf>.
+- cp-algorithms, "Fenwick Tree", including range updates with two trees: <https://cp-algorithms.com/data_structures/fenwick.html>.
+- LeetCode: [307. Range Sum Query - Mutable](https://leetcode.com/problems/range-sum-query-mutable/), [1649. Create Sorted Array through Instructions](https://leetcode.com/problems/create-sorted-array-through-instructions/), [2179. Count Good Triplets in an Array](https://leetcode.com/problems/count-good-triplets-in-an-array/).
+
+[← Segment Tree](../segment-tree/index.qmd) · [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd) · [Sweep Line →](../sweep-line/index.qmd)
