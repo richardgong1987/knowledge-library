@@ -37,7 +37,9 @@ def main():
         for path in chapters:
             text = path.read_text()
             assert "## The question" in text, f"Missing question: {path.name}"
-            assert "## The rule to remember" in text, f"Missing core rule: {path.name}"
+            assert ("## The rule to remember" in text or "## The core rule" in text), (
+                f"Missing core rule: {path.name}"
+            )
             assert "## Important limitation" in text or "## Common misunderstanding" in text, path.name
             blocks = re.findall(r"~~~rust\s*\n(.*?)\n~~~", text, re.DOTALL)
             assert len(blocks) == 1, f"One tiny executable Rust block expected: {path.name}"
