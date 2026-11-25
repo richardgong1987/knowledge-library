@@ -1,43 +1,143 @@
 ---
-title: "Runnable Algorithm Examples"
-description: "Practice twenty-six tiny, original algorithms and verify them with Node's test runner."
+title: "Runnable Algorithm Labs"
+description: "Every algorithms lesson has one small runnable lab that checks every number the lesson quotes and prints OK."
 ---
 
-## One reusable source file
+Every lesson in this section comes with **one runnable file**, kept next to it in the same folder. The lab contains all the code the lesson shows, and its `main` method checks every number the lesson quotes. That covers the worked examples, the interview-problem answers and the edge cases. When everything holds, it prints `OK`.
 
-The [JavaScript module](patterns.mjs) provides independent implementations of classical techniques: binary search, two pointers, sliding windows, recursion, backtracking, dynamic programming, greedy scheduling, graph traversal, shortest paths, monotonic structures, disjoint sets, string matching and more.
+## Run one lab
 
-You do not need a framework, a package manager or external libraries. Run these commands from the **repository root**:
+You need only a JDK, Java 21 or newer. Java's source launcher compiles the single file in memory, so there is no build step:
 
 ~~~bash
-node algorithms/examples/patterns.mjs
-node --test algorithms/examples/patterns.test.mjs
+cd algorithms/hash-table
+java HashTableLab.java
 ~~~
 
-The first command prints five tiny demonstrations. The second runs the [original unit tests](patterns.test.mjs), covering empty input, duplicates, negative values, ordering, dynamic-programming counterexamples and graph cases.
+Two topics use the language their problems are asked in: Database runs its SQL through Python's built-in `sqlite3`, and Shell is a Bash script.
 
-### Start with a short example
+## Three rules every lab follows
 
-~~~js
-import { longestUniqueSubstring } from '../examples/patterns.mjs';
+1. **The code you read is the code that runs.** Every Java block in a lesson is an exact excerpt of its lab, and an automated check fails the site build if they drift apart.
+2. **Every number is checked.** If a lesson says "6 keys in 8 slots collide with probability 92%", the lab computes 0.9231 and compares.
+3. **Short and plain.** Each block shows one idea, usually 5–20 lines. The lab is the simplest correct version, and optimisations are described in the lesson's prose.
 
-console.log(longestUniqueSubstring('abba')); // 2
+## Run all of them
+
+From the repository root, this runs every lab and fails on the first one that does not print `OK`. The site's CI does the same on Java 25:
+
+~~~bash
+node --test algorithms/check-labs.test.mjs
 ~~~
 
-Place this example in a file inside any `algorithms/<topic>/` folder and run it with Node. The path resolves to the shared examples module.
+## Every lab
 
-**Why it returns 2:** the valid substring 'ab' has length 2. Reading a second 'b' moves the left boundary to index 2; it cannot move back when 'a' appears again. This is exactly the [Sliding Window invariant](../sliding-window/index.qmd).
+### [Data Structures and Representations](../groups/01-data-structures.qmd)
 
-## Core functions
+| Lesson | Lab | Run it from the topic folder |
+| --- | --- | --- |
+| [Array](../array/index.qmd) | [`ArrayLab.java`](../array/ArrayLab.java) | `java ArrayLab.java` |
+| [String](../string/index.qmd) | [`StringLab.java`](../string/StringLab.java) | `java StringLab.java` |
+| [Hash Table](../hash-table/index.qmd) | [`HashTableLab.java`](../hash-table/HashTableLab.java) | `java HashTableLab.java` |
+| [Matrix](../matrix/index.qmd) | [`MatrixLab.java`](../matrix/MatrixLab.java) | `java MatrixLab.java` |
+| [Linked List](../linked-list/index.qmd) | [`LinkedListLab.java`](../linked-list/LinkedListLab.java) | `java LinkedListLab.java` |
+| [Doubly-Linked List](../doubly-linked-list/index.qmd) | [`DoublyLinkedListLab.java`](../doubly-linked-list/DoublyLinkedListLab.java) | `java DoublyLinkedListLab.java` |
+| [Stack](../stack/index.qmd) | [`StackLab.java`](../stack/StackLab.java) | `java StackLab.java` |
+| [Queue](../queue/index.qmd) | [`QueueLab.java`](../queue/QueueLab.java) | `java QueueLab.java` |
+| [Heap (Priority Queue)](../heap-priority-queue/index.qmd) | [`HeapPriorityQueueLab.java`](../heap-priority-queue/HeapPriorityQueueLab.java) | `java HeapPriorityQueueLab.java` |
+| [Ordered Set](../ordered-set/index.qmd) | [`OrderedSetLab.java`](../ordered-set/OrderedSetLab.java) | `java OrderedSetLab.java` |
+| [Tree](../tree/index.qmd) | [`TreeLab.java`](../tree/TreeLab.java) | `java TreeLab.java` |
+| [Binary Tree](../binary-tree/index.qmd) | [`BinaryTreeLab.java`](../binary-tree/BinaryTreeLab.java) | `java BinaryTreeLab.java` |
+| [Binary Search Tree](../binary-search-tree/index.qmd) | [`BinarySearchTreeLab.java`](../binary-search-tree/BinarySearchTreeLab.java) | `java BinarySearchTreeLab.java` |
+| [Trie](../trie/index.qmd) | [`TrieLab.java`](../trie/TrieLab.java) | `java TrieLab.java` |
+| [Graph Theory](../graph-theory/index.qmd) | [`GraphTheoryLab.java`](../graph-theory/GraphTheoryLab.java) | `java GraphTheoryLab.java` |
+| [Data Stream](../data-stream/index.qmd) | [`DataStreamLab.java`](../data-stream/DataStreamLab.java) | `java DataStreamLab.java` |
+| [Iterator](../iterator/index.qmd) | [`IteratorLab.java`](../iterator/IteratorLab.java) | `java IteratorLab.java` |
 
-The source provides 26 exported functions plus one small disjoint-set class, with automated tests for the core patterns. Each topic chapter links to its relevant example when applicable.
+### [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd)
 
-The [example README](README.md) contains a function-to-LeetCode reference table, including LC 3, 35, 167, 46, 78, 198, 322, 560, 743, 912, 239 and 300.
+| Lesson | Lab | Run it from the topic folder |
+| --- | --- | --- |
+| [Binary Search](../binary-search/index.qmd) | [`BinarySearchLab.java`](../binary-search/BinarySearchLab.java) | `java BinarySearchLab.java` |
+| [Two Pointers](../two-pointers/index.qmd) | [`TwoPointersLab.java`](../two-pointers/TwoPointersLab.java) | `java TwoPointersLab.java` |
+| [Sliding Window](../sliding-window/index.qmd) | [`SlidingWindowLab.java`](../sliding-window/SlidingWindowLab.java) | `java SlidingWindowLab.java` |
+| [Depth-First Search](../depth-first-search/index.qmd) | [`DepthFirstSearchLab.java`](../depth-first-search/DepthFirstSearchLab.java) | `java DepthFirstSearchLab.java` |
+| [Breadth-First Search](../breadth-first-search/index.qmd) | [`BreadthFirstSearchLab.java`](../breadth-first-search/BreadthFirstSearchLab.java) | `java BreadthFirstSearchLab.java` |
+| [Backtracking](../backtracking/index.qmd) | [`BacktrackingLab.java`](../backtracking/BacktrackingLab.java) | `java BacktrackingLab.java` |
+| [Recursion](../recursion/index.qmd) | [`RecursionLab.java`](../recursion/RecursionLab.java) | `java RecursionLab.java` |
+| [Enumeration](../enumeration/index.qmd) | [`EnumerationLab.java`](../enumeration/EnumerationLab.java) | `java EnumerationLab.java` |
+| [Divide and Conquer](../divide-and-conquer/index.qmd) | [`DivideAndConquerLab.java`](../divide-and-conquer/DivideAndConquerLab.java) | `java DivideAndConquerLab.java` |
+| [Meet in the Middle](../meet-in-the-middle/index.qmd) | [`MeetInTheMiddleLab.java`](../meet-in-the-middle/MeetInTheMiddleLab.java) | `java MeetInTheMiddleLab.java` |
+| [Quickselect](../quickselect/index.qmd) | [`QuickselectLab.java`](../quickselect/QuickselectLab.java) | `java QuickselectLab.java` |
+| [Simulation](../simulation/index.qmd) | [`SimulationLab.java`](../simulation/SimulationLab.java) | `java SimulationLab.java` |
+| [Brainteaser](../brainteaser/index.qmd) | [`BrainteaserLab.java`](../brainteaser/BrainteaserLab.java) | `java BrainteaserLab.java` |
 
-## A limitation worth understanding
+### [Dynamic Programming and Decision Making](../groups/03-optimisation.qmd)
 
-These are teaching implementations. For instance, [Dijkstra's algorithm](../shortest-path/index.qmd) chooses its next vertex with a linear scan instead of a heap, so the code is easier to understand but does not have the fastest implementation's asymptotic complexity. The mathematical guarantee still depends on **nonnegative edge weights**.
+| Lesson | Lab | Run it from the topic folder |
+| --- | --- | --- |
+| [Dynamic Programming](../dynamic-programming/index.qmd) | [`DynamicProgrammingLab.java`](../dynamic-programming/DynamicProgrammingLab.java) | `java DynamicProgrammingLab.java` |
+| [Memoization](../memoization/index.qmd) | [`MemoizationLab.java`](../memoization/MemoizationLab.java) | `java MemoizationLab.java` |
+| [Greedy](../greedy/index.qmd) | [`GreedyLab.java`](../greedy/GreedyLab.java) | `java GreedyLab.java` |
+| [Game Theory](../game-theory/index.qmd) | [`GameTheoryLab.java`](../game-theory/GameTheoryLab.java) | `java GameTheoryLab.java` |
+| [Minimax](../minimax/index.qmd) | [`MinimaxLab.java`](../minimax/MinimaxLab.java) | `java MinimaxLab.java` |
+| [Bitmask](../bitmask/index.qmd) | [`BitmaskLab.java`](../bitmask/BitmaskLab.java) | `java BitmaskLab.java` |
 
-Always explain which optimisation an implementation does and does not include.
+### [Sorting, Range Queries, and Monotonic Structures](../groups/04-sorting-range.qmd)
+
+| Lesson | Lab | Run it from the topic folder |
+| --- | --- | --- |
+| [Sorting](../sorting/index.qmd) | [`SortingLab.java`](../sorting/SortingLab.java) | `java SortingLab.java` |
+| [Merge Sort](../merge-sort/index.qmd) | [`MergeSortLab.java`](../merge-sort/MergeSortLab.java) | `java MergeSortLab.java` |
+| [Counting Sort](../counting-sort/index.qmd) | [`CountingSortLab.java`](../counting-sort/CountingSortLab.java) | `java CountingSortLab.java` |
+| [Bucket Sort](../bucket-sort/index.qmd) | [`BucketSortLab.java`](../bucket-sort/BucketSortLab.java) | `java BucketSortLab.java` |
+| [Radix Sort](../radix-sort/index.qmd) | [`RadixSortLab.java`](../radix-sort/RadixSortLab.java) | `java RadixSortLab.java` |
+| [Monotonic Stack](../monotonic-stack/index.qmd) | [`MonotonicStackLab.java`](../monotonic-stack/MonotonicStackLab.java) | `java MonotonicStackLab.java` |
+| [Monotonic Queue](../monotonic-queue/index.qmd) | [`MonotonicQueueLab.java`](../monotonic-queue/MonotonicQueueLab.java) | `java MonotonicQueueLab.java` |
+| [Prefix Sum](../prefix-sum/index.qmd) | [`PrefixSumLab.java`](../prefix-sum/PrefixSumLab.java) | `java PrefixSumLab.java` |
+| [Segment Tree](../segment-tree/index.qmd) | [`SegmentTreeLab.java`](../segment-tree/SegmentTreeLab.java) | `java SegmentTreeLab.java` |
+| [Binary Indexed Tree](../binary-indexed-tree/index.qmd) | [`BinaryIndexedTreeLab.java`](../binary-indexed-tree/BinaryIndexedTreeLab.java) | `java BinaryIndexedTreeLab.java` |
+| [Sweep Line](../sweep-line/index.qmd) | [`SweepLineLab.java`](../sweep-line/SweepLineLab.java) | `java SweepLineLab.java` |
+
+### [Graph Algorithms and Connectivity](../groups/05-graph-algorithms.qmd)
+
+| Lesson | Lab | Run it from the topic folder |
+| --- | --- | --- |
+| [Union-Find](../union-find/index.qmd) | [`UnionFindLab.java`](../union-find/UnionFindLab.java) | `java UnionFindLab.java` |
+| [Shortest Path](../shortest-path/index.qmd) | [`ShortestPathLab.java`](../shortest-path/ShortestPathLab.java) | `java ShortestPathLab.java` |
+| [Topological Sort](../topological-sort/index.qmd) | [`TopologicalSortLab.java`](../topological-sort/TopologicalSortLab.java) | `java TopologicalSortLab.java` |
+| [Minimum Spanning Tree](../minimum-spanning-tree/index.qmd) | [`MinimumSpanningTreeLab.java`](../minimum-spanning-tree/MinimumSpanningTreeLab.java) | `java MinimumSpanningTreeLab.java` |
+| [Strongly Connected Component](../strongly-connected-component/index.qmd) | [`StronglyConnectedComponentLab.java`](../strongly-connected-component/StronglyConnectedComponentLab.java) | `java StronglyConnectedComponentLab.java` |
+| [Biconnected Component](../biconnected-component/index.qmd) | [`BiconnectedComponentLab.java`](../biconnected-component/BiconnectedComponentLab.java) | `java BiconnectedComponentLab.java` |
+| [Eulerian Circuit](../eulerian-circuit/index.qmd) | [`EulerianCircuitLab.java`](../eulerian-circuit/EulerianCircuitLab.java) | `java EulerianCircuitLab.java` |
+
+### [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd)
+
+| Lesson | Lab | Run it from the topic folder |
+| --- | --- | --- |
+| [Math](../math/index.qmd) | [`MathLab.java`](../math/MathLab.java) | `java MathLab.java` |
+| [Number Theory](../number-theory/index.qmd) | [`NumberTheoryLab.java`](../number-theory/NumberTheoryLab.java) | `java NumberTheoryLab.java` |
+| [Combinatorics](../combinatorics/index.qmd) | [`CombinatoricsLab.java`](../combinatorics/CombinatoricsLab.java) | `java CombinatoricsLab.java` |
+| [Probability and Statistics](../probability-and-statistics/index.qmd) | [`ProbabilityAndStatisticsLab.java`](../probability-and-statistics/ProbabilityAndStatisticsLab.java) | `java ProbabilityAndStatisticsLab.java` |
+| [Geometry](../geometry/index.qmd) | [`GeometryLab.java`](../geometry/GeometryLab.java) | `java GeometryLab.java` |
+| [Bit Manipulation](../bit-manipulation/index.qmd) | [`BitManipulationLab.java`](../bit-manipulation/BitManipulationLab.java) | `java BitManipulationLab.java` |
+| [Hash Function](../hash-function/index.qmd) | [`HashFunctionLab.java`](../hash-function/HashFunctionLab.java) | `java HashFunctionLab.java` |
+| [Rolling Hash](../rolling-hash/index.qmd) | [`RollingHashLab.java`](../rolling-hash/RollingHashLab.java) | `java RollingHashLab.java` |
+| [String Matching](../string-matching/index.qmd) | [`StringMatchingLab.java`](../string-matching/StringMatchingLab.java) | `java StringMatchingLab.java` |
+| [Suffix Array](../suffix-array/index.qmd) | [`SuffixArrayLab.java`](../suffix-array/SuffixArrayLab.java) | `java SuffixArrayLab.java` |
+| [Counting](../counting/index.qmd) | [`CountingLab.java`](../counting/CountingLab.java) | `java CountingLab.java` |
+
+### [Randomisation, Design, and Special Domains](../groups/07-specialised-domains.qmd)
+
+| Lesson | Lab | Run it from the topic folder |
+| --- | --- | --- |
+| [Randomized](../randomized/index.qmd) | [`RandomizedLab.java`](../randomized/RandomizedLab.java) | `java RandomizedLab.java` |
+| [Reservoir Sampling](../reservoir-sampling/index.qmd) | [`ReservoirSamplingLab.java`](../reservoir-sampling/ReservoirSamplingLab.java) | `java ReservoirSamplingLab.java` |
+| [Rejection Sampling](../rejection-sampling/index.qmd) | [`RejectionSamplingLab.java`](../rejection-sampling/RejectionSamplingLab.java) | `java RejectionSamplingLab.java` |
+| [Design](../design/index.qmd) | [`DesignLab.java`](../design/DesignLab.java) | `java DesignLab.java` |
+| [Interactive](../interactive/index.qmd) | [`InteractiveLab.java`](../interactive/InteractiveLab.java) | `java InteractiveLab.java` |
+| [Database](../database/index.qmd) | [`database_lab.py`](../database/database_lab.py) | `python3 database_lab.py` |
+| [Shell](../shell/index.qmd) | [`shell_lab.sh`](../shell/shell_lab.sh) | `bash shell_lab.sh` |
+| [Concurrency](../concurrency/index.qmd) | [`ConcurrencyLab.java`](../concurrency/ConcurrencyLab.java) | `java ConcurrencyLab.java` |
 
 [← Algorithms](../index.qmd) · [Read each mathematical symbol](../guides/read-the-math.qmd)

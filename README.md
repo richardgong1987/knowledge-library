@@ -5,7 +5,7 @@ An English-language technical knowledge website powered by [Quarto](https://quar
 ## Topics
 
 - **Programming Languages:** Java (including JVM Topics → Java Memory Model), Rust, Go, TypeScript, JavaScript, Python, C#, Prolog
-- **Algorithms:** 73 independently rewritten, original CLRS-inspired topic lessons with worked numerical substitutions after every main formula, proof/complexity explanations, four learning guides, a 26-function runnable JavaScript lab and unit tests
+- **Algorithms:** 73 LeetCode topics in seven categories, each taught from simple to advanced with a child-level explanation, every formula followed by its symbols and real numbers, and hard interview problems solved math-first. Every topic has a runnable Java lab (SQL for Database, Bash for Shell) that checks each number its lesson quotes; lesson code is an exact excerpt of the lab
 - **System Design:** fully written fundamentals plus 18 advanced mathematically grounded interview cases (fair scheduling, RAG, idempotency, cache coherence, feeds, search, consistency), with a runnable and tested NestJS 12 teaching lab, alongside the microservices course
 - **DevOps:** a hands-on book in six parts (Ansible, k3s, CI/CD, AWS, Google Cloud, Terraform) built around one running example, the Lemonade Stand, with child-friendly analogies, keyword-by-keyword reference tables, labs verified on real tools (Ansible, a k3s cluster, LocalStack, Terraform) and worked numerical formulas
 - **Finance:** fixed income, bond pricing, duration, and future financial topics

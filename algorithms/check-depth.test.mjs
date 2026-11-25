@@ -7,13 +7,6 @@ const root = process.cwd();
 const catalog = JSON.parse(readFileSync(join(root, 'algorithms/leetcode-topic-catalog.json'), 'utf8'));
 const read = path => readFileSync(join(root, path), 'utf8');
 
-// Groups already rewritten to the Java, kid-first, math-first standard in WRITING_GUIDE.md.
-// While writing, check more locally with ALGO_REWRITTEN=<group-id>,... or ALGO_TOPICS=<slug>,...
-const fromEnv = name => (process.env[name] ?? '').split(',').filter(Boolean);
-const REWRITTEN = new Set(['01-data-structures', '03-optimisation', '04-sorting-range', '05-graph-algorithms', '06-maths-strings', '02-search-and-exploration', '07-specialised-domains', ...fromEnv('ALGO_REWRITTEN')]);
-const REWRITTEN_TOPICS = new Set(fromEnv('ALGO_TOPICS'));
-const isRewritten = topic => REWRITTEN.has(topic.group) || REWRITTEN_TOPICS.has(topic.slug);
-
 // LeetCode publishes no Hard problem under these tags, so their lessons end with the hardest available ones.
 const NO_HARD_PROBLEM_ON_LEETCODE = new Set(['shell', 'concurrency', 'reservoir-sampling', 'rejection-sampling']);
 
@@ -64,7 +57,8 @@ const section = (text, heading) => {
   return text.slice(start, end < 0 ? undefined : end);
 };
 
-function checkRewrittenLesson(topic, text) {
+// The standard is described in WRITING_GUIDE.md, "Standard for Algorithms chapters".
+function checkLesson(topic, text) {
   const path = `algorithms/${topic.slug}/index.qmd`;
   const folder = join(root, 'algorithms', topic.slug);
 
@@ -102,22 +96,12 @@ function checkRewrittenLesson(topic, text) {
   }
 }
 
-// The original template check, kept only for groups that have not been rewritten yet.
-function checkLegacyLesson(topic, text) {
-  const path = `algorithms/${topic.slug}/index.qmd`;
-  assert.ok(text.length > 2200, 'Insufficient lesson depth: ' + path);
-  assert.ok(text.includes('$$'), 'No mathematical formalisation: ' + path);
-  assert.ok(/(?:LeetCode|leetcode)/.test(text), 'No interview practice: ' + path);
-}
-
 test('every LeetCode topic is a substantive lesson', () => {
   assert.equal(catalog.topics.length, 73);
   for (const topic of catalog.topics) {
     const path = `algorithms/${topic.slug}/index.qmd`;
     assert.ok(existsSync(join(root, path)), 'Missing chapter: ' + path);
-    const text = read(path);
-    if (isRewritten(topic)) checkRewrittenLesson(topic, text);
-    else checkLegacyLesson(topic, text);
+    checkLesson(topic, read(path));
   }
 });
 

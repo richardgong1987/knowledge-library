@@ -1,7 +1,7 @@
 ---
 title: "Algorithms"
 subtitle: "Understand first. Prove second. Code third."
-description: "73 individually worked, mathematically explained LeetCode topics taught with original CLRS-inspired explanations and tested code."
+description: "73 LeetCode topics taught from simple to advanced: child-level explanations, every formula worked with real numbers, runnable Java labs, and hard interview problems solved math-first."
 ---
 
 # Algorithms should make sense before they become code
@@ -22,7 +22,7 @@ The writing standard is **plain-English meaning → one equation → explanation
 
 ## Four foundations to read first
 
-1. [**Read Every Mathematical Symbol**](guides/read-the-math.qmd) — learn $sum$, $in$, $orall$, indexing, recurrences, asymptotic notation and graphs from tiny arithmetic examples.
+1. [**Read Every Mathematical Symbol**](guides/read-the-math.qmd) — learn $\sum$, $\in$, $\forall$, indexing, recurrences, asymptotic notation and graphs from tiny arithmetic examples.
 2. [**How to Choose the Right Algorithm**](guides/choose-a-pattern.qmd) — discover why Sliding Window works on some sums but fails for negative values; compare DP, greedy, graph and search methods.
 3. [**How to Prove Correctness and Count Work**](guides/prove-and-count.qmd) — CLRS-style loop invariants, induction, greedy exchange proofs, recurrence trees and amortised analysis.
 4. [**CLRS Fourth-Edition Reading Roadmap**](guides/clrs-roadmap.qmd) — follow the MIT Press textbook structure while keeping useful LeetCode topics clearly labelled.
@@ -47,25 +47,29 @@ Suppose the array is **[1,−1,0]**. How many nonempty contiguous subarrays add 
 We can write every prefix sum, and recognise that a zero-sum interval starts and ends at two **equal** prefix values.
 
 $$
-operatorname{sum}(l,r)=P_r-P_l
+\operatorname{sum}(l, r) = P_r - P_l
 $$
 
-**Symbols explained:** $P_j$ is the sum of the first j elements, $l$ is the inclusive start index and $r$ the exclusive end index.
+where:
 
-**Actual values substituted:** Prefixes for [1,−1,0] are [0,1,0,0]. Equal prefix pairs give [1,−1] (prefix 0 to 2), [1,−1,0] (0 to 3), and [0] (2 to 3). Each difference is 0, so the answer is 3.
+- $P_j$ is the sum of the first $j$ elements, with $P_0 = 0$;
+- $l$ is the inclusive start index and $r$ the exclusive end index of the subarray;
+- $\operatorname{sum}(l, r)$ is the total of the elements from index $l$ up to, but not including, $r$.
 
-The formula tells us **what to remember**: counts of earlier prefix sums. That leads directly to the [tested code](examples/patterns.mjs), not the other way around.
+Example: the prefixes of $[1, -1, 0]$ are $P = [0, 1, 0, 0]$. Equal prefix pairs give $[1, -1]$ (from $P_0$ to $P_2$), $[1, -1, 0]$ ($P_0$ to $P_3$) and $[0]$ ($P_2$ to $P_3$). Each difference is $0 - 0 = 0$, so the answer is 3.
+
+The formula tells us **what to remember**: counts of earlier prefix sums. That leads directly to the code in [Hash Table, interview problem 2 (LeetCode 560)](hash-table/index.qmd#interview-problems), not the other way around.
 
 ## Run your own experiments
 
-All core examples are independently authored, small and testable; no package installation is required for the examples.
+Every topic folder has one Java lab next to its lesson, for example [`hash-table/HashTableLab.java`](hash-table/HashTableLab.java). It needs only a JDK (Java 21 or newer). Each lab checks every number its lesson quotes and prints `OK`:
 
 ~~~bash
-node algorithms/examples/patterns.mjs
-node --test algorithms/examples/patterns.test.mjs
+cd algorithms/hash-table
+java HashTableLab.java
 ~~~
 
-[Source and explanation of the examples](examples/README.md).
+Every Java block in a lesson is an exact excerpt of its lab, so the code you read is the code that is tested. [How the labs work, and a list of all of them](examples/index.qmd).
 
 ## All 73 LeetCode topics
 
