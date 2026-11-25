@@ -7,7 +7,7 @@ An English-language technical knowledge website powered by [Quarto](https://quar
 - **Programming Languages:** Java (including JVM Topics → Java Memory Model), Rust, Go, TypeScript, JavaScript, Python, C#, Prolog
 - **Algorithms:** 73 independently rewritten, original CLRS-inspired topic lessons with worked numerical substitutions after every main formula, proof/complexity explanations, four learning guides, a 26-function runnable JavaScript lab and unit tests
 - **System Design:** fully written fundamentals plus 18 advanced mathematically grounded interview cases (fair scheduling, RAG, idempotency, cache coherence, feeds, search, consistency), with a runnable and tested NestJS 12 teaching lab, alongside the microservices course
-- **DevOps:** a hands-on book in three parts (Ansible, k3s, CI/CD) built around one running example, with child-friendly analogies, keyword-by-keyword reference tables, runnable labs and worked numerical formulas
+- **DevOps:** a hands-on book built around one running example (the Lemonade Stand), with child-friendly analogies, keyword-by-keyword reference tables, runnable labs and worked numerical formulas
 - **Finance:** fixed income, bond pricing, duration, and future financial topics
 - **AI & Mathematics:** 11 original mathematical chapter guides, 68 worked topic lessons aligned with *Mathematics for Machine Learning*, a dependency-free Python lab, and interactive experiments
 
