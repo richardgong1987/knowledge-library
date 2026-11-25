@@ -1,0 +1,269 @@
+---
+title: "8. Conditionals, Loops and Handlers"
+description: "Control the flow of a playbook: when, loop and loop_control, until/retries, handlers with notify and listen, changed_when and failed_when, and block/rescue/always."
+---
+
+## The problem
+
+A real Lemonade deploy is not a straight line:
+
+- Install `apt` packages only on Debian servers, and `dnf` packages only on Fedora servers. (**Conditionals**)
+- Create the same kind of folder three times without writing three tasks. (**Loops**)
+- After starting the app, wait until it answers, but give up after a while. (**Retries**)
+- Reload nginx after a config change, but only once, and only if something really changed. (**Handlers**)
+- If the deploy fails, roll back and always clean up. (**Blocks**)
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Mum's morning instructions"}
+- "**If** it's raining, take your umbrella." That is `when`.
+- "Give **each** friend at your party one balloon." That is `loop`.
+- "Knock on Grandma's door. If she doesn't answer, wait a minute and knock again. Try **five times**, then come home." That is `until` / `retries` / `delay`.
+- "If you **changed** anything in the kitchen, tell me. I'll do the washing-up **once**, at the end." That is a **handler**. Ten changes still mean one washing-up.
+- "**Try** to bake the cake. **If it burns**, we'll buy one. **Either way**, clean the kitchen." That is `block` / `rescue` / `always`.
+:::
+
+## Conditionals: `when`
+
+`when` takes a **bare Jinja expression**, without `{{ }}`. If it is false, the task is `skipped`. Since ansible-core 2.19, the result must be a real boolean, not a string or a number.
+
+| Form | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| Comparison | Runs if the comparison is true. | `==`, `!=`, `<`, `>`, `<=`, `>=` | `when: lemonade_app_port != 80` |
+| Fact | Branch on the OS or hardware. | Use `ansible_facts[...]`. | `when: ansible_facts['os_family'] == 'Debian'` |
+| List of conditions | Runs only if **all** are true (AND). | One condition per line reads well. | `when: [a > 1, b == 2]` |
+| `and`, `or`, `not` | Combine conditions. | Use brackets with `or`. | `when: (x == 1) or (y == 2)` |
+| Test | Ask a yes/no question. | | `when: lemonade_menu is defined` |
+| Registered result | React to an earlier task. | | `when: nginx_conf is changed` |
+| Boolean variable | Runs if the variable is `true`. | From `-e`, convert with `\| bool`. | `when: lemonade_enable_tls \| bool` |
+| Membership | Is this host in a group? | | `when: inventory_hostname in groups['web']` |
+
+## Loops
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `loop` | Runs the task once per item; the item is `item`. | A list, or an expression that gives a list. | `loop: [nginx, site]` |
+| `loop` over dictionaries | Each item is a dictionary. | Read fields as `item.name`. | `loop: "{{ lemonade_menu }}"` |
+| `loop` over a dictionary | Turn it into a list first. | | `loop: "{{ ports \| dict2items }}"` |
+| `loop_control.label` | What to print for each item. | Keeps output short for big dictionaries. | `label: "{{ item.name }}"` |
+| `loop_control.loop_var` | Renames `item`. | **Required** in nested loops (a loop inside an included file). | `loop_var: drink` |
+| `loop_control.index_var` | Puts the item's index (0, 1, 2…) in a variable. | | `index_var: idx` |
+| `loop_control.pause` | Seconds to wait between items. | | `pause: 2` |
+| `loop_control.extended` | Adds `ansible_loop.index`, `.first`, `.last`, `.length`. | | `extended: true` |
+| `loop_control.break_when` | Stops the loop early when a condition is true. | | `break_when: [result is failed]` |
+
+Older playbooks use `with_*` keywords. They still work, but `loop` is the modern form:
+
+| Legacy | Modern equivalent |
+| --- | --- |
+| `with_items: "{{ list }}"` | `loop: "{{ list \| flatten(levels=1) }}"` |
+| `with_list: "{{ list }}"` | `loop: "{{ list }}"` |
+| `with_dict: "{{ d }}"` | `loop: "{{ d \| dict2items }}"` |
+| `with_fileglob: "*.j2"` | `loop: "{{ query('ansible.builtin.fileglob', '*.j2') }}"` |
+| `with_sequence: start=1 end=3` | `loop: "{{ range(1, 4) \| list }}"` |
+| `with_together: [a, b]` | `loop: "{{ a \| zip(b) \| list }}"` |
+| `with_nested: [a, b]` | `loop: "{{ a \| product(b) \| list }}"` |
+
+## Retrying: `until`
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `until` | Repeats the task until this condition is true. | Needs `register` to test the result. | `until: health.status == 200` |
+| `retries` | How many **extra** tries after the first one. | Default 3 when `until` is set. | `retries: 10` |
+| `delay` | Seconds to wait between tries. | Default 5. | `delay: 3` |
+| `attempts` | Added to the registered result. | | `health.attempts` |
+
+## Handlers
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `handlers:` | A list of tasks that run only when notified. | In a play, or in a role's `handlers/main.yml`. | `handlers: [...]` |
+| `notify` | Notifies a handler **if this task reported changed**. | Use the handler's exact `name`, or a list of names. | `notify: Reload nginx` |
+| `listen` | Gives a handler a topic that tasks can notify. | Lets several handlers react to one event. | `listen: web config changed` |
+| `meta: flush_handlers` | Runs notified handlers **now**, not at the end. | When later tasks need the restarted service. | `ansible.builtin.meta: flush_handlers` |
+| `--force-handlers` | Runs notified handlers even after a failure. | | `ansible-playbook site.yml --force-handlers` |
+
+Handler rules:
+
+- A notified handler runs **once**, at the end of the section (`pre_tasks`, `roles`/`tasks`, `post_tasks`), however many tasks notified it.
+- Handlers run in the order they are **defined**, not the order they were notified.
+- A handler is not run for a host where a later task failed, unless you force it.
+
+## Deciding the result yourself
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `changed_when` | Sets when the task counts as `changed`. | `false` for read-only commands. | `changed_when: false` |
+| `failed_when` | Sets when the task counts as `failed`. | Lets you accept some non-zero exit codes. | `failed_when: result.rc not in [0, 1]` |
+| `ignore_errors` | Continue after a failure. | Shows as `ignored` in the recap. Prefer `failed_when`. | `ignore_errors: true` |
+| `ignore_unreachable` | Continue after a connection failure. | | `ignore_unreachable: true` |
+
+## Blocks
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `block` | Groups tasks. Keywords on the block (`when`, `become`, `tags`) apply to all of them. | | `block: [...]` |
+| `rescue` | Runs only if a task in `block` failed. | The host counts as `rescued`, not `failed`. | `rescue: [...]` |
+| `always` | Runs whether or not `block` failed. | For cleanup. | `always: [...]` |
+| `ansible_failed_task` | The task that failed, inside `rescue`. | | `{{ ansible_failed_task.name }}` |
+| `ansible_failed_result` | That task's result. | | `{{ ansible_failed_result.msg }}` |
+
+## Worked examples
+
+Each block below was run with ansible-core 2.21. The output is trimmed to the lines that prove the point.
+
+**A loop with a label and an index:**
+
+```yaml
+- name: Print each drink
+  ansible.builtin.debug:
+    msg: "{{ idx + 1 }}. {{ drink.name }} costs {{ drink.price }}"
+  loop: "{{ lemonade_menu }}"
+  loop_control: { loop_var: drink, index_var: idx, label: "{{ drink.name }}" }
+```
+
+```text
+ok: [localhost] => (item=Classic Lemonade) =>
+    msg: 1. Classic Lemonade costs 2.5
+ok: [localhost] => (item=Pink Lemonade) =>
+    msg: 2. Pink Lemonade costs 3.0
+```
+
+**Retry until the app is up.** Here a small web server started about 1.5 seconds after the task, so the second try succeeded:
+
+```yaml
+- name: Wait for the Lemonade app
+  ansible.builtin.uri: { url: "http://127.0.0.1:8080/health" }
+  register: health
+  until: health.status == 200
+  retries: 5
+  delay: 1
+```
+
+```text
+FAILED - RETRYING: [localhost]: Wait for the Lemonade app (4 retries left).
+ok: [localhost]
+```
+
+**Two changes, one handler run.** In the lab role, both templates notify `Reload nginx`. On the first run both changed, and the handler still ran once per host:
+
+```text
+TASK [lemonade_web : Render the nginx config] ****
+changed: [web1]
+TASK [lemonade_web : Render the menu page] *******
+changed: [web1]
+RUNNING HANDLER [lemonade_web : Reload nginx] ****
+ok: [web1] =>
+    msg: nginx reloaded on web1
+```
+
+**Rescue and clean up:**
+
+```yaml
+- block:
+    - name: Deploy step that fails
+      ansible.builtin.command: "false"
+  rescue:
+    - ansible.builtin.debug: { msg: "rolling back: {{ ansible_failed_task.name }} failed" }
+  always:
+    - ansible.builtin.debug: { msg: "cleanup done" }
+```
+
+```text
+fatal: [localhost]: FAILED! => ... rc: 1
+ok: [localhost] =>
+    msg: 'rolling back: Deploy step that fails failed'
+ok: [localhost] =>
+    msg: cleanup done
+localhost : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=1    ignored=0
+```
+
+The recap says `failed=0`, `rescued=1`. The failure was handled.
+
+**Accept a harmless exit code.** `grep -c` exits with 1 when it finds nothing:
+
+```yaml
+- ansible.builtin.command: grep -c Mango /srv/lemonade/menu.txt
+  register: mango
+  failed_when: mango.rc not in [0, 1]
+  changed_when: false
+```
+
+## Rules and conventions
+
+- **No `{{ }}` in `when`, `until`, `changed_when` or `failed_when`.** They are already expressions.
+- **Convert `-e` values with `| bool`.** `-e lemonade_enable_tls=false` passes the **string** `"false"`.
+- **Use handlers for restarts and reloads**, never plain tasks with `state: restarted`.
+- **Name handlers clearly**, such as "Reload nginx", and notify them by that exact name.
+- **Use `loop_var`** whenever a loop runs inside another loop.
+- **Prefer `failed_when` over `ignore_errors`.** Say which failures are fine instead of hiding all of them.
+- **Always set `retries` and `delay`** with `until`, so the reader sees the time limit.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `-e use_tls=false` with `when: use_tls` | `Conditional result (True) was derived from value of type 'str' ... Conditionals must have a boolean result.` | `when: use_tls \| bool`, or pass JSON: `-e '{"use_tls": false}'`. |
+| `notify: reload nginx` (wrong case) | `The requested handler 'reload nginx' was not found in either the main handlers list nor in the listening handlers list` | Match the handler's `name` exactly. |
+| Expecting a handler to run mid-play | A later task fails because nginx still has the old config. | Add `- ansible.builtin.meta: flush_handlers`. |
+| `until` without `register` | The condition reads an undefined variable. | `register: health`, then `until: health.status == 200`. |
+| `ignore_errors: true` on a real failure | `failed=0`, but the server is broken. | Remove it; use `failed_when` for specific cases. |
+
+## Mathematical Abstraction
+
+**Retries.** With `until`, a task runs at most $r + 1$ times and waits between runs:
+
+$$
+N_{\max} = r + 1, \qquad W_{\max} = r \cdot d
+$$
+
+where:
+
+- $r$ is `retries`, the number of extra tries ($r \ge 0$; default 3);
+- $d$ is `delay`, the wait between tries in seconds (default 5);
+- $N_{\max}$ is the largest number of times the task runs;
+- $W_{\max}$ is the longest total waiting time in seconds, not counting the time the task itself takes.
+
+**Example 1**, the health check above: $r = 5$ and $d = 1$, so $N_{\max} = 5 + 1 = 6$ runs and $W_{\max} = 5 \cdot 1 = 5$ s. It succeeded on try $k = 2$, so it waited $(k - 1) \cdot d = 1 \cdot 1 = 1$ s.
+
+**Example 2**, defaults: $r = 3$ and $d = 5$ give $N_{\max} = 4$ runs and $W_{\max} = 15$ s. If the app needs 30 s to start, the defaults are too short. Choose $r$ and $d$ so that $r \cdot d \ge 30$, for example $r = 10$ and $d = 3$.
+
+**Handlers.** Let task $i$ notify handler $H$. A handler runs at most once per section:
+
+$$
+\operatorname{runs}(H) =
+\begin{cases}
+1 & \text{if } \sum_{i} n_i \ge 1 \\
+0 & \text{otherwise}
+\end{cases}
+\qquad
+n_i =
+\begin{cases}
+1 & \text{if task } i \text{ notifies } H \text{ and reported changed} \\
+0 & \text{otherwise}
+\end{cases}
+$$
+
+where the sum runs over every task in the section, and $\operatorname{runs}(H)$ is how many times $H$ runs on that host.
+
+**Example.** First run of `site.yml` on `web1`: both templates changed, so $n_1 + n_2 = 1 + 1 = 2 \ge 1$, and "Reload nginx" runs **once**. Second run: nothing changed, so $n_1 + n_2 = 0 + 0 = 0$, and the handler runs **zero** times. That is why the second run's `ok` count dropped from 4 to 3 in [lesson 1](01-how-ansible-works.qmd).
+
+**Loops.** A looped task runs once per item, on each host:
+
+$$
+E = \lvert L \rvert \cdot \lvert H \rvert
+$$
+
+where $\lvert L \rvert$ is the number of items in the loop list, $\lvert H \rvert$ is the number of hosts, and $E$ is the number of module executions.
+
+**Example.** "Create the nginx and site folders" loops over $L$ = [nginx, site] on $H$ = {web1, web2}: $E = 2 \cdot 2 = 4$ executions. That matches the four `changed: [...] => (item=...)` lines of the first run.
+
+## References
+
+- Ansible documentation, "Conditionals": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_conditionals.html>
+- Ansible documentation, "Loops" (including retries and migrating from `with_*`): <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_loops.html>
+- Ansible documentation, "Handlers: running operations on change": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_handlers.html>
+- Ansible documentation, "Blocks": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_blocks.html>
+- Ansible documentation, "Error handling in playbooks": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_error_handling.html>
+
+[← Previous: Jinja2 templates](07-jinja2-templates.qmd) · [Ansible index](index.qmd) · [Next: Roles and collections →](09-roles-and-collections.qmd)

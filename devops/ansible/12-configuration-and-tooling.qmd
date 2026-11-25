@@ -1,0 +1,222 @@
+---
+title: "12. Configuration and Tooling"
+description: "Make Ansible behave the same for the whole team with ansible.cfg: where it is found, the settings that matter, environment variables, and a reference for every Ansible command-line tool."
+---
+
+## The problem
+
+Every command in this book has been run from `devops/ansible/examples/`, and nobody typed `-i inventory.yml`. Why? Because a file called `ansible.cfg` sits in that folder and says where the inventory is.
+
+On a team this matters even more. If Alice has `forks = 50` in her home folder and Bob has the default 5, the same playbook behaves differently for each of them. You want **one** project config in Git, and you want to know which settings are actually in force.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="The rule book on the top of the pile"}
+Imagine several board-game rule books stacked in a pile: one from the game box, one your family wrote, and one your class made. The house rule is simple: **read only the book on the top of the pile**, and ignore the others completely. You never mix page 3 from one book with page 5 from another.
+
+Ansible looks for `ansible.cfg` in the same way. It checks a fixed list of places, uses the **first** file it finds, and ignores the rest.
+
+There is also a referee. Whatever the rule book says, if the referee calls out a rule during the game ("this round, everyone gets two turns!"), the referee wins. Environment variables and command-line flags are the referee.
+:::
+
+## Where `ansible.cfg` is found
+
+Ansible checks these places in order and uses the **first one that exists**:
+
+| Order | Location | Rule / convention |
+| --- | --- | --- |
+| 1 | The file named in the `ANSIBLE_CONFIG` environment variable | For CI, or to test another config. |
+| 2 | `./ansible.cfg` in the current folder | The usual choice: one per project, in Git. |
+| 3 | `~/.ansible.cfg` in your home folder | Personal defaults. Keep it small. |
+| 4 | `/etc/ansible/ansible.cfg` | System-wide, often installed by a package manager. |
+
+The files are **not merged**. If `./ansible.cfg` exists, `~/.ansible.cfg` is ignored completely.
+
+**The world-writable caveat.** If the current folder can be written by every user (mode `777`), Ansible refuses to read `./ansible.cfg` from it. Another user could otherwise plant a config that runs their code. Real output:
+
+```text
+[WARNING]: Ansible is being run in a world writable directory (.../ww), ignoring it as an ansible.cfg source.
+  config file = None
+```
+
+Fix it with `chmod 755 .`, or point `ANSIBLE_CONFIG` at the file explicitly.
+
+## The settings that matter
+
+The lab's [`ansible.cfg`](examples/ansible.cfg) is three lines:
+
+```ini
+[defaults]
+inventory = inventory.yml
+callback_result_format = yaml
+```
+
+A fuller project config:
+
+```ini
+[defaults]
+inventory = inventories/prod
+remote_user = deploy
+forks = 20
+roles_path = roles
+collections_path = collections
+interpreter_python = auto_silent
+
+[ssh_connection]
+pipelining = true
+```
+
+| Setting (section) | What it does | Default | Environment variable | Example |
+| --- | --- | --- | --- | --- |
+| `inventory` (defaults) | Inventory file or folder. | `/etc/ansible/hosts` | `ANSIBLE_INVENTORY` | `inventory = inventory.yml` |
+| `remote_user` (defaults) | SSH login user. | your local user | `ANSIBLE_REMOTE_USER` | `remote_user = deploy` |
+| `forks` (defaults) | Hosts handled in parallel. | `5` | `ANSIBLE_FORKS` | `forks = 20` |
+| `host_key_checking` (defaults) | Refuse unknown SSH host keys. | `True` | `ANSIBLE_HOST_KEY_CHECKING` | keep `True` in production |
+| `timeout` (defaults) | SSH connection timeout, in seconds. | `10` | `ANSIBLE_TIMEOUT` | `timeout = 30` |
+| `roles_path` (defaults) | Where to find roles. | `~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles` | `ANSIBLE_ROLES_PATH` | `roles_path = roles` |
+| `collections_path` (defaults) | Where to find collections. | `~/.ansible/collections:/usr/share/ansible/collections` | `ANSIBLE_COLLECTIONS_PATH` | `collections_path = collections` |
+| `stdout_callback` (defaults) | The output plugin. | `default` | `ANSIBLE_STDOUT_CALLBACK` | `stdout_callback = default` |
+| `callback_result_format` (defaults) | Results as `json` or readable `yaml`. | `json` | `ANSIBLE_CALLBACK_RESULT_FORMAT` | `callback_result_format = yaml` |
+| `gathering` (defaults) | When to gather facts: `implicit`, `explicit`, `smart`. | `implicit` | `ANSIBLE_GATHERING` | `gathering = smart` |
+| `fact_caching` (defaults) | Where to keep facts between runs. | `memory` | `ANSIBLE_CACHE_PLUGIN` | `fact_caching = jsonfile` |
+| `interpreter_python` (defaults) | Python on the hosts. | `auto` | `ANSIBLE_PYTHON_INTERPRETER` | `interpreter_python = auto_silent` |
+| `vault_password_file` (defaults) | Default vault password file. | none | `ANSIBLE_VAULT_PASSWORD_FILE` | `vault_password_file = ~/.lemonade-pass` |
+| `log_path` (defaults) | Also write output to a log file. | none | `ANSIBLE_LOG_PATH` | `log_path = ./ansible.log` |
+| `retry_files_enabled` (defaults) | Write `.retry` files for failed hosts. | `False` | `ANSIBLE_RETRY_FILES_ENABLED` | leave it off |
+| `become` (privilege_escalation) | Use sudo by default. | `False` | `ANSIBLE_BECOME` | `become = True` |
+| `become_method` (privilege_escalation) | How to escalate. | `sudo` | `ANSIBLE_BECOME_METHOD` | `become_method = su` |
+| `become_user` (privilege_escalation) | Who to become. | `root` | `ANSIBLE_BECOME_USER` | `become_user = root` |
+| `pipelining` (ssh_connection or connection) | Send modules over the open SSH session instead of copying files first. Much faster. | `False` | `ANSIBLE_PIPELINING` | `pipelining = true` (needs sudo without `requiretty`) |
+
+## Who wins: config, environment, flags, playbook
+
+The same setting can come from several places. From weakest to strongest:
+
+1. `ansible.cfg`
+2. environment variables, such as `ANSIBLE_FORKS`
+3. command-line options, such as `-f`
+4. playbook keywords, such as `remote_user:` in a play
+5. variables, such as `ansible_user` in inventory, or `-e`
+
+## Every `ansible-config` subcommand
+
+| Command | What it does | Example output |
+| --- | --- | --- |
+| `ansible-config view` | Prints the config file in use. | `[defaults]` / `inventory = inventory.yml` / … |
+| `ansible-config dump --only-changed` | Shows every setting that differs from the default, and **where it came from**. | `DEFAULT_FORKS(env: ANSIBLE_FORKS) = 10` |
+| `ansible-config list` | Every setting with its description, default, ini key and environment variable. | long YAML |
+| `ansible-config init --disabled` | Writes a full commented example config. | `;action_warnings=True` … |
+| `ansible-config init --disabled -t all` | The same, including plugin settings. | |
+| `ansible-config validate -t all` | Checks for unknown keys, including plugin settings. | `All configurations seem valid!` |
+
+`ansible-config validate` without `-t all` complains about `callback_result_format` in the lab, because that key belongs to a plugin, not to the core. With `-t all` the lab config is reported valid.
+
+## Every Ansible command-line tool
+
+| Tool | What it does | Typical use | Example |
+| --- | --- | --- | --- |
+| `ansible` | Runs one module on many hosts. | Quick questions and fixes ([lesson 3](03-ad-hoc-commands.qmd)). | `ansible web -a uptime` |
+| `ansible-playbook` | Runs playbooks. | Everything you repeat ([lesson 4](04-playbooks.qmd)). | `ansible-playbook site.yml --check --diff` |
+| `ansible-inventory` | Shows the inventory and merged variables. | Debugging groups and variables ([lesson 2](02-inventory.qmd)). | `ansible-inventory --graph` |
+| `ansible-doc` | Shows plugin and module documentation. | Parameters and return values ([lesson 5](05-essential-modules.qmd)). | `ansible-doc -s ansible.builtin.template` |
+| `ansible-galaxy` | Creates roles; installs roles and collections. | [Lesson 9](09-roles-and-collections.qmd). | `ansible-galaxy collection install -r requirements.yml` |
+| `ansible-vault` | Encrypts and decrypts secrets. | [Lesson 10](10-vault-and-secrets.qmd). | `ansible-vault edit group_vars/db/vault.yml` |
+| `ansible-config` | Shows and checks configuration. | This lesson. | `ansible-config dump --only-changed` |
+| `ansible-console` | An interactive shell for ad hoc commands. | Exploring a fleet: type `ping`, `cd web2`, `command uptime`. | `ansible-console web` |
+| `ansible-pull` | Each host clones a Git repository and runs a playbook **on itself**. | The pull model, usually from cron. | `ansible-pull -U https://github.com/acme/lemonade-infra.git site.yml` |
+| `ansible-test` | Tests collections (sanity, unit, integration). | For people who publish collections. | `ansible-test sanity` |
+| `ansible-lint` | Checks playbooks and roles for bad practice. Installed separately. | Before every commit, and in CI. | `ansible-lint site.yml` |
+
+### `ansible-lint` in practice
+
+`ansible-lint` is a separate package (`pipx install ansible-lint`). It reports rule names you can look up, for example:
+
+| Rule | What it catches | Example it would flag |
+| --- | --- | --- |
+| `fqcn` | Short module names. | `copy:` instead of `ansible.builtin.copy:` |
+| `name[missing]` | Tasks without a name. | `- ansible.builtin.debug: ...` |
+| `no-changed-when` | `command` or `shell` without `changed_when`. | `command: nginx -t` |
+| `risky-file-permissions` | Files created without an explicit `mode`. | `file: { path: x, state: directory }` |
+| `yaml[truthy]` | `yes` / `no` instead of `true` / `false`. | `become: yes` |
+
+The lab leaves `mode` out of a few short tasks to keep the examples small. `risky-file-permissions` is the rule that would ask you to add it in a real project.
+
+## Worked example
+
+From `devops/ansible/examples/`, see where every non-default setting came from:
+
+```bash
+ANSIBLE_FORKS=10 ansible-config dump --only-changed
+```
+
+```text
+CONFIG_FILE() = <lab>/ansible.cfg
+DEFAULT_FORKS(env: ANSIBLE_FORKS) = 10
+DEFAULT_HOST_LIST(<lab>/ansible.cfg) = ['<lab>/inventory.yml']
+```
+
+- `DEFAULT_HOST_LIST` came from the lab's `ansible.cfg`.
+- `DEFAULT_FORKS` came from the environment variable, which beats any `forks =` line in the file.
+- Add `-f 20` to a real command, and 20 beats both.
+
+## Rules and conventions
+
+- **One `ansible.cfg` per project, in Git**, next to the playbooks. Then everyone runs with the same settings.
+- **Keep `~/.ansible.cfg` minimal.** It is ignored whenever a project file is found, so anything you rely on there silently disappears inside projects.
+- **Leave `host_key_checking = True`** for real servers. Turning it off hides man-in-the-middle attacks.
+- **Turn on `pipelining`** once sudo works without `requiretty`. It cuts SSH round trips.
+- **Run `ansible --version` when confused.** The `config file =` line says which file won.
+- **Run `ansible-lint` and `--syntax-check` in CI** ([CI/CD part](../ci-cd/index.qmd)).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Running from another folder | `No inventory was parsed`; roles not found. | `cd` into the project, or set `ANSIBLE_CONFIG`. |
+| Expecting settings from two files to merge | A setting in `~/.ansible.cfg` "does nothing". | Only the first file found is used. Put everything in the project file. |
+| Project folder is world-writable | `ignoring it as an ansible.cfg source`. | `chmod 755 .` |
+| Writing `pipelining` under an unrelated section such as `[privilege_escalation]` | No speed-up. | Put it under `[defaults]`, `[connection]` or `[ssh_connection]`. |
+| Using `ansible-config validate` without `-t all` | False error about `callback_result_format`. | `ansible-config validate -t all`. |
+
+## Mathematical Abstraction
+
+**Which config file.** Let $L = (\ell_1, \ell_2, \ell_3, \ell_4)$ be the list of locations above, in order. Ansible uses
+
+$$
+\operatorname{cfg} = \ell_{k}, \qquad k = \min \lbrace\, i : \ell_i \text{ exists and is allowed} \,\rbrace
+$$
+
+where:
+
+- $\ell_1$ is the path in `ANSIBLE_CONFIG`, $\ell_2$ is `./ansible.cfg`, $\ell_3$ is `~/.ansible.cfg`, and $\ell_4$ is `/etc/ansible/ansible.cfg`;
+- "allowed" excludes $\ell_2$ when the current folder is world-writable;
+- $\min$ picks the smallest index $i$ that qualifies, so $k$ is the position of the first usable file;
+- if no location qualifies, there is no config file and every setting has its default.
+
+**Example 1**, the lab: `ANSIBLE_CONFIG` is not set, so $\ell_1$ does not exist. `./ansible.cfg` exists and the folder is not world-writable, so the set contains 2 (and maybe 3 and 4), and $k = 2$. The lab file wins. `ansible --version` confirms it on its `config file =` line.
+
+**Example 2**, the same folder after `chmod 777 .`: $\ell_2$ is no longer allowed. If neither $\ell_3$ nor $\ell_4$ exists, the set is empty, and the real output above shows `config file = None`.
+
+**Which value for one setting.** For a setting $x$, each layer $j$ may give a value $v_j(x)$:
+
+$$
+\operatorname{value}(x) = v_{j^\ast}(x), \qquad j^\ast = \max \lbrace\, j : v_j(x) \text{ is set} \,\rbrace
+$$
+
+where:
+
+- $j \in \lbrace 1, 2, 3, 4, 5 \rbrace$ numbers the layers config file, environment, command line, playbook keyword and variable, from weakest to strongest;
+- $v_j(x)$ is the value that layer $j$ gives, if any;
+- $j^\ast$ is the strongest layer that sets $x$.
+
+**Example**, forks: `ansible.cfg` says `forks = 5` ($v_1 = 5$), the environment has `ANSIBLE_FORKS=10` ($v_2 = 10$), and the command has `-f 20` ($v_3 = 20$). Then $j^\ast = \max \lbrace 1, 2, 3 \rbrace = 3$, so Ansible uses **20** forks. Remove `-f 20` and $j^\ast = 2$: **10**, which is what `dump --only-changed` printed. With [lesson 3](03-ad-hoc-commands.qmd)'s wave formula, 12 hosts then need $\lceil 12/10 \rceil = 2$ waves instead of $\lceil 12/5 \rceil = 3$.
+
+## References
+
+- Ansible documentation, "Ansible configuration settings" (file search order, every setting, the world-writable rule): <https://docs.ansible.com/projects/ansible/latest/reference_appendices/config.html>
+- Ansible documentation, "Controlling how Ansible behaves: precedence rules": <https://docs.ansible.com/projects/ansible/latest/reference_appendices/general_precedence.html>
+- Ansible documentation, command-line tools: <https://docs.ansible.com/projects/ansible/latest/command_guide/command_line_tools.html>
+- Ansible Lint documentation and rule list: <https://ansible.readthedocs.io/projects/lint/>
+- Jeff Geerling, *Ansible for DevOps*, chapters on project layout and testing: <https://leanpub.com/ansible-for-devops>
+
+[← Previous: Rolling deployments](11-rolling-deployments.qmd) · [Ansible index](index.qmd)

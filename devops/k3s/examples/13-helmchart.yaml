@@ -1,0 +1,12 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: podinfo
+  namespace: kube-system
+spec:
+  repo: https://stefanprodan.github.io/podinfo
+  chart: podinfo
+  version: 6.17.0
+  targetNamespace: lemonade
+  valuesContent: |-
+    replicaCount: 1

@@ -1,0 +1,16 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: squeeze-lemons
+  namespace: lemonade
+spec:
+  completions: 6
+  parallelism: 2
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: squeeze
+          image: busybox:1.37.0
+          command: ["sh", "-c", "echo squeezing a batch; sleep 5"]

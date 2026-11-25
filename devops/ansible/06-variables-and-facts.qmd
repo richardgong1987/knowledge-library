@@ -1,0 +1,259 @@
+---
+title: "6. Variables and Facts"
+description: "Where Ansible variables come from, the naming rules, the precedence ladder that decides which value wins, facts gathered from hosts, magic variables, and registered results."
+---
+
+## The problem
+
+The Lemonade web servers are almost identical, but not quite:
+
+- `web1` is a bigger machine and should run 4 nginx workers. `web2` should use the normal 1.
+- Every web server serves the same menu.
+- During a test you want to try 8 workers **once**, without editing any file.
+
+If the same playbook must produce slightly different results, the differences go into **variables**. Then the question is: when a value is set in several places, which one wins?
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="School rules and the loudspeaker"}
+At school there are rules at different levels:
+
+1. The **school rule**: "Lunch is at 12:00."
+2. Your **class rule**: "Class 4B has lunch at 12:30."
+3. A **note just for you**: "Maya, you have lunch at 11:45 because of your dentist visit."
+4. The head teacher's **loudspeaker announcement**: "Today *everyone* has lunch at 13:00!"
+
+When rules disagree, the more specific one wins: your note beats the class rule, and the class rule beats the school rule. The loudspeaker beats everything.
+
+Ansible variables work the same way. Role defaults are the school rule, `group_vars` is the class rule, `host_vars` is the note just for you, and `-e` on the command line is the loudspeaker.
+:::
+
+## The concept, precisely
+
+- A **variable** is a name with a value. Use it in Jinja as `{{ lemonade_app_port }}`.
+- Values can be strings, numbers, booleans, lists or dictionaries. Read inside a dictionary with `menu.price` or `menu['price']`.
+- **Facts** are variables Ansible discovers on each host: its OS, IP addresses, memory and so on.
+- **Magic variables** are variables Ansible sets itself, such as `inventory_hostname`.
+- **Registered variables** hold the result of a task (`register:`).
+
+### Naming rules
+
+| Rule | Valid | Invalid |
+| --- | --- | --- |
+| Letters, digits and underscores only | `lemonade_app_port` | `lemonade-app-port`, `app port`, `app.port` |
+| Start with a letter or `_` | `web_port` | `8080_port` |
+| Not a Python keyword or playbook keyword | `menu_items` | `class`, `async`, `environment`, `hosts` |
+| Prefix role variables with the role name | `lemonade_menu` | `menu` (too easy to clash) |
+| Prefix secrets with `vault_` | `vault_db_password` | ([lesson 10](10-vault-and-secrets.qmd)) |
+
+## Every place a variable can come from
+
+| Source | Where it lives | Rule / convention | Example |
+| --- | --- | --- | --- |
+| Role defaults | `roles/x/defaults/main.yml` | Lowest precedence. Put every tunable value here. | `lemonade_nginx_workers: 1` |
+| Inventory | `vars:` in `inventory.yml` | Prefer `group_vars/` files. | `all: vars: { ansible_connection: local }` |
+| `group_vars/` | next to inventory or playbook | One file or folder per group. | `group_vars/web.yml` |
+| `host_vars/` | next to inventory or playbook | One file or folder per host. | `host_vars/web1.yml` |
+| Facts | gathered by `setup` | Read with `ansible_facts['…']`. | `ansible_facts['distribution']` |
+| Play `vars` | in the play | For values that belong to this playbook only. | `vars: { lemonade_version: "1.1.0" }` |
+| `vars_files` | listed in the play | Usually secrets. | `vars_files: [secrets/vault.yml]` |
+| `vars_prompt` | in the play | Asks a person; blocks automation. | `vars_prompt: [{ name: release }]` |
+| Role vars | `roles/x/vars/main.yml` | High precedence. For constants users must not change. | `lemonade_folders: [nginx, site]` |
+| Block and task `vars` | on a block or task | Only visible there. | `vars: { greeting: hi }` |
+| `include_vars` | a task | Loads a file at run time. | `include_vars: { file: "{{ ansible_facts['os_family'] }}.yml" }` |
+| `set_fact` / `register` | a task | Created while the play runs. | `register: menu_check` |
+| Role parameters | `roles: [{ role: x, var: 1 }]` | For one use of a role. | `- { role: lemonade_web, lemonade_app_port: 9090 }` |
+| Extra vars | `-e` on the command line | **Always wins.** | `-e lemonade_nginx_workers=8` |
+
+### The precedence ladder
+
+The official documentation lists 22 levels. From lowest (1) to highest (22):
+
+1. command-line values such as `-u deploy` (these are not variables)
+2. role defaults
+3. inventory file or script group vars
+4. inventory `group_vars/all`
+5. playbook `group_vars/all`
+6. inventory `group_vars/*`
+7. playbook `group_vars/*`
+8. inventory file or script host vars
+9. inventory `host_vars/*`
+10. playbook `host_vars/*`
+11. host facts and cached `set_fact`
+12. play `vars`
+13. play `vars_prompt`
+14. play `vars_files`
+15. role vars (`vars/main.yml`)
+16. block vars
+17. task vars
+18. `include_vars`
+19. `set_fact` and registered vars
+20. role (and `include_role`) parameters
+21. include parameters
+22. extra vars (`-e`)
+
+You rarely need all 22. Remember the short version: **defaults < group < host < play < role vars < task < set_fact < -e**.
+
+Two more rules matter:
+
+- **Dictionaries and lists are replaced, not merged.** The lab's role default menu has one drink and `group_vars/web.yml` has three. The web servers get exactly three, not four. Merge on purpose with the `combine` filter ([lesson 7](07-jinja2-templates.qmd)).
+- **Variables are per host.** `web1` and `web2` each have their own `lemonade_nginx_workers`.
+
+## Facts
+
+With `gather_facts: true` (the default), each play starts with a hidden `setup` task that fills `ansible_facts`.
+
+| Keyword or setting | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `gather_facts` | Run `setup` at the start of the play. | Turn off when you don't read facts. | `gather_facts: false` |
+| `gather_subset` | Collect only some facts. | `min` is fast; `!hardware` skips one area. | `gather_subset: [min, network]` |
+| `ansible_facts['x']` | Read a fact. | The preferred form. The key has no `ansible_` prefix. | `ansible_facts['distribution']` |
+| `ansible_x` | Old top-level form. | **Deprecated**: 2.21 warns, and the default changes in 2.24. | `ansible_distribution` |
+| `setup` `filter` | Show only matching facts. | Ad hoc exploration. | `-a "filter=ansible_python_version"` |
+| `/etc/ansible/facts.d/*.fact` | Custom facts on the host. | JSON or INI files, read into `ansible_local`. | `ansible_local['lemonade']['version']` |
+| `fact_caching` (ansible.cfg) | Remember facts between runs. | `jsonfile` or `redis`; `fact_caching_timeout` is in seconds. | `fact_caching = jsonfile` |
+
+## Magic variables
+
+| Variable | Value | Example value in the lab |
+| --- | --- | --- |
+| `inventory_hostname` | The host's name in the inventory. | `web1` |
+| `inventory_hostname_short` | The name up to the first dot. | `web1` |
+| `hostvars` | Every host's variables, by name. | `hostvars['db1']['ansible_host']` → `192.0.2.21` |
+| `groups` | Every group and its hosts. | `groups['web']` → `['web1', 'web2']` |
+| `group_names` | Groups the current host is in. | `['prod', 'web']` |
+| `ansible_play_hosts` | Hosts still active in this play. | `['web1', 'web2']` |
+| `ansible_play_batch` | Hosts in the current `serial` batch. | `['web1']` |
+| `playbook_dir` | Folder of the playbook. | `.../examples` |
+| `role_path` | Folder of the running role. | `.../roles/lemonade_web` |
+| `inventory_dir` | Folder of the inventory file. | `.../examples` |
+| `ansible_check_mode` | `true` during `--check`. | `false` |
+| `ansible_version` | Ansible's version as a dictionary. | `ansible_version.full` → `2.21.6` |
+| `omit` | Leaves a module parameter out entirely. | `mode: "{{ file_mode \| default(omit) }}"` |
+
+## Registered results
+
+`register: name` stores a task's JSON result. For `command` and `shell`:
+
+| Key | Meaning | Example |
+| --- | --- | --- |
+| `rc` | Exit code. 0 means success. | `0` |
+| `stdout` / `stdout_lines` | Output as one string, or as a list of lines. | `Classic Lemonade` / `['Classic Lemonade']` |
+| `stderr` / `stderr_lines` | Error output. | `''` |
+| `changed` | Did the task change something? | `false` |
+| `failed` | Did the task fail? | `false` |
+| `skipped` | Was the task skipped by `when`? | present only when skipped |
+| `results` | With `loop`: one result per item. | `menu.results[0].stdout` |
+
+```yaml
+- name: Read the first drink
+  ansible.builtin.command: head -n 1 /srv/lemonade/menu.txt
+  register: first_drink
+  changed_when: false        # reading never changes anything
+
+- ansible.builtin.debug:
+    msg: "First drink is {{ first_drink.stdout }}"
+```
+
+## Worked example: who wins?
+
+`lemonade_nginx_workers` is set in two files:
+
+```yaml
+# roles/lemonade_web/defaults/main.yml   (level 2)
+lemonade_nginx_workers: 1
+# host_vars/web1.yml                     (level 9)
+lemonade_nginx_workers: 4
+```
+
+`web1` gets 4 and `web2` falls back to 1. Now add the loudspeaker for one dry run:
+
+```bash
+ansible-playbook site.yml --limit web --check --diff -e lemonade_nginx_workers=8
+```
+
+```text
+TASK [lemonade_web : Render the nginx config] **********************************
+-worker_processes 4;
++worker_processes 8;
+changed: [web1]
+-worker_processes 1;
++worker_processes 8;
+changed: [web2]
+```
+
+Read another host's variables through `hostvars`, for example so a web server can find the database:
+
+```bash
+ansible web1 -m ansible.builtin.debug -a "msg='{{ hostvars[\"db1\"].ansible_host }}:{{ hostvars[\"db1\"].db_port }}'"
+```
+
+```text
+web1 | SUCCESS =>
+    msg: 192.0.2.21:5432
+```
+
+Read one fact:
+
+```bash
+ansible db1 -m ansible.builtin.setup -a "filter=ansible_python_version"
+```
+
+```text
+db1 | SUCCESS =>
+    ansible_facts:
+        ansible_python_version: 3.15.2
+```
+
+## Rules and conventions
+
+- **Put every knob in role defaults**, with a sensible value. Override in `group_vars` or `host_vars`.
+- **Keep `-e` for one-off runs and CI pipelines**, not for values that belong in Git.
+- **Define each variable in as few places as possible.** Two definitions are a choice; five are a puzzle.
+- **Use `ansible_facts['name']`**, not the deprecated `ansible_name`.
+- **Turn off facts** (`gather_facts: false`) when no task needs them.
+- **Check the merged result** with `ansible-inventory --host web1`, or with a `debug: var=...` task.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| A variable name with a dash | `'lemonade' is undefined`, because Jinja reads `lemonade-port` as subtraction. | Use underscores. |
+| Expecting lists or dictionaries to merge | Drinks from the role default vanish. | Merge explicitly with `combine`, or define the full list in one place. |
+| Setting a value in role `vars/` and overriding it in `group_vars` | The override is ignored, because role vars are level 15. | Move it to `defaults/`. |
+| Using `ansible_distribution` | Deprecation warning: top-level facts will not be injected after the change in 2.24. | `ansible_facts['distribution']`. |
+| `register` inside a loop, then `.stdout` | `object of type 'dict' has no attribute 'stdout'` | Use `.results[i].stdout`, or loop over `.results`. |
+
+## Mathematical Abstraction
+
+For a variable name $v$ and a host $h$, several sources may define a value. Ansible keeps the one with the highest rank:
+
+$$
+\operatorname{value}(v, h) = x_{s^\ast}, \qquad s^\ast = \arg\max_{s \in D(v,h)} r(s)
+$$
+
+where:
+
+- $v$ is a variable name, such as `lemonade_nginx_workers`;
+- $h$ is a host, such as `web1`;
+- $D(v,h)$ is the set of sources that define $v$ for $h$ (role defaults, `host_vars`, `-e` and so on);
+- $r(s)$ is the rank of source $s$ on the 22-level ladder above, from 1 (lowest) to 22 (highest);
+- $\arg\max$ picks the source with the largest rank; $s^\ast$ is that winning source;
+- $x_s$ is the value that source $s$ gives.
+
+**Example 1**, `web1`, normal run. $D = \lbrace \text{role defaults}, \text{host vars file} \rbrace$ with ranks $r = 2$ (value 1) and $r = 9$ (value 4). The largest rank is $\max(2, 9) = 9$, so the value is **4**.
+
+**Example 2**, `web2`, normal run. Only role defaults define the variable: $D = \lbrace \text{role defaults} \rbrace$, so $s^\ast$ is the defaults with $r = 2$, and the value is **1**.
+
+**Example 3**, both hosts with `-e lemonade_nginx_workers=8`. Extra vars join $D$ with $r = 22$. Since $22 > 9$ and $22 > 2$, both hosts get **8**, which matches the diff above.
+
+When the values are dictionaries or lists, "keep the winner" means the winner **replaces** the others completely. The menu shows this. The role default list has $1$ drink and `group_vars/web.yml` has $3$, so the result has $3$ drinks, not $1 + 3 = 4$.
+
+## References
+
+- Ansible documentation, "Using variables" (naming rules and the full precedence list): <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_variables.html>
+- Ansible documentation, "Controlling how Ansible behaves: precedence rules": <https://docs.ansible.com/projects/ansible/latest/reference_appendices/general_precedence.html>
+- Ansible documentation, "Discovering variables: facts and magic variables": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_vars_facts.html>
+- Ansible documentation, "Special variables": <https://docs.ansible.com/projects/ansible/latest/reference_appendices/special_variables.html>
+
+[← Previous: Essential modules](05-essential-modules.qmd) · [Ansible index](index.qmd) · [Next: Jinja2 templates →](07-jinja2-templates.qmd)

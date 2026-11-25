@@ -1,0 +1,262 @@
+---
+title: "Artifacts, Caching and Versioning"
+description: "Build once and deploy the same thing everywhere: artifacts, container images, tags versus digests, semantic versions and caches."
+---
+
+## The problem
+
+The Lemonade team used to build the app twice: once in CI to run the tests, and again on the production server to deploy it. One Friday, the second build pulled a newer base image (`node:latest`) that had just changed. Production ran code that **no test had ever seen**. Rolling back did not help either: they had deployed the tag `latest`, and `latest` now pointed at the broken image, so there was nothing to roll back *to*.
+
+They need three things: build the app **once** and ship that exact result; name each result so it can never be swapped; and save time on repeated work without risking correctness.
+
+::: {.callout-tip}
+## Explain it like I'm ten
+
+**Build once.** Bake **one** cake. Give a slice to the taster. If the taster says "yum", bring **that same cake** to the party. Don't bake a second cake for the party and hope it tastes the same: you might grab the salt instead of the sugar. Jez Humble and David Farley make "only build your binaries once" a core rule in *Continuous Delivery* (2010).
+
+**Tags and digests.** A **tag** is a name sticker on a lunchbox: "Ana's lunch". Anyone can peel it off and stick it on a different box. A **digest** is a fingerprint of what is *inside* the box. If even one crumb changes, the fingerprint changes. To be sure you get the exact lunch, ask for the fingerprint.
+
+**Version numbers.** Think of a book: `2.4.1`. The first number is a **whole new book** (old readers may be confused), the middle number means **a new chapter was added** (old chapters still work), and the last number means **a typo was fixed**. Tom Preston-Werner, a co-founder of GitHub, wrote these rules down as [Semantic Versioning](https://semver.org/).
+
+**Cache.** A **pantry** of lemons you already cut yesterday. It saves time, but if the pantry is empty you can always cut fresh lemons. A cache may make things faster; it must never be the only way to get them.
+:::
+
+## The concepts, precisely
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| **Artifact** | A file a job produces and stores after the job ends | Use for reports and build outputs that later jobs or people need | `report.xml`, a `.tgz` package |
+| **Container image** | The app plus its runtime, packaged in layers | The Lemonade Stand's real deliverable | `ghcr.io/acme/lemonade-stand` |
+| **Registry** | A server that stores images | GHCR, Docker Hub, a private registry | `ghcr.io` |
+| **Tag** | A movable, human-friendly name for an image | Tag with the git SHA; never deploy `latest` | `:3f2c1ab` |
+| **Digest** | `sha256:` hash of the image manifest; identifies exact content | Deploy by digest; it can never point elsewhere | `@sha256:7aaa5fdf...` |
+| **Immutable artifact** | A build output that is never modified after creation | Promote the same artifact from staging to production | same digest in both environments |
+| **Semantic version** | `MAJOR.MINOR.PATCH`, plus optional `-pre.release` | Breaking change → MAJOR; new feature → MINOR; fix → PATCH | `1.4.2` → `1.5.0` |
+| **Pre-release** | A version before the final release | Sorts *before* the release | `1.5.0-rc.1` < `1.5.0` |
+| **Build metadata** | Extra information after `+` | Ignored when comparing versions | `1.5.0+sha.3f2c1ab` |
+| **Cache** | Files saved by one run and restored by a later one | Key it on what the files depend on | `~/.npm` keyed by `package-lock.json` |
+| **Cache key** | Exact name of a cache entry | Include OS and a hash of the lock file | `npm-Linux-${{ hashFiles('**/package-lock.json') }}` |
+| **Restore keys** | Prefixes tried when the exact key misses | From most to least specific | `npm-Linux-` |
+
+### The artifact and cache actions
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `actions/upload-artifact@v7` `name` | Name of the artifact | Unique within a run | `name: test-report` |
+| `path` | Files or globs to upload | Hidden files are skipped unless `include-hidden-files: true` | `path: report.xml` |
+| `retention-days` | How long GitHub keeps it | Shorter than the repo default for big files | `retention-days: 7` |
+| `if-no-files-found` | What to do if `path` matches nothing | `error` catches a broken build | `if-no-files-found: error` |
+| `actions/download-artifact@v8` `name` | Which artifact to fetch into the workspace | Use in a later job with `needs` | `name: test-report` |
+| `actions/cache@v6` `key` | Exact cache key to restore and save | Changes when the inputs change | `key: npm-${{ hashFiles('package-lock.json') }}` |
+| `restore-keys` | Fallback prefixes | Partial hits still save time | `restore-keys: npm-` |
+| `path` | What to cache | Caches of tools, not build outputs | `path: ~/.npm` |
+
+Caches are scoped to a branch (a branch can also read caches from the default branch), are evicted after about 7 days without use, and a repository has 10 GB of cache by default.
+
+### GitHub Actions and GitLab CI
+
+| Concept | GitHub Actions | GitLab CI |
+| --- | --- | --- |
+| Save files after a job | `actions/upload-artifact` | `artifacts: paths:` with `expire_in:` |
+| Read them later | `actions/download-artifact` | automatic for later stages, or `needs: artifacts: true` |
+| Cache | `actions/cache` with `key:` | `cache: key: files: [package-lock.json]` |
+| Commit SHA | `github.sha` | `$CI_COMMIT_SHA` |
+| Built-in registry | `ghcr.io/<owner>/<name>` | `$CI_REGISTRY_IMAGE` |
+
+## A worked example
+
+### 1. Build once, deploy the digest
+
+The `image` job in [`ci.yml`](examples/lemonade-stand/workflows/ci.yml) builds and pushes **once**, tags the image with the commit SHA, and exports the *digest* for every later job:
+
+```yaml
+outputs:
+  ref: ${{ steps.name.outputs.repo }}@${{ steps.build.outputs.digest }}
+steps:
+  - id: build
+    uses: docker/build-push-action@v7
+    with:
+      context: .
+      push: true
+      tags: ${{ steps.name.outputs.repo }}:${{ github.sha }}
+```
+
+Both deploy jobs receive `needs.image.outputs.ref`, for example `ghcr.io/acme/lemonade-stand@sha256:7aaa...`, so staging and production run byte-for-byte the same image. The tag `:<sha>` is for humans looking at the registry; the digest is what the cluster runs.
+
+### 2. A digest is a fingerprint of content
+
+A digest is just SHA-256 of the content. Change one character and the fingerprint is completely different. Real output:
+
+```text
+$ printf 'classic=250\n' | shasum -a 256
+532c490f5f16bdda3be1655d2d2e8f43c354cc65355a90ae12b81db66af8087e  -
+$ printf 'classic=260\n' | shasum -a 256
+7aaa5fdf500b78d72f2ff40f4b9723f4d3dbb42534d13a3e60a5192511ff97a6  -
+```
+
+An image digest works the same way, over the image manifest (which itself lists the digests of every layer). That is why `@sha256:...` can never quietly start meaning something else.
+
+### 3. Pinning the base image
+
+The Lemonade [`Dockerfile`](examples/lemonade-stand/Dockerfile) starts with an exact version, not `node:latest`:
+
+```dockerfile
+FROM node:26.13.1-alpine3.24
+```
+
+A tag such as `26.13.1-alpine3.24` is far more stable than `latest`. For full safety you can pin the digest too (`FROM node:26.13.1-alpine3.24@sha256:...`) and let a bot such as Dependabot or Renovate open pull requests when a newer one appears.
+
+### 4. Passing a test report between jobs
+
+```yaml
+test:
+  steps:
+    - run: node --test --test-reporter=junit --test-reporter-destination=report.xml
+    - uses: actions/upload-artifact@v7
+      if: ${{ !cancelled() }}
+      with: { name: test-report, path: report.xml }
+publish-report:
+  needs: test
+  steps:
+    - uses: actions/download-artifact@v8
+      with: { name: test-report }
+```
+
+`if: ${{ !cancelled() }}` uploads the report even when tests fail, which is exactly when you need it.
+
+### 5. Versions sort as numbers, not as text
+
+Real output from Node, sorting the same four versions two ways:
+
+```text
+string sort: 1.10.0  1.10.0-rc.1  1.9.3  2.0.0
+semver sort: 1.9.3  1.10.0-rc.1  1.10.0  2.0.0
+```
+
+As text, `"1.10.0"` comes before `"1.9.3"` because the character `1` is smaller than `9`. As versions, minor version 10 is newer than 9, and the release candidate comes before its release. A release workflow usually starts from a version tag:
+
+```yaml
+on:
+  push:
+    tags: ['v*.*.*']      # git tag v1.5.0 && git push --tags
+```
+
+### 6. A cache for a project with dependencies
+
+The Lemonade Stand has no npm dependencies, so it needs no cache. When it grows, this is the standard pattern:
+
+```yaml
+- uses: actions/cache@v6
+  with:
+    path: ~/.npm
+    key: npm-${{ runner.os }}-${{ hashFiles('**/package-lock.json') }}
+    restore-keys: npm-${{ runner.os }}-
+- run: npm ci
+```
+
+`npm ci` still runs; the cache only means it downloads less. (`actions/setup-node` can also do this for you with `cache: npm`.)
+
+## Rules and conventions
+
+- Build once per commit; promote the same artifact through every environment.
+- Tag images with the commit SHA; deploy by digest.
+- Never deploy `latest`, and never overwrite a release tag.
+- Pin base images to an exact version; update them on purpose, through a pull request.
+- Use semantic versions for things other people depend on (libraries, APIs, Helm charts).
+- Cache downloaded tools and dependencies, not your own build outputs.
+- Key caches on the files that determine their content (`hashFiles` of the lock file).
+- Set `retention-days` so artifacts do not pile up forever.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Rebuilding for production | Production differs from what was tested | Build once; pass the digest to the deploy job |
+| Deploying `:latest` | Can't tell what is running; rollback target is gone | SHA tag plus digest |
+| `FROM node:latest` | A rebuild of an old commit behaves differently | Pin `node:26.13.1-alpine3.24` (and a digest) |
+| Upper-case owner in an image name | `invalid reference format: repository name must be lowercase` | Lower-case it (`${GITHUB_REPOSITORY_OWNER,,}` in bash) |
+| Cache key without a file hash | Stale dependencies after upgrading | Add `hashFiles('**/package-lock.json')` |
+| Uploading an artifact only on success | No report when you need it most | `if: ${{ !cancelled() }}` |
+| Comparing versions as strings | `1.10.0` treated as older than `1.9.3` | Compare numbers field by field |
+
+## Mathematical Abstraction
+
+### 1. Tags move, digests do not
+
+Let $\mathcal{T}$ be the set of tags, $\mathcal{D}$ the set of digests, and $t$ a moment in time. A registry holds a mapping that can change over time, while the digest is a fixed function of content:
+
+$$
+\tau_t : \mathcal{T} \to \mathcal{D}, \qquad d = H(\text{content})
+$$
+
+where
+
+- $\tau_t$ ("tau at time $t$") says which digest a tag points to at time $t$; a push can change it;
+- $H$ is SHA-256, a deterministic function: the same content always gives the same digest;
+- $d \in \mathcal{D}$ is the digest of one exact image.
+
+**Example.** On Monday $\tau_{\text{Mon}}(\texttt{latest}) = \texttt{sha256:532c...}$. On Friday someone pushes a new build and $\tau_{\text{Fri}}(\texttt{latest}) = \texttt{sha256:7aaa...}$. The tag is the same, the image is different. But $\texttt{sha256:532c...}$ still names Monday's image, on Friday and forever. Deploying $d$ instead of a tag makes the deployment reproducible.
+
+### 2. Semantic version order and the next version
+
+Write a version as a triple $v = (M, m, p)$ of whole numbers. Versions compare **lexicographically** (like words in a dictionary, but field by field as numbers):
+
+$$
+(M_1, m_1, p_1) < (M_2, m_2, p_2) \iff
+M_1 < M_2 \ \lor\ (M_1 = M_2 \land m_1 < m_2) \ \lor\ (M_1 = M_2 \land m_1 = m_2 \land p_1 < p_2)
+$$
+
+where
+
+- $M$, $m$, $p$ are the MAJOR, MINOR and PATCH numbers;
+- $\lor$ means "or" and $\land$ means "and".
+
+**Example.** Compare $1.9.3$ and $1.10.0$: $M_1 = M_2 = 1$, then $m_1 = 9 < m_2 = 10$, so $1.9.3 < 1.10.0$. (A pre-release such as $1.10.0\text{-rc.1}$ sorts just before $1.10.0$; that extra rule is in the SemVer specification.)
+
+The next version depends on the kind of change:
+
+$$
+\operatorname{next}(M, m, p) =
+\begin{cases}
+(M + 1,\ 0,\ 0) & \text{if the change breaks existing users} \\
+(M,\ m + 1,\ 0) & \text{if it adds a backwards-compatible feature} \\
+(M,\ m,\ p + 1) & \text{if it only fixes a bug}
+\end{cases}
+$$
+
+where $\operatorname{next}$ gives the version to release after the current one $(M, m, p)$.
+
+**Example.** The Lemonade API is at $1.4.2$. Adding mint lemonade to `/` is a new feature: $\operatorname{next}(1, 4, 2) = (1, 4 + 1, 0) = 1.5.0$. Later, renaming the field `totalCents` to `total` would break callers: $\operatorname{next}(1, 5, 0) = (1 + 1, 0, 0) = 2.0.0$.
+
+### 3. What a cache is worth
+
+With hit rate $h$, the expected time of the dependency step is:
+
+$$
+E[t] = h \cdot t_{\text{hit}} + (1 - h) \cdot t_{\text{miss}}
+$$
+
+where
+
+- $h$ is the fraction of runs whose cache key is found ($0 \le h \le 1$);
+- $t_{\text{hit}}$ is the time when the cache is restored, in seconds;
+- $t_{\text{miss}}$ is the time when it is not (full download, plus saving the new cache);
+- $E[t]$ is the expected time per run.
+
+**Example** (for a future Lemonade Stand with dependencies): a full `npm ci` takes 90 s, saving the cache adds 5 s, so $t_{\text{miss}} = 95$; restoring takes $t_{\text{hit}} = 8$ s; the lock file rarely changes, so $h = 0.85$.
+
+$$
+E[t] = 0.85 \times 8 + 0.15 \times 95 = 6.8 + 14.25 = 21.05 \text{ s}
+$$
+
+That saves $90 - 21.05 = 68.95$ s per run. At 40 runs a day, that is $40 \times 68.95 = 2758$ s, about 46 minutes of waiting saved per day.
+
+## References
+
+- Jez Humble and David Farley, *Continuous Delivery* (2010), chapter 5: "Only Build Your Binaries Once".
+- Tom Preston-Werner, [Semantic Versioning 2.0.0](https://semver.org/).
+- GitHub Docs, [Workflow artifacts](https://docs.github.com/en/actions/concepts/workflows-and-actions/workflow-artifacts) and [Dependency caching reference](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching).
+- GitHub Docs, [Working with the Container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+- Docker Docs, [docker/build-push-action](https://github.com/docker/build-push-action) and [Pull an image by digest](https://docs.docker.com/reference/cli/docker/image/pull/#pull-an-image-by-digest-immutable-identifier).
+
+[← Previous: Automated Testing in the Pipeline](04-automated-testing-in-the-pipeline.qmd) · [Part index](index.qmd) · [Next: Secrets, Environments and Approvals →](06-secrets-environments-and-approvals.qmd)

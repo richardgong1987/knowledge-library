@@ -1,0 +1,128 @@
+---
+title: "CI/CD Pipelines"
+description: "Part 3 of the DevOps book: test, package and ship the Lemonade Stand automatically, from a commit to a k3s cluster."
+---
+
+## What this part is about
+
+In Part 1, Ansible prepared the Lemonade Stand servers. In Part 2, k3s ran the app as the Deployment `lemonade-web` in the namespace `lemonade`. One question is still open: **how does a new version get from a programmer's laptop to the customers?**
+
+Doing it by hand means running the tests (if you remember), building a container image, pushing it, editing a manifest and running `kubectl`, at midnight, while hoping nothing was forgotten. A **CI/CD pipeline** is a robot that does those steps the same way every time a change is pushed.
+
+::: {.callout-tip}
+## Explain it like I'm ten
+
+Think of a real lemonade stand. Before a new recipe reaches a customer, it passes a line of checkpoints: someone mixes it, someone tastes it, someone pours it into bottles with a label, a friend tries one bottle, and only then does the bottle go on the counter. If any checkpoint says "yuck", the bottle never reaches the counter. A CI/CD pipeline is that line of checkpoints for software, and a robot runs it every time anyone changes the recipe.
+:::
+
+## The Lemonade pipeline
+
+Every lesson builds a piece of this one pipeline. Lesson 9 puts all of it together.
+
+```{mermaid}
+flowchart LR
+  A[Commit pushed to main] --> B[Test]
+  B --> C[Build and push image]
+  C --> D[Deploy to staging]
+  D --> E{Human approves?}
+  E -->|yes| F[Deploy to production]
+  B -.->|red| X[Stop and fix]
+```
+
+| Stage | What happens to the Lemonade Stand | Lesson |
+| --- | --- | --- |
+| Test | `npm test` checks the price rules and the HTTP endpoints | [4](04-automated-testing-in-the-pipeline.qmd) |
+| Build image | A container image `ghcr.io/<owner>/lemonade-stand:<git-sha>` is built once and pushed | [5](05-artifacts-caching-and-versioning.qmd) |
+| Deploy staging | The image goes to a practice k3s cluster | [7](07-deployment-strategies.qmd), [9](09-end-to-end-lemonade-pipeline.qmd) |
+| Approval | A reviewer clicks "Approve" on the `production` environment | [6](06-secrets-environments-and-approvals.qmd) |
+| Deploy production | The **same** image rolls out to the real cluster, pod by pod | [7](07-deployment-strategies.qmd), [9](09-end-to-end-lemonade-pipeline.qmd) |
+
+## Lessons
+
+1. **[What CI and CD Mean](01-what-ci-and-cd-mean.qmd)**: continuous integration, delivery and deployment, plus the stories that made them famous.
+2. **[Pipeline Building Blocks](02-pipeline-building-blocks.qmd)**: triggers, jobs, steps, runners, artifacts and the deployment pipeline idea.
+3. **[GitHub Actions Syntax](03-github-actions-syntax.qmd)**: every workflow keyword, expression and context, with a one-line example each.
+4. **[Automated Testing in the Pipeline](04-automated-testing-in-the-pipeline.qmd)**: the test pyramid, fast feedback, flaky tests and required checks.
+5. **[Artifacts, Caching and Versioning](05-artifacts-caching-and-versioning.qmd)**: build once, tags and digests, semantic versions, caches.
+6. **[Secrets, Environments and Approvals](06-secrets-environments-and-approvals.qmd)**: keeping keys safe and putting a human gate before production.
+7. **[Deployment Strategies](07-deployment-strategies.qmd)**: recreate, rolling, blue-green, canary, feature flags and rollback.
+8. **[Measuring Delivery with DORA](08-measuring-delivery-with-dora.qmd)**: the DORA metrics and error budgets, computed for a real month.
+9. **[The End-to-End Lemonade Pipeline](09-end-to-end-lemonade-pipeline.qmd)**: the whole pipeline, plus a walk through this website's own workflow.
+
+## The lab
+
+The runnable example lives in [`examples/lemonade-stand/`](examples/lemonade-stand/README.md):
+
+| File | What it is |
+| --- | --- |
+| `server.mjs` | The app: one pure pricing function and a tiny HTTP handler (`/`, `/health`, `/price`) |
+| `server.test.mjs` | Four tests of real behaviour, run with `node --test` |
+| `Dockerfile` | A six-line image recipe on a pinned `node:26.13.1-alpine3.24` base |
+| `k8s/deployment.yaml` | The Namespace, Deployment and Service from Part 2, with an `__IMAGE__` placeholder |
+| `workflows/ci.yml` | Test, build and push, then call the deploy workflow twice |
+| `workflows/deploy.yml` | A reusable deploy workflow: apply, wait for the rollout, roll back on failure |
+
+```bash
+cd devops/ci-cd/examples/lemonade-stand
+npm test                      # 4 tests, no dependencies to install
+PORT=8080 node server.mjs     # then: curl localhost:8080/price?classic=2
+```
+
+## Glossary
+
+| Word | Meaning in one line |
+| --- | --- |
+| Continuous integration (CI) | Everyone merges small changes into the main branch often, and a robot checks every merge |
+| Continuous delivery | Every change that passes the pipeline *could* be released with one button press |
+| Continuous deployment | Every change that passes the pipeline *is* released, with no button |
+| Pipeline / workflow | The whole list of automated checkpoints, written in a file in the repository |
+| Trigger / event | What starts the pipeline: a push, a pull request, a timer, a button |
+| Job | A group of steps that run together on one machine |
+| Step | One command or one reusable action inside a job |
+| Runner | The machine that executes a job |
+| Artifact | A file the pipeline produces and keeps, such as a test report or a built package |
+| Container image | A packaged app plus everything it needs to run, stored in a registry |
+| Digest | The fingerprint (`sha256:...`) of an image; it never changes |
+| Environment | A named deployment target such as `staging` or `production`, with its own secrets and rules |
+| Secret | A password or key the pipeline needs but must never print |
+| Status check | The green tick or red cross a pipeline puts on a commit or pull request |
+| Rollback | Going back to the previous working version |
+
+## Prerequisites and connections
+
+- [Part 1: Ansible](../ansible/index.qmd) installs and configures the k3s host that the pipeline deploys to.
+- [Part 2: k3s](../k3s/index.qmd) explains the Deployment, Service and rolling update that the pipeline drives.
+- The [System Design](../../system-design/index.qmd) section explains idempotency and failure handling, which the deploy step relies on.
+
+## Mathematical Abstraction
+
+A pipeline is a chain of gates. A change reaches production only if it passes all of them:
+
+$$
+\operatorname{ship}(c) \iff \bigwedge_{i=1}^{k} g_i(c)
+$$
+
+where
+
+- $c$ is one change (one commit);
+- $k$ is the number of gates in the pipeline (a whole number, $k \ge 1$);
+- $g_i(c)$ is true when gate number $i$ accepts change $c$, and false otherwise;
+- $\bigwedge_{i=1}^{k}$ means "gate 1 **and** gate 2 **and** ... **and** gate $k$";
+- $\iff$ means "exactly when": both sides are true together or false together;
+- $\operatorname{ship}(c)$ is true when $c$ is allowed into production.
+
+**Example.** The Lemonade pipeline has $k = 4$ gates: $g_1$ = tests pass, $g_2$ = image builds, $g_3$ = staging rollout succeeds, $g_4$ = a reviewer approves. A commit that changes the mint price passes the tests ($g_1 = \text{true}$), builds ($g_2 = \text{true}$), rolls out to staging ($g_3 = \text{true}$), but the reviewer rejects it ($g_4 = \text{false}$). Then
+
+$$
+\operatorname{ship}(c) = \text{true} \land \text{true} \land \text{true} \land \text{false} = \text{false},
+$$
+
+so the new price never reaches customers. One "no" anywhere is enough to stop a change, which is why gates that are fast and cheap should come first (see [Lesson 4](04-automated-testing-in-the-pipeline.qmd)).
+
+## References
+
+- Martin Fowler, [Continuous Integration](https://martinfowler.com/articles/continuousIntegration.html) (first published in the early 2000s from Matt Foemmel's ThoughtWorks project, updated in 2006, rewritten in 2023).
+- Jez Humble and David Farley, *Continuous Delivery* (Addison-Wesley, 2010), and [continuousdelivery.com](https://continuousdelivery.com/).
+- GitHub Docs, [GitHub Actions documentation](https://docs.github.com/en/actions).
+
+[Start with Lesson 1: What CI and CD Mean →](01-what-ci-and-cd-mean.qmd) · [DevOps book](../index.qmd)

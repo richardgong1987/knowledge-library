@@ -1,0 +1,49 @@
+# deploy.yml replaces __IMAGE__ with an image pinned by digest before applying.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lemonade
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lemonade-web
+  namespace: lemonade
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: lemonade
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: lemonade
+    spec:
+      containers:
+        - name: web
+          image: __IMAGE__
+          env:
+            - name: APP_VERSION
+              value: "__IMAGE__"
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lemonade-web
+  namespace: lemonade
+spec:
+  selector:
+    app: lemonade
+  ports:
+    - port: 80
+      targetPort: 8080

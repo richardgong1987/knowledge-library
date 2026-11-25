@@ -1,0 +1,251 @@
+---
+title: "1. How Ansible Works"
+description: "Control node, managed nodes, SSH, modules, the push model, desired state and idempotency, shown with the Lemonade Stand fleet."
+---
+
+## The problem
+
+The Lemonade Stand has two web servers, `web1` and `web2`. Both need the same nginx config, the same menu page and the same app settings. Today you log in to each one with SSH and type the commands by hand.
+
+That goes wrong in three ways:
+
+1. **Drift.** You forget one command on `web2`. Now the two servers are different, and nobody notices until customers on `web2` see the old prices.
+2. **No record.** Six months later nobody remembers what was typed.
+3. **It does not scale.** Two servers take ten minutes. Twenty servers take all afternoon.
+
+We want to write the steps down **once**, run them on every server, and run them again safely whenever we like.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="A walkie-talkie and a checklist"}
+In Ursula K. Le Guin's 1966 science-fiction novel *Rocannon's World*, an **ansible** is a machine that sends messages instantly to anyone, anywhere in the galaxy. The software is named after it. You stand in one place and talk to all your servers at once.
+
+Now imagine you are the captain of a lemonade stand with two helpers. You don't tell them "pour one cup of sugar". If you said that every time, you would end up with far too much sugar. Instead you hand each helper a checklist that says what things should **look like**:
+
+- "The jug **has** sugar in it."
+- "The sign **says** Lemonade \$2.50."
+
+A helper checks each line. If it is already true, they do nothing. If it is not true, they fix it. You can read the checklist to them a hundred times and the lemonade never gets too sweet.
+
+Ansible works the same way. Your laptop is the captain, the servers are the helpers, and a **playbook** is the checklist.
+:::
+
+## The concept, precisely
+
+### The pieces
+
+| Piece | What it is | Lemonade Stand example |
+| --- | --- | --- |
+| **Control node** | The machine where Ansible is installed and where you type commands. | Your laptop. |
+| **Managed node** (host) | A machine Ansible configures. Ansible does not need to be installed on it. | `web1`, `web2`, `db1`. |
+| **Inventory** | A file that lists the managed nodes and puts them into groups. | [`inventory.yml`](examples/inventory.yml): groups `web`, `db`, `prod`. |
+| **Module** | A small program that does one job, such as copy a file or install a package. | `ansible.builtin.template` renders the nginx config. |
+| **Task** | One call to one module, with arguments. | "Render the nginx config". |
+| **Play** | A list of tasks aimed at a group of hosts. | "Configure the web servers" for `hosts: web`. |
+| **Playbook** | A YAML file with one or more plays. | [`site.yml`](examples/site.yml). |
+| **Role** | A folder that packages tasks, templates and defaults for reuse. | [`roles/lemonade_web/`](examples/roles/lemonade_web/tasks/main.yml). |
+
+### What happens when a task runs
+
+Ansible is **agentless**: nothing runs on the servers between Ansible runs. For each task and each host, Ansible:
+
+1. connects to the host, usually over **SSH**;
+2. copies the module's code to a temporary folder on the host;
+3. runs it with the host's Python and gets back a JSON result such as `{"changed": true}`;
+4. deletes the temporary folder;
+5. prints the result: `ok`, `changed`, `failed`, `skipped` or `unreachable`.
+
+```text
+control node                                  managed node web1
+┌─────────────────────┐   1. ssh             ┌──────────────────────┐
+│ ansible-playbook    │ ───────────────────► │ sshd                 │
+│ reads site.yml      │   2. copy module     │ ~/.ansible/tmp/...   │
+│                     │ ───────────────────► │ 3. python3 module    │
+│ prints "changed"    │ ◄─────────────────── │    returns JSON      │
+└─────────────────────┘   4. delete tmp      └──────────────────────┘
+```
+
+This is a **push model**. The control node decides when to change things and pushes the work out. Other tools, such as Puppet or Chef, normally run an agent on every server that **pulls** its configuration on a timer. Ansible can pull too, with `ansible-pull` ([lesson 12](12-configuration-and-tooling.qmd)), but push is the normal way.
+
+### Desired state and idempotency
+
+Most modules are **declarative**. You describe the end result, not the steps:
+
+```yaml
+- name: Make sure the site folder exists
+  ansible.builtin.file:
+    path: /srv/lemonade/site
+    state: directory      # "should be a directory", not "run mkdir"
+```
+
+The module first **checks** the current state. Then it acts only if the state is wrong:
+
+| Current state on the host | What the module does | Result shown |
+| --- | --- | --- |
+| Folder is missing | Creates it | `changed` |
+| Folder already exists | Nothing | `ok` |
+| A *file* with that name exists | Cannot fix this safely | `failed` |
+
+An operation is **idempotent** when doing it twice has the same effect as doing it once. Idempotency makes it safe to run a playbook again. When you are not sure whether a server is correct, run the playbook. It fixes only what has drifted.
+
+The `command` and `shell` modules are the exception. Ansible cannot know what an arbitrary shell command does, so it runs the command every time and reports `changed` every time. [Lesson 5](05-essential-modules.qmd) shows how to make them behave.
+
+### What you need
+
+| Machine | Requirement (ansible-core 2.21) |
+| --- | --- |
+| Control node | Linux, macOS or Windows with WSL; Python 3.12 or newer. |
+| Managed node (Linux) | An SSH server, a user you can log in as, and Python 3.9 or newer. |
+| Managed node (Windows) | WinRM or SSH plus PowerShell, using the `ansible.windows` collection. |
+
+## Every install and first-run command
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `pipx install ansible-core` | Installs only the engine and the `ansible.builtin` modules into an isolated environment. | Recommended for learning. Add collections later as you need them. | `pipx install ansible-core` |
+| `pipx install --include-deps ansible` | Installs the "batteries included" package: ansible-core plus about 90 community collections. | Bigger download. `--include-deps` is needed so pipx exposes the `ansible-*` commands. | `pipx install --include-deps ansible` |
+| `python3 -m pip install --user ansible` | Installs with pip for the current user. | Use a virtual environment to avoid clashing with system packages. | `python3 -m venv .venv && .venv/bin/pip install ansible-core` |
+| `brew install ansible` | Installs the full package on macOS with Homebrew. | Homebrew upgrades Ansible together with your other formulae. | `brew install ansible` |
+| `ansible --version` | Prints the version, the config file in use, and the Python it runs on. | Run it first when something behaves oddly. The `config file` line tells you which `ansible.cfg` won. | `ansible --version` |
+| `ansible localhost -m ansible.builtin.ping` | Runs the `ping` module on your own machine. | `ping` does not send network pings. It checks that Ansible can log in and run Python. | see below |
+
+## Worked example: your first run
+
+From any folder with no inventory, Ansible still knows one host, the implicit `localhost`:
+
+```bash
+ansible localhost -m ansible.builtin.ping
+```
+
+```text
+[WARNING]: No inventory was parsed, only implicit localhost is available
+localhost | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+```
+
+`SUCCESS` and `"ping": "pong"` mean Ansible ran Python on the target and got an answer. `"changed": false` means nothing on the machine was modified.
+
+Now run the lab playbook. From `devops/ansible/examples/`:
+
+```bash
+ansible-playbook site.yml
+```
+
+First run (trimmed to the lines that matter):
+
+```text
+TASK [lemonade_web : Render the nginx config] **********************************
+changed: [web1]
+changed: [web2]
+
+RUNNING HANDLER [lemonade_web : Reload nginx] **********************************
+ok: [web1] =>
+    msg: nginx reloaded on web1
+
+PLAY RECAP *********************************************************************
+db1    : ok=2    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+web1   : ok=4    changed=3    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+web2   : ok=4    changed=3    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+Second run of exactly the same command:
+
+```text
+PLAY RECAP *********************************************************************
+db1    : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+web1   : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+web2   : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+What changed between the runs:
+
+- Every task now reports `ok`, because the files already look the way the playbook describes.
+- `ok` dropped from 4 to 3 on the web hosts. The **handler** "Reload nginx" did not run, because no task changed anything. Handlers are covered in [lesson 8](08-conditionals-loops-and-handlers.qmd).
+- `changed=0` everywhere. That is the proof that the playbook is idempotent.
+
+The result on "web1's disk", `/tmp/lemonade-lab/web1/nginx/lemonade.conf`:
+
+```text
+# Ansible managed
+worker_processes 4;
+server {
+    listen 80;
+    location / { proxy_pass http://127.0.0.1:8080; }
+}
+```
+
+## Rules and conventions
+
+- **Describe the state, not the steps.** Prefer `state: present`, `state: directory` and `state: started` over shell commands.
+- **Use fully qualified module names** (FQCN), such as `ansible.builtin.copy` rather than `copy`. The long name says exactly which collection the module comes from.
+- **Give every task a `name`** that reads like a line on a checklist: "Render the menu page".
+- **Run twice to test.** A good playbook reports `changed=0` on its second run.
+- **Keep everything in Git**: inventory, playbooks, roles and variables. The repository becomes the record of how your servers are built.
+- **Use `--check --diff` before risky changes** ([lesson 4](04-playbooks.qmd)).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Installing Ansible on the servers | Nothing breaks, but it is unnecessary work. | Install it only on the control node. Managed nodes need SSH and Python. |
+| Using `shell: mkdir -p /srv/lemonade` | The task reports `changed` on every run, and handlers fire every time. | Use `ansible.builtin.file` with `state: directory`. |
+| Thinking `ping` sends ICMP packets | `ping` fails even though `ping 192.0.2.11` in a terminal works. | `ansible.builtin.ping` needs SSH login and Python. Check the user, the SSH key and the Python path. |
+| Managed node has no Python | `/usr/bin/python3: not found` | Install Python first, for example with the `raw` module ([lesson 5](05-essential-modules.qmd)). |
+| Running from the wrong folder | Ansible says "No inventory was parsed". | Run from the folder that holds `ansible.cfg`, or pass `-i inventory.yml`. |
+
+## Mathematical Abstraction
+
+Model one server as a **state** $s$: everything Ansible could check, such as which files exist and what they contain. A task is a function that turns one state into another.
+
+$$
+f(f(s)) = f(s) \quad \text{for every state } s \in S
+$$
+
+where:
+
+- $S$ is the set of all possible states of a server (every combination of files, packages and services);
+- $s$ is one particular state, for example "`web1` with no nginx config yet";
+- $f : S \to S$ is a task, such as "the file `lemonade.conf` has this content";
+- $f(s)$ is the state after running the task once, and $f(f(s))$ the state after running it twice.
+
+The equation says that the second run changes nothing. A function with this property is called **idempotent**.
+
+**Example.** Let $f$ be the task "the folder `/tmp/lemonade-lab/web1/nginx` exists".
+
+- Start state $s_0$: the folder does not exist.
+- After one run, $f(s_0) = s_1$, where $s_1$ is "the folder exists". Ansible reports `changed`.
+- After a second run, $f(s_1) = s_1$, because the folder already exists. Ansible reports `ok`.
+- So $f(f(s_0)) = f(s_1) = s_1 = f(s_0)$. The equation holds.
+
+A whole playbook run on one host can be summarised by the number of tasks that reported `changed`:
+
+$$
+C_k = \sum_{h \in H} c_{h,k}
+$$
+
+where:
+
+- $H$ is the set of hosts in the run, here $H = \lbrace \texttt{web1}, \texttt{web2}, \texttt{db1} \rbrace$;
+- $k$ is the run number: $k = 1$ for the first run and $k = 2$ for the second;
+- $c_{h,k}$ is the `changed=` number that PLAY RECAP prints for host $h$ in run $k$;
+- $C_k$ is the total number of changes in run $k$.
+
+**Example**, using the real output above:
+
+- First run: $C_1 = c_{\texttt{db1},1} + c_{\texttt{web1},1} + c_{\texttt{web2},1} = 2 + 3 + 3 = 8$.
+- Second run: $C_2 = 0 + 0 + 0 = 0$.
+
+$C_2 = 0$ is the practical test of idempotency. If $C_2 > 0$ and nobody changed the servers between the runs, some task is not idempotent and should be fixed.
+
+## References
+
+- Ansible documentation, "Getting started with Ansible": <https://docs.ansible.com/projects/ansible/latest/getting_started/index.html>
+- Ansible documentation, "Installing Ansible": <https://docs.ansible.com/projects/ansible/latest/installation_guide/intro_installation.html>
+- Ansible documentation, release and maintenance (Python support matrix): <https://docs.ansible.com/projects/ansible/latest/reference_appendices/release_and_maintenance.html>
+- Ursula K. Le Guin, *Rocannon's World* (1966), where the word "ansible" first appears: <https://en.wikipedia.org/wiki/Ansible>
+- "How Ansible got started and grew", the project's origin story from its first release by Michael DeHaan in 2012: <https://opensource.com/article/21/2/ansible-origin-story>
+- Jeff Geerling, *Ansible for DevOps*: <https://leanpub.com/ansible-for-devops>
+
+[Ansible index](index.qmd) · [Next: Inventory →](02-inventory.qmd)

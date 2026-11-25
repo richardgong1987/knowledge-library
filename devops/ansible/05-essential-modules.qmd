@@ -1,0 +1,235 @@
+---
+title: "5. Essential Modules"
+description: "The 30 modules you will use most, grouped by job: what each does, its key parameters, what it returns, and a one-line example from the Lemonade Stand."
+---
+
+## The problem
+
+Ansible ships with thousands of modules. A beginner does not know where to start, so they write everything with `shell:`. Then every run reports `changed`, `--check` cannot predict anything, and handlers fire every time.
+
+For the Lemonade Stand you need perhaps thirty modules: write files, install nginx, start services, create a user, call the health endpoint. This lesson is the map.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="A box of LEGO pieces"}
+A module is one LEGO piece with a single job. A wheel rolls. A hinge bends. A window lets light in. You don't carve a wheel out of a plain brick. You pick the wheel piece, because it already works.
+
+`shell` is the plain brick: you *can* build anything with it, but you have to shape it yourself, and it never tells you whether anything changed. Grab the special piece first: `copy` for files, `package` for software, `service` for programs that keep running. Use the plain brick only when no special piece exists.
+:::
+
+## The concept, precisely
+
+- A **module** is a small program with **parameters** (its inputs) and **return values** (a JSON result).
+- Every module returns at least `changed` (true or false) and `failed`. Many add more, such as `rc` and `stdout` for `command`, or `stat.exists` for `stat`.
+- Save the result with `register:` and use it in later tasks ([lesson 6](06-variables-and-facts.qmd)).
+- Write the **fully qualified collection name** (FQCN): `namespace.collection.module`. All modules below live in `ansible.builtin`, which ships with ansible-core.
+- Most modules are **declarative and idempotent**. The exceptions, marked ⚠, always run.
+
+Find modules and read their documentation without leaving the terminal:
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `ansible-doc -l` | List every installed module. | `ansible-doc -l ansible.builtin` (71 modules in 2.21) |
+| `ansible-doc NAME` | Full documentation: parameters, return values, examples. | `ansible-doc ansible.builtin.copy` |
+| `ansible-doc -s NAME` | A short task snippet with every parameter. | `ansible-doc -s ansible.builtin.lineinfile` |
+| `ansible-doc -t TYPE -l` | List other plugin types. | `ansible-doc -t lookup -l` |
+
+## Checking and talking
+
+| Module | What it does | Key parameters | Returns | Example |
+| --- | --- | --- | --- | --- |
+| `ping` | Checks Ansible can log in and run Python. | none | `ping: pong` | `ansible.builtin.ping:` |
+| `debug` | Prints a message or a variable. | `msg`, `var`, `verbosity` | `msg` | `debug: { var: menu.status }` |
+| `assert` | Fails unless every condition is true. | `that` (list), `fail_msg`, `success_msg` | `msg` | `assert: { that: [lemonade_app_port > 1024] }` |
+| `fail` | Stops the host with a message. | `msg` | | `fail: { msg: "No menu defined" }` |
+| `pause` | Waits, or asks the operator to press Enter. | `seconds`, `minutes`, `prompt` | `user_input` | `pause: { seconds: 10 }` |
+| `set_fact` | Creates a variable for the rest of the play. | `key: value` pairs, `cacheable` | | `set_fact: { menu_size: "{{ lemonade_menu \| length }}" }` |
+
+## Running programs ⚠
+
+| Module | What it does | Key parameters | Returns | Example |
+| --- | --- | --- | --- | --- |
+| `command` | Runs a program **without** a shell. The default for ad hoc. | `cmd` or `argv`, `chdir`, `creates`, `removes` | `rc`, `stdout`, `stdout_lines`, `stderr` | `command: { cmd: nginx -t }` |
+| `shell` | Runs a line through `/bin/sh`: pipes, `>`, `$VAR`. | `cmd`, `chdir`, `creates`, `executable` | same as `command` | `shell: "ps aux \| grep -c nginx"` |
+| `raw` | Sends a bare SSH command. Needs no Python on the host. | free text | `rc`, `stdout` | `raw: apt-get install -y python3` |
+| `script` | Copies a local script to the host and runs it. | free text, `creates`, `chdir` | `rc`, `stdout` | `script: scripts/seed_menu.sh` |
+
+`creates: PATH` skips the command when `PATH` already exists. `removes: PATH` skips it when `PATH` does **not** exist. Those two parameters make a command idempotent.
+
+## Files and folders
+
+| Module | What it does | Key parameters | Returns | Example |
+| --- | --- | --- | --- | --- |
+| `copy` | Puts a local file, or inline text, on the host. | `src` or `content`, `dest`, `mode`, `owner`, `backup`, `force`, `validate` | `dest`, `checksum` | `copy: { src: logo.png, dest: /srv/lemonade/site/ }` |
+| `template` | Renders a Jinja2 template, then copies it. | `src` (a `.j2` file), `dest`, `mode`, `validate` | same as `copy` | `template: { src: nginx.conf.j2, dest: /etc/nginx/conf.d/lemonade.conf }` |
+| `file` | Makes a folder, link or empty file, sets owner and mode, or deletes. | `path`, `state` (`directory`, `file`, `touch`, `link`, `hard`, `absent`), `mode`, `owner`, `recurse` | `path`, `state` | `file: { path: /srv/lemonade, state: directory, mode: "0755" }` |
+| `lineinfile` | Makes sure **one line** is in a file, or replaces the line matching a regex. | `path`, `line`, `regexp`, `state`, `create`, `insertafter` | `msg` | `lineinfile: { path: /etc/lemonade.env, regexp: "^PORT=", line: "PORT=8080" }` |
+| `blockinfile` | Makes sure a **block** of lines sits between two marker comments. | `path`, `block`, `marker`, `state` | `msg` | `blockinfile: { path: /etc/hosts, block: "192.0.2.21 db1" }` |
+| `replace` | Replaces **every** match of a regex in a file. | `path`, `regexp`, `replace` | `msg` | `replace: { path: menu.txt, regexp: "2\\.50", replace: "2.75" }` |
+| `stat` | Looks at a file without changing it. | `path`, `get_checksum` | `stat.exists`, `stat.size`, `stat.mode`, `stat.isdir` | `stat: { path: /srv/lemonade/site/index.html }` |
+| `get_url` | Downloads a file from a URL. | `url`, `dest`, `checksum`, `mode` | `dest`, `checksum_src` | `get_url: { url: https://example.com/app.tgz, dest: /tmp/, checksum: "sha256:..." }` |
+| `unarchive` | Unpacks a `.tar.gz` or `.zip`. | `src`, `dest`, `remote_src`, `creates` | `dest` | `unarchive: { src: /tmp/app.tgz, dest: /srv/lemonade, remote_src: true }` |
+
+Where `src` is searched: `copy` and `unarchive` look in a role's `files/` folder, and `template` looks in `templates/`. `validate: "nginx -t -c %s"` checks the new file **before** it replaces the old one, so a typo never reaches nginx.
+
+## Packages and services
+
+| Module | What it does | Key parameters | Example |
+| --- | --- | --- | --- |
+| `package` | Installs or removes packages with whatever manager the OS uses. | `name` (string or list), `state` (`present`, `absent`, `latest`; documented as required, so always write it) | `package: { name: nginx, state: present }` |
+| `apt` | Debian and Ubuntu packages. | `name`, `state`, `update_cache`, `cache_valid_time` | `apt: { name: nginx, update_cache: true, cache_valid_time: 3600 }` |
+| `dnf` | Fedora, RHEL and Rocky packages. | `name`, `state`, `enablerepo` | `dnf: { name: nginx, state: latest }` |
+| `service` | Starts, stops or enables a service with any init system. | `name`, `state` (`started`, `stopped`, `restarted`, `reloaded`), `enabled` | `service: { name: nginx, state: started, enabled: true }` |
+| `systemd_service` | The same, with systemd extras. | `name`, `state`, `enabled`, `daemon_reload`, `masked` | `systemd_service: { name: lemonade, daemon_reload: true, state: restarted }` |
+
+`started` is idempotent: it does nothing when the service is already running. `restarted` and `reloaded` act every time, so use them in handlers.
+
+## Users and groups
+
+| Module | What it does | Key parameters | Example |
+| --- | --- | --- | --- |
+| `group` | Makes sure a Unix group exists. | `name`, `gid`, `state`, `system` | `group: { name: lemonade, system: true }` |
+| `user` | Makes sure a Unix user exists. | `name`, `group`, `groups`, `append`, `shell`, `system`, `create_home`, `state` | `user: { name: lemonade, group: lemonade, system: true, shell: /usr/sbin/nologin }` |
+
+`groups` **replaces** the user's extra groups unless you also set `append: true`.
+
+## Code, web and waiting
+
+| Module | What it does | Key parameters | Returns | Example |
+| --- | --- | --- | --- | --- |
+| `git` | Clones or updates a repository. | `repo`, `dest`, `version` (default `HEAD`), `depth` | `before`, `after` (commit IDs) | `git: { repo: https://github.com/acme/lemonade.git, dest: /srv/lemonade/app, version: v1.1.0 }` |
+| `uri` | Makes an HTTP request and checks the status. | `url`, `method`, `status_code` (default `[200]`), `body`, `return_content` | `status`, `content`, `json` | `uri: { url: "http://web1:8080/health" }` |
+| `wait_for` | Waits for a port, a file or a text in a file. | `port`, `host`, `path`, `search_regex`, `state`, `timeout` (default 300) | `elapsed` | `wait_for: { port: 8080, timeout: 30 }` |
+| `cron` | Manages one cron job, found again by its `name`. | `name`, `job`, `minute`, `hour`, `weekday`, `state` | | `cron: { name: nightly-report, hour: "2", minute: "0", job: /srv/lemonade/report.sh }` |
+
+### Beyond `ansible.builtin`
+
+Many useful modules live in **collections** that you install separately ([lesson 9](09-roles-and-collections.qmd)):
+
+- `ansible.posix.authorized_key` adds an SSH public key to a user.
+- `ansible.posix.firewalld` and `community.general.ufw` manage firewalls.
+- `community.postgresql.postgresql_db` creates databases.
+
+## Worked examples
+
+**A web server from nothing**: the four steps that every web role has. Packages and services need root, so the play sets `become: true`.
+
+```yaml
+- name: Install nginx
+  ansible.builtin.package: { name: nginx, state: present }
+
+- name: Write the Lemonade site
+  ansible.builtin.template:
+    src: nginx.conf.j2
+    dest: /etc/nginx/conf.d/lemonade.conf
+    validate: nginx -t -c %s
+  notify: Reload nginx
+
+- name: Keep nginx running after reboots
+  ansible.builtin.service: { name: nginx, state: started, enabled: true }
+```
+
+**A health check that reads the page.** Run against a local copy of the menu page:
+
+```yaml
+- name: Ask the menu page for a 200
+  ansible.builtin.uri:
+    url: http://127.0.0.1:18080/index.html
+    return_content: true
+  register: menu
+
+- ansible.builtin.debug:
+    msg: "{{ menu.status }} {{ 'Pink Lemonade' in menu.content }}"
+```
+
+```text
+ok: [localhost] =>
+    msg: 200 True
+```
+
+Asking for a page that does not exist fails, because 404 is not in `status_code`:
+
+```text
+fatal: [localhost]: FAILED! =>
+    msg: 'Status code was 404 and not [200]: HTTP Error 404: File not found'
+    status: 404
+```
+
+**Two modules fighting over one file.** Each task below is idempotent on its own:
+
+```yaml
+- ansible.builtin.copy:
+    dest: prices.conf
+    content: "classic = 2.50\n"      # add "force: false" to fix the fight
+- ansible.builtin.lineinfile:
+    path: prices.conf
+    line: "pink = 3.00"
+```
+
+Three runs in a row report `changed=2`, `changed=2`, `changed=2`. `copy` resets the file to one line, and then `lineinfile` adds the second line back. With `force: false`, `copy` only creates the file when it is missing, and the runs report `changed=0`.
+
+## Rules and conventions
+
+- **Pick the most specific module.** `package` over `shell: apt-get`, `copy` over `shell: echo >`.
+- **Always write the FQCN**, so readers and `ansible-lint` know where the module comes from.
+- **One owner per file.** Either `template` manages the whole file, or `lineinfile`/`blockinfile` manage parts of it. Never both.
+- **Quote file modes**: `mode: "0644"` ([lesson 4](04-playbooks.qmd)).
+- **Validate config files** with `validate:` before they go live.
+- **Make `command` and `shell` honest** with `creates`, `removes` or `changed_when`.
+- **Read `ansible-doc`** for the return values before you write `register:`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `shell: systemctl restart nginx` in normal tasks | Restarts on every run; `changed` every time. | `service` with `state: started` in tasks, `state: restarted` in a handler. |
+| `copy` and `lineinfile` on one file | The playbook is never `changed=0`. | Give the file one owner, or use `force: false` on `copy`. |
+| `user: { groups: www-data }` without `append` | The user loses its other groups, such as `sudo`. | Add `append: true`. |
+| `apt` without `update_cache` on a new server | `No package matching 'nginx' is available`. | `update_cache: true` and `cache_valid_time: 3600`. |
+| `package` without `state` | Behaviour depends on the OS package manager behind it; the docs mark `state` as required. | Always write `state: present`. |
+| Host has no Python | Every module fails. | Bootstrap with `raw: apt-get install -y python3`. |
+
+## Mathematical Abstraction
+
+A playbook runs its tasks one after another. As functions on the server state, that is a **composition**:
+
+$$
+R = t_n \circ \cdots \circ t_2 \circ t_1
+$$
+
+where:
+
+- $t_1, t_2, \dots, t_n$ are the tasks in order; each is a function from states to states ([lesson 1](01-how-ansible-works.qmd));
+- $\circ$ means "do the right-hand function first, then the left-hand one", so $(t_2 \circ t_1)(s) = t_2(t_1(s))$;
+- $R$ is the whole run.
+
+**Example.** The fight above has $n = 2$ tasks: $t_1$ is `copy` and $t_2$ is `lineinfile`, so $R = t_2 \circ t_1$ and $R(s) = t_2(t_1(s))$. Starting from an empty folder $s$: $t_1(s)$ is a file with the one line `classic = 2.50`, and $t_2$ of that adds `pink = 3.00`. So $R(s)$ is the two-line file.
+
+Even when every $t_i$ is idempotent, $R$ can still **report** changes on every run. Ansible reports task $i$ as changed when it altered the state it was given:
+
+$$
+C = \sum_{i=1}^{n} \big[\, t_i(s_{i-1}) \neq s_{i-1} \,\big], \qquad s_i = t_i(s_{i-1})
+$$
+
+where:
+
+- $s_0$ is the state before the run, and $s_i$ is the state after task $i$;
+- $[\,P\,]$ is 1 when the statement $P$ is true and 0 when it is false;
+- $C$ is the `changed=` count for this host.
+
+**Example**, the fight above. Let $s^\ast$ be the finished file with two lines, `classic = 2.50` and `pink = 3.00`. Start the second run from $s_0 = s^\ast$:
+
+- $t_1$ = `copy` with `force: true`: $t_1(s^\ast)$ is the one-line file, which is different from $s^\ast$. That counts 1.
+- $t_2$ = `lineinfile`: it adds `pink = 3.00` back, which is different from the one-line file. That counts 1.
+- $C = 1 + 1 = 2$, and the final state is $s^\ast$ again.
+
+So $R(R(s)) = R(s)$: the **file** ends the same. But $C = 2$ on every run, so a handler would fire every time. With `force: false`, $t_1(s^\ast) = s^\ast$ and $t_2(s^\ast) = s^\ast$, so $C = 0 + 0 = 0$. A playbook is only truly idempotent when both the state and the change count settle.
+
+## References
+
+- Ansible documentation, `ansible.builtin` collection index (every module page): <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/index.html>
+- Ansible documentation, "Introduction to modules": <https://docs.ansible.com/projects/ansible/latest/module_plugin_guide/modules_intro.html>
+- Ansible documentation, "Return values": <https://docs.ansible.com/projects/ansible/latest/reference_appendices/common_return_values.html>
+- `ansible-doc` CLI: <https://docs.ansible.com/projects/ansible/latest/cli/ansible-doc.html>
+
+[← Previous: Playbooks](04-playbooks.qmd) · [Ansible index](index.qmd) · [Next: Variables and facts →](06-variables-and-facts.qmd)

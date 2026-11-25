@@ -1,0 +1,182 @@
+---
+title: "Pipeline Building Blocks"
+description: "Triggers, workflows, jobs, steps, runners, artifacts, caches, environments, secrets and status checks: the parts every CI/CD system shares."
+---
+
+## The problem
+
+The Lemonade team agreed in [Lesson 1](01-what-ci-and-cd-mean.qmd) that "a robot should test and ship every change". To tell the robot what to do, they need words for its parts. *When* should it start? *Where* does it run? *What* does it run, and in what order? How does the image built in one place reach the deploy step in another? Where does the cluster password live?
+
+Every CI/CD tool (GitHub Actions, GitLab CI, Jenkins, CircleCI, Azure Pipelines) answers these questions with the same handful of building blocks. Learn them once and you can read any of these tools.
+
+::: {.callout-tip}
+## Explain it like I'm ten
+
+Picture a restaurant kitchen making lemonade for a party.
+
+- The **recipe card** pinned on the wall is the *workflow file*.
+- The **order bell** that rings when a customer orders is the *trigger*.
+- Each **cook at a station** (one squeezes lemons, one mixes, one bottles) is a *job*. Cooks at different stations can work at the same time.
+- Each **line on a cook's card** ("cut 10 lemons", "add sugar") is a *step*.
+- The **kitchen itself**, with its counters and tools, is the *runner*. After every order it is wiped completely clean.
+- The **tray** a cook passes to the next station is an *artifact*.
+- The **pantry** of lemons cut yesterday is the *cache*: it saves time, but you could always cut fresh ones.
+- The **practice table** for tasting and the **real party table** are *environments* (staging and production).
+- The **locked drawer** with the key to the party hall is where *secrets* live.
+- The **thumbs-up or thumbs-down** the head chef shows is the *status check*.
+
+Jez Humble and David Farley call the whole line of stations a **deployment pipeline**: each station gives a bit more confidence, and a bottle only moves on if the station before it said yes. Martin Fowler summarises the idea in [Deployment Pipeline](https://martinfowler.com/bliki/DeploymentPipeline.html).
+:::
+
+## The building blocks, precisely
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| **Trigger (event)** | Decides *when* a pipeline starts | Trigger on every push and pull request to the main branch | `on: [push, pull_request]` |
+| **Pipeline / workflow** | The whole automated process, defined as a file in the repo | One file per purpose (CI, deploy, nightly) | `.github/workflows/ci.yml` |
+| **Stage** | A group of jobs that logically belong together (test, build, deploy) | GitHub has no `stage` keyword; order comes from `needs` | test stage → build stage → deploy stage |
+| **Job** | A set of steps that run on **one** runner, top to bottom | Jobs run in parallel unless `needs` orders them | `jobs: test:` |
+| **Step** | One shell command or one reusable action inside a job | One clear purpose per step, with a `name` | `- run: npm test` |
+| **Action** | A reusable, versioned step published by someone | Pin a major version or a full commit SHA | `uses: actions/checkout@v7` |
+| **Runner** | The machine (VM or container) that executes a job | Prefer fresh, throw-away runners | `runs-on: ubuntu-latest` |
+| **Workspace** | The folder on the runner where the repo is checked out | Never assume files survive to another job | `$GITHUB_WORKSPACE` |
+| **Artifact** | A file produced by a job and kept after the job ends | Pass build outputs between jobs as artifacts or registry images | test report, built image |
+| **Cache** | Saved files reused by later runs to go faster | A cache may be missing; the job must still work without it | `~/.npm` keyed by the lock file |
+| **Environment** | A named deploy target with its own secrets and protection rules | One per target: `staging`, `production` | `environment: production` |
+| **Secret** | An encrypted value (password, token, key) given to jobs | Never print it; scope it to the smallest place | `secrets.KUBECONFIG_B64` |
+| **Variable** | A plain, non-secret setting | Config that differs per environment | `vars.LEMONADE_URL` |
+| **Status check** | The ✔ or ✖ a job reports on a commit or pull request | Make important checks *required* before merging | "CI / test ✔" |
+| **Approval (gate)** | A human must approve before a job continues | Use for production only | Required reviewers on `production` |
+
+### Same ideas, different words: GitHub Actions and GitLab CI
+
+| Concept | GitHub Actions | GitLab CI |
+| --- | --- | --- |
+| Pipeline file | `.github/workflows/*.yml` (many files) | `.gitlab-ci.yml` (one file, can `include:` others) |
+| Trigger | `on:` | `workflow: rules:` and job `rules:` |
+| Stage | implied by `needs:` | `stages:` list, then `stage:` per job |
+| Job order | `needs: [test]` | stage order, or `needs: [test]` |
+| Commands | `steps:` with `run:` | `script:` |
+| Reusable step | `uses: owner/action@v1` | `include:` templates, CI/CD components |
+| Runner choice | `runs-on: ubuntu-latest` | `tags:` and `image: node:26-alpine` |
+| Artifact | `actions/upload-artifact` | `artifacts: paths:` |
+| Cache | `actions/cache` | `cache: key: paths:` |
+| Environment | `environment: production` | `environment: name: production` |
+| Manual gate | environment required reviewers | `when: manual`, protected environments |
+| Secret | `secrets.NAME` | masked and protected CI/CD variables |
+
+## A worked example: the Lemonade pipeline as building blocks
+
+Here is the shape of the Lemonade CI workflow, with only the lines that show the building blocks:
+
+```yaml
+on: [push, pull_request]            # trigger
+jobs:
+  check-syntax:                     # job 1 (runs in parallel with job 2)
+    runs-on: ubuntu-latest          # runner
+    steps:
+      - uses: actions/checkout@v7   # step: a reusable action
+      - run: node --check server.mjs  # step: a shell command
+  test:                             # job 2
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: npm test
+  image:
+    needs: [check-syntax, test]     # waits for both jobs above
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "build and push the image here (Lesson 5)"
+```
+
+Three things to notice:
+
+1. **Jobs do not share a disk.** `check-syntax`, `test` and `image` each get a *fresh* runner, so each one checks out the code again. Anything that must travel between jobs goes through an artifact, a registry, or a job output.
+2. **`needs` turns the job list into a graph.** Without `needs`, all three jobs start at once. With it, `image` starts only after both of its parents succeed.
+3. **A failed job stops its children.** If `test` fails, `image` is skipped, and the pull request shows a red ✖. That red cross is the andon cord from Lesson 1.
+
+You can run each step's command locally to see that it is real:
+
+```bash
+cd devops/ci-cd/examples/lemonade-stand
+node --check server.mjs && echo "syntax ok"   # prints: syntax ok
+npm test                                      # ℹ pass 4  ℹ fail 0
+```
+
+### Runners: who owns the kitchen?
+
+| Runner type | What it is | When to use | Example |
+| --- | --- | --- | --- |
+| GitHub-hosted | A fresh VM created for each job and deleted afterwards | Default choice; nothing to maintain | `runs-on: ubuntu-latest` |
+| Larger hosted | Same, with more CPU or memory | Slow builds | a larger-runner label set up by your organisation |
+| Self-hosted | A machine you run, registered with GitHub | Deploying into a private network, special hardware | `runs-on: [self-hosted, linux]` |
+
+For the Lemonade Stand, a self-hosted runner inside the shop's network can reach the k3s API without exposing it to the internet. The trade-off: you must patch and clean that machine yourself, and you must never let untrusted pull requests run on it.
+
+## Rules and conventions
+
+- Keep pipeline files in the repository, reviewed like any other code.
+- Name jobs and steps after what they check (`test`, `build-image`), not after tools (`job1`).
+- Make jobs independent and repeatable: same commit in, same result out.
+- Put cheap, fast checks first so failures appear in seconds.
+- Treat runners as disposable; never rely on leftovers from a previous run.
+- Pass build outputs forward; never rebuild the same thing later "to deploy it" (see [Lesson 5](05-artifacts-caching-and-versioning.qmd)).
+- Give each environment only the secrets it needs.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Expecting files from job A in job B | `No such file or directory` in the second job | Upload an artifact, push an image, or use job `outputs` |
+| No `needs` between test and deploy | Deploy runs even while tests are still running or failing | Add `needs: test` |
+| Everything in one giant job | Slow, and one failure hides where it happened | Split into jobs by purpose |
+| Pipeline only lives in a web UI | Nobody can review or roll back pipeline changes | Pipeline as code in the repo |
+| Relying on a cache for correctness | Random failures when the cache is evicted | A cache must only make things faster |
+
+## Mathematical Abstraction
+
+Write the jobs as a **directed acyclic graph** (DAG) $G = (J, E)$:
+
+- $J$ is the set of jobs;
+- $E \subseteq J \times J$ is the set of arrows, with $(a, b) \in E$ when job $b$ has `needs: a`;
+- "acyclic" means no job can (directly or indirectly) need itself.
+
+Each job $j$ takes $t_j$ minutes. With enough runners, jobs without an arrow between them run in parallel, so the wall-clock time of the whole pipeline is the length of the **longest path** (the critical path):
+
+$$
+D = \max_{P \in \mathcal{P}(G)} \sum_{j \in P} t_j
+$$
+
+where
+
+- $\mathcal{P}(G)$ is the set of all paths that start at a job with no `needs` and end at a job nothing needs;
+- $P$ is one such path, a sequence of jobs;
+- $\sum_{j \in P} t_j$ adds up the minutes of the jobs on that path;
+- $\max$ picks the longest one;
+- $D$ is the pipeline duration in minutes.
+
+**Example.** The Lemonade pipeline with deploy added: `check-syntax` $t = 1$, `test` $t = 3$, `image` $t = 4$ (needs both), `staging` $t = 2$ (needs `image`). The two paths are:
+
+- $P_1$ = check-syntax → image → staging: $1 + 4 + 2 = 7$ minutes;
+- $P_2$ = test → image → staging: $3 + 4 + 2 = 9$ minutes.
+
+So $D = \max(7, 9) = 9$ minutes. Making `check-syntax` faster cannot help at all; only the jobs on $P_2$ matter.
+
+The runner time you pay for is different: every job is billed, parallel or not.
+
+$$
+B = \sum_{j \in J} t_j
+$$
+
+where $B$ is the total runner minutes for one pipeline run and the sum adds every job's minutes once.
+
+**Example.** $B = 1 + 3 + 4 + 2 = 10$ runner minutes, while the team waits only $D = 9$ minutes. Running all four jobs one after another in a single job would take $10$ minutes of waiting too, so parallel jobs save waiting time, not runner time. (Job durations here are illustrative; the real Lemonade tests take under a second, and most of a real job's time is runner start-up and checkout.)
+
+## References
+
+- Jez Humble and David Farley, *Continuous Delivery* (2010), chapter 5, "Anatomy of the Deployment Pipeline".
+- Martin Fowler, [Deployment Pipeline](https://martinfowler.com/bliki/DeploymentPipeline.html).
+- GitHub Docs, [Understanding GitHub Actions](https://docs.github.com/en/actions/get-started/understand-github-actions) and [About GitHub-hosted runners](https://docs.github.com/en/actions/concepts/runners/github-hosted-runners).
+- GitLab Docs, [CI/CD YAML syntax reference](https://docs.gitlab.com/ci/yaml/).
+
+[← Previous: What CI and CD Mean](01-what-ci-and-cd-mean.qmd) · [Part index](index.qmd) · [Next: GitHub Actions Syntax →](03-github-actions-syntax.qmd)

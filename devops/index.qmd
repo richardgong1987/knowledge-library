@@ -1,13 +1,133 @@
 ---
-title: "DevOps"
+title: "DevOps: A Hands-On Book"
+description: "Ansible, k3s, CI/CD, AWS, Google Cloud and Terraform explained in plain words, with one running example, runnable labs, and every formula worked out with real numbers."
 ---
 
-Infrastructure automation, platform operations, deployment, and delivery systems.
+This book teaches the tools that take a small web application from a laptop to servers that stay up:
 
-## Topics
+1. **Ansible** configures machines: packages, files and services.
+2. **k3s**, a small but complete Kubernetes, runs the application in containers and keeps it healthy.
+3. **CI/CD** tests every change automatically and ships it safely.
+4. **AWS** and 5. **Google Cloud** rent you the computers, networks and databases.
+6. **Terraform** writes that cloud infrastructure down as code, so it can be rebuilt with one command.
 
-- [Ansible](ansible.qmd) — Inventories, playbooks, roles, idempotency, and reliable deployment.
-- [Kubernetes (K8s)](kubernetes.qmd) — Pods, Deployments, Services, reconciliation, and scheduling.
-- [CI/CD Pipelines](ci-cd.qmd) — Build automation, tests, artefacts, approvals, and deployment strategies.
+Each lesson starts with a real problem, then explains the idea the way you would explain it to a ten-year-old, and then gives the exact rules. Every keyword, command and convention appears in a table with a short example. Each lesson ends with a small piece of mathematics. Every symbol in it is defined and every formula is worked through with real numbers.
 
-Each topic will grow into a collection of worked examples, conceptual explanations, and interactive experiments.
+## The running example: the Lemonade Stand
+
+Every chapter uses the same tiny business, so you never have to learn a new scenario.
+
+> The **Lemonade Stand** is a web page that shows a lemonade menu and its prices. Customers open it in a browser. The owner wants it to stay online, to change prices without breaking anything, and to add new drinks every week.
+
+| Piece | Value used throughout the book |
+| --- | --- |
+| Application | `lemonade-stand`, an HTTP server on port `8080` with a `/health` endpoint |
+| Servers | `web1` (192.0.2.11) and `web2` (192.0.2.12) in group `web`, `db1` (192.0.2.21) in group `db` |
+| Cluster | namespace `lemonade`, Deployment and Service `lemonade-web`, label `app: lemonade` |
+| Container image | `lemonade-stand:<git-sha>`, built by the pipeline |
+| AWS | region `eu-west-2`, VPC `10.0.0.0/16` |
+| Google Cloud | project `lemonade-stand-dev`, region `europe-west2` |
+
+The server IP addresses come from `192.0.2.0/24`, a range reserved for documentation ([RFC 5737](https://www.rfc-editor.org/rfc/rfc5737)), so they can never clash with a real machine.
+
+## How the parts fit together
+
+```text
+ developer pushes a commit
+             │
+             ▼
+ ┌────────────────────────┐  Part 3: CI/CD
+ │  test → build image    │  tests every change, builds a container image
+ └───────────┬────────────┘
+             │ image: lemonade-stand:<git-sha>
+             ▼
+ ┌────────────────────────┐  Part 2: k3s   (or ECS / Cloud Run in Parts 4–5)
+ │  run the containers    │  keeps copies alive, replaces crashed ones, rolls out versions
+ └───────────┬────────────┘
+             │ runs on
+             ▼
+ ┌────────────────────────┐  Part 1: Ansible
+ │  configured machines   │  installs packages, writes config files, installs k3s
+ └───────────┬────────────┘
+             │ created by
+             ▼
+ ┌────────────────────────┐  Part 6: Terraform
+ │  cloud infrastructure  │  networks, VMs, buckets, databases on AWS (Part 4) or Google Cloud (Part 5)
+ └────────────────────────┘
+```
+
+Read the parts in order the first time. Parts 1–3 work entirely on your laptop. Parts 4–5 show the same ideas as rented cloud services, done by hand so you can see each piece. Part 6 then automates Parts 4–5.
+
+## The parts
+
+::: {.grid}
+
+:::
+
+## Why k3s instead of "full" Kubernetes
+
+Kubernetes is powerful, but a production installation has many separate pieces to install, secure and upgrade. [k3s](https://docs.k3s.io/) is a [CNCF](https://www.cncf.io/projects/k3s/)-certified Kubernetes distribution packaged as **one binary**. It bundles a container runtime, networking, DNS, an ingress controller, a load balancer and local storage. It is the same Kubernetes API, so every manifest and `kubectl` command in Part 2 also works on a large cluster later. You just have much less to set up while you learn.
+
+## How to read the math in this book
+
+The mathematics here is small. It turns a rule into one exact line, such as "how many batches will a rolling update take?". Every lesson defines its symbols again where they are used, but this table collects them in one place.
+
+| Symbol | Read it as | Meaning | Example |
+| --- | --- | --- | --- |
+| $x \in S$ | "$x$ is in $S$" | $x$ is a member of the set $S$ | $\texttt{web1} \in \lbrace \texttt{web1}, \texttt{web2} \rbrace$ |
+| $x \notin S$ | "$x$ is not in $S$" | $x$ is not a member of $S$ | $\texttt{db1} \notin \lbrace \texttt{web1}, \texttt{web2} \rbrace$ |
+| $A \cup B$ | "$A$ union $B$" | everything in $A$ **or** $B$ | $\lbrace 1, 2 \rbrace \cup \lbrace 2, 3 \rbrace = \lbrace 1, 2, 3 \rbrace$ |
+| $A \cap B$ | "$A$ intersect $B$" | only what is in **both** $A$ and $B$ | $\lbrace 1, 2 \rbrace \cap \lbrace 2, 3 \rbrace = \lbrace 2 \rbrace$ |
+| $A \setminus B$ | "$A$ minus $B$" | what is in $A$ but **not** in $B$ | $\lbrace 1, 2 \rbrace \setminus \lbrace 2, 3 \rbrace = \lbrace 1 \rbrace$ |
+| $A \subseteq B$ | "$A$ is a subset of $B$" | every member of $A$ is also in $B$ | $\lbrace 1 \rbrace \subseteq \lbrace 1, 2 \rbrace$ |
+| $\lvert S \rvert$ | "size of $S$" | how many members $S$ has | $\lvert \lbrace \texttt{web1}, \texttt{web2}, \texttt{db1} \rbrace \rvert = 3$ |
+| $\emptyset$ | "the empty set" | a set with no members | $\lbrace 1 \rbrace \cap \lbrace 2 \rbrace = \emptyset$ |
+| $\lceil x \rceil$ | "ceiling of $x$" | the smallest whole number $\ge x$ (round **up**) | $\lceil 2.5 \rceil = 3$, $\lceil 3 \rceil = 3$ |
+| $\lfloor x \rfloor$ | "floor of $x$" | the largest whole number $\le x$ (round **down**) | $\lfloor 2.5 \rfloor = 2$ |
+| $\sum_{i=1}^{n} a_i$ | "sum of $a_i$ for $i$ from 1 to $n$" | $a_1 + a_2 + \dots + a_n$ | $\sum_{i=1}^{3} i = 1 + 2 + 3 = 6$ |
+| $x^n$ | "$x$ to the power $n$" | $x$ multiplied by itself $n$ times | $2^{8} = 256$ |
+| $\max(a, b)$ | "maximum of $a$ and $b$" | the larger value | $\max(4, 7) = 7$ |
+| $\min(a, b)$ | "minimum of $a$ and $b$" | the smaller value | $\min(4, 7) = 4$ |
+| $f(x)$ | "$f$ of $x$" | apply the rule $f$ to the input $x$ | if $f(x) = 2x$ then $f(3) = 6$ |
+| $f(f(s)) = f(s)$ | "doing it twice equals doing it once" | **idempotent**: repeating the action changes nothing more | "make sure the light is on", done twice, leaves it on |
+| $P \Rightarrow Q$ | "if $P$ then $Q$" | whenever $P$ is true, $Q$ must be true | "a test fails" $\Rightarrow$ "the deploy stops" |
+| $P \land Q$ | "$P$ and $Q$" | both are true | two conditions in an Ansible `when:` list |
+| $P \lor Q$ | "$P$ or $Q$" | at least one is true | `web:db` selects hosts in `web` **or** `db` |
+| $\neg P$ | "not $P$" | $P$ is false | `!db` excludes the `db` group |
+| $a \le b$ | "$a$ is at most $b$" | $a$ is smaller than or equal to $b$ | requested CPU $\le$ available CPU |
+| $\approx$ | "is about" | an approximate value | $1/3 \approx 0.33$ |
+
+A worked example combines several of these symbols. Ansible runs a task on at most $f$ hosts at a time. With $n$ hosts it therefore needs
+
+$$
+w = \left\lceil \frac{n}{f} \right\rceil
+$$
+
+where:
+
+- $w$ is the number of waves (rounds) needed, a whole number;
+- $n$ is the number of target hosts;
+- $f$ is the `forks` setting, the largest number of hosts Ansible works on at once;
+- $\lceil \cdot \rceil$ rounds the division **up**, because a half-full wave still takes a whole round.
+
+Example: the Lemonade fleet has $n = 3$ hosts. With the default $f = 5$, $w = \lceil 3/5 \rceil = \lceil 0.6 \rceil = 1$ wave. With $f = 2$, $w = \lceil 3/2 \rceil = \lceil 1.5 \rceil = 2$ waves: `web1` and `web2` first, then `db1`.
+
+## What you need
+
+| Tool | Used in | How to get it |
+| --- | --- | --- |
+| A terminal and `git` | all parts | built into macOS and Linux; Git for Windows |
+| Python 3 and Ansible | Part 1 | `pipx install ansible-core` (or `brew install ansible`) |
+| Docker | Parts 2, 3, 6 | Docker Desktop, or Docker Engine on Linux |
+| `kubectl` | Parts 2 and 3 | [kubernetes.io/docs/tasks/tools](https://kubernetes.io/docs/tasks/tools/) |
+| Node.js | Part 3 | [nodejs.org](https://nodejs.org/) |
+| A GitHub account | Part 3 | to run GitHub Actions on your own copy of the example |
+| AWS / Google Cloud accounts | Parts 4–5, optional | set a budget alarm **before** creating anything |
+| Terraform | Part 6 | the official `hashicorp/terraform` Docker image, or a native install |
+
+Every part has an `examples/` folder with files you can run. The Ansible lab needs no servers. It pretends that your laptop is three machines. The k3s lab starts a real cluster in one Docker container. The CI/CD lab is a real Node.js application with tests. The Terraform lab starts the Lemonade Stand as a local container, so it needs no cloud account.
+
+## Related parts of the library
+
+- [System Design](../system-design/index.qmd) explains *what* to build: services, consistency and failure handling. This book explains *how to run and ship it*.
+- [Microservices Architecture](../system-design/microservices/index.qmd) covers gateways, discovery and resilience. k3s Services and Ingress are the platform versions of those ideas.

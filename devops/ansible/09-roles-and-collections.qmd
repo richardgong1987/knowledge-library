@@ -1,0 +1,232 @@
+---
+title: "9. Roles and Collections"
+description: "Package automation for reuse: the role folder convention, defaults versus vars, roles versus import_role versus include_role, dependencies, argument specs, collections, requirements.yml and a project layout."
+---
+
+## The problem
+
+The Lemonade Stand is opening a second stand at the beach, with its own `staging` and `prod` servers. You want the **same** web-server setup there. Copying tasks from `site.yml` into a new playbook means two copies that slowly drift apart.
+
+You also want modules that are not in `ansible.builtin`, for example a firewall module, and a database role that someone else already wrote and tested.
+
+**Roles** package your own work for reuse. **Collections** bring in other people's.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="LEGO sets"}
+A LEGO set comes in a box. Inside there is everything for one model: the **pieces**, the **instruction booklet**, and a **sticker sheet** with suggested colours. You can build the same set at home and at Grandma's house, and it comes out the same. If you want a red car instead of a blue one, you choose your own stickers. The instructions stay the same.
+
+A **role** is one LEGO set. Tasks are the instructions, templates and files are the pieces, and `defaults` is the sticker sheet you are allowed to change.
+
+A **collection** is a whole LEGO theme, like the "City" range: many sets, plus special pieces (modules) that you can't get anywhere else. **Ansible Galaxy** is the toy shop.
+:::
+
+## The concept, precisely
+
+- A **role** is a folder with a fixed layout. Ansible knows where to look inside it, so you write `roles: [lemonade_web]` and it finds the tasks, handlers, templates and defaults by itself.
+- A **collection** is a package of modules, plugins and roles, published under a name `namespace.collection` such as `community.general`. You install it with `ansible-galaxy`.
+- A **fully qualified collection name** (FQCN) points at one item inside a collection: `community.general.ufw`.
+
+### The role folder convention
+
+`ansible-galaxy role init lemonade_db` creates this skeleton (real output, ansible-core 2.21):
+
+```text
+lemonade_db/
+├── README.md
+├── defaults/main.yml     # tunable variables (lowest precedence)
+├── files/                # static files for copy / script / unarchive
+├── handlers/main.yml     # handlers
+├── meta/main.yml         # author, licence, dependencies
+├── tasks/main.yml        # the entry point: tasks run in order
+├── templates/            # .j2 files for template
+├── tests/                # inventory + test.yml to try the role
+└── vars/main.yml         # internal constants (high precedence)
+```
+
+| Folder or file | What it holds | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `tasks/main.yml` | The role's tasks. | Required. Split long roles with `include_tasks`. | `- name: Render the nginx config` |
+| `handlers/main.yml` | The role's handlers. | Other roles in the same play can notify them. | `- name: Reload nginx` |
+| `defaults/main.yml` | Every variable a user may change. | Precedence level 2: anything overrides it. Prefix names with the role name. | `lemonade_app_port: 8080` |
+| `vars/main.yml` | Values users should not change. | Level 15: overrides inventory. | `lemonade_folders: [nginx, site]` |
+| `templates/` | Jinja2 files. | `template: src: nginx.conf.j2` finds them here. | `templates/nginx.conf.j2` |
+| `files/` | Static files. | `copy: src: logo.png` finds them here. | `files/logo.png` |
+| `meta/main.yml` | Metadata and dependencies. | `dependencies:` run **before** this role. | `dependencies: [common]` |
+| `meta/argument_specs.yml` | Types of the role's inputs. | Checked automatically before `tasks/main.yml`. | see below |
+| `library/` | Custom modules for this role. | | `library/lemonade_check.py` |
+| `README.md` | How to use the role. | Document every default. | |
+
+## Every way to use a role
+
+| Way | When Ansible processes it | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `roles:` in a play | **Static**, when the playbook is read. Runs before `tasks:`. | The classic form. | `roles: [lemonade_web]` |
+| `roles:` with parameters | Static. | Parameters are precedence level 20. | `roles: [{ role: lemonade_web, lemonade_app_port: 9090 }]` |
+| `import_role` | **Static**, at the place you write it in `tasks:`. | `when` and `tags` are copied onto every task inside. Tasks show in `--list-tasks`. | `ansible.builtin.import_role: { name: lemonade_web }` |
+| `include_role` | **Dynamic**, only when the task is reached. | Can be looped and decided at run time. Inner tasks are hidden from `--list-tasks`. | `ansible.builtin.include_role: { name: "{{ app_role }}" }` |
+
+The same split exists for plain task files:
+
+| Keyword | Kind | Use it when | Example |
+| --- | --- | --- | --- |
+| `import_tasks` | Static | The file name is fixed and you want `--list-tasks` and `--start-at-task` to see the tasks. | `ansible.builtin.import_tasks: install.yml` |
+| `include_tasks` | Dynamic | The file name comes from a variable, or you loop over it. | `ansible.builtin.include_tasks: "{{ ansible_facts['os_family'] }}.yml"` |
+
+Real `--list-tasks` output for one `import_role` and one `include_role` of the same small role:
+
+```text
+    tasks:
+      greet : Validating arguments against arg spec 'main' - Say hello.	TAGS: [always]
+      ansible.builtin.debug	TAGS: []
+      ansible.builtin.include_role	TAGS: []
+```
+
+The imported role's tasks are listed. The included role is one opaque task until it runs.
+
+### Run once, unless the parameters differ
+
+Within one play, a role listed twice with **the same parameters** runs only once. To run it again, give it different parameters, or set `allow_duplicates: true` in its `meta/main.yml`.
+
+### Argument specs
+
+`meta/argument_specs.yml` declares the role's inputs. Ansible adds a validation task at the start of the role.
+
+```yaml
+argument_specs:
+  main:
+    short_description: Configure a Lemonade web server.
+    options:
+      lemonade_app_port: { type: int, required: true }
+      lemonade_menu: { type: list, elements: dict }
+```
+
+Passing `-e lemonade_app_port=abc` now fails early, with a clear message, before any file is touched:
+
+```text
+Validation of arguments failed:
+argument 'lemonade_app_port' is of type str and we were unable to convert to int
+```
+
+## Collections
+
+| Command or file | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `ansible-galaxy collection install NAME` | Installs a collection from Galaxy. | Into `~/.ansible/collections` by default. | `ansible-galaxy collection install community.general` |
+| `… install NAME:VERSION` | Installs a specific version or range. | Quote ranges in the shell. | `ansible-galaxy collection install 'community.general:>=9.0.0,<10.0.0'` |
+| `… install -r requirements.yml` | Installs everything in a requirements file. | Commit this file; run it in CI. | `ansible-galaxy collection install -r requirements.yml` |
+| `… install -p DIR` | Installs into a project folder. | Pair with `collections_path` in `ansible.cfg`. | `-p ./collections` |
+| `ansible-galaxy collection list` | Shows installed collections and versions. | | `ansible-galaxy collection list community.general` |
+| `ansible-galaxy role install NAME` | Installs a standalone role from Galaxy. | Older style; many roles now live in collections. | `ansible-galaxy role install geerlingguy.nginx` |
+| `collections:` play keyword | Lets you write short module names. | Prefer the FQCN instead; it is clearer. | `collections: [community.general]` |
+
+A `requirements.yml` for the Lemonade Stand:
+
+```yaml
+collections:
+  - name: ansible.posix
+    version: ">=2.0.0"
+  - name: community.general
+    version: ">=9.0.0,<10.0.0"
+roles:
+  - name: geerlingguy.nginx
+```
+
+## Recommended project layout
+
+```text
+lemonade-infra/
+├── ansible.cfg
+├── requirements.yml
+├── inventories/
+│   ├── staging/{hosts.yml, group_vars/, host_vars/}
+│   └── prod/{hosts.yml, group_vars/, host_vars/}
+├── roles/
+│   ├── lemonade_web/
+│   └── lemonade_db/
+├── site.yml                # imports web.yml and db.yml
+├── web.yml
+└── db.yml
+```
+
+Run against one environment with `ansible-playbook -i inventories/staging site.yml`.
+
+## Worked example
+
+The lab's `site.yml` uses the `lemonade_web` role in four lines:
+
+```yaml
+- name: Configure the web servers
+  hosts: web
+  gather_facts: false
+  roles:
+    - lemonade_web
+```
+
+The output shows each task prefixed with the role name, `TASK [lemonade_web : Render the nginx config]`, so you always know which role a line came from. To reuse the role at the beach stand, point a new inventory at the same playbook. The role does not change.
+
+## Rules and conventions
+
+- **One role, one job**: `lemonade_web`, `lemonade_db`, `common`. Avoid a "do everything" role.
+- **Every input in `defaults/`**, documented in `README.md` and typed in `argument_specs.yml`.
+- **Prefix variables with the role name**, so two roles never fight over `port`.
+- **Use `import_*` by default** and `include_*` only when you need run-time decisions or loops.
+- **Pin collection versions** in `requirements.yml`, so a new release cannot surprise you.
+- **Write FQCNs everywhere**, even for `ansible.builtin`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| A user-facing value in `vars/main.yml` | `group_vars` overrides are ignored. | Move it to `defaults/main.yml`. |
+| `when:` on `import_role`, expecting one check | The condition is evaluated on every inner task, sometimes with surprising results. | Use `include_role` to decide once. |
+| Tags on `include_role` | Inner tasks don't get the tag, and `--tags` skips them. | Use `import_role`, or `apply: { tags: [...] }`. |
+| Listing a role twice to run it twice | It runs once. | Give different parameters, or `allow_duplicates: true`. |
+| Collection not installed | `couldn't resolve module/action 'community.general.ufw'` | `ansible-galaxy collection install -r requirements.yml`. |
+
+## Mathematical Abstraction
+
+**Defaults versus vars.** Using the precedence rule from [lesson 6](06-variables-and-facts.qmd), a role default has rank $r_d = 2$ and a role var has rank $r_v = 15$. An inventory host variable has rank $r_h = 9$. So
+
+$$
+r_d < r_h < r_v
+$$
+
+where $r_d$, $r_h$ and $r_v$ are the ranks of a role default, an inventory host variable and a role variable.
+
+**Example.** If `lemonade_nginx_workers` is in `defaults/` (1) and `host_vars/web1.yml` (4), then $\max(2, 9) = 9$ wins: **4**. Move the default to `vars/` and the winner becomes $\max(15, 9) = 15$: **1**, and the host override is silently lost. That is why user-facing values belong in `defaults/`.
+
+**How many times a role runs.** In one play, list a role $k$ times with parameter sets $p_1, \dots, p_k$. Without `allow_duplicates`:
+
+$$
+\operatorname{runs} = \big\lvert \lbrace p_1, p_2, \dots, p_k \rbrace \big\rvert
+$$
+
+where:
+
+- $p_i$ is the set of parameters passed on the $i$-th listing (empty if none);
+- $\lbrace \dots \rbrace$ makes a **set**, so identical parameter sets count once;
+- $\lvert \cdot \rvert$ is the number of elements in the set.
+
+**Example.** A test play listed a small role three times: `greet`, `greet`, and `{ role: greet, greet_port: 9090 }`. The parameter sets are $p_1 = \lbrace\rbrace$, $p_2 = \lbrace\rbrace$ and $p_3 = \lbrace \text{port} = 9090 \rbrace$. The set $\lbrace p_1, p_2, p_3 \rbrace = \lbrace \lbrace\rbrace, \lbrace \text{port} = 9090 \rbrace \rbrace$ has 2 elements, and the real run printed exactly two messages: `port 8080` and `port 9090`.
+
+**Version ranges.** The requirement `>=9.0.0,<10.0.0` is a half-open interval:
+
+$$
+v \in [\,9.0.0,\ 10.0.0\,)
+$$
+
+where $v$ is the collection version, $[$ means the left end is included and $)$ means the right end is excluded, with versions compared part by part (major, then minor, then patch).
+
+**Example.** 9.0.0 is allowed (left end included). 9.5.2 is allowed, since $9 = 9$ and the major part is below 10. 10.0.0 is **not** allowed (right end excluded), so a breaking major release cannot slip in.
+
+## References
+
+- Ansible documentation, "Roles": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_reuse_roles.html>
+- Ansible documentation, "Re-using Ansible artifacts" (import versus include): <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_reuse.html>
+- Ansible documentation, "Using Ansible collections": <https://docs.ansible.com/projects/ansible/latest/collections_guide/index.html>
+- `ansible-galaxy` CLI: <https://docs.ansible.com/projects/ansible/latest/cli/ansible-galaxy.html>
+- Ansible Galaxy: <https://galaxy.ansible.com/>
+- Jeff Geerling's widely used roles, such as `geerlingguy.nginx`: <https://github.com/geerlingguy/ansible-role-nginx>
+
+[← Previous: Conditionals, loops and handlers](08-conditionals-loops-and-handlers.qmd) · [Ansible index](index.qmd) · [Next: Vault and secrets →](10-vault-and-secrets.qmd)

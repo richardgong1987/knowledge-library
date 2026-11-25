@@ -1,0 +1,208 @@
+---
+title: "3. Ad Hoc Commands"
+description: "Run one task on many servers with the ansible command: the syntax, every common flag, command versus shell, and how forks decide speed."
+---
+
+## The problem
+
+It is a hot Saturday and the Lemonade Stand is busy. You need quick answers and quick fixes, and writing a playbook for each one would be overkill:
+
+- Which version is each web server running right now?
+- Put a "Closed for lunch" notice on both web servers.
+- Restart nginx on `web2` only.
+
+An **ad hoc command** runs one module on many hosts from a single line in the terminal.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Simon says"}
+In the game *Simon says*, one person calls out an instruction and everybody does it at once: "Simon says touch your nose!" Nobody writes anything down first. It is a single instruction, for right now.
+
+An ad hoc command is "Simon says" for servers. `ansible web -a "uptime"` means "Simon says: every web server, tell me your uptime." When you want the same instructions every week, write them into a playbook instead. That is the recipe card you keep.
+:::
+
+## The concept, precisely
+
+The shape of every ad hoc command:
+
+```text
+ansible <pattern> -m <module> -a "<arguments>" [flags]
+```
+
+- `<pattern>` chooses the hosts ([lesson 2](02-inventory.qmd)).
+- `-m` names the module. When you leave it out, Ansible uses `ansible.builtin.command`.
+- `-a` gives the module's arguments, either as `key=value key=value` or as JSON.
+- Arguments are Jinja templates, so `{{ inventory_hostname }}` becomes each host's own name.
+
+Ansible runs the module on every matched host **in parallel**, up to `forks` hosts at a time (default 5).
+
+## Every common flag
+
+| Flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `-i FILE` | Inventory to use. | Not needed when `ansible.cfg` sets `inventory`. | `-i inventory.yml` |
+| `-m NAME` | Module to run. | Default `ansible.builtin.command`. Use the full name. | `-m ansible.builtin.copy` |
+| `-a ARGS` | Module arguments. | Quote the whole string. | `-a "dest=/tmp/x content=hi"` |
+| `-b`, `--become` | Run as another user, root by default. | Needed for packages and services. | `-b` |
+| `--become-user U` | User to become. | Default `root`. | `--become-user postgres` |
+| `--become-method M` | How to become. | Default `sudo`. | `--become-method su` |
+| `-K` | Ask for the sudo password. | Use with `-b` when sudo needs a password. | `-b -K` |
+| `-u USER` | SSH login user. | Overrides `ansible_user`. | `-u deploy` |
+| `-k` | Ask for the SSH password. | Prefer SSH keys. | `-k` |
+| `--private-key FILE` | SSH key to use. | | `--private-key ~/.ssh/lemonade` |
+| `-c TYPE` | Connection type. | `ssh` (default), `local`. | `-c local` |
+| `-f N` | Forks: hosts at once. | Default 5. Raise it for big fleets. | `-f 20` |
+| `-l PATTERN` | Limit to a subset. | Intersected with `<pattern>`. | `web -l web2` |
+| `-C`, `--check` | Dry run: predict, don't change. | Modules without check support are skipped. | `-C` |
+| `-D`, `--diff` | Show file changes as a diff. | Great together with `-C`. | `-C -D` |
+| `-e VARS` | Extra variables. | Highest precedence. `@file.yml` loads a file. | `-e lab_root=/tmp/x` |
+| `-v` … `-vvvvvv` | More output. | `-vvv` shows connection details; `-vvvv` adds SSH debugging. | `-vvv` |
+| `--list-hosts` | Show matched hosts and stop. | Always safe. | `--list-hosts` |
+| `-T SECONDS` | Connection timeout. | Default 10. | `-T 30` |
+| `--task-timeout S` | Kill a task after S seconds. | | `--task-timeout 60` |
+| `-B S -P N` | Run in the background for at most S seconds, checking every N seconds. | For long jobs that would outlive the SSH session. `-P 0` = fire and forget. | `-B 600 -P 10` |
+| `--vault-password-file F` | Password for encrypted variables. | [Lesson 10](10-vault-and-secrets.qmd). | `--vault-password-file pass.txt` |
+| `--playbook-dir DIR` | Pretend a playbook lives in DIR. | Makes `group_vars/` and `roles/` there visible. | `--playbook-dir .` |
+| `-o` | One line per host. | **Deprecated in 2.21, removed in 2.23.** Use the `oneline` callback instead. | `-o` |
+| `-t DIR` | Save results as files in DIR. | **Deprecated in 2.21, removed in 2.23.** | `-t /tmp/results` |
+
+## `command` or `shell`?
+
+Both run a program. The difference is whether a **shell** (`/bin/sh`) reads your line first.
+
+| | `ansible.builtin.command` | `ansible.builtin.shell` |
+| --- | --- | --- |
+| Pipes `\|`, redirects `>` | No | Yes |
+| `$HOME`, `*.txt`, `&&` | No | Yes |
+| Safe with odd input | Yes: arguments are never re-parsed | Take care: a `;` in a variable runs a second command |
+| Idempotent | No, unless you add `creates=` or `removes=` | Same |
+| Use it when | You run one program with arguments | You truly need shell features |
+
+Rule: use `command` by default, and use `shell` only for pipes, redirects or shell variables. Before both, look for a real module. `copy` is better than `shell: echo > file`.
+
+## Worked examples
+
+All from `devops/ansible/examples/`. Paths in the output are shown with the default `lab_root`.
+
+Which version does each web server serve?
+
+```bash
+ansible web -a "grep -o 'version .*<' {{ lab_root }}/{{ inventory_hostname }}/site/index.html"
+```
+
+```text
+web1 | CHANGED | rc=0 >>
+version 1.1.0<
+web2 | CHANGED | rc=0 >>
+version 1.1.0<
+```
+
+`CHANGED` here does not mean anything changed. `command` cannot tell, so it always says `CHANGED`. `rc=0` is the exit code.
+
+A pipe needs `shell`. With `command`, `ls` receives `|`, `wc` and `-l` as file names:
+
+```bash
+ansible db1 -a "ls {{ lab_root }}/db1 | wc -l"                      # FAILED rc=1: ls: |: No such file
+ansible db1 -m ansible.builtin.shell -a "ls {{ lab_root }}/db1 | wc -l"   # CHANGED rc=0 >> 2
+```
+
+A real module is idempotent. Run this twice:
+
+```bash
+ansible web -m ansible.builtin.copy \
+  -a "content='Closed for lunch' dest={{ lab_root }}/{{ inventory_hostname }}/site/notice.txt"
+```
+
+```text
+web1 | CHANGED =>        # first run
+    changed: true
+web1 | SUCCESS =>        # second run
+    changed: false
+```
+
+`creates=` makes `command` idempotent. It skips the command when the file already exists:
+
+```bash
+ansible db1 -a "touch {{ lab_root }}/db1/seeded creates={{ lab_root }}/db1/seeded"
+```
+
+```text
+db1 | CHANGED | rc=0 >>                                   # first run
+db1 | SUCCESS | rc=0 >>                                   # second run
+skipped, since /tmp/lemonade-lab/db1/seeded exists
+```
+
+On real servers, with sudo:
+
+```bash
+ansible web -b -m ansible.builtin.package -a "name=nginx state=present"
+ansible web2 -b -m ansible.builtin.service -a "name=nginx state=restarted"
+ansible db1 -m ansible.builtin.setup -a "filter=ansible_distribution*"
+```
+
+## Rules and conventions
+
+- **Ad hoc for questions and emergencies, playbooks for anything you repeat.** If you type the same ad hoc command twice, put it in a playbook.
+- **Look at the hosts first**: add `--list-hosts` before any command that changes things.
+- **Prefer a module over `command`/`shell`.** Modules report `changed` honestly and support `--check`.
+- **Quote the `-a` string**, and use single quotes inside it.
+- **Restarting services is not idempotent by design.** `state=restarted` always restarts. Use `state=started` to only make sure a service is running.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Pipe or `>` with the default module | `ls: \|: No such file or directory` | Use `-m ansible.builtin.shell`. |
+| Forgetting `-b` for packages | `This command has to be run under the root user.` | Add `-b`, and `-K` if sudo asks for a password. |
+| Double quotes around `{{ }}` arguments in bash | Works, but `$` inside is expanded by your local shell. | Use single quotes outside, or escape `$`. |
+| `state=restarted` in a loop over many hosts | All web servers restart at once and the stand goes down. | Use `-f 1`, or a playbook with `serial` ([lesson 11](11-rolling-deployments.qmd)). |
+| Using `-o` in scripts | Deprecation warning; it breaks in ansible-core 2.23. | Configure the `oneline` callback, or use a playbook. |
+
+## Mathematical Abstraction
+
+Ansible starts at most $f$ hosts at the same time. If every host takes about the same time per task, the hosts run in **waves**:
+
+$$
+w = \left\lceil \frac{n}{f} \right\rceil
+$$
+
+where:
+
+- $n$ is the number of hosts the pattern matched (a count, $n \ge 1$);
+- $f$ is the number of forks, set by `-f` or `forks` in `ansible.cfg` (default 5);
+- $\lceil x \rceil$ ("ceiling") rounds $x$ up to the next whole number;
+- $w$ is the number of waves.
+
+**Example.** The lab has $n = 3$ hosts.
+
+- With $f = 5$: $w = \lceil 3/5 \rceil = \lceil 0.6 \rceil = 1$ wave. All three run together.
+- With $f = 1$: $w = \lceil 3/1 \rceil = 3$ waves. One host at a time.
+
+The time for one task is then roughly:
+
+$$
+T \approx w \cdot t + c
+$$
+
+where:
+
+- $T$ is the total time in seconds;
+- $t$ is the time one host needs for the task, in seconds;
+- $c$ is Ansible's fixed start-up cost, in seconds (reading the inventory, starting Python);
+- $w$ is the number of waves from the formula above.
+
+**Example.** In the lab, `ansible all -a "sleep 1"` has $t = 1$ s. Measured on a laptop:
+
+- `-f 1`: $w = 3$, so $T \approx 3 \cdot 1 + c$. Measured: 4.3 s, which gives $c \approx 1.3$ s.
+- `-f 3`: $w = 1$, so $T \approx 1 \cdot 1 + c$. Measured: 1.8 s, which gives $c \approx 0.8$ s.
+
+For a summer fleet of $n = 12$ web servers with $t = 4$ s, the default $f = 5$ gives $w = \lceil 12/5 \rceil = \lceil 2.4 \rceil = 3$ waves, so $T \approx 3 \cdot 4 = 12$ s plus start-up. Raising $f$ to 12 gives one wave, about 4 s. The formula is an approximation: real hosts take different times, and Ansible starts a new host as soon as a fork is free.
+
+## References
+
+- Ansible documentation, "Introduction to ad hoc commands": <https://docs.ansible.com/projects/ansible/latest/command_guide/intro_adhoc.html>
+- Ansible documentation, `ansible` CLI reference: <https://docs.ansible.com/projects/ansible/latest/cli/ansible.html>
+- `ansible.builtin.command` module: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/command_module.html>
+- `ansible.builtin.shell` module: <https://docs.ansible.com/projects/ansible/latest/collections/ansible/builtin/shell_module.html>
+
+[← Previous: Inventory](02-inventory.qmd) · [Ansible index](index.qmd) · [Next: Playbooks →](04-playbooks.qmd)

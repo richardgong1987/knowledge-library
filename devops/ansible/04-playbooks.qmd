@@ -1,0 +1,273 @@
+---
+title: "4. Playbooks"
+description: "Write repeatable automation in YAML: the YAML rules that trip beginners, every play and task keyword, the ansible-playbook flags, and how to read PLAY RECAP."
+---
+
+## The problem
+
+Ad hoc commands are quick, but they disappear when you close the terminal. Setting up a Lemonade web server takes several steps in a fixed order: create folders, write the nginx config, write the menu page, reload nginx. You want those steps:
+
+- written down in Git, so a teammate can review them;
+- run in the same order on every web server;
+- safe to run again tomorrow.
+
+A **playbook** is that written-down list.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="The team's playbook and the pilot's checklist"}
+A football coach keeps a **playbook**. Each *play* says which players do what: "defenders, stay back; strikers, run left". Ansible borrowed the name. A play says which **hosts** (players) run which **tasks** (moves).
+
+Pilots and surgeons use **checklists** too. In *The Checklist Manifesto* (2009), the surgeon Atul Gawande tells how a simple 19-item checklist, tested in eight hospitals around the world, cut deaths after surgery from 1.5% to 0.8%. People are not bad at their jobs. They just forget steps when they are busy. A checklist never forgets.
+
+A playbook is a checklist for computers. Computers follow it perfectly, every single time.
+:::
+
+## The concept, precisely
+
+- A **playbook** is a YAML file that holds a list of **plays**.
+- A **play** maps a set of hosts (`hosts:`) to an ordered list of **tasks**.
+- A **task** calls one module with arguments.
+- Ansible runs **task by task**: task 1 on all hosts, then task 2 on all hosts, and so on. This is the default `linear` strategy.
+
+The first play of the lab's [`site.yml`](examples/site.yml):
+
+```yaml
+- name: Configure the web servers   # play name, shown in the output
+  hosts: web                        # which hosts (a pattern)
+  gather_facts: false               # skip collecting system facts (faster)
+  roles:
+    - lemonade_web                  # the tasks come from this role
+```
+
+A play with tasks written directly in it:
+
+```yaml
+- name: Configure the database server
+  hosts: db
+  tasks:
+    - name: Write the database settings          # task name
+      ansible.builtin.copy:                      # module (FQCN)
+        content: "port = {{ db_port }}\n"        # module arguments
+        dest: "{{ lab_root }}/db1/db.conf"
+```
+
+## YAML rules that matter
+
+Ansible files are YAML. Most beginner errors are YAML errors, not Ansible errors.
+
+| Rule | Right | Wrong | Why |
+| --- | --- | --- | --- |
+| Indent with spaces, never tabs | `··hosts: web` | `⇥hosts: web` | YAML forbids tabs for indentation. Two spaces is the convention. |
+| A list item starts with `- ` | `- name: Render` | `-name: Render` | The space after `-` is required. |
+| A map entry is `key: value` | `state: directory` | `state:directory` | The space after `:` is required. |
+| Quote a value that **starts** with `{{` | `dest: "{{ path }}"` | `dest: {{ path }}` | Unquoted `{` starts a YAML dictionary. |
+| Quote a value that **contains** `: ` | `msg: "Price: 2.50"` | `msg: Price: 2.50` | `: ` would start a second key. |
+| Write booleans as `true` / `false` | `become: true` | `become: yes` | `yes`, `no`, `on`, `off` are booleans in YAML 1.1 too, but they confuse readers. A country code `NO` silently becomes `false`. |
+| Quote file modes | `mode: "0644"` | `mode: 644` | Unquoted `644` is the decimal number 644, which is the wrong permission. See the maths below. |
+| `\|` keeps line breaks | `content: \|` | | For files and scripts. |
+| `>` folds lines into one | `msg: >` | | For long sentences. |
+| `---` at the top is optional | `---` | | It marks the start of a YAML document. |
+| `#` starts a comment | `# why we do this` | | Explain *why*, not *what*. |
+
+## Every play keyword
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `name` | Label printed as `PLAY [...]`. | Always set it. | `name: Configure the web servers` |
+| `hosts` | Which hosts the play targets. | A pattern ([lesson 2](02-inventory.qmd)). Required. | `hosts: web` |
+| `become` | Run tasks as another user (sudo). | Set on the play or on single tasks. | `become: true` |
+| `become_user` | Which user to become. | Default `root`. | `become_user: postgres` |
+| `become_method` | How to become. | Default `sudo`. | `become_method: su` |
+| `remote_user` | SSH login user for this play. | Overrides `ansible.cfg`, but `ansible_user` overrides it. | `remote_user: deploy` |
+| `connection` | Connection plugin for this play. | | `connection: local` |
+| `gather_facts` | Run the `setup` module first. | Default `true`. Turn off when you don't use facts. | `gather_facts: false` |
+| `gather_subset` | Which facts to collect. | Smaller is faster. | `gather_subset: [min, network]` |
+| `vars` | Variables for this play. | | `vars: { lemonade_app_port: 8080 }` |
+| `vars_files` | Load variables from files. | Used for secrets files. | `vars_files: [secrets/vault.yml]` |
+| `vars_prompt` | Ask the user for a value. | Rare in automation, since it blocks CI. | `vars_prompt: [{ name: version }]` |
+| `pre_tasks` | Tasks that run **before** roles. | Drain from load balancer, update caches. | `pre_tasks: [...]` |
+| `roles` | Roles to apply. | Run after `pre_tasks`, before `tasks`. | `roles: [lemonade_web]` |
+| `tasks` | The main task list. | | `tasks: [...]` |
+| `post_tasks` | Tasks that run **after** `tasks`. | Health checks, re-enable in load balancer. | `post_tasks: [...]` |
+| `handlers` | Tasks that run only when notified. | [Lesson 8](08-conditionals-loops-and-handlers.qmd). | `handlers: [...]` |
+| `serial` | Run the play in batches of hosts. | [Lesson 11](11-rolling-deployments.qmd). | `serial: 1` |
+| `strategy` | How tasks are scheduled. | `linear` (default) or `free` (each host runs at its own speed). | `strategy: free` |
+| `max_fail_percentage` | Abort when too many hosts in a batch fail. | | `max_fail_percentage: 0` |
+| `any_errors_fatal` | One failure stops the whole play. | For changes that must be all-or-nothing. | `any_errors_fatal: true` |
+| `ignore_unreachable` | Keep going when a host is unreachable. | | `ignore_unreachable: true` |
+| `force_handlers` | Run notified handlers even after a failure. | | `force_handlers: true` |
+| `order` | Order of hosts. | `inventory` (default), `sorted`, `reverse_sorted`, `reverse_inventory`, `shuffle`. | `order: sorted` |
+| `tags` | Tags inherited by every task in the play. | | `tags: [web]` |
+| `environment` | Environment variables for every task. | | `environment: { TZ: UTC }` |
+| `module_defaults` | Default arguments for a module. | Saves repeating the same option. | `module_defaults: { ansible.builtin.uri: { timeout: 5 } }` |
+| `check_mode` | Force dry-run mode on or off. | | `check_mode: true` |
+| `diff` | Force diff output on or off. | | `diff: true` |
+
+Sections run in this fixed order, whatever order you write them in: `pre_tasks` → `roles` → `tasks` → `post_tasks`. Notified handlers run at the end of each section.
+
+## Every common task keyword
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `name` | Label printed as `TASK [...]`. | Describe the result: "Render the menu page". | `name: Render the menu page` |
+| module (FQCN) | Which module to run, with its arguments. | Exactly one module per task. | `ansible.builtin.file: { path: /srv/x, state: directory }` |
+| `register` | Save the module's result in a variable. | [Lesson 6](06-variables-and-facts.qmd). | `register: menu_check` |
+| `when` | Run only if the condition is true. | A bare Jinja expression without `{{ }}`. | `when: lemonade_app_port != 80` |
+| `loop` | Run the task once per item. | The item is `{{ item }}`. | `loop: [nginx, site]` |
+| `loop_control` | Rename `item`, add an index, shorten output. | | `loop_control: { label: "{{ item.name }}" }` |
+| `notify` | Trigger a handler if this task changed something. | Use the handler's exact name. | `notify: Reload nginx` |
+| `tags` | Labels for `--tags` / `--skip-tags`. | | `tags: [nginx]` |
+| `become` | Escalate for this task only. | | `become: true` |
+| `delegate_to` | Run on a different host. | For load balancers and the control node. | `delegate_to: localhost` |
+| `run_once` | Run on one host only (per batch). | | `run_once: true` |
+| `changed_when` | Decide yourself when the task counts as changed. | Common with `command` / `shell`. | `changed_when: false` |
+| `failed_when` | Decide yourself when the task counts as failed. | | `failed_when: result.rc not in [0, 1]` |
+| `ignore_errors` | Continue even if the task fails. | Shows as `ignored`. Use sparingly. | `ignore_errors: true` |
+| `no_log` | Hide the task's arguments and result. | Always for passwords. | `no_log: true` |
+| `environment` | Environment variables for this task. | | `environment: { LANG: C }` |
+| `check_mode` | `true`: always dry run. `false`: run even during `--check`. | `false` suits read-only commands. | `check_mode: false` |
+| `diff` | Show a diff for this task. | | `diff: false` |
+| `until` / `retries` / `delay` | Retry until a condition holds. | [Lesson 8](08-conditionals-loops-and-handlers.qmd). | `until: health.status == 200` |
+| `timeout` | Stop the task after N seconds. | | `timeout: 60` |
+| `vars` | Variables for this task only. | | `vars: { greeting: hi }` |
+| `async` / `poll` | Run in the background. | For tasks longer than the SSH timeout. | `async: 600` |
+
+## Every common `ansible-playbook` flag
+
+| Flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `--syntax-check` | Parse the YAML and stop. | First thing in CI. | `ansible-playbook site.yml --syntax-check` |
+| `--list-hosts` | Show the hosts of each play. | Nothing runs. | `--list-hosts` |
+| `--list-tasks` | Show the tasks that would run. | Nothing runs. | `--list-tasks` |
+| `--list-tags` | Show every tag. | | `--list-tags` |
+| `-C`, `--check` | Dry run. | Modules that can't predict are skipped. | `--check` |
+| `-D`, `--diff` | Show file differences. | Combine with `--check`. | `--check --diff` |
+| `-l`, `--limit` | Restrict to some hosts. | Pattern, or `@file` with one host per line. | `--limit web1` |
+| `-t`, `--tags` | Run only tasks with these tags. | Comma-separated. | `--tags nginx,site` |
+| `--skip-tags` | Run everything except these tags. | | `--skip-tags slow` |
+| `-e`, `--extra-vars` | Set variables. | Always wins ([lesson 6](06-variables-and-facts.qmd)). | `-e lemonade_version=1.1.0` |
+| `--start-at-task` | Begin at the task with this name. | For resuming after a fix. | `--start-at-task "Render the menu page"` |
+| `--step` | Ask before each task. | For learning and debugging. | `--step` |
+| `--force-handlers` | Run notified handlers even if a task failed. | | `--force-handlers` |
+| `-f`, `-b`, `-K`, `-u`, `-i`, `-v` | Same as for `ansible`. | [Lesson 3](03-ad-hoc-commands.qmd). | `-f 10 -b` |
+
+## Worked example
+
+Look before you leap. From `devops/ansible/examples/`:
+
+```bash
+ansible-playbook site.yml --list-tasks
+```
+
+```text
+  play #1 (web): Configure the web servers	TAGS: []
+      lemonade_web : Create the nginx and site folders	TAGS: []
+      lemonade_web : Render the nginx config	TAGS: []
+      lemonade_web : Render the menu page	TAGS: []
+  play #2 (db): Configure the database server	TAGS: []
+      Create the database folder	TAGS: []
+      Write the database settings	TAGS: []
+```
+
+Preview a port change on `web1` without touching anything:
+
+```bash
+ansible-playbook site.yml --limit web1 --check --diff -e lemonade_app_port=9090
+```
+
+```text
+TASK [lemonade_web : Render the nginx config] **********************************
+-    location / { proxy_pass http://127.0.0.1:8080; }
++    location / { proxy_pass http://127.0.0.1:9090; }
+changed: [web1]
+
+PLAY RECAP *********************************************************************
+web1   : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+The file on disk still says 8080. `--check` only predicted the change.
+
+## Reading PLAY RECAP
+
+| Counter | Meaning | Good or bad? |
+| --- | --- | --- |
+| `ok` | Tasks that succeeded, **including** the changed ones. | Expected. |
+| `changed` | Tasks that modified the host. | Expected on the first run; should be 0 on the second. |
+| `unreachable` | Ansible could not connect. The host is dropped from the rest of the play. | Check SSH, DNS and the firewall. |
+| `failed` | A task failed. The host stops running further tasks. | Read the error above the recap. |
+| `skipped` | A `when` was false, or a module could not run in check mode. | Usually fine. |
+| `rescued` | A failure handled by a `rescue:` section. | Fine. The recovery worked. |
+| `ignored` | A failure hidden by `ignore_errors: true`. | Look at it. Something did fail. |
+
+The exit code tells scripts and CI what happened: `0` all good, `1` general error, `2` at least one host failed, `4` a host was unreachable (or the playbook could not be parsed), `5` bad command-line options, `99` you pressed Ctrl-C.
+
+## Rules and conventions
+
+- **One playbook per purpose**: `site.yml` builds everything; `rolling-update.yml` upgrades; small task files live in roles.
+- **Name every play and task.** The names are your log.
+- **Use FQCNs**: `ansible.builtin.copy`, not `copy`.
+- **Put tasks in roles** once a play has more than a handful of tasks ([lesson 9](09-roles-and-collections.qmd)).
+- **Run `--syntax-check`, then `--check --diff`, then the real run.**
+- **Set `gather_facts: false`** when no task uses facts. It saves one task per host.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Unquoted `{{ }}` at the start of a value | `YAML parsing failed: This may be an issue with missing quotes around a template block.` | Quote it: `dest: "{{ path }}"`. |
+| `msg: Price: 2.50` | `YAML parsing failed: Colons in unquoted values must be followed by a non-space character.` | Quote the whole value. |
+| `mode: 644` | Files get odd permissions (`--w----r-T`). | `mode: "0644"`. |
+| Tabs in the file | `YAML parsing failed: Tabs are usually invalid in YAML.` | Set your editor to insert spaces. |
+| Expecting `--check` to run `command` tasks | Tasks show `skipped`. | Add `check_mode: false` to read-only commands. |
+| `when: "{{ x }}"` | Deprecation warning: conditionals should not be surrounded by `{{ }}`; this stops working in ansible-core 2.23. | Write `when: x`. |
+
+## Mathematical Abstraction
+
+PLAY RECAP counts tasks per host. The two most important counters are linked:
+
+$$
+o_h = c_h + u_h
+$$
+
+where:
+
+- $h$ is one host, for example `web1`;
+- $o_h$ is the `ok=` number for $h$: every task that finished successfully;
+- $c_h$ is the `changed=` number: successful tasks that modified the host;
+- $u_h$ is the number of successful tasks that found everything already correct. It is not printed, but you can compute it.
+
+**Example.** First run of `site.yml` on `web1`: $o = 4$ and $c = 3$, so $u = 4 - 3 = 1$. The one unchanged task is the handler "Reload nginx", which uses `debug` and never reports a change. Second run: $o = 3$, $c = 0$, so $u = 3$. All three role tasks found the files already correct.
+
+YAML's number rules explain why `mode` must be quoted. A file mode is a number in **base 8** (octal):
+
+$$
+m = \sum_{i=0}^{k} d_i \cdot 8^{i}
+$$
+
+where:
+
+- $m$ is the permission value as an ordinary (base 10) number;
+- $d_i$ is the $i$-th octal digit, counting from the right and starting at $i = 0$; each $d_i \in \lbrace 0, 1, \dots, 7 \rbrace$;
+- $k + 1$ is the number of digits.
+
+**Example 1.** The intended mode `0644`, read as octal: $m = 6 \cdot 8^2 + 4 \cdot 8^1 + 4 \cdot 8^0 = 384 + 32 + 4 = 420$. That is `rw-r--r--`. YAML reads unquoted `0644` as octal 420 too, and quoted `"0644"` is passed to Ansible as text and read as octal. Both are fine.
+
+**Example 2.** Unquoted `644`, without the leading zero, is the **decimal** number 644. Turn it back into octal by dividing by 8 repeatedly:
+
+- $644 = 80 \cdot 8 + 4$, so $d_0 = 4$;
+- $80 = 10 \cdot 8 + 0$, so $d_1 = 0$;
+- $10 = 1 \cdot 8 + 2$, so $d_2 = 2$;
+- $1 = 0 \cdot 8 + 1$, so $d_3 = 1$.
+
+So decimal 644 is octal `1204`: the sticky bit, `-w-` for the owner, nothing for the group and `r--` for everyone else. The owner can no longer read the file. Quoting the mode, `"0644"`, removes the doubt.
+
+## References
+
+- Ansible documentation, "Ansible playbooks": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_intro.html>
+- Ansible documentation, "Playbook keywords": <https://docs.ansible.com/projects/ansible/latest/reference_appendices/playbooks_keywords.html>
+- Ansible documentation, "YAML syntax": <https://docs.ansible.com/projects/ansible/latest/reference_appendices/YAMLSyntax.html>
+- Ansible documentation, "Validating tasks: check mode and diff mode": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_checkmode.html>
+- Atul Gawande, *The Checklist Manifesto* (2009), and Haynes et al., "A Surgical Safety Checklist to Reduce Morbidity and Mortality in a Global Population", *New England Journal of Medicine* 360 (2009): <https://www.nejm.org/doi/full/10.1056/NEJMsa0810119>
+
+[← Previous: Ad hoc commands](03-ad-hoc-commands.qmd) · [Ansible index](index.qmd) · [Next: Essential modules →](05-essential-modules.qmd)

@@ -1,0 +1,38 @@
+# Copy to .github/workflows/deploy.yml. Called by ci.yml, or run by hand to roll back.
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment: { type: string, required: true }
+      image: { type: string, required: true }
+  workflow_dispatch:
+    inputs:
+      environment: { type: choice, options: [staging, production], required: true }
+      image: { type: string, required: true, description: "repo@sha256:... built by CI" }
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency: deploy-${{ inputs.environment }} # never two deploys at once
+    steps:
+      - uses: actions/checkout@v7
+      - name: Write kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          printf '%s' "$KUBECONFIG_B64" | base64 -d > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+      - name: Apply and wait for the rolling update
+        env:
+          IMAGE: ${{ inputs.image }}
+        run: |
+          sed "s|__IMAGE__|$IMAGE|g" k8s/deployment.yaml | kubectl apply -f -
+          kubectl -n lemonade rollout status deployment/lemonade-web --timeout=180s
+      - name: Roll back
+        if: failure()
+        run: kubectl -n lemonade rollout undo deployment/lemonade-web

@@ -1,0 +1,135 @@
+---
+title: "k3s: Kubernetes Made Small"
+description: "Learn every core Kubernetes concept on k3s, the lightweight certified distribution, by running a tiny Lemonade Stand web app."
+---
+
+## Why k3s instead of "full" Kubernetes?
+
+Kubernetes (often written **K8s**: a K, eight letters, an s) runs containers on many machines and keeps them healthy. The usual way of installing it has many separate parts: an etcd database cluster, several control-plane programs, a network plug-in, a DNS server, an ingress controller, a storage driver. Each part must be installed, configured and upgraded on its own. That is a lot to learn before you can run your first web page.
+
+**k3s** is a Kubernetes distribution that removes most of that set-up work:
+
+- It is **one binary of less than 100 MB**. All control-plane parts run inside one `k3s` process.
+- It ships with the parts a small cluster needs: containerd, Flannel networking, CoreDNS, the Traefik ingress controller, the ServiceLB load balancer, a local-path storage provisioner, metrics-server and a Helm controller.
+- It stores cluster state in **SQLite** by default, so you do not need an etcd cluster to start. Embedded etcd is still available when you want high availability.
+- It is **fully conformant**. Every `kubectl` command, manifest and concept in this part also works on any other Kubernetes. You learn the real thing, just with fewer moving parts.
+
+The k3s team explains the name like this. They wanted something about half the size of Kubernetes. "Kubernetes" has 10 letters and is written K8s, so something half as big is a 5-letter word, written K3s. There is no long form and no official pronunciation. Darren Shepherd, chief architect at Rancher Labs, created it. Rancher announced it on 26 February 2019 for edge, IoT, ARM and CI machines. k3s is now a CNCF project.
+
+::: {.callout-note}
+## What changes compared with upstream Kubernetes
+Only the **installation and the bundled add-ons** change. Pods, Deployments, Services, Ingress, ConfigMaps, Secrets, volumes, Jobs and Helm work exactly as the Kubernetes documentation describes. Each lesson has a short "k3s difference" note wherever k3s adds something of its own.
+:::
+
+## The running example: a Lemonade Stand
+
+Every lesson builds one small thing: a web page that shows a lemonade menu.
+
+- **Image:** `nginxinc/nginx-unprivileged:1.30.5-alpine`. This is a public NGINX image that listens on **port 8080** and runs as a non-root user, so you do not have to build anything.
+- **Menu:** an HTML page stored in a ConfigMap called `lemonade-menu`.
+- **Namespace:** `lemonade`.
+- **Label:** every web pod carries `app: lemonade`.
+- **Deployment and Service:** both are called `lemonade-web`.
+- **Address:** `http://lemonade.localhost`, routed by the Traefik ingress controller that k3s ships with.
+
+```text
+ browser ──► Traefik (Ingress: lemonade.localhost)
+                │
+                ▼
+         Service lemonade-web  (port 80)
+          ┌─────┼─────┐
+          ▼     ▼     ▼
+        pod   pod   pod        Deployment lemonade-web, 3 replicas
+        :8080 :8080 :8080      each mounts ConfigMap lemonade-menu
+```
+
+The [CI/CD part](../ci-cd/index.qmd) later replaces the public image with one it builds and tests itself. The [Ansible part](../ansible/index.qmd) shows how to prepare machines like these.
+
+## Get a lab cluster
+
+**On Linux** (a VM or a Raspberry Pi is fine), use the official install script:
+
+```bash
+curl -sfL https://get.k3s.io | sh -
+sudo k3s kubectl get nodes
+```
+
+**On macOS or Windows**, run k3s inside Docker. We used this exact command to check every example in this part. It used k3s `v1.37.2+k3s1`, the stable channel in November 2026:
+
+```bash
+docker run -d --name k3s-lab --hostname k3s-lab --privileged \
+  -p 6443:6443 -p 8081:80 -p 30080:30080 \
+  rancher/k3s:v1.37.2-k3s1 server
+docker cp k3s-lab:/etc/rancher/k3s/k3s.yaml ./k3s.yaml
+export KUBECONFIG=$PWD/k3s.yaml
+kubectl get nodes
+```
+
+- `-p 6443:6443` publishes the Kubernetes API, so `kubectl` on your laptop can reach it.
+- `-p 8081:80` publishes Traefik's port 80 as `localhost:8081`.
+- `-p 30080:30080` publishes the NodePort used in [lesson 7](07-services-and-dns.qmd).
+- Docker tags cannot contain `+`, so the version `v1.37.2+k3s1` becomes the tag `v1.37.2-k3s1`. The `latest` tag is not maintained.
+- Give Docker at least 1 GB of **free** memory. On a laptop where other containers were already using most of Docker's memory, k3s became unresponsive until we freed memory.
+- Remove the lab with `docker rm -f k3s-lab`.
+
+Other easy options: [k3d](https://k3d.io/) (`k3d cluster create lemonade`), [Rancher Desktop](https://rancherdesktop.io/), which runs k3s for you, or a [Multipass](https://canonical.com/multipass) Ubuntu VM with the install script.
+
+The runnable manifests are in [`examples/`](examples/README.md). Their file names start with the lesson number.
+
+## Lessons
+
+1. [Containers and Orchestration](01-containers-and-orchestration.qmd): images, containers, registries, and why one machine is not enough.
+2. [k3s Architecture and Installation](02-k3s-architecture-and-install.qmd): servers, agents, the control plane as a school, important files.
+3. [kubectl and Manifests](03-kubectl-and-manifests.qmd): how to talk to the cluster and describe what you want.
+4. [Pods](04-pods.qmd): the smallest unit that runs a container; phases, restarts and CrashLoopBackOff.
+5. [Labels, Selectors and Namespaces](05-labels-selectors-and-namespaces.qmd): name tags, queries and rooms.
+6. [Deployments and Rolling Updates](06-deployments-and-rolling-updates.qmd): keep N copies running and upgrade without downtime.
+7. [Services and DNS](07-services-and-dns.qmd): one stable address for pods that come and go.
+8. [Ingress with Traefik](08-ingress-with-traefik.qmd): one front door that routes by host name and path.
+9. [ConfigMaps and Secrets](09-configmaps-and-secrets.qmd): settings and passwords outside the image.
+10. [Storage](10-storage.qmd): volumes, PersistentVolumeClaims and the local-path provisioner.
+11. [Health, Resources and Scheduling](11-health-resources-and-scheduling.qmd): probes, requests and limits, the scheduler, autoscaling.
+12. [Jobs, CronJobs, DaemonSets and StatefulSets](12-jobs-cronjobs-daemonsets-statefulsets.qmd): run-to-finish work, timetables, one per node, stable identities.
+13. [Helm and Auto-Deploy](13-helm-and-auto-deploy.qmd): charts, releases, and the k3s HelmChart resource.
+
+## kubectl cheat sheet
+
+| Command | What it does | Example |
+| --- | --- | --- |
+| `kubectl get` | List objects | `kubectl get pods -n lemonade` |
+| `kubectl describe` | Show details and recent events | `kubectl describe pod lemonade-pod -n lemonade` |
+| `kubectl apply -f` | Create or update objects from a file | `kubectl apply -f 06-deployment.yaml` |
+| `kubectl delete` | Remove objects | `kubectl delete pod broken -n lemonade` |
+| `kubectl logs` | Print a container's output | `kubectl logs deploy/lemonade-web -n lemonade` |
+| `kubectl exec` | Run a command inside a container | `kubectl exec -it lemonade-pod -n lemonade -- sh` |
+| `kubectl port-forward` | Tunnel a local port to a pod or Service | `kubectl port-forward svc/lemonade-web 8080:80 -n lemonade` |
+| `kubectl rollout` | Watch, list or undo Deployment updates | `kubectl rollout undo deploy/lemonade-web -n lemonade` |
+| `kubectl scale` | Change the replica count | `kubectl scale deploy/lemonade-web --replicas=5 -n lemonade` |
+| `kubectl explain` | Built-in field documentation | `kubectl explain deployment.spec.strategy` |
+| `kubectl get events` | What happened recently | `kubectl get events -n lemonade --sort-by=.lastTimestamp` |
+
+## Mathematical Abstraction
+
+The whole part rests on one idea. You write down the **desired state**, and k3s keeps changing the **observed state** until the two match.
+
+$$
+\Delta(t) = D - O(t)
+$$
+
+where
+
+- $D$ is the desired number of something. Here it is the number of lemonade pods you asked for, a whole number $\ge 0$.
+- $O(t)$ is the observed number at time $t$: the pods that really exist right now.
+- $\Delta(t)$ is the gap. A positive $\Delta$ means "start this many more". A negative $\Delta$ means "stop $|\Delta|$ of them". $\Delta = 0$ means "do nothing".
+
+**Example:** you ask for $D = 3$ pods. A machine crashes and takes one pod with it, so $O(t) = 2$. Then $\Delta = 3 - 2 = 1$, and k3s starts **one** new pod. If you then lower the request to $D = 1$ while $O = 3$, you get $\Delta = 1 - 3 = -2$, and k3s stops **two** pods. [Lesson 6](06-deployments-and-rolling-updates.qmd) shows this loop running on a real cluster.
+
+## References
+
+- k3s documentation: <https://docs.k3s.io/>, including the [Quick-Start Guide](https://docs.k3s.io/quick-start) and [Running K3s in Docker](https://docs.k3s.io/advanced#running-k3s-in-docker).
+- k3s source and README: <https://github.com/k3s-io/k3s>.
+- InfoQ (2019), "Rancher Labs Release k3s": <https://www.infoq.com/news/2019/03/rancher-labs-k3s-kubernetes/>.
+- CNCF project page: <https://www.cncf.io/projects/k3s/>.
+- Kubernetes concepts: <https://kubernetes.io/docs/concepts/>.
+
+[DevOps home](../index.qmd) · [Next: Containers and Orchestration →](01-containers-and-orchestration.qmd)

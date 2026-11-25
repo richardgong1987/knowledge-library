@@ -1,0 +1,58 @@
+# Copy to .github/workflows/ci.yml. Pipeline: test -> image -> staging -> production.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - run: npm test
+
+  image:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      ref: ${{ steps.name.outputs.repo }}@${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: name # registry names must be lower case
+        run: echo "repo=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lemonade-stand" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.name.outputs.repo }}:${{ github.sha }}
+
+  staging:
+    needs: image
+    uses: ./.github/workflows/deploy.yml
+    with: { environment: staging, image: "${{ needs.image.outputs.ref }}" }
+    secrets: inherit
+
+  production: # the production environment requires a reviewer's approval
+    needs: [image, staging]
+    uses: ./.github/workflows/deploy.yml
+    with: { environment: production, image: "${{ needs.image.outputs.ref }}" }
+    secrets: inherit

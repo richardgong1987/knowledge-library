@@ -1,0 +1,289 @@
+---
+title: "2. Inventory"
+description: "Tell Ansible which servers exist and how they are grouped: INI and YAML inventories, connection variables, group_vars, host_vars and host patterns."
+---
+
+## The problem
+
+Before Ansible can configure anything, it must know three things about the Lemonade Stand:
+
+1. **Which servers exist**: `web1`, `web2`, `db1`.
+2. **How to reach them**: address, user, port.
+3. **Which job each one has**: `web1` and `web2` serve the menu, `db1` holds the data.
+
+A deploy should touch only the web servers. A security patch should touch every production server. That needs groups.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="The class register"}
+A teacher has a **register**: a list of every child in the school. Children are also in **groups**. Maya is in Class 4B *and* in the chess club.
+
+When the head teacher says "Class 4B, go to the hall", only 4B moves. When she says "everyone in the chess club who is also in 4B", only the children in both lists move. When she says "the whole school except the chess club", everyone moves except the chess players.
+
+An Ansible inventory is that register. Hosts are the children. Groups are the classes and clubs. A **host pattern** is the head teacher's instruction for who should move.
+:::
+
+## The concept, precisely
+
+- A **host** is one machine Ansible manages. Its inventory name, such as `web1`, is just a label. The real address goes in `ansible_host`.
+- A **group** is a named set of hosts. A host can be in many groups.
+- A group can contain other groups. They are its **children**. `prod` contains `web` and `db`, so every web or db host is also in `prod`.
+- Two groups always exist. `all` contains every host. `ungrouped` contains hosts that are in no group except `all`.
+- **Inventory variables** attach values to a host or a group, such as the SSH user or the app port.
+
+### The same fleet in two formats
+
+INI format, short and flat:
+
+```ini
+[web]
+web1 ansible_host=192.0.2.11
+web2 ansible_host=192.0.2.12
+
+[db]
+db1 ansible_host=192.0.2.21
+
+[prod:children]
+web
+db
+```
+
+YAML format, the lab's [`inventory.yml`](examples/inventory.yml):
+
+```yaml
+all:
+  children:
+    web:
+      hosts:
+        web1: { ansible_host: 192.0.2.11 }
+        web2: { ansible_host: 192.0.2.12 }
+    db:
+      hosts:
+        db1: { ansible_host: 192.0.2.21 }
+    prod:
+      children:
+        web:
+        db:
+```
+
+Both describe exactly the same groups. YAML is easier to read when hosts have many variables. INI is quicker to type.
+
+## Every inventory keyword
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `[name]` (INI) | Starts a group. | Lowercase letters, digits and `_`. Avoid `-`, because it is not a valid variable name in Jinja. | `[web]` |
+| `[name:children]` (INI) | Lists groups inside a group. | Each line is a group name, not a host. | `[prod:children]` |
+| `[name:vars]` (INI) | Sets variables for every host in the group. | One `key=value` per line. | `[web:vars]` then `http_port=80` |
+| `hosts:` (YAML) | The hosts directly in this group. | A map: host name → its variables, or empty. | `web1: { ansible_host: 192.0.2.11 }` |
+| `children:` (YAML) | Groups inside this group. | A map of group names. | `children: { web: , db: }` |
+| `vars:` (YAML) | Variables for every host in the group. | Same names as INI. | `vars: { http_port: 80 }` |
+| `all` | Implicit group with every host. | Put fleet-wide settings in `all: vars:` or `group_vars/all.yml`. | `ansible all --list-hosts` |
+| `ungrouped` | Implicit group of hosts that belong to no other group. | Usually empty in a tidy inventory. | `ansible ungrouped --list-hosts` |
+| `name[a:b]` | A **range** that expands to many hosts. | Both ends are included. Leading zeros are kept. | `web[1:3]` → `web1`, `web2`, `web3` |
+
+## Every common connection variable
+
+These **behavioural variables** tell Ansible how to connect. Set them per host or per group.
+
+| Variable | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `ansible_host` | Address to connect to. | Use when the inventory name is not resolvable in DNS. | `ansible_host: 192.0.2.11` |
+| `ansible_port` | SSH port. | Default `22`. | `ansible_port: 2222` |
+| `ansible_user` | User to log in as. | Default is your local user name. | `ansible_user: deploy` |
+| `ansible_password` | Login password. | Prefer SSH keys. If you must use it, keep it in Vault ([lesson 10](10-vault-and-secrets.qmd)). | `ansible_password: "{{ vault_ssh_password }}"` |
+| `ansible_connection` | Connection plugin. | `ssh` (default), `local` (this machine), `winrm` (Windows). | `ansible_connection: local` |
+| `ansible_ssh_private_key_file` | Private key to use. | One key per environment is common. | `ansible_ssh_private_key_file: ~/.ssh/lemonade` |
+| `ansible_ssh_common_args` | Extra arguments for ssh, scp and sftp. | Typical use: reach hosts through a bastion. | `ansible_ssh_common_args: "-o ProxyJump=bastion"` |
+| `ansible_python_interpreter` | Python on the target. | Default `auto` discovers it. Set it to silence warnings or pick a specific Python. | `ansible_python_interpreter: /usr/bin/python3` |
+| `ansible_become` | Use privilege escalation (sudo) by default. | Usually set in the playbook with `become: true` instead. | `ansible_become: true` |
+| `ansible_become_method` | How to escalate. | Default `sudo`; others include `su`. | `ansible_become_method: su` |
+| `ansible_become_user` | User to become. | Default `root`. | `ansible_become_user: postgres` |
+| `ansible_become_password` | sudo password. | Keep it in Vault, or type it with `-K`. | `ansible_become_password: "{{ vault_sudo_password }}"` |
+
+## Variables in files: `group_vars/` and `host_vars/`
+
+Putting many variables inside the inventory gets messy. Ansible also reads two folders next to the inventory (or next to the playbook):
+
+```text
+examples/
+├── inventory.yml
+├── group_vars/
+│   ├── all.yml      # every host:   lab_root: /tmp/lemonade-lab
+│   ├── web.yml      # group "web":  lemonade_menu: [...]
+│   └── db.yml       # group "db":   db_port: 5432
+└── host_vars/
+    └── web1.yml     # only web1:    lemonade_nginx_workers: 4
+```
+
+| Rule | Detail |
+| --- | --- |
+| File name = group or host name | `group_vars/web.yml` applies to group `web`. `host_vars/web1.yml` applies to host `web1`. |
+| A folder works too | `group_vars/db/vars.yml` and `group_vars/db/vault.yml` are both loaded for group `db`. |
+| Host beats group | A value in `host_vars/web1.yml` overrides the same name in `group_vars/web.yml`. |
+| Child group beats parent | A value in `group_vars/web.yml` overrides `group_vars/prod.yml`, because `web` is a child of `prod`. |
+| Same-level tie | Groups at the same depth are merged in alphabetical order, so the last name wins. Set `ansible_group_priority` to change this. |
+
+[Lesson 6](06-variables-and-facts.qmd) gives the full precedence order.
+
+## Every `ansible-inventory` command
+
+| Command | What it does | Example output |
+| --- | --- | --- |
+| `ansible-inventory --graph` | Draws groups and hosts as a tree. | see below |
+| `ansible-inventory --graph web` | The tree below one group. | `@web: web1, web2` |
+| `ansible-inventory --list` | Prints the whole inventory, with variables, as JSON. | `{"_meta": {"hostvars": ...}}` |
+| `ansible-inventory --list --yaml` | The same as YAML. | `all: children: ...` |
+| `ansible-inventory --host web1` | All variables of one host after merging. | `{"lemonade_nginx_workers": 4, ...}` |
+| `-i FILE` | Use this inventory instead of the configured one. | `ansible-inventory -i inventory.ini --graph` |
+| `-i 'a,b,'` | An inline host list. The trailing comma makes it a list. | `ansible all -i 'web1,web2,' --list-hosts` |
+
+## Every host-pattern form
+
+A **pattern** chooses hosts. It is the first argument of `ansible`, the `hosts:` line of a play, and the value of `--limit`.
+
+| Pattern | Meaning | Rule / convention | Lab result |
+| --- | --- | --- | --- |
+| `all` or `*` | Every host. | Quote `*` in the shell. | web1, web2, db1 |
+| `web1` | One host. | | web1 |
+| `web` | One group. | | web1, web2 |
+| `web:db` or `web,db` | Union: in `web` **or** `db`. | `,` is preferred, because `:` clashes with IPv6 and ranges. | web1, web2, db1 |
+| `prod:&web` | Intersection: in `prod` **and** `web`. | Quote it: `&` means "background" in the shell. | web1, web2 |
+| `prod:!db` | Difference: in `prod` but **not** `db`. | Use single quotes: `!` triggers history in bash and zsh. | web1, web2 |
+| `web*` | Wildcard on names. | Matches host and group names. | web1, web2 |
+| `~web\d` | Regular expression. | Starts with `~`. | web1, web2 |
+| `all[0]` | First host of a group. | Index from 0. `[-1]` is the last. | web1 |
+| `all[0:1]` | Slice of a group. | **Both ends included**, unlike Python. | web1, web2 |
+| `--limit web1` | Narrow a play's hosts further. | Final hosts = play pattern ∩ limit. | web1 |
+
+## Worked example
+
+From `devops/ansible/examples/`:
+
+```bash
+ansible-inventory --graph
+```
+
+```text
+@all:
+  |--@ungrouped:
+  |--@web:
+  |  |--web1
+  |  |--web2
+  |--@db:
+  |  |--db1
+  |--@prod:
+  |  |--@web:
+  |  |  |--web1
+  |  |  |--web2
+  |  |--@db:
+  |  |  |--db1
+```
+
+```bash
+ansible-inventory --host web1      # output trimmed
+```
+
+```text
+{
+    "ansible_host": "192.0.2.11",
+    "lab_root": "/tmp/lemonade-lab",
+    "lemonade_nginx_workers": 4,
+    ...
+}
+```
+
+`lab_root` came from `group_vars/all.yml` and `lemonade_nginx_workers` from `host_vars/web1.yml`. Ansible merged them for you.
+
+```bash
+ansible 'web:db:&prod:!web2' --list-hosts
+```
+
+```text
+  hosts (2):
+    web1
+    db1
+```
+
+## Rules and conventions
+
+- **Name hosts by role and number** (`web1`, `db1`) and put real addresses in `ansible_host`.
+- **One inventory per environment**: `inventories/staging/` and `inventories/prod/`. Then a typo cannot send a staging change to production.
+- **Use groups for roles and environments**: `web`, `db`, `prod`, `staging`. Target groups, not single hosts.
+- **Keep variables in `group_vars/` and `host_vars/`**, not in long inventory lines.
+- **Always quote patterns** that contain `&`, `!` or `*`.
+- **Check before you run**: `--list-hosts` shows exactly which hosts a pattern selects.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Group name with a dash, `web-servers` | Warning "Invalid characters were found in group names". | Use `web_servers`. |
+| Unquoted `prod:!db` in zsh or bash | `event not found` | Use single quotes: `'prod:!db'`. |
+| `group_vars` in the wrong folder | Variables are silently missing. | Put it next to the inventory file or the playbook. Check with `ansible-inventory --host web1`. |
+| Expecting `all[0:1]` to give one host | Two hosts run. | Slices include both ends. Use `all[0]` for one host. |
+| Forgetting the trailing comma in `-i web1` | Ansible looks for a *file* called `web1`. | Write `-i web1,`. |
+
+## Mathematical Abstraction
+
+A group is a **set** of hosts, and patterns are set operations.
+
+$$
+\begin{aligned}
+A \texttt{:} B &= A \cup B \\
+A \texttt{:\&} B &= A \cap B \\
+A \texttt{:!} B &= A \setminus B
+\end{aligned}
+$$
+
+where:
+
+- $A$ and $B$ are sets of hosts, such as the group `web` or `prod`;
+- $A \cup B$ (union) is every host in $A$ **or** $B$;
+- $A \cap B$ (intersection) is every host in **both** $A$ and $B$;
+- $A \setminus B$ (difference) is every host in $A$ that is **not** in $B$.
+
+**Example.** In the lab, $W = \lbrace \texttt{web1}, \texttt{web2} \rbrace$ is `web`, $D = \lbrace \texttt{db1} \rbrace$ is `db`, and $P = W \cup D = \lbrace \texttt{web1}, \texttt{web2}, \texttt{db1} \rbrace$ is `prod`.
+
+- `prod:&web` is $P \cap W = \lbrace \texttt{web1}, \texttt{web2} \rbrace$.
+- `prod:!db` is $P \setminus D = \lbrace \texttt{web1}, \texttt{web2} \rbrace$.
+
+When you mix the operators, Ansible does not read them from left to right. It first joins every union term, then intersects, then removes the exclusions:
+
+$$
+\text{pattern} = \Big( \bigcup_{i} U_i \Big) \cap \Big( \bigcap_{j} I_j \Big) \setminus \Big( \bigcup_{k} E_k \Big)
+$$
+
+where:
+
+- $U_i$ are the plain terms (no prefix), such as `web` and `db`;
+- $I_j$ are the terms written with `&`, such as `&prod`;
+- $E_k$ are the terms written with `!`, such as `!web2`;
+- the $\bigcup$ and $\bigcap$ signs mean "union of all of them" and "intersection of all of them".
+
+**Example.** For `web:db:&prod:!web2`:
+
+- Unions: $U_1 \cup U_2 = W \cup D = \lbrace \texttt{web1}, \texttt{web2}, \texttt{db1} \rbrace$.
+- Intersection: $\cap\, P$ keeps all three, because all are in `prod`.
+- Exclusion: $\setminus \lbrace \texttt{web2} \rbrace$ leaves $\lbrace \texttt{web1}, \texttt{db1} \rbrace$.
+
+That matches the real `--list-hosts` output above. Writing `'!web2:web:db'` gives the same two hosts, because the order of the terms does not matter.
+
+A **range** in the inventory expands to a count of hosts:
+
+$$
+n = b - a + 1
+$$
+
+where $a$ is the first number and $b$ the last number inside `name[a:b]`, and $n$ is the number of hosts created.
+
+**Example.** `web[1:3]` has $a = 1$ and $b = 3$, so $n = 3 - 1 + 1 = 3$ hosts: `web1`, `web2`, `web3`. A slice pattern `all[0:1]` follows the same rule: $1 - 0 + 1 = 2$ hosts, which is why it returned `web1` and `web2`.
+
+## References
+
+- Ansible documentation, "How to build your inventory": <https://docs.ansible.com/projects/ansible/latest/inventory_guide/intro_inventory.html>
+- Ansible documentation, "Patterns: targeting hosts and groups": <https://docs.ansible.com/projects/ansible/latest/inventory_guide/intro_patterns.html>
+- Ansible documentation, `ansible-inventory` CLI: <https://docs.ansible.com/projects/ansible/latest/cli/ansible-inventory.html>
+- Jeff Geerling, *Ansible for DevOps*, chapter on inventories: <https://leanpub.com/ansible-for-devops>
+
+[← Previous: How Ansible works](01-how-ansible-works.qmd) · [Ansible index](index.qmd) · [Next: Ad hoc commands →](03-ad-hoc-commands.qmd)

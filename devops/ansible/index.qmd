@@ -1,0 +1,94 @@
+---
+title: "Ansible"
+description: "Learn Ansible from zero by configuring the Lemonade Stand fleet: inventories, ad hoc commands, playbooks, modules, variables, templates, roles, vault and rolling deployments."
+---
+
+## What Ansible is for
+
+You have three servers. You want every one of them set up the same way: the same packages, the same config files, the same users. Doing it by hand means logging in to each server and typing the same commands. You make mistakes, and nobody can see later what you did.
+
+**Ansible** writes those steps down as a text file and runs them on many servers at once. Run the file again and Ansible only changes what is still wrong. You can keep the file in Git, review it and run it again next year.
+
+This part of the book teaches Ansible through one running example.
+
+## The running example: the Lemonade Stand
+
+The Lemonade Stand is a tiny web app that shows a menu of drinks and prices. It runs on three servers:
+
+```text
+                     you (control node: your laptop)
+                                 │  ansible-playbook site.yml
+             ┌───────────────────┼───────────────────┐
+             ▼                   ▼                   ▼
+   web1  192.0.2.11      web2  192.0.2.12      db1  192.0.2.21
+   group: web, prod      group: web, prod      group: db, prod
+   nginx :80 → app :8080 nginx :80 → app :8080 database settings
+```
+
+- `web1` and `web2` are in the group `web`. Each runs nginx on port 80, which forwards requests to the Lemonade app on port 8080.
+- `db1` is in the group `db`.
+- All three are in the group `prod` (production).
+- The addresses come from 192.0.2.0/24, a range reserved for documentation, so they never clash with a real network.
+
+## Run the lab on your laptop
+
+The [lab](examples/README.md) pretends to be the whole fleet on one machine. Every host uses `ansible_connection: local`, and each writes into its own folder under `/tmp/lemonade-lab/`. You need no SSH, no sudo and no virtual machines.
+
+```bash
+pipx install ansible-core          # or: brew install ansible
+cd devops/ansible/examples
+ansible all -m ansible.builtin.ping
+ansible-playbook site.yml
+ansible-playbook site.yml          # second run reports changed=0
+```
+
+Lab files: [`ansible.cfg`](examples/ansible.cfg) · [`inventory.yml`](examples/inventory.yml) · [`site.yml`](examples/site.yml) · [`roles/lemonade_web/`](examples/roles/lemonade_web/tasks/main.yml) · [`rolling-update.yml`](examples/rolling-update.yml) · [`vault-demo.yml`](examples/vault-demo.yml).
+
+## Lessons
+
+Read them in order. Each lesson starts with a problem from the Lemonade Stand, explains the idea for a ten-year-old, lists every keyword with its rules, shows real output from the lab, and ends with the maths behind it.
+
+1. [How Ansible works](01-how-ansible-works.qmd): control node, managed nodes, SSH, modules, desired state, idempotency.
+2. [Inventory](02-inventory.qmd): hosts, groups, connection variables, `group_vars`, host patterns.
+3. [Ad hoc commands](03-ad-hoc-commands.qmd): one-off tasks with `ansible`, and every common flag.
+4. [Playbooks](04-playbooks.qmd): YAML rules, play and task keywords, `ansible-playbook` flags, PLAY RECAP.
+5. [Essential modules](05-essential-modules.qmd): the 30 modules you will use most.
+6. [Variables and facts](06-variables-and-facts.qmd): where values come from and which one wins.
+7. [Jinja2 templates](07-jinja2-templates.qmd): expressions, filters, tests, lookups, config files.
+8. [Conditionals, loops and handlers](08-conditionals-loops-and-handlers.qmd): `when`, `loop`, `until`, `notify`, `block`.
+9. [Roles and collections](09-roles-and-collections.qmd): packaging work for reuse.
+10. [Vault and secrets](10-vault-and-secrets.qmd): encrypting passwords with `ansible-vault`.
+11. [Rolling deployments](11-rolling-deployments.qmd): upgrading servers in batches without closing the stand.
+12. [Configuration and tooling](12-configuration-and-tooling.qmd): `ansible.cfg` and the whole CLI toolbox.
+
+## One-page cheat sheet
+
+| Goal | Command |
+| --- | --- |
+| Show the inventory as a tree | `ansible-inventory --graph` |
+| Show all variables of one host | `ansible-inventory --host web1` |
+| Which hosts match a pattern? | `ansible 'web:&prod' --list-hosts` |
+| Can I reach every host? | `ansible all -m ansible.builtin.ping` |
+| Run one command everywhere | `ansible web -m ansible.builtin.command -a "uptime"` |
+| Run as root | add `-b` (become); add `-K` to type the sudo password |
+| Check a playbook's syntax | `ansible-playbook site.yml --syntax-check` |
+| List the tasks a playbook would run | `ansible-playbook site.yml --list-tasks` |
+| Dry run that shows file changes | `ansible-playbook site.yml --check --diff` |
+| Run only on some hosts | `ansible-playbook site.yml --limit web1` |
+| Run only tagged tasks | `ansible-playbook site.yml --tags nginx` |
+| Override a variable | `ansible-playbook site.yml -e lemonade_app_port=9090` |
+| Read a module's documentation | `ansible-doc ansible.builtin.copy` |
+| Create a role skeleton | `ansible-galaxy role init lemonade_db` |
+| Install collections | `ansible-galaxy collection install -r requirements.yml` |
+| Encrypt a secrets file | `ansible-vault encrypt secrets/vault.yml` |
+| See which settings you changed | `ansible-config dump --only-changed` |
+
+## Where to go next
+
+After Ansible, the [k3s part](../k3s/index.qmd) runs the Lemonade app in containers, and the [CI/CD part](../ci-cd/index.qmd) tests and ships it automatically.
+
+## References
+
+- Ansible community documentation: <https://docs.ansible.com/projects/ansible/latest/>
+- Jeff Geerling, *Ansible for DevOps*: <https://leanpub.com/ansible-for-devops>
+- RFC 5737, IPv4 address blocks reserved for documentation: <https://www.rfc-editor.org/rfc/rfc5737>

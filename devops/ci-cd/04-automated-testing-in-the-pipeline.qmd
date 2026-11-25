@@ -1,0 +1,232 @@
+---
+title: "Automated Testing in the Pipeline"
+description: "The test pyramid, fast feedback, fail-fast ordering, flaky tests, quality gates and required status checks, applied to the Lemonade Stand."
+---
+
+## The problem
+
+A pipeline is only as good as the checks inside it. The Lemonade team hits three problems in one week:
+
+1. **Slow feedback.** Someone adds a browser test that clicks through the menu page. It takes 8 minutes, and it runs *before* the 1-second unit tests, so a typo takes 8 minutes to report.
+2. **A flaky test.** One test sometimes fails because it waits a fixed 50 ms for the server to start. People start clicking "Re-run" without reading the failure.
+3. **Merging on red.** Ben's pull request is red, but nothing stops him from pressing "Merge".
+
+This lesson fixes all three: the right *mix* of tests, the right *order*, *trustworthy* tests, and *rules* that make the pipeline's verdict count.
+
+::: {.callout-tip}
+## Explain it like I'm ten
+
+**The test pyramid.** Imagine building a LEGO castle. You check that **each brick** is not broken: lots of quick checks. Then you check that **a few bricks clicked together** make a solid wall: fewer checks. Finally you check that **the whole castle** stands up: only a few slow checks, because building the whole castle takes ages. Lots of small tests at the bottom, a few big ones at the top: that shape is a pyramid. Mike Cohn drew it in his book *Succeeding with Agile* (2009), and Ham Vocke explains it with real code in [The Practical Test Pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) (2018).
+
+**Flaky tests.** Remember the boy who cried wolf? He shouted "Wolf!" when there was no wolf, so when a real wolf came, nobody listened. A flaky test is a smoke alarm that goes off whenever you make toast: soon everyone ignores it, and then a real fire is ignored too. Martin Fowler's [Eradicating Non-Determinism in Tests](https://martinfowler.com/articles/nonDeterminism.html) compares such tests to an infection that can ruin a whole test suite, and explains how to cure them.
+:::
+
+## The concepts, precisely
+
+| Keyword | What it does | Rule / convention | Lemonade example |
+| --- | --- | --- | --- |
+| **Static check (lint)** | Finds mistakes without running the code | First stage: fastest | `node --check server.mjs` |
+| **Unit test** | Tests one small piece in memory, no network or disk | The bulk of the suite; milliseconds each | `priceOrder({ classic: 6, mint: 4 })` is 2610 |
+| **Integration test** | Tests pieces working together through a real interface | Fewer; use a local port, a test database | Start the HTTP handler on a random port and `fetch('/price')` |
+| **Contract test** | Checks that a service still answers the way its callers expect | Between teams or services | `/health` still returns `{ status, version }` |
+| **End-to-end (E2E) test** | Tests the whole system as a user would | A handful; slow and fragile | Build the image, run it, `curl /health` |
+| **Smoke test** | A tiny E2E check right after a deployment | Seconds; "is it alive?" | Readiness probe on `/health` during rollout |
+| **Fast feedback** | Developers learn about a failure within minutes | Target: commit stage under 10 minutes | All Lemonade unit tests: under 1 second |
+| **Fail fast** | Cheap, likely-to-fail checks run first; later stages are skipped on failure | Order: lint → unit → integration → E2E | `needs:` chain in `ci.yml` |
+| **Flaky test** | Passes and fails on the same code | Quarantine or fix within days; never ignore | Fixed `sleep 50ms` before the server is ready |
+| **Quality gate** | A rule the build must meet to pass | Measurable and enforced by the pipeline | Line coverage at least 80% |
+| **Required status check** | A check that must be green before a pull request can merge | Set in branch protection or a ruleset | "CI / test" must pass |
+| **Branch protection / ruleset** | Repository rules for a branch such as `main` | Require pull requests and required checks | No direct pushes to `main` |
+
+### Repository rules that enforce the pipeline
+
+These live in **Settings → Rules → Rulesets** (or the older **Branches → Branch protection rules**):
+
+| Setting | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| Require a pull request before merging | No direct pushes to the branch | Turn on for `main` | Ben must open a PR |
+| Required approvals | A number of reviewers must approve | 1 is common for a small team | Caro approves Ben's PR |
+| Require status checks to pass | Listed checks must be green | Use the exact job name | `test` |
+| Require branches to be up to date | The PR must include the latest `main` before merging | Prevents "green alone, red together" | Ben updates his branch first |
+| Merge queue | GitHub tests each PR combined with the ones ahead of it before merging | For busy repositories | Workflows also listen to `merge_group` |
+| Block force pushes | History of `main` cannot be rewritten | Always on for `main` | — |
+
+GitLab has the same ideas: **Pipelines must succeed** in merge-request settings, **protected branches**, and **approval rules**.
+
+## A worked example: three stages for the Lemonade Stand
+
+The pipeline runs the cheapest check first. Each job needs the one before, so a failure stops everything after it:
+
+```yaml
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: node --check server.mjs
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: node --test --experimental-test-coverage --test-coverage-lines=80 --test-coverage-exclude='*.test.mjs'
+  container-smoke:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          docker build -t lemonade:ci .
+          docker run -d -p 8080:8080 lemonade:ci
+          curl --retry 10 --retry-connrefused --fail localhost:8080/health
+```
+
+The three stages run locally too. Here is the real output of each one, trimmed to the lines that matter:
+
+```text
+$ node --check server.mjs && echo ok
+ok
+
+$ node --test
+✔ adds up the price of every cup
+✔ gives 10% off from the tenth cup
+✔ rejects unknown drinks and bad quantities
+✔ serves health, prices and 404 over HTTP
+ℹ pass 4
+ℹ fail 0
+
+$ curl localhost:8080/health          # container started from the built image
+{"status":"ok","version":"dev"}
+```
+
+The four Lemonade tests already form a pyramid: three unit tests of `priceOrder` and one integration test that talks HTTP. The container smoke test is the single E2E check at the top.
+
+### A quality gate that fails, and what it teaches
+
+Ask Node for a stricter 90% line-coverage gate and the build goes red:
+
+```text
+$ node --test --experimental-test-coverage --test-coverage-lines=90 --test-coverage-exclude='*.test.mjs'
+ℹ Error: 85.11% line coverage does not meet threshold of 90%.
+ℹ file       | line % | branch % | funcs % | uncovered lines
+ℹ server.mjs |  85.11 |    86.96 |   71.43 | 36-37 43-47
+```
+
+The uncovered lines are the start-up block that only runs when the file is started directly, and a re-throw for unexpected errors. Writing tests just to touch them would add code without adding safety. That is the real lesson of coverage gates: **a gate is a floor, not a goal**. The Lemonade pipeline uses 80%, which catches a big untested feature without forcing silly tests.
+
+### Fixing the flaky test
+
+The flaky version waited a fixed time before calling the server:
+
+```js
+server.listen(8080);
+await new Promise((r) => setTimeout(r, 50));   // flaky: 50 ms is sometimes too short
+```
+
+The fixed version waits for the event that *means* "ready", and uses port `0` so the operating system picks a free port and two test runs never collide:
+
+```js
+await new Promise((resolve) => server.listen(0, resolve));   // ready, on a free port
+const base = `http://127.0.0.1:${server.address().port}`;
+```
+
+This is exactly what `server.test.mjs` does. The general rule from Fowler's article: replace "wait and hope" with "wait for a signal", and isolate tests from each other and from time.
+
+### Test results the pipeline can read
+
+`node --test --test-reporter=junit --test-reporter-destination=report.xml` writes JUnit XML, the format most CI tools understand:
+
+```xml
+<testcase name="gives 10% off from the tenth cup" time="0.000072" classname="test" .../>
+```
+
+## Rules and conventions
+
+- Shape the suite like a pyramid: many unit tests, some integration tests, few E2E tests.
+- Order the pipeline by cost: lint → unit → integration → E2E.
+- Keep the commit stage (everything before the image build) under about 10 minutes.
+- A test must not depend on time, order, network luck or another test.
+- Quarantine a flaky test at once (skip it with a ticket), and fix or delete it within days.
+- Never "re-run until green" without reading the failure.
+- Make the important checks **required** in a ruleset; otherwise a red build is only advice.
+- Treat coverage as a floor that catches untested features, not as a score to maximise.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Ice-cream cone: mostly E2E, few unit tests | Pipeline takes 40 minutes; failures are vague | Push checks down to unit level |
+| Slow tests first | A typo takes 8 minutes to report | Reorder with `needs:` |
+| Fixed sleeps in tests | Random failures under load | Wait for a ready signal or poll with a deadline |
+| Shared state between tests | Tests pass alone, fail together | Fresh server, port `0`, no global data |
+| Status check not required | Red pull requests get merged | Add it to the ruleset |
+| Renaming a required job | PRs wait forever for a check that never reports | Keep job names stable, update the ruleset |
+| Chasing 100% coverage | Tests that assert nothing useful | Gate at a sensible floor; review test quality |
+
+## Mathematical Abstraction
+
+### 1. How flaky tests poison a suite
+
+Assume each of $n$ tests fails *spuriously* (with no real bug) with probability $p$, independently. The chance that the whole suite is red for no reason is:
+
+$$
+P_{\text{false red}} = 1 - (1 - p)^n
+$$
+
+where
+
+- $n$ is the number of tests in the suite;
+- $p$ is the chance that one test fails without a real bug, per run ($0 \le p \le 1$);
+- $(1-p)$ is the chance that one test behaves;
+- $(1-p)^n$ is the chance that **all** $n$ tests behave (independence lets us multiply);
+- $P_{\text{false red}}$ is the chance that at least one test fails spuriously.
+
+**Example.** The Lemonade Stand grows to $n = 500$ tests, and each is "only" a little flaky: $p = 0.001$ (one bad run in a thousand).
+
+$$
+P_{\text{false red}} = 1 - 0.999^{500} = 1 - e^{500 \ln 0.999} \approx 1 - e^{-0.5003} \approx 1 - 0.606 = 0.394
+$$
+
+So about **39% of all builds** would be red for no reason. That is how a team ends up ignoring red builds, which is the boy who cried wolf in numbers. Independence is a simplifying assumption; in practice flaky tests often fail together (for example when a runner is slow), which changes the number but not the lesson.
+
+### 2. Why cheap checks go first
+
+Run stages $1, 2, \dots, k$ in order. Stage $i$ takes $t_i$ minutes and fails with probability $f_i$; a failure skips everything after it. The expected time until the pipeline finishes or stops is:
+
+$$
+E[T] = \sum_{i=1}^{k} t_i \prod_{j=1}^{i-1} (1 - f_j)
+$$
+
+where
+
+- $k$ is the number of stages;
+- $t_i$ is the duration of stage $i$ in minutes;
+- $f_i$ is the probability that stage $i$ fails;
+- $\prod_{j=1}^{i-1} (1 - f_j)$ is the chance that every stage before $i$ passed, so stage $i$ runs at all (for $i = 1$ the empty product is $1$);
+- $E[T]$ is the expected pipeline time in minutes.
+
+**Example.** Lint $t_1 = 0.5$, $f_1 = 0.10$; unit tests $t_2 = 2$, $f_2 = 0.05$; E2E $t_3 = 10$, $f_3 = 0.02$ (illustrative numbers for a larger Lemonade Stand).
+
+Cheap first (lint → unit → E2E):
+
+$$
+E[T] = 0.5 + 2(0.90) + 10(0.90)(0.95) = 0.5 + 1.8 + 8.55 = 10.85 \text{ minutes}
+$$
+
+Expensive first (E2E → unit → lint):
+
+$$
+E[T] = 10 + 2(0.98) + 0.5(0.98)(0.95) = 10 + 1.96 + 0.4655 \approx 12.43 \text{ minutes}
+$$
+
+Cheap-first saves about 1.6 minutes per run on average. More importantly, a lint failure is reported after 0.5 minutes instead of 10.5. (The model assumes stage failures are independent; when they are not, the ordering still usually wins.)
+
+## References
+
+- Mike Cohn, *Succeeding with Agile* (Addison-Wesley, 2009), where the test pyramid first appears.
+- Ham Vocke, [The Practical Test Pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) (martinfowler.com, 2018).
+- Martin Fowler, [Test Pyramid](https://martinfowler.com/bliki/TestPyramid.html) and [Eradicating Non-Determinism in Tests](https://martinfowler.com/articles/nonDeterminism.html).
+- GitHub Docs, [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets) and [About protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
+- Node.js Docs, [Test runner](https://nodejs.org/api/test.html).
+
+[← Previous: GitHub Actions Syntax](03-github-actions-syntax.qmd) · [Part index](index.qmd) · [Next: Artifacts, Caching and Versioning →](05-artifacts-caching-and-versioning.qmd)

@@ -1,0 +1,173 @@
+---
+title: "1. Containers and Orchestration"
+description: "Images, containers and registries, how a container differs from a virtual machine, and why a cluster needs an orchestrator."
+---
+
+## The problem
+
+Sam built the Lemonade Stand web page on a laptop. It works there. On the shop's server it fails: the server has a different NGINX version, a missing configuration file, and another program already using the same port.
+
+Once that is fixed, a second problem appears. The page runs on **one** server. If that server reboots for an update, the stand is closed. If a school trip arrives and 200 children open the menu at once, one server is too slow.
+
+We need two things:
+
+1. A way to package the app **together with everything it needs**, so it runs the same way everywhere. That is a **container**.
+2. Something that runs many copies of that package on several machines, restarts them when they die, and sends customers to the healthy ones. That is an **orchestrator**. Kubernetes is one, and k3s is a small Kubernetes.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Phippy finds a home
+
+In *The Illustrated Children's Guide to Kubernetes*, written by Matt Butcher, illustrated by Bailey Beougher and designed by Karen Chu, there is a little app called **Phippy**. She is a one-page PHP app. She lives at a crowded hosting company next to strange apps she does not know. She wishes for a place of her own.
+
+A friendly **whale** (a nod to Docker's logo) tells her to move into a **container**. It is a tidy little room with everything she needs. But a container on its own is "like a fancy living room floating in the middle of the ocean": nobody connects it to the network, restarts it, or gives it company. Then **Captain Kube** sails up on a huge ship made of many rafts tied together, and Phippy finds a real home on board. *Kubernetes* is the Greek word for a ship's captain or helmsman.
+
+**Cookies.** An **image** is a cookie cutter. A **container** is a cookie made with it. You can make 100 identical cookies from one cutter. Eating a cookie does not damage the cutter. A **registry** is the shop shelf where everyone keeps and shares their cookie cutters.
+
+**Pets and cattle.** Randy Bias tells the story this way, building on a talk about scaling SQL Server by Microsoft's Bill Baker. A *pet* server has a name, like "Bob the mail server". When Bob is sick, everyone stops working to nurse him. *Cattle* servers are numbered (`www001` to `www100`). When one gets sick, you replace it and the herd carries on. Kubernetes treats containers as cattle. That is why we never name a pod "Bob".
+:::
+
+## The concept, precisely
+
+- **Container image:** a read-only package of files, made of stacked *layers*: an operating-system userland, libraries, your app, and metadata such as which command to run. It is identified by a name and a tag, for example `nginxinc/nginx-unprivileged:1.30.5-alpine`. It can also be pinned to a **digest** (`@sha256:…`), which is a fingerprint of the exact bytes.
+- **Container:** a normal Linux process started from an image. The kernel isolates it with *namespaces*, so it has its own view of files, network and process IDs. *cgroups* limit how much CPU and memory it can use. It shares the host's kernel.
+- **Registry:** a server that stores images, for example Docker Hub (`docker.io`) or GitHub Container Registry (`ghcr.io`). Machines *pull* images from it.
+- **Container runtime:** the program on each machine that pulls images and starts containers. k3s ships with **containerd**. You do not need Docker on a k3s node.
+- **Orchestrator:** software that decides *where* containers run and keeps them in the state you asked for. It restarts them, scales them, connects them, and updates them gradually.
+
+### Container vs virtual machine
+
+| | Virtual machine | Container |
+| --- | --- | --- |
+| What is inside | A whole guest operating system, including its own kernel | Only the app and its files; uses the host kernel |
+| Start-up time | Tens of seconds to minutes | Usually under a second to a few seconds |
+| Typical size | Gigabytes | Megabytes (our NGINX image is about 26 MB) |
+| Isolation | Very strong (hardware virtualisation) | Strong, but containers share one kernel |
+| Good for | Running different operating systems, strong tenant separation | Packaging and shipping apps many times a day |
+
+### What an orchestrator does for the Lemonade Stand
+
+| Need | Without an orchestrator | With Kubernetes / k3s |
+| --- | --- | --- |
+| Run 3 copies | Log in to 3 servers by hand | Write `replicas: 3` |
+| A copy crashes | Someone notices and restarts it | Restarted automatically |
+| A server dies | Its copies are gone | Copies are recreated on other servers |
+| Customers need one address | Configure a load balancer by hand | A *Service* gives one stable address |
+| New version | Stop, copy, start, and hope | A *rolling update* replaces copies one by one |
+
+## Every field and command for this topic
+
+### The parts of an image reference
+
+| Part | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| Registry host | Where to pull from | Omitted means `docker.io` | `ghcr.io` |
+| Namespace | Owner or organisation | Official Docker Hub images use `library` | `nginxinc` |
+| Repository | The image's name | Lowercase letters, digits, `.`, `_`, `-` | `nginx-unprivileged` |
+| Tag | A human label for a version | Pin a real version; avoid `latest` | `1.30.5-alpine` |
+| Digest | Exact content fingerprint | Never changes for the same bytes | `@sha256:…` |
+
+### Commands to look at images and containers
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `docker run` | Start a container on your laptop | `-p host:container` publishes a port | `docker run --rm -p 8080:8080 nginxinc/nginx-unprivileged:1.30.5-alpine` |
+| `docker pull` | Download an image | Use the same tag that production uses | `docker pull busybox:1.37.0` |
+| `crictl images` | List images on a k3s node | Run on the node, as root | `sudo k3s crictl images` |
+| `crictl ps` | List running containers on a node | For debugging; use `kubectl` normally | `sudo k3s crictl ps` |
+| `k3s ctr images import` | Load an image tarball without a registry | Handy on air-gapped machines | `sudo k3s ctr images import lemonade.tar` |
+
+## Worked example
+
+Start the Lemonade Stand image as a plain container on your laptop. This shows what an image is before Kubernetes is involved:
+
+```bash
+docker run --rm -d --name lemonade -p 8080:8080 nginxinc/nginx-unprivileged:1.30.5-alpine
+curl -s localhost:8080 | grep '<title>'
+docker rm -f lemonade
+```
+
+```text
+<title>Welcome to nginx!</title>
+```
+
+The same image is just as easy to start a hundred times. Deciding *where* those hundred copies should run is the hard part, and the orchestrator does it.
+
+Now look inside the lab k3s node. It has **no Docker**. containerd holds the images that k3s itself uses:
+
+```bash
+docker exec k3s-lab crictl images
+```
+
+```text
+IMAGE                                        TAG                     SIZE
+docker.io/rancher/klipper-lb                 v0.4.17                 5.79MB
+docker.io/rancher/local-path-provisioner     v0.0.37                 13.4MB
+docker.io/rancher/mirrored-coredns-coredns   1.14.7                  21.7MB
+docker.io/rancher/mirrored-library-traefik   3.7.15                  50.2MB
+docker.io/rancher/mirrored-pause             3.10.2                  268kB
+```
+
+These are the bundled add-ons: the ServiceLB load balancer (`klipper-lb`), storage, DNS and the Traefik ingress controller. [Lesson 2](02-k3s-architecture-and-install.qmd) explains each one.
+
+## Rules and conventions
+
+- Build one image per app and run it everywhere: laptop, CI and cluster. Configure it with settings ([lesson 9](09-configmaps-and-secrets.qmd)), not by rebuilding.
+- Pin image tags to a real version (`1.30.5-alpine`). `latest` changes under your feet, so two nodes can run different code with the same name.
+- Keep images small. The image travels to every node, and a smaller one starts faster.
+- Treat containers as cattle. Never fix a running container by hand; change the image or the manifest and replace the container.
+- Do not store data inside a container's own filesystem. It disappears when the container is replaced. Use volumes ([lesson 10](10-storage.qmd)).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Using `:latest` | Pods on different nodes behave differently | Pin a version tag or a digest |
+| Changing files inside a running container | The fix disappears after a restart | Put the change in the image or a ConfigMap |
+| Expecting Docker on a k3s node | `docker: command not found` | Use `k3s crictl` and `k3s ctr`, or just `kubectl` |
+| Image only exists on your laptop | Pod shows `ErrImagePull` | Push it to a registry, or import it with `k3s ctr images import` |
+
+## Mathematical Abstraction
+
+Why run copies at all? Suppose each copy of the stand is unavailable some fraction of the time, and the copies fail **independently** of each other. Then the stand is closed only when **all** copies are down at the same moment:
+
+$$
+P_{\text{closed}} = p^{\,n}
+$$
+
+where
+
+- $p$ is the probability that one copy is down at a random moment. It is a number between 0 and 1, for example $0.05$ means "down 5% of the time".
+- $n$ is the number of copies (replicas), a whole number $\ge 1$.
+- $P_{\text{closed}}$ is the probability that the whole stand is closed, also between 0 and 1.
+
+**Example:** with one copy, $p = 0.05$ and $n = 1$ give $P_{\text{closed}} = 0.05^{1} = 0.05$, which is 5% of the time. With three copies:
+
+$$
+0.05^{3} = 0.05 \times 0.05 \times 0.05 = 0.000125
+$$
+
+That is $0.0125\%$ of the time, about 66 minutes a year instead of about 18 days a year.
+
+**Assumption:** the formula only holds if the copies fail independently. If all three run on the **same** machine and that machine dies, they fail together and the real $P_{\text{closed}}$ is close to the machine's own failure rate. This is why the scheduler spreads pods across nodes ([lesson 11](11-health-resources-and-scheduling.qmd)).
+
+A second, illustrative calculation shows why containers make many copies cheap. If a machine has $M$ MiB of memory and each copy needs $m$ MiB, the number of copies that fit is
+
+$$
+k = \left\lfloor \frac{M}{m} \right\rfloor
+$$
+
+where $M$ and $m$ are in mebibytes (MiB), and $\lfloor x \rfloor$ means "round down to a whole number", because you cannot run 0.4 of a copy.
+
+**Example (illustrative numbers):** take $M = 4096$ MiB. A small VM that needs $m = 512$ MiB for its own operating system plus 16 MiB for NGINX gives $\lfloor 4096 / 528 \rfloor = \lfloor 7.76 \rfloor = 7$ copies. A container that needs only $m = 16$ MiB gives $\lfloor 4096 / 16 \rfloor = 256$ copies. Real numbers depend on the app, but the gap explains why containers became the unit that clusters schedule.
+
+## References
+
+- Matt Butcher, Bailey Beougher and Karen Chu, *The Illustrated Children's Guide to Kubernetes* (CNCF, CC-BY-4.0): <https://www.cncf.io/phippy/the-childrens-illustrated-guide-to-kubernetes/>, and the original 2016 Kubernetes blog post: <https://kubernetes.io/blog/2016/06/illustrated-childrens-guide-to-kubernetes/>.
+- Phippy and Friends (CNCF): <https://www.cncf.io/phippy/>.
+- Randy Bias, "The History of Pets vs Cattle and How to Use the Analogy Properly" (2016): <https://cloudscaling.com/blog/cloud-computing/the-history-of-pets-vs-cattle/>.
+- Kubernetes, "Images": <https://kubernetes.io/docs/concepts/containers/images/>.
+- k3s, "What is K3s?": <https://docs.k3s.io/>.
+
+[← Part index](index.qmd) · [Next: k3s Architecture and Installation →](02-k3s-architecture-and-install.qmd)

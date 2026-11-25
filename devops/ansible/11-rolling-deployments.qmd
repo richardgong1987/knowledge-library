@@ -1,0 +1,238 @@
+---
+title: "11. Rolling Deployments"
+description: "Upgrade servers in batches without closing the stand: serial, max_fail_percentage, any_errors_fatal, delegate_to, run_once, throttle, strategies, health checks, and the maths of batches and failure thresholds."
+---
+
+## The problem
+
+Version 1.1.0 of the Lemonade app is ready. If you upgrade `web1` and `web2` **at the same time**, both reload together and customers see errors for a moment. Worse: if 1.1.0 is broken, **both** servers are broken, and the stand is closed.
+
+You want to:
+
+1. take one server out of the load balancer,
+2. upgrade it,
+3. check that it really works,
+4. put it back,
+5. then move to the next server, and **stop** at the first failure.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Swapping football players"}
+In a football match the coach never takes all the players off at once. That would leave the pitch empty and the other team would score. Instead the coach makes **substitutions**: one player comes off, a fresh player goes on, and the team keeps playing the whole time.
+
+If the new player twists an ankle in the first minute, the coach stops making substitutions and thinks again.
+
+A rolling deployment is a substitution plan for servers. `serial: 1` means "swap one server at a time". `max_fail_percentage: 0` means "if any new player gets hurt, stop the substitutions".
+:::
+
+## The concept, precisely
+
+- Normally a play runs each task on **all** its hosts before moving to the next task.
+- With `serial`, Ansible splits the hosts into **batches** and runs the **whole play** on one batch before starting the next. In the output, the `PLAY [...]` header repeats once per batch.
+- After each task, Ansible checks the share of failed hosts in the current batch. If it is above `max_fail_percentage`, the whole run stops, and later batches are never touched.
+- Tasks that act on **another** machine, such as a load balancer, use `delegate_to`.
+- Notified handlers run at the end of each section **in each batch**, so a server is reloaded before its health check.
+
+## Every rolling-update keyword
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `serial: N` | Batches of N hosts. | `1` is the safest; the last batch may be smaller. | `serial: 1` |
+| `serial: "P%"` | Batches of P percent of the play's hosts. | Rounded **down**, but at least 1 host. | `serial: "30%"` |
+| `serial: [a, b, c]` | Growing batches: first `a`, then `b`, then `c` for the rest. | The last value repeats until all hosts are done. Classic canary: `[1, "30%", "100%"]`. | `serial: [1, 5, 10]` |
+| `max_fail_percentage` | Stop when the failed share of a batch is **greater than** this. | `0` stops at the first failure. | `max_fail_percentage: 0` |
+| `any_errors_fatal` | Stop the play on all hosts as soon as any host fails. | Works with or without `serial`. The failing task finishes on the current batch, then nothing else runs. | `any_errors_fatal: true` |
+| `delegate_to` | Run this task on another host, with the current host's variables. | For load balancers, monitoring and DNS. | `delegate_to: lb1` |
+| `run_once` | Run the task on one host only, **once per batch**. | Combine with `delegate_to` for one-off work. | `run_once: true` |
+| `throttle` | At most N hosts run this task at the same time. | Cannot go above `forks` or `serial`. | `throttle: 1` |
+| `strategy: linear` | Every host finishes a task before the next task starts. | The default. Required for `max_fail_percentage`. | `strategy: linear` |
+| `strategy: free` | Each host runs at its own speed. | Faster, but `max_fail_percentage` is not supported. | `strategy: free` |
+| `order` | Which hosts go first. | `inventory`, `sorted`, `reverse_sorted`, `reverse_inventory`, `shuffle`. | `order: sorted` |
+| `ansible_play_batch` | Magic variable: the hosts in this batch. | | `{{ ansible_play_batch }}` |
+
+### The health-check modules
+
+| Module | What it waits for | Example |
+| --- | --- | --- |
+| `ansible.builtin.wait_for` | A port to open or close, or text to appear in a file. | `wait_for: { port: 8080, timeout: 30 }` |
+| `ansible.builtin.uri` + `until` | An HTTP status, retried. | `until: health.status == 200` ([lesson 8](08-conditionals-loops-and-handlers.qmd)) |
+
+## Worked example
+
+The heart of the lab's [`rolling-update.yml`](examples/rolling-update.yml) is the play header:
+
+```yaml
+- name: Upgrade the web servers one at a time
+  hosts: web
+  gather_facts: false
+  serial: 1                  # one server per batch
+  max_fail_percentage: 0     # any failure stops the rollout
+```
+
+And the drain → upgrade → check → enable pattern, written as `pre_tasks`, `roles` and `post_tasks`. (The full file also has a first pre-task, "Create the load balancer folder", with `run_once: true`, and a last post-task that removes the `.off` file.)
+
+```yaml
+  pre_tasks:
+    - name: Take this server out of the load balancer
+      ansible.builtin.file: { path: "{{ lab_root }}/lb/{{ inventory_hostname }}.off", state: touch }
+      delegate_to: localhost
+  roles:
+    - lemonade_web
+  post_tasks:
+    - name: Wait until the menu shows the new version
+      ansible.builtin.wait_for:
+        path: "{{ lab_root }}/{{ inventory_hostname }}/site/index.html"
+        search_regex: "version {{ lemonade_version }}"
+```
+
+Run it:
+
+```bash
+ansible-playbook rolling-update.yml -e lemonade_version=1.1.0
+```
+
+Real output, trimmed. Notice that the `PLAY` header appears twice, once per batch:
+
+```text
+PLAY [Upgrade the web servers one at a time] ***********************************
+TASK [Create the load balancer folder] *****************************************
+changed: [web1 -> localhost]
+TASK [Take this server out of the load balancer] *******************************
+changed: [web1 -> localhost]
+TASK [lemonade_web : Render the menu page] *************************************
+changed: [web1]
+RUNNING HANDLER [lemonade_web : Reload nginx] **********************************
+ok: [web1] =>
+    msg: nginx reloaded on web1
+TASK [Wait until the menu shows the new version] *******************************
+ok: [web1]
+TASK [Put this server back into the load balancer] *****************************
+changed: [web1 -> localhost]
+
+PLAY [Upgrade the web servers one at a time] ***********************************
+TASK [Create the load balancer folder] *****************************************
+ok: [web2 -> localhost]
+...
+PLAY RECAP *********************************************************************
+web1   : ok=8    changed=4    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+web2   : ok=8    changed=3    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+Three things to see:
+
+- `web1 -> localhost` means the task ran on the control node (the "load balancer") on behalf of `web1`.
+- The handler ran **inside** the batch, before the health check.
+- "Create the load balancer folder" has `run_once: true`, yet it ran in **both** batches: `changed` for `web1`, then `ok` for `web2`. `run_once` means once per batch.
+
+**Dry run first.** `--check --diff` shows the version change and skips `wait_for`, which cannot be predicted:
+
+```text
+-<p>Served by web1, version 1.1.0</p>
++<p>Served by web1, version 1.2.0</p>
+changed: [web1]
+TASK [Wait until the menu shows the new version] *******************************
+skipping: [web1]
+```
+
+**On real servers** the drain step talks to the real load balancer, and the check calls the app:
+
+```yaml
+- name: Drain this server in HAProxy
+  community.general.haproxy: { state: disabled, host: "{{ inventory_hostname }}", backend: lemonade }
+  delegate_to: lb1
+- name: Wait for the app's health endpoint
+  ansible.builtin.uri: { url: "http://{{ ansible_host }}:8080/health" }
+  register: health
+  until: health.status == 200
+  retries: 10
+  delay: 3
+```
+
+## Rules and conventions
+
+- **Keep the version in Git** (`group_vars/web.yml`), not only in `-e`. Otherwise the next `site.yml` run puts the default version back. You can see this in the lab: after a rolling update with `-e lemonade_version=1.1.0`, a plain `site.yml --check` wants to change the menu back to 1.0.0.
+- **Drain, upgrade, verify, enable**, in that order, every time.
+- **Start small**: `serial: [1, "30%", "100%"]` upgrades one canary server first.
+- **Fail fast**: `max_fail_percentage: 0` for web servers; consider `any_errors_fatal: true` for database schema changes.
+- **Health checks must test the app**, not just the port. A port can be open while the app returns errors.
+- **Leave headroom**: never take out more servers than the rest can carry (see the maths below).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| No `serial` | All web servers reload at once; brief outage. | `serial: 1` or a percentage. |
+| `max_fail_percentage: 50` with `serial: 2` | One failed server in a batch of two does **not** stop the run (50% is not above 50). | Use `0`, or `49` if you want "stop at 1 of 2". |
+| `strategy: free` with `max_fail_percentage` | Warning: not supported with the free strategy. | Use the default `linear` strategy. |
+| `run_once` expecting "once per play" with `serial` | The task runs once in every batch. | Move it into its own play without `serial`. |
+| Enabling the server before the health check | A broken server receives traffic. | The health check must come before "put back". |
+| Version only passed with `-e` | The next `site.yml` reverts the version. | Store it in `group_vars`. |
+
+## Mathematical Abstraction
+
+**Batch sizes.** Let the play have $N$ hosts and `serial` the list $s_1, s_2, \dots, s_m$. Each entry becomes a batch size:
+
+$$
+b_j =
+\begin{cases}
+\max\!\left(1, \left\lfloor \dfrac{q_j}{100} \cdot N \right\rfloor\right) & \text{if } s_j \text{ is a percentage } q_j\% \\[1ex]
+s_j & \text{if } s_j \text{ is a number}
+\end{cases}
+\qquad j = 1, 2, \dots
+$$
+
+where:
+
+- $N$ is the number of hosts the play targets;
+- $s_j$ is the $j$-th entry of the `serial` list, and $q_j$ is its value when written as a percentage;
+- $\lfloor x \rfloor$ rounds down;
+- $b_j$ is the size of batch $j$; after the list ends, the last entry is used again; the final batch takes whatever hosts remain, so it can be smaller.
+
+**Example 1**, the lab: $N = 2$, `serial: 1`. So $b_1 = 1$, $b_2 = 1$: two batches, `web1` then `web2`.
+
+**Example 2**, a summer fleet of $N = 10$ web servers with `serial: [1, "30%", "100%"]`:
+
+- $b_1 = 1$ (one canary);
+- $b_2 = \max(1, \lfloor 0.30 \cdot 10 \rfloor) = \max(1, 3) = 3$;
+- $b_3 = \max(1, \lfloor 1.00 \cdot 10 \rfloor) = 10$, but only $10 - 1 - 3 = 6$ hosts remain, so the batch has 6.
+
+Batches of 1, 3 and 6. A real run on ten test hosts printed exactly `['w01']`, then `['w02', 'w03', 'w04']`, then `['w05', …, 'w10']`.
+
+**When the run stops.** After each task, Ansible compares the failed share of the batch with the limit:
+
+$$
+\frac{F}{B} > \frac{p}{100} \;\Rightarrow\; \text{stop the whole run}
+$$
+
+where:
+
+- $B$ is the size of the current batch;
+- $F$ is the number of hosts in that batch that have failed;
+- $p$ is `max_fail_percentage`, from 0 to 100;
+- the comparison is **strictly greater than**: hitting the limit exactly is still allowed.
+
+**Example 1**: $B = 4$, $p = 25$, and one host fails. $F/B = 1/4 = 0.25$, which is **not** greater than $0.25$, so the run continues. A real test did exactly that.
+
+**Example 2**: $B = 4$, $p = 25$, two hosts fail. $2/4 = 0.5 > 0.25$, so the run stops. The real test printed `NO MORE HOSTS LEFT` and never started the next batch.
+
+**Example 3**, the lab: $p = 0$. Any failure gives $F/B \ge 1/B > 0$, so the first broken server stops the rollout.
+
+**Capacity during the rollout.** While a batch is drained, the rest of the fleet carries the traffic:
+
+$$
+\text{capacity} = \frac{N - b}{N}
+$$
+
+where $N$ is the number of web servers and $b$ the size of the batch currently drained.
+
+**Example.** The lab: $N = 2$ and $b = 1$, so capacity is $(2 - 1)/2 = 50\%$. If the stand's peak traffic needs 70% of both servers, a Saturday-noon rollout would overload `web2`. Roll out in a quiet hour, or add a third server: $(3 - 1)/3 \approx 67\%$. For the summer fleet, the 6-host batch leaves $(10 - 6)/10 = 40\%$, so a large last batch should only be used when traffic is low.
+
+## References
+
+- Ansible documentation, "Controlling playbook execution: strategies and more" (serial, max_fail_percentage, throttle, order): <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_strategies.html>
+- Ansible documentation, "Controlling where tasks run: delegation and local actions": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_delegation.html>
+- Ansible documentation, "Error handling in playbooks" (any_errors_fatal): <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_error_handling.html>
+- `community.general.haproxy` module: <https://docs.ansible.com/projects/ansible/latest/collections/community/general/haproxy_module.html>
+- Martin Fowler, "BlueGreenDeployment", for the wider family of zero-downtime releases: <https://martinfowler.com/bliki/BlueGreenDeployment.html>
+
+[← Previous: Vault and secrets](10-vault-and-secrets.qmd) · [Ansible index](index.qmd) · [Next: Configuration and tooling →](12-configuration-and-tooling.qmd)

@@ -1,0 +1,203 @@
+---
+title: "What CI and CD Mean"
+description: "Continuous integration, continuous delivery and continuous deployment, told through the Lemonade Stand and the stories that made them famous."
+---
+
+## The problem
+
+Three friends work on the Lemonade Stand code:
+
+- **Ana** adds a new drink, *mint lemonade*.
+- **Ben** changes how prices are rounded.
+- **Caro** adds the bulk discount: 10% off from the tenth cup.
+
+Each of them works alone on a private branch for three weeks. On release day they merge everything. Ben's rounding change breaks Caro's discount, Ana's new drink has no price in Ben's new format, and nobody remembers which of the 60 commits caused which bug. The release slips by a week.
+
+Nothing here was hard to *write*. It was hard to *combine*. The longer changes wait apart, the more painful it is to put them together. CI/CD is the set of habits and tools that keeps that pain small.
+
+::: {.callout-tip}
+## Explain it like I'm ten
+
+**Continuous integration** is like a class writing one storybook together. If every child writes a whole chapter alone for a month and then glues all the chapters together, the dog is called Rex in chapter 2 and Max in chapter 3, and the story falls apart. If instead everyone adds a page **every day** and the teacher reads the whole book each afternoon, mistakes are tiny and found at once. Martin Fowler's famous article on [Continuous Integration](https://martinfowler.com/articles/continuousIntegration.html) makes this same point: integrate often so each integration is small.
+
+**Continuous delivery** means the lemonade is *always* bottled, labelled and ready in the fridge. Opening the stand is just a decision ("let's sell now!"), not a week of work. Jez Humble and David Farley wrote the book on this, [*Continuous Delivery*](https://continuousdelivery.com/) (2010).
+
+**Continuous deployment** goes one step further: every bottle that passes the taste test goes straight onto the counter, with nobody pressing a button.
+
+**The stop cord.** In Toyota's car factories, any worker can pull a cord, the [andon](https://mag.toyota.co.uk/andon-toyota-production-system/), when they see a problem. A light shows where, and help comes at once, so the problem is fixed before more cars are built with it. In CI, a red build is our andon: the team stops and fixes it before adding new work on top.
+
+**"If it hurts, do it more often."** Martin Fowler calls this one of his favourite sayings in [Frequency Reduces Difficulty](https://martinfowler.com/bliki/FrequencyReducesDifficulty.html). Merging once a month hurts, so merge every day. Releasing is scary, so release so often that it becomes boring.
+
+**Ten releases a day.** In 2009, John Allspaw and Paul Hammond showed in their talk [10+ Deploys per Day: Dev and Ops Cooperation at Flickr](https://www.slideshare.net/slideshow/10-deploys-per-day-dev-and-ops-cooperation-at-flickr/1628368) that a large website could release many small changes every day, safely, because developers and operations people shared tools, information and responsibility. The talk inspired the first DevOpsDays conference.
+:::
+
+## The concepts, precisely
+
+| Term | Plain definition | What triggers it | Who decides to release |
+| --- | --- | --- | --- |
+| **Continuous integration (CI)** | Everyone merges small changes into the shared main branch at least daily; every merge is built and tested automatically; a broken build is fixed first | A push or pull request | Not about releasing at all |
+| **Continuous delivery (CD)** | Every change that passes the pipeline is *releasable*: packaged, tested in a production-like environment, one button away from production | A green CI build | A person, whenever the business wants |
+| **Continuous deployment** | Every change that passes the pipeline is released to production automatically | A green CI build | The pipeline itself |
+| **Mainline / trunk** | The one shared branch everyone integrates into (`main`) | — | — |
+| **Trunk-based development** | Branches live for hours or a day or two, not weeks; unfinished work is hidden behind a feature flag instead of a long branch | — | — |
+| **Batch size** | How many changes travel together in one integration or one release | — | — |
+| **Deployment** | Putting a version onto servers | A pipeline step | — |
+| **Release** | Letting users see the new behaviour | Deployment, or flipping a feature flag later | — |
+
+The last two rows matter. With a [feature flag](07-deployment-strategies.qmd), the Lemonade Stand can *deploy* the mint lemonade code on Monday and *release* the drink on Friday by switching the flag on.
+
+## The practices that make CI work
+
+These are the habits Fowler lists in his article, rewritten for the Lemonade Stand:
+
+| Practice | What it means | Lemonade example |
+| --- | --- | --- |
+| One source repository | All code, tests, Dockerfile and pipeline files live in one place | `server.mjs`, `server.test.mjs`, `Dockerfile` and `.github/workflows/` in one repo |
+| Automate the build | One command builds and checks everything | `npm test`; `docker build .` |
+| Make the build self-testing | The build fails if a test fails | `node --test` exits with code 1 on any failure |
+| Commit to mainline every day | No branch lives for weeks | Ana merges "mint lemonade, hidden behind a flag" on day 1 |
+| Every push builds on a clean machine | Not "works on my laptop" | GitHub Actions runner `ubuntu-latest` |
+| Fix a broken build immediately | Red build = stop the line | Ben reverts his rounding commit within 10 minutes |
+| Keep the build fast | Feedback in minutes, not hours | Lemonade tests run in under 1 second |
+| Everyone can see the result | Status on every commit and pull request | Green tick on the pull request |
+| Automate deployment | Releasing is a script, not a ritual | `workflows/deploy.yml` |
+
+## A worked example: the same three weeks, done with CI
+
+Here is what Ana, Ben and Caro do instead.
+
+**Day 1.** Ana opens a small pull request that adds mint lemonade to the menu. The pipeline runs `npm test` on a fresh machine:
+
+```yaml
+# .github/workflows/ci.yml (core of it)
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - run: npm test
+```
+
+The check is green, she merges. Total change: 1 line in `MENU` plus 1 test.
+
+**Day 2.** Ben tidies the pricing code and, without noticing, writes `cups > 10` where Caro's rule needs `cups >= 10`. His pull request turns red, because Caro's discount test (merged that morning) now fails. This is the real output of that bug:
+
+```text
+✖ gives 10% off from the tenth cup
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+    {
+      cups: 10,
+  +   totalCents: 2900
+  -   totalCents: 2610
+    }
+ℹ tests 4
+ℹ pass 3
+ℹ fail 1
+```
+
+Ten cups cost 2900 cents instead of the discounted 2610. The failure points at one small change made today, so Ben fixes it in minutes. Without CI, the same bug would have surfaced on release day, buried among 60 commits.
+
+**Day 3 onward.** Every merge to `main` produces a tested container image (continuous **delivery**). The team chooses to let the pipeline deploy each image automatically after a reviewer approves production (still continuous delivery, because a human presses the button). If they removed the approval, it would become continuous **deployment**.
+
+Run the real tests yourself:
+
+```bash
+cd devops/ci-cd/examples/lemonade-stand
+npm test
+```
+
+```text
+✔ adds up the price of every cup
+✔ gives 10% off from the tenth cup
+✔ rejects unknown drinks and bad quantities
+✔ serves health, prices and 404 over HTTP
+ℹ tests 4
+ℹ pass 4
+ℹ fail 0
+```
+
+## Rules and conventions
+
+- Merge into `main` at least once a day. A branch older than two days is a warning sign.
+- Every change goes through the same pipeline; there is no "quick fix straight to the server".
+- A red `main` is the team's top priority. Fix it or revert it; do not pile new commits on top.
+- Keep commits small enough that a failure points at one idea.
+- Hide unfinished features behind flags instead of hiding them on long branches.
+- The pipeline definition lives in the repository and is reviewed like code.
+- "Done" means merged, tested and deployable, not "works on my machine".
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Calling a build server "CI" while branches live for weeks | Painful merges, "merge day" | Merge to `main` daily; use feature flags |
+| Ignoring a red build | New failures hide behind the old one; people stop trusting the pipeline | Stop the line: revert or fix before anything else |
+| Tests only run on a developer's laptop | "It worked for me" bugs | Run every check on a clean runner |
+| Confusing delivery with deployment | Arguments about whether "we do CD" | Ask one question: does a human press the release button? |
+| Huge releases "to be safe" | Big, scary, slow releases that are hard to debug | Smaller batches; release more often |
+
+## Mathematical Abstraction
+
+### 1. Three definitions as logic
+
+Let $C$ be the set of all changes and, for a change $c \in C$:
+
+- $\operatorname{pass}(c)$: the pipeline is green for $c$;
+- $\operatorname{releasable}(c)$: $c$ is packaged and could go to production with one action;
+- $\operatorname{deployed}(c)$: $c$ is running in production.
+
+$$
+\begin{aligned}
+\text{Continuous delivery:}\quad & \forall c \in C:\ \operatorname{pass}(c) \Rightarrow \operatorname{releasable}(c) \\
+\text{Continuous deployment:}\quad & \forall c \in C:\ \operatorname{pass}(c) \Rightarrow \operatorname{deployed}(c)
+\end{aligned}
+$$
+
+where
+
+- $\forall c \in C$ reads "for every change $c$ in the set $C$";
+- $\Rightarrow$ reads "implies": whenever the left side is true, the right side must be true too.
+
+**Example.** On Tuesday the team merges 5 changes and all 5 are green. With continuous delivery, all 5 must be releasable: $\operatorname{releasable}(c_1) = \dots = \operatorname{releasable}(c_5) = \text{true}$. Only 2 of them are deployed that day, because the reviewer approves twice. That is fine for delivery. It would break continuous deployment, which requires $\operatorname{deployed}(c_i) = \text{true}$ for all 5.
+
+### 2. A simple model of why long branches hurt
+
+This is a **simplified model**, not a law. Assume $n$ developers each change about $r$ files per day, chosen at random from a codebase of $F$ files, and they integrate every $T$ days. Two developers' work overlaps when they touch the same file. The expected number of such overlapping files, summed over all pairs of developers, is about
+
+$$
+E(T) \approx \binom{n}{2} \cdot \frac{(rT)^2}{F}
+$$
+
+where
+
+- $n$ is the number of developers (a whole number);
+- $\binom{n}{2} = \frac{n(n-1)}{2}$ is the number of pairs of developers;
+- $r$ is files changed per developer per day;
+- $T$ is the integration interval in days;
+- $rT$ is how many files one developer has changed by merge time;
+- $\frac{(rT)^2}{F}$ is the expected number of files two developers share: each of the $rT$ files of the first developer is in the second developer's set with probability $\frac{rT}{F}$ (this needs $rT$ much smaller than $F$);
+- $E(T)$ is the expected number of overlapping files, a rough count of merge-conflict risk.
+
+**Example.** Ana, Ben and Caro plus one more friend: $n = 4$, so $\binom{4}{2} = \frac{4 \cdot 3}{2} = 6$ pairs. Each changes $r = 3$ files a day in a codebase of $F = 200$ files.
+
+- Integrating daily, $T = 1$: $E(1) \approx 6 \cdot \frac{(3 \cdot 1)^2}{200} = 6 \cdot \frac{9}{200} = 0.27$ overlapping files.
+- Integrating every 10 days, $T = 10$: $E(10) \approx 6 \cdot \frac{(3 \cdot 10)^2}{200} = 6 \cdot \frac{900}{200} = 27$ overlapping files.
+
+The interval grew $10\times$, but the overlap grew $\frac{27}{0.27} = 100\times$, because $T$ is squared. Real files are not chosen at random (some files, like `server.mjs`, are touched by everyone), so real numbers differ, but the lesson holds: **conflict risk grows faster than the waiting time**, which is the reasoning behind "if it hurts, do it more often".
+
+## References
+
+- Martin Fowler, [Continuous Integration](https://martinfowler.com/articles/continuousIntegration.html) (rewritten 2023) and the [original version](https://martinfowler.com/articles/originalContinuousIntegration.html).
+- Martin Fowler, [Frequency Reduces Difficulty](https://martinfowler.com/bliki/FrequencyReducesDifficulty.html) (2011).
+- Kent Beck, *Extreme Programming Explained* (Addison-Wesley, 1999), where continuous integration is one of the core XP practices.
+- Jez Humble and David Farley, *Continuous Delivery* (Addison-Wesley, 2010); [continuousdelivery.com](https://continuousdelivery.com/).
+- John Allspaw and Paul Hammond, [10+ Deploys per Day: Dev and Ops Cooperation at Flickr](https://www.slideshare.net/slideshow/10-deploys-per-day-dev-and-ops-cooperation-at-flickr/1628368), Velocity 2009 ([PDF](https://paulhammond.org/2009/06/velocity/10deploys.pdf)).
+- Toyota UK Magazine, [Andon – Toyota Production System guide](https://mag.toyota.co.uk/andon-toyota-production-system/).
+- Paul Hammant, [trunkbaseddevelopment.com](https://trunkbaseddevelopment.com/).
+
+[← Part index](index.qmd) · [Next: Pipeline Building Blocks →](02-pipeline-building-blocks.qmd)

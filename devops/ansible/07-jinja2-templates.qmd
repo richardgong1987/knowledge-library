@@ -1,0 +1,239 @@
+---
+title: "7. Jinja2 Templates"
+description: "Fill config files and values with variables: the three Jinja2 delimiters, the most useful filters and tests, lookups, the template module, quoting and whitespace rules."
+---
+
+## The problem
+
+Each Lemonade web server needs its own nginx config. `web1` has 4 workers and `web2` has 1. Both forward to port 8080. The menu page must list every drink with its price.
+
+Keeping two hand-written copies means editing two files for every price change, and one day they will differ. Instead we want **one** file with blanks, and Ansible fills the blanks for each host.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Mad Libs"}
+*Mad Libs* is a word game invented by Roger Price and Leonard Stern in the 1950s. You get a story with blanks: "Today I drank a ___(adjective)___ lemonade that cost ___(number)___ dollars." Your friends call out words, you write them into the blanks, and you read out a funny story.
+
+A Jinja2 template is a Mad Libs page for computers. `worker_processes {{ lemonade_nginx_workers }};` has one blank. For `web1` Ansible writes 4 into it; for `web2` it writes 1. Templates can do one trick that Mad Libs can't: "repeat this line for every drink on the menu".
+:::
+
+## The concept, precisely
+
+- **Jinja2** is a template language for Python. Ansible uses it everywhere: in playbook values, in `when:` conditions, and in template files.
+- Templating happens on the **control node**, before anything is sent to the host.
+- The `ansible.builtin.template` module renders a `.j2` file with the host's variables and copies the result to the host. It is `copy` with blanks filled in.
+- A **filter** transforms a value: `{{ name | upper }}`. A **test** asks a yes/no question: `{{ port is defined }}`. A **lookup** fetches data from outside, on the control node.
+
+## Every piece of syntax
+
+| Syntax | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `{{ expr }}` | Prints the value of an expression. | Spaces inside the braces are the convention. | `{{ lemonade_app_port }}` |
+| `{% if %}…{% elif %}…{% else %}…{% endif %}` | Includes text only when a condition holds. | Every `if` needs `endif`. | `{% if lemonade_nginx_workers > 2 %}big{% endif %}` |
+| `{% for x in list %}…{% endfor %}` | Repeats text for each item. | `loop.index` counts from 1. | `{% for drink in lemonade_menu %}` |
+| `{% set x = … %}` | Creates a template-local variable. | | `{% set total = lemonade_menu \| map(attribute='price') \| sum %}` |
+| `{# … #}` | A comment that never reaches the output. | | `{# keep in sync with app #}` |
+| `{%-` / `-%}` | Strips whitespace before or after the tag. | Use when output has unwanted blank lines. | `{%- for d in menu %}` |
+| `x \| filter(args)` | Applies a filter. Chain them left to right. | | `{{ menu \| map(attribute='name') \| join(', ') }}` |
+| `x is test` | A yes/no test. | `is not` negates. | `{{ port is defined }}` |
+| `~` | Joins values as text. | Safer than `+` for mixed types. | `{{ 'web' ~ 1 }}` → `web1` |
+| `in` | Membership. | | `{{ 'web1' in groups['web'] }}` |
+
+## Filters you will use
+
+All results below are real outputs from ansible-core 2.21. In the examples, `ports` is `{http: 80, app: 8080}` and the menu holds Classic Lemonade (2.50, in stock), Pink Lemonade (3.00, out of stock) and Iced Tea (2.00, in stock).
+
+| Filter | What it does | Rule / convention | Example → result |
+| --- | --- | --- | --- |
+| `default(v)` | Uses `v` when the variable is undefined. | `default(v, true)` also replaces empty strings. | `missing \| default('none')` → `none` |
+| `mandatory` | Fails with a clear error when undefined. | For values that have no sensible default. | `x \| mandatory` → `Mandatory variable 'x' not defined.` |
+| `upper`, `lower` | Changes the case. | | `'Sunny' \| upper` → `SUNNY` |
+| `replace(a, b)` | Replaces text. | Plain text, not a regex. | `'Sunny Stand' \| replace('Sunny','Rainy')` → `Rainy Stand` |
+| `join(sep)` | List → string. | | `['web1','web2'] \| join(', ')` → `web1, web2` |
+| `split(sep)` | String → list. | | `'web1,web2' \| split(',')` → `['web1', 'web2']` |
+| `int`, `float` | Text → number. | Needed before maths on strings. | `'4' \| int + 1` → `5` |
+| `bool` | Text → true/false. | `'yes'`, `'true'`, `'1'` → `True`. | `'yes' \| bool` → `True` |
+| `length` | Number of items or characters. | | `menu \| length` → `3` |
+| `sum` | Adds up a list of numbers. | | `menu \| map(attribute='price') \| sum` → `7.5` |
+| `map(attribute=a)` | Takes one field from each dictionary. | Follow with `list` to see a list. | `menu \| map(attribute='name') \| list` |
+| `selectattr(a)` | Keeps the items whose field is true, or passes a test. | `selectattr('price', '>', 2)` also works. | `menu \| selectattr('in_stock') \| map(attribute='name') \| list` → `['Classic Lemonade', 'Iced Tea']` |
+| `unique`, `sort` | Removes duplicates; sorts. | | `['web','prod','web'] \| unique` → `['web', 'prod']` |
+| `combine(d)` | Merges dictionaries; the right side wins. | `recursive=true` merges nested ones. | `ports \| combine({'app': 9090})` → `{http: 80, app: 9090}` |
+| `dict2items` | Dictionary → list of `{key, value}`. | For looping over a dictionary. | `ports \| dict2items` → `[{key: http, value: 80}, …]` |
+| `items2dict` | The reverse. | | `… \| items2dict` → `{http: 80, app: 8080}` |
+| `to_json`, `to_nice_json` | Data → JSON text. | | `ports \| to_json` → `{"http": 80, "app": 8080}` |
+| `to_yaml`, `to_nice_yaml` | Data → YAML text. | Indent with `indent=2`. | `ports \| to_nice_yaml` → `app: 8080`… |
+| `from_json`, `from_yaml` | Text → data. | Parse command output. | `'{"a": 1}' \| from_json` → `{a: 1}` |
+| `regex_replace(p, r)` | Regex replace. | Back-references are `\\1`. | `'web-01' \| regex_replace('^web-(\\d+)$', 'server \\1')` → `server 01` |
+| `ternary(a, b)` | `a` if true, `b` if false. | | `(8080 > 1024) \| ternary('unprivileged','privileged')` → `unprivileged` |
+| `format(...)` | printf-style formatting. | | `'%.2f' \| format(2.5)` → `2.50` |
+
+## Tests
+
+| Test | Question | Example → result |
+| --- | --- | --- |
+| `is defined` / `is undefined` | Does the variable exist? | `missing is defined` → `False` |
+| `is none` | Is the value null? | `null_var is none` → `True` |
+| `is version(v, op)` | Compare version strings correctly. | `'2.21.6' is version('2.17', '>=')` → `True` |
+| `is match(re)` | Does the regex match at the **start**? | `'web1' is match('web')` → `True` |
+| `is search(re)` | Does the regex match **anywhere**? | `'prod-web1' is search('web')` → `True` |
+| `is succeeded` / `is failed` / `is changed` / `is skipped` | Checks a registered result. | `result is changed` |
+
+## Lookups
+
+A lookup reads data **on the control node**, never on the managed host.
+
+| Lookup | What it reads | Example |
+| --- | --- | --- |
+| `env` | An environment variable. | `lookup('ansible.builtin.env', 'HOME')` |
+| `file` | A local file's contents. | `lookup('ansible.builtin.file', 'files/motd.txt')` |
+| `template` | A local template, rendered. | `lookup('ansible.builtin.template', 'banner.j2')` |
+| `pipe` | The output of a local command. | `lookup('ansible.builtin.pipe', 'git rev-parse --short HEAD')` |
+
+## The `template` module
+
+| Parameter | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `src` | The `.j2` file. | Searched in the role's `templates/` folder. | `src: nginx.conf.j2` |
+| `dest` | Path on the host. | | `dest: /etc/nginx/conf.d/lemonade.conf` |
+| `mode`, `owner`, `group` | File permissions. | Quote the mode. | `mode: "0644"` |
+| `validate` | Checks the rendered file before installing it. | `%s` is the temporary file. | `validate: nginx -t -c %s` |
+| `backup` | Keeps a timestamped copy of the old file. | | `backup: true` |
+| `trim_blocks` | Drops the newline after a `{% %}` tag. | Default `true` in Ansible. | `trim_blocks: false` |
+| `lstrip_blocks` | Strips spaces before a `{% %}` tag. | Default `false`. | `lstrip_blocks: true` |
+
+Put `{{ ansible_managed }}` in a comment at the top of every template. It renders as "Ansible managed", which warns people not to edit the file by hand.
+
+## Worked example
+
+The lab's [`nginx.conf.j2`](examples/roles/lemonade_web/templates/nginx.conf.j2):
+
+```jinja
+# {{ ansible_managed }}
+worker_processes {{ lemonade_nginx_workers }};
+server {
+    listen 80;
+    location / { proxy_pass http://127.0.0.1:{{ lemonade_app_port }}; }
+}
+```
+
+And [`index.html.j2`](examples/roles/lemonade_web/templates/index.html.j2), with a loop:
+
+```jinja
+<h1>Sunny Lemonade Stand</h1>
+<ul>
+{% for drink in lemonade_menu %}
+  <li>{{ drink.name }}: ${{ '%.2f' | format(drink.price) }}</li>
+{% endfor %}
+</ul>
+<p>Served by {{ inventory_hostname }}, version {{ lemonade_version }}</p>
+```
+
+After `ansible-playbook site.yml`, `web1` has:
+
+```text
+# Ansible managed
+worker_processes 4;
+server {
+    listen 80;
+    location / { proxy_pass http://127.0.0.1:8080; }
+}
+```
+
+```html
+<h1>Sunny Lemonade Stand</h1>
+<ul>
+  <li>Classic Lemonade: $2.50</li>
+  <li>Pink Lemonade: $3.00</li>
+  <li>Iced Tea: $2.00</li>
+</ul>
+<p>Served by web1, version 1.0.0</p>
+```
+
+There are no blank lines where the `{% for %}` and `{% endfor %}` tags were, because `trim_blocks` is on by default.
+
+## Rules and conventions
+
+- **Quote any YAML value that starts with `{{`**: `dest: "{{ path }}"`.
+- **No `{{ }}` inside `when:`**. Conditions are already Jinja: `when: lemonade_app_port != 80`.
+- **Keep logic out of templates.** Compute values in variables, and keep templates to blanks, simple `if`s and loops.
+- **Use FQCN for lookups**: `lookup('ansible.builtin.env', 'HOME')`.
+- **Use `default()` for optional values and `mandatory` for required ones.** Make the choice visible.
+- **Name templates after their target, plus `.j2`**: `nginx.conf.j2`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `dest: {{ path }}` | `YAML parsing failed: This may be an issue with missing quotes around a template block.` | `dest: "{{ path }}"`. |
+| `'4' + 1` | `can only concatenate str (not "int") to str` | `'4' \| int + 1`. |
+| `lookup('file', ...)` expecting a file on the host | `Unable to access the file 'motd.txt': File not found.` | Lookups read the control node. Use `slurp` or `command: cat` for host files. |
+| `{{ menu \| map(attribute='name') }}` in a sentence | Prints `['Classic Lemonade', 'Pink Lemonade', …]` with brackets and quotes. | End with `\| join(', ')` for human text. |
+| Editing a rendered file on the server | The next run silently overwrites your edit. | Change the template; trust the `Ansible managed` header. |
+
+## Mathematical Abstraction
+
+Rendering a template is a function of the template text and the host's variables:
+
+$$
+\operatorname{render}(T, V_h) = F_h
+$$
+
+where:
+
+- $T$ is the template text, such as `nginx.conf.j2`;
+- $V_h$ is the set of variables of host $h$ after precedence ([lesson 6](06-variables-and-facts.qmd));
+- $F_h$ is the resulting file for host $h$.
+
+The same $T$ with different $V_h$ gives different files. That is the whole point.
+
+**Example.** $T$ = `nginx.conf.j2`. With $V_{\texttt{web1}}$ containing workers = 4, $F_{\texttt{web1}}$ has `worker_processes 4;`. With $V_{\texttt{web2}}$ containing workers = 1, $F_{\texttt{web2}}$ has `worker_processes 1;`.
+
+The `default` filter is a **piecewise** function:
+
+$$
+\operatorname{default}(x, d) =
+\begin{cases}
+x & \text{if } x \text{ is defined} \\
+d & \text{otherwise}
+\end{cases}
+$$
+
+where $x$ is the variable being read and $d$ is the fallback value.
+
+**Example.** `missing | default('none')`: `missing` is undefined, so the second case applies and the result is `none`. `lemonade_app_port | default(80)` on a web host: the variable is defined as 8080, so the first case applies and the result is 8080.
+
+The menu total combines `map` and `sum`:
+
+$$
+P = \sum_{i=1}^{n} p_i
+$$
+
+where:
+
+- $n$ is the number of drinks in `lemonade_menu`;
+- $p_i$ is the price of drink $i$, in dollars;
+- $P$ is the total, which is what `lemonade_menu | map(attribute='price') | sum` returns.
+
+**Example.** $n = 3$, with $p_1 = 2.50$, $p_2 = 3.00$ and $p_3 = 2.00$, so $P = 2.50 + 3.00 + 2.00 = 7.50$. Ansible printed `7.5`. To show it as money, use `'%.2f' | format(P)`, which gives `7.50`.
+
+`selectattr` is set-builder notation:
+
+$$
+S = \lbrace\, d \in M : \operatorname{inStock}(d) \,\rbrace
+$$
+
+where $M$ is the set of drinks on the menu, $\operatorname{inStock}(d)$ is true when drink $d$ has `in_stock: true`, and $S$ is the drinks that pass.
+
+**Example.** $M$ = {Classic, Pink, Iced Tea}, and only Pink is out of stock, so $S$ = {Classic, Iced Tea}. That matches the filter table above.
+
+## References
+
+- Ansible documentation, "Templating (Jinja2)": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_templating.html>
+- Ansible documentation, "Using filters to manipulate data": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_filters.html>
+- Ansible documentation, "Tests": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_tests.html>
+- Ansible documentation, "Lookups": <https://docs.ansible.com/projects/ansible/latest/playbook_guide/playbooks_lookups.html>
+- Jinja2 Template Designer Documentation: <https://jinja.palletsprojects.com/en/stable/templates/>
+- Mad Libs, created by Roger Price and Leonard Stern: <https://en.wikipedia.org/wiki/Mad_Libs>
+
+[← Previous: Variables and facts](06-variables-and-facts.qmd) · [Ansible index](index.qmd) · [Next: Conditionals, loops and handlers →](08-conditionals-loops-and-handlers.qmd)

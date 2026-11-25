@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-thermometer
+  namespace: lemonade
+spec:
+  selector:
+    matchLabels:
+      app: node-thermometer
+  template:
+    metadata:
+      labels:
+        app: node-thermometer
+    spec:
+      containers:
+        - name: thermometer
+          image: busybox:1.37.0
+          command: ["sh", "-c", "while true; do echo checking $NODE_NAME; sleep 60; done"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
