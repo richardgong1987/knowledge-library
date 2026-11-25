@@ -10,7 +10,7 @@ const read = path => readFileSync(join(root, path), 'utf8');
 // Groups already rewritten to the Java, kid-first, math-first standard in WRITING_GUIDE.md.
 // While writing, check more locally with ALGO_REWRITTEN=<group-id>,... or ALGO_TOPICS=<slug>,...
 const fromEnv = name => (process.env[name] ?? '').split(',').filter(Boolean);
-const REWRITTEN = new Set(['01-data-structures', '03-optimisation', '04-sorting-range', '05-graph-algorithms', '06-maths-strings', ...fromEnv('ALGO_REWRITTEN')]);
+const REWRITTEN = new Set(['01-data-structures', '03-optimisation', '04-sorting-range', '05-graph-algorithms', '06-maths-strings', '02-search-and-exploration', ...fromEnv('ALGO_REWRITTEN')]);
 const REWRITTEN_TOPICS = new Set(fromEnv('ALGO_TOPICS'));
 const isRewritten = topic => REWRITTEN.has(topic.group) || REWRITTEN_TOPICS.has(topic.slug);
 

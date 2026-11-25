@@ -1,75 +1,384 @@
 ---
 title: "Enumeration"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "Trying every candidate without missing one: counting the search space first with the product rule, pairs, subarrays and subsets, shrinking loops to the square root, enumerating answers instead of inputs, counting by complement, and hard interview problems solved math-first."
 ---
 
-## Start with the problem, not a formula
+Enumeration means listing every candidate answer, checking each one, and keeping those that pass. It sounds like the least clever algorithm there is, and it is often the right one. The skill is not in the loop. It is in **counting the candidates before you write the loop**, and in shrinking the list until the loop is fast.
 
-**LeetCode 53 — Maximum Subarray, as a brute-force starting point**. Systematically inspect a finite or bounded space of candidates.
+All code is in [`EnumerationLab.java`](EnumerationLab.java). Run it from this folder with `java EnumerationLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+You forgot the code of a bike lock. It has 3 dials, each showing a digit from 0 to 9. You remember one thing: all three digits were **different**.
 
-Before optimising, list every candidate subarray to understand the search space and build a correctness oracle for short test inputs.
+- How many codes must you try in the worst case?
+- If the lock had 9 dials instead of 3, could you still try them all?
 
-## Discover the key idea
+Trying codes at random is hopeless: you repeat some and miss others. Trying them **in order**, 000, 001, 002, …, 999, never repeats and never misses. That is enumeration. Before trying, though, count: 3 dials give $10 \times 10 \times 10 = 1{,}000$ codes, about a quarter of an hour by hand. Nine dials give $10^9$ codes, which is 31 years at one code per second. Counting first tells you which plan works.
 
-Enumeration is not a failure: it makes the constraints and counting precise. Then identify repeated computation that a faster algorithm can reuse.
+## Explain it like I'm ten
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+::: {.callout-tip}
+Think of a car's mileage counter. The right-hand wheel turns 0, 1, 2, … 9. When it passes 9 it goes back to 0 and pushes the next wheel on by one. A counter like that visits **every** number exactly once, in order. If you turn your lock's dials the same way, you are sure to hit the right code, and you never try a code twice.
 
-## Mathematical model — then immediately translate it
+Before you start, multiply: 10 choices on the first dial, times 10 on the second, times 10 on the third, is 1,000 tries. That one multiplication tells you whether you will be done before dinner or before you grow up.
+
+Then get clever about **where you look**. If you know the digits are all different, skip codes like 007 straight away. If you are hunting for pairs of numbers that multiply to 36, once you have tried 6 × 6 you can stop, because every bigger first number would just repeat a pair you already found, backwards.
+
+Robert Sedgewick and Kevin Wayne open their chapter on analysing algorithms (*Algorithms*, 4th edition, Section 1.4) with exactly this kind of program: `ThreeSum`, which checks every triple of numbers to see whether it adds to zero. They use it to show how the number of candidates, $N^3$ for triples, decides the running time.
+:::
+
+## From simple to advanced
+
+### Level 1: list every candidate, but count them first
+
+An enumeration has two parts: a way to visit every candidate, and a test for each one. The first thing to work out is **how many candidates there are**, because that is the running time. The tool is the **product rule**: if a candidate is built from $k$ independent choices, the counts multiply.
 
 $$
-N=\frac{n(n+1)}2
+\lvert \Omega \rvert = c_1 \cdot c_2 \cdot \ldots \cdot c_k
 $$
 
-**Explanation of every symbol:** n is array length; N is the count of NONEMPTY contiguous subarrays. A subarray is determined by its start and end indices.
+where:
 
-**Substitute actual values:** For n=4, starts at index 0 give 4 choices, index 1 gives 3, index 2 gives 2, and index 3 gives 1. So N=4+3+2+1=10, equal to 4×5/2=10.
+- $\Omega$ (omega) is the *search space*, the set of all candidates;
+- $\lvert \Omega \rvert$ is how many candidates it holds;
+- $c_i$ is the number of options for choice number $i$;
+- $k$ is the number of choices.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: the lock has $k = 3$ dials with $c_1 = c_2 = c_3 = 10$ digits, so $\lvert \Omega \rvert = 10 \cdot 10 \cdot 10 = 1{,}000$ codes. The product rule also counts the codes we want: the first digit has 10 options, the second must differ from it (9 options), and the third must differ from both (8 options), giving $10 \cdot 9 \cdot 8 = 720$ codes with three different digits.
 
-## Work through the algorithm
+Three nested loops are the mileage counter. The lab checks that they find exactly 720:
 
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
+```java
+static int codesWithDistinctDigits() {
+    int count = 0;
+    for (int a = 0; a <= 9; a++)
+        for (int b = 0; b <= 9; b++)
+            for (int c = 0; c <= 9; c++)
+                if (a != b && b != c && a != c) count++;
+    return count;
+}
+```
 
-**Why this is correct:** The start can be any of n positions, and for a start i there are n−i possible endpoints. Summing these counts gives the formula without double-counting.
+To turn a count into a time, use a rough rule: a simple Java loop runs on the order of $10^8$ cheap steps per second. Then 1,000 candidates take about 10 microseconds, $10^8$ take about a second, and $10^{12}$ take about three hours. This is only a rule of thumb, but it is enough to decide whether brute force is acceptable.
 
-## Actual code — keep it small
+### Level 2: the shapes that come up again and again
 
-The original [Node.js example library](../examples/patterns.mjs) implements this technique as `maxSubarray` and tests it against boundary cases:
+Most interview searches enumerate one of four shapes. Each has a counting formula:
 
-~~~js
-import { maxSubarray } from '../examples/patterns.mjs';
+$$
+\text{pairs} = \binom{n}{2} = \frac{n(n-1)}{2}, \qquad
+\text{subarrays} = \frac{n(n+1)}{2}, \qquad
+\text{subsets} = 2^n, \qquad
+\text{orderings} = n!
+$$
 
-console.log(maxSubarray([-2,1,-3,4,-1,2,1]));
-~~~
+where:
 
-Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
+- $n$ is the number of items in the input;
+- a *pair* is two different positions $i < j$, and $\binom{n}{2}$ ("$n$ choose 2") counts them;
+- a *subarray* is a contiguous run from position $i$ to position $j \ge i$;
+- a *subset* is any selection of items: each item is either in or out, so the product rule gives $2 \cdot 2 \cdot \ldots \cdot 2 = 2^n$;
+- an *ordering* (permutation) lines all $n$ items up: $n$ choices for the first place, $n - 1$ for the second, and so on, so $n! = n \cdot (n-1) \cdots 1$.
 
-## Analyse the work; do not guess big-O
+Example: with $n = 4$ items there are $\frac{4 \cdot 3}{2} = 6$ pairs, $\frac{4 \cdot 5}{2} = 10$ subarrays, $2^4 = 16$ subsets and $4! = 24$ orderings. With $n = 20$:
 
-**Cost:** Enumerating subarrays costs Θ(n²) candidates; summing each from scratch makes a naive solution Θ(n³), while prefix sums make each sum O(1).
+| Shape | Formula | $n = 4$ | $n = 20$ | Brute force at $n = 20$? |
+| --- | --- | --- | --- | --- |
+| Pairs | $n(n-1)/2$ | 6 | 190 | instant |
+| Subarrays | $n(n+1)/2$ | 10 | 210 | instant |
+| Subsets | $2^n$ | 16 | 1,048,576 | a fraction of a second |
+| Orderings | $n!$ | 24 | about $2.4 \times 10^{18}$ | never |
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+Polynomial shapes stay small. Exponential ones do not: $2^{40} \approx 1.1 \times 10^{12}$, which is why 40 items need the [meet-in-the-middle](../meet-in-the-middle/index.qmd) trick instead.
 
-## Break the technique deliberately
+Subsets have a neat enumeration. Number the items $0, 1, \dots, n-1$. Every whole number from $0$ to $2^n - 1$, written in binary, is one subset: bit $i$ is 1 exactly when item $i$ is chosen. Counting from 0 to 15 visits all 16 subsets of 4 items.
 
-Do not confuse a contiguous subarray (n(n+1)/2 possibilities) with a subset (2^n) or a permutation (n!). They represent different search spaces.
+```java
+static int subsetsWithSum(int[] items, int target) {
+    int n = items.length, count = 0;
+    for (int mask = 0; mask < (1 << n); mask++) {     // each mask is one subset
+        int sum = 0;
+        for (int i = 0; i < n; i++)
+            if ((mask >> i & 1) == 1) sum += items[i];
+        if (sum == target) count++;
+    }
+    return count;
+}
+```
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+For items $\lbrace 3, 1, 4, 2 \rbrace$ and target 5 it returns 2. Mask $1001_2 = 9$ chooses items 0 and 3, which are $3 + 2 = 5$, and mask $0110_2 = 6$ chooses items 1 and 2, which are $1 + 4 = 5$. The work is 16 masks times 4 bit tests, which is 64 steps.
 
-## Source connections and practice
+### Level 3: shrink the bounds
 
-**Textbook:** CLRS Chapters 2–3 (analysis) and Chapter 4 (maximum subarray via divide and conquer).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+The cheapest speed-up is to stop the loop early when the rest of the range cannot hold anything new. The classic case is divisors. Divisors come in **pairs**: if $d$ divides $n$, so does $n / d$. The smaller member of each pair is never above the square root:
 
-**LeetCode problem:** LeetCode 53 — Maximum Subarray, as a brute-force starting point. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/maximum-subarray/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+$$
+d \cdot \frac{n}{d} = n \quad \Rightarrow \quad \min\left(d, \frac{n}{d}\right) \le \sqrt{n}
+$$
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+where:
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+- $n$ is the number whose divisors we want;
+- $d$ is a divisor and $\frac{n}{d}$ is its partner;
+- $\Rightarrow$ means "therefore": if both were bigger than $\sqrt{n}$, their product would be bigger than $n$.
+
+Example: $n = 36$, $\sqrt{36} = 6$. Trying $d = 1, \dots, 6$ finds the pairs $(1, 36)$, $(2, 18)$, $(3, 12)$, $(4, 9)$ and $(6, 6)$. That gives all $2 + 2 + 2 + 2 + 1 = 9$ divisors after **6** tests instead of 36. The pair $(6, 6)$ counts once, because its two members are the same number. For $n = 10^{12}$ the saving is from $10^{12}$ tests to $10^6$.
+
+```java
+static int countDivisors(int n) {
+    int count = 0;
+    for (int d = 1; (long) d * d <= n; d++) {         // d * d <= n avoids floating-point sqrt
+        if (n % d != 0) continue;
+        count += (d == n / d) ? 1 : 2;               // d and n / d, counted once when equal
+    }
+    return count;
+}
+```
+
+The test `d * d <= n` is exact integer arithmetic, so it avoids the rounding risks of `Math.sqrt`. The cast to `long` stops `d * d` from overflowing when $n$ is close to $2^{31} - 1$. Other ways to shrink bounds follow the same logic: loop $j$ from $i + 1$ so each pair is seen once instead of twice, and break out of a loop over sorted values once the sum is already too big.
+
+### Level 4: enumerate the answers, not the inputs
+
+Sometimes the set of possible **answers** is far smaller than the set of inputs. Then loop over the answers and check whether each one fits.
+
+$$
+\#\lbrace k^2 \le N \rbrace = \lfloor \sqrt{N} \rfloor
+$$
+
+where:
+
+- $N$ is the upper limit of the range;
+- $\#\lbrace \dots \rbrace$ counts the elements of a set, here the perfect squares $1, 4, 9, \dots$ that do not exceed $N$;
+- $\lfloor x \rfloor$ ("floor") rounds $x$ down to a whole number.
+
+Example: to list the perfect squares from 1 to $N = 1{,}000$, testing every number means 1,000 tests. Generating $1^2, 2^2, 3^2, \dots$ until the square passes 1,000 means $\lfloor \sqrt{1000} \rfloor = \lfloor 31.6 \rfloor = 31$ steps, ending at $31^2 = 961$, because $32^2 = 1{,}024$ is too big.
+
+```java
+static List<Integer> squaresUpTo(int limit) {
+    List<Integer> squares = new ArrayList<>();
+    for (int k = 1; k * k <= limit; k++) squares.add(k * k);   // 31 steps for 1,000, not 1,000
+    return squares;
+}
+```
+
+The interview problem LeetCode 1291 uses the same idea: there are only 36 numbers like 1234 or 6789 in the whole range of `int`, so build those 36 instead of scanning a billion inputs.
+
+### Level 5: count without listing, using the complement
+
+The last step is to stop listing altogether and **count with formulas**. Often the things you want are hard to count directly but their opposite is easy. Then subtract:
+
+$$
+\lvert A \rvert = \lvert U \rvert - \lvert \bar{A} \rvert
+$$
+
+where:
+
+- $U$ is the whole range of candidates;
+- $A$ is the set we want to count;
+- $\bar{A}$ ("not $A$") is everything in $U$ that is not in $A$, the *complement*.
+
+Example: how many three-digit numbers, 100 to 999, have a **repeated** digit? Repeats can happen in several places, which is messy. Numbers with **no** repeat are easy with the product rule: the first digit has 9 options (1 to 9, since a number cannot start with 0), the second has 9 (any digit except the first, now including 0), and the third has 8. That gives $9 \cdot 9 \cdot 8 = 648$. All three-digit numbers are $999 - 100 + 1 = 900$, so the answer is $900 - 648 = 252$.
+
+A formula like this needs a slow, obviously correct check to test it against. The lab compares the formula with this one on every number up to 3,000:
+
+```java
+static boolean hasRepeatedDigit(int x) {
+    boolean[] seen = new boolean[10];
+    for (; x > 0; x /= 10) {
+        if (seen[x % 10]) return true;
+        seen[x % 10] = true;
+    }
+    return false;
+}
+```
+
+Keeping the brute force next to the clever version, and comparing them on many small inputs, is the standard way to catch an off-by-one in a counting formula.
+
+## Why it works and what it costs
+
+**Correctness of plain enumeration.** The invariant is: *the loops visit every candidate in $\Omega$ exactly once.* For nested loops this is the mileage counter. Each combination of loop values is one candidate, and the product rule says there are exactly $\lvert \Omega \rvert$ combinations, so none is missed and none repeats. For bitmasks, the numbers $0, \dots, 2^n - 1$ and the subsets of $n$ items match one to one through binary digits. Since every candidate is tested, the answer is right as long as the test is right.
+
+**Correctness of a shrunk bound.** A shortcut is safe only if it skips nothing that could matter. For divisors, every divisor $d > \sqrt{n}$ is the partner $n / d'$ of a divisor $d' = n / d < \sqrt{n}$ that the loop does visit, and the loop adds both members of each pair. So skipping the range above $\sqrt{n}$ loses nothing.
+
+**Correctness of the complement.** $A$ and $\bar{A}$ split $U$ into two parts with nothing in common and nothing left over, so $\lvert A \rvert + \lvert \bar{A} \rvert = \lvert U \rvert$.
+
+**Costs on this page's examples:**
+
+| Method | Candidates visited | Work per candidate | Total |
+| --- | --- | --- | --- |
+| Lock, all codes | $10^3 = 1{,}000$ | 3 comparisons | about 3,000 |
+| Subsets of 4 items | $2^4 = 16$ | 4 bit tests | 64 |
+| Divisors of 36, full loop | 36 | 1 division | 36 |
+| Divisors of 36, to $\sqrt{n}$ | 6 | 1 division | 6 |
+| Squares up to 1,000, test inputs | 1,000 | 1 test | 1,000 |
+| Squares up to 1,000, build answers | 31 | 1 multiplication | 31 |
+
+Memory is $O(1)$ for the loops themselves, plus whatever the answers take.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Writing the loop before counting the candidates | The program is correct but runs for hours | Multiply the choices first; compare with about $10^8$ steps per second |
+| `d < Math.sqrt(n)` instead of `d * d <= n` | The divisor 6 of 36 is missed | Include the square root itself, and use integer arithmetic |
+| Counting $d$ and $n / d$ twice when they are equal | Perfect squares get one divisor too many | Add 1, not 2, when `d == n / d` |
+| `d * d` in `int` for large $n$ | Overflow turns the product negative and the loop never stops | Cast to `long` |
+| `1 << n` with $n \ge 31$ | Wrong or negative bounds | Use `1L << n`, and remember that $2^{31}$ subsets is already too many |
+| Letting a number start with digit 0 in a digit count | Counts such as 10 · 9 · 8 instead of 9 · 9 · 8 | Give the first position 9 options, 1 to 9 |
+| Trusting a counting formula without a brute-force check | Off-by-one errors that only appear on some inputs | Compare with the slow version on every small input |
+
+## Interview problems
+
+Each solution starts with the mathematics: count the space, then shrink it.
+
+### 1. LeetCode 507: Perfect Number (Easy)
+
+**Problem.** A *perfect number* equals the sum of its positive divisors other than itself. Given $n \le 10^8$, return whether it is perfect. For 28 the answer is `true`, because $1 + 2 + 4 + 7 + 14 = 28$.
+
+**Math first.** Let $\sigma^*(n)$ be the sum of the proper divisors. Collect them in pairs up to the square root:
+
+$$
+\sigma^*(n) = 1 + \sum_{\substack{2 \le d \le \sqrt{n} \\ d \mid n}} \left( d + \frac{n}{d} \right) - \left[\, \sqrt{n} \in \mathbb{Z} \,\right] \sqrt{n}, \qquad \text{perfect} \iff \sigma^*(n) = n
+$$
+
+where:
+
+- $d \mid n$ means "$d$ divides $n$ exactly";
+- the 1 is the divisor 1, whose partner $n$ itself is left out on purpose;
+- $\left[\, \sqrt{n} \in \mathbb{Z} \,\right]$ is 1 when $n$ is a perfect square and 0 otherwise; it stops $\sqrt{n}$ from being added twice;
+- $\iff$ means "exactly when".
+
+Example: $n = 28$, $\sqrt{28} \approx 5.3$. The loop tries $d = 2, 3, 4, 5$. It finds $d = 2$ (partner 14) and $d = 4$ (partner 7). So $\sigma^*(28) = 1 + (2 + 14) + (4 + 7) = 28$, and 28 is perfect. The loop took 4 tests instead of 27.
+
+**Idea.** Start the sum at 1, loop $d$ from 2 while $d^2 \le n$, and add each divisor and its partner. The number 1 needs special care, because its only divisor is itself.
+
+```java
+static boolean checkPerfectNumber(int num) {
+    if (num == 1) return false;                      // 1 has no proper divisor except itself
+    int sum = 1;                                     // 1 always divides num
+    for (int d = 2; d * d <= num; d++) {
+        if (num % d != 0) continue;
+        sum += d;
+        if (d != num / d) sum += num / d;            // the partner divisor above the square root
+    }
+    return sum == num;
+}
+```
+
+**Answer.** `true` for 28, 6 and 496, and `false` for 1, 2 and 12. Time $O(\sqrt{n})$: for $n = 10^8$ the loop runs at most $10^4$ times. Space $O(1)$.
+
+### 2. LeetCode 1291: Sequential Digits (Medium)
+
+**Problem.** A number has *sequential digits* when each digit is one more than the digit before it, like 123 or 6789. Return, in increasing order, every such number in $[\text{low}, \text{high}]$, where $10 \le \text{low} \le \text{high} \le 10^9$. For $[100, 300]$ the answer is `[123, 234]`.
+
+**Math first.** A sequential-digit number is fixed by two choices: its length $\ell$ and its first digit $s$. Its last digit is $s + \ell - 1$, which must be at most 9:
+
+$$
+\lvert \text{answers} \rvert = \sum_{\ell=2}^{9} (10 - \ell) = 8 + 7 + 6 + 5 + 4 + 3 + 2 + 1 = 36
+$$
+
+where:
+
+- $\ell$ is the number of digits, from 2 up to 9 (the longest is 123456789);
+- for length $\ell$ the first digit $s$ runs from 1 to $10 - \ell$, which is $10 - \ell$ options.
+
+Example: for $\ell = 3$ there are $10 - 3 = 7$ numbers, $123, 234, \dots, 789$. Only 123 and 234 lie in $[100, 300]$. Scanning the input range instead would test 201 numbers here, and up to about $10^9$ in the worst case.
+
+**Idea.** Build all 36 candidates and keep those in range. Looping by length first, then by first digit, produces them already in increasing order, so no sort is needed.
+
+```java
+static List<Integer> sequentialDigits(int low, int high) {
+    List<Integer> result = new ArrayList<>();
+    for (int length = 2; length <= 9; length++) {
+        for (int start = 1; start + length - 1 <= 9; start++) {
+            int x = 0;
+            for (int d = start; d < start + length; d++) x = x * 10 + d;
+            if (low <= x && x <= high) result.add(x);
+        }
+    }
+    return result;
+}
+```
+
+**Answer.** `[123, 234]` for $[100, 300]$, and `[1234, 2345, 3456, 4567, 5678, 6789, 12345]` for $[1000, 13000]$. The work is at most 36 candidates of at most 9 digits each, about 300 steps whatever the range: $O(1)$ time and $O(1)$ extra space.
+
+### 3. LeetCode 1012: Numbers With Repeated Digits (Hard)
+
+**Problem.** Given $n \le 10^9$, count the integers in $[1, n]$ that have at least one repeated digit. For $n = 100$ the answer is 10: the numbers 11, 22, …, 99 and 100.
+
+**Math first.** Testing all $n$ numbers is $10^9$ checks of up to 10 digits each, far too slow. Use the complement from Level 5: count the numbers with **all distinct digits**, $D(n)$, and subtract.
+
+$$
+\text{answer} = n - D(n), \qquad D(n) = \underbrace{\sum_{\ell=1}^{L-1} 9 \cdot P(9, \ell - 1)}_{\text{shorter than } n} + \underbrace{\sum_{i=0}^{L-1} c_i \cdot P(9 - i, \, L - 1 - i)}_{\text{same length, first difference at } i} + [\,n \text{ itself is distinct}\,]
+$$
+
+where:
+
+- $L$ is the number of digits of $n$, and $n_0 n_1 \dots n_{L-1}$ are those digits from left to right;
+- $P(m, k) = m (m-1) \cdots (m - k + 1)$ is the number of ways to fill $k$ places with different digits chosen from $m$ unused ones;
+- $9 \cdot P(9, \ell - 1)$ counts distinct-digit numbers with exactly $\ell$ digits: 9 options for the first digit (not 0), then $P(9, \ell - 1)$ for the rest;
+- $c_i$ is the number of digits $d < n_i$ that are not among $n_0, \dots, n_{i-1}$ (and not 0 when $i = 0$). Putting such a $d$ at position $i$ after copying $n$'s first $i$ digits gives a smaller number, and the $L - 1 - i$ places after it may hold any of the $9 - i$ digits still unused;
+- the second sum stops early if $n$'s own prefix already repeats a digit, because no number with that prefix can be distinct;
+- $[\dots]$ is 1 if the condition holds and 0 otherwise.
+
+Example: $n = 345$, so $L = 3$ and the digits are 3, 4, 5.
+
+- Shorter numbers: $\ell = 1$ gives $9$; $\ell = 2$ gives $9 \cdot 9 = 81$. Subtotal $90$.
+- Position 0: digits below 3, excluding 0, are $\lbrace 1, 2 \rbrace$, so $c_0 = 2$. Each is followed by $P(9, 2) = 9 \cdot 8 = 72$ endings. That is $144$ numbers from 102 to 298.
+- Position 1, prefix 3: digits below 4 not yet used are $\lbrace 0, 1, 2 \rbrace$, so $c_1 = 3$, each with $P(8, 1) = 8$ endings: $24$.
+- Position 2, prefix 34: digits below 5 not yet used are $\lbrace 0, 1, 2 \rbrace$, so $c_2 = 3$, each with $P(7, 0) = 1$ ending: $3$.
+- 345 itself has distinct digits: $+1$.
+
+So $D(345) = 90 + 144 + 24 + 3 + 1 = 262$ and the answer is $345 - 262 = \mathbf{83}$.
+
+**Idea.** Read the digits of $n$. Add the shorter lengths. Then walk the digits from left to right, adding $c_i \cdot P(9 - i, L - 1 - i)$, marking each of $n$'s digits as used, and stopping if one repeats. Finally subtract from $n$.
+
+```java
+static int numDupDigitsAtMostN(int n) {
+    int[] digits = String.valueOf(n).chars().map(c -> c - '0').toArray();
+    int digitCount = digits.length, distinct = 0;
+    for (int length = 1; length < digitCount; length++) distinct += 9 * permutations(9, length - 1);
+    boolean[] used = new boolean[10];
+    for (int i = 0; i < digitCount; i++) {
+        for (int d = (i == 0 ? 1 : 0); d < digits[i]; d++)
+            if (!used[d]) distinct += permutations(9 - i, digitCount - i - 1);   // smaller digit here, rest free
+        if (used[digits[i]]) return n - distinct;                         // n's own prefix repeats: stop
+        used[digits[i]] = true;
+    }
+    return n - (distinct + 1);                                            // + 1 for n itself
+}
+
+static int permutations(int m, int k) {             // m * (m - 1) * ... * (m - k + 1)
+    int p = 1;
+    for (int j = 0; j < k; j++) p *= m - j;
+    return p;
+}
+```
+
+**Answer.** 83 for $n = 345$, and 1, 10 and 262 for LeetCode's examples $n = 20, 100, 1000$. The lab also compares every $n$ from 1 to 3,000 with the brute force of Level 5. The work is at most 10 positions times 10 digits times a 10-step product, about 1,000 operations even for $n = 10^9$, instead of about $10^{10}$ for testing every number. Time $O(L^2 \cdot 10)$ with $L \le 10$, which is $O(\log^2 n)$; space $O(1)$.
+
+## Mathematical Abstraction
+
+Enumeration is a sum of tests over a search space, and its cost is the size of that space:
+
+$$
+\text{answer} = \sum_{x \in \Omega} [\, \text{test}(x) \,], \qquad \lvert \Omega \rvert = c_1 c_2 \cdots c_k, \qquad \text{time} \approx \lvert \Omega \rvert \cdot t
+$$
+
+where:
+
+- $\Omega$ is the set of candidates, built from $k$ choices with $c_1, \dots, c_k$ options each;
+- $[\, \text{test}(x) \,]$ is 1 when candidate $x$ passes and 0 otherwise, so the sum counts the passing candidates;
+- $t$ is the time to test one candidate.
+
+Example: the lock has $\lvert \Omega \rvert = 10 \cdot 10 \cdot 10 = 1{,}000$ candidates and $t = 3$ comparisons, about 3,000 steps, and the sum is 720 codes with different digits. Every technique on this page shrinks one factor. Bounds to $\sqrt{n}$ shrink $\lvert \Omega \rvert$ from 36 to 6 for $n = 36$. Enumerating answers replaces 1,000 inputs by 31 squares. The complement and the product rule replace the whole sum by a formula, $900 - 9 \cdot 9 \cdot 8 = 252$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Appendix C, "Counting and Probability", Section C.1 "Counting": the rules of sum and product, permutations, combinations and subsets.
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, Section 1.4 "Analysis of Algorithms", which analyses the brute-force `ThreeSum`: <https://algs4.cs.princeton.edu/14analysis/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 4A, *Combinatorial Algorithms, Part 1* (Addison-Wesley, 2011), Section 7.2.1, on generating all tuples, permutations and combinations systematically.
+- LeetCode: [507. Perfect Number](https://leetcode.com/problems/perfect-number/), [1291. Sequential Digits](https://leetcode.com/problems/sequential-digits/), [1012. Numbers With Repeated Digits](https://leetcode.com/problems/numbers-with-repeated-digits/).
+
+[← Recursion](../recursion/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Divide and Conquer →](../divide-and-conquer/index.qmd)

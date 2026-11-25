@@ -1,75 +1,432 @@
 ---
 title: "Divide and Conquer"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "Split, solve, combine: recursion trees, recurrences and the master theorem with worked numbers, Karatsuba's three-multiplication trick, splitting at every position, and hard interview problems (maximum subarray, parenthesisations, range sums) solved math-first."
 ---
 
-## Start with the problem, not a formula
+Divide and conquer solves a big problem by cutting it into smaller copies of itself, solving those, and gluing the answers together. Merge sort, binary search, fast multiplication and the fast Fourier transform all have this shape. This lesson starts with a tournament, learns to predict the running time of any such algorithm with one formula, and uses that formula to beat school multiplication.
 
-**LeetCode 912 — Sort an Array; merge sort**. Split the problem into subproblems, solve them, then combine results.
+All code is in [`DivideAndConquerLab.java`](DivideAndConquerLab.java). Run it from this folder with `java DivideAndConquerLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+Multiply $1234 \times 5678$ the way school teaches: multiply every digit of one number by every digit of the other, then add the shifted rows. That is $4 \times 4 = 16$ one-digit multiplications.
 
-Sorting a huge array by comparing every element with every other element gives quadratic work.
+- Two 1,024-digit numbers need $1{,}024^2 = 1{,}048{,}576$ one-digit multiplications.
+- Cryptography multiplies numbers of thousands of digits all the time, so this cost matters.
+- The great mathematician Andrei Kolmogorov conjectured that no method could do fundamentally better than $n^2$. He restated the conjecture at a Moscow seminar in 1960, and about a week later a 23-year-old student there, Anatolii Karatsuba, found a method that does.
 
-## Discover the key idea
+Karatsuba's method is divide and conquer. By the end of Level 4 it multiplies two 1,024-digit numbers with 59,049 one-digit multiplications instead of 1,048,576.
 
-Split into smaller halves, solve each half once, and merge two already-sorted sequences in one linear pass.
+## Explain it like I'm ten
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+::: {.callout-tip}
+Your class has 8 apples and wants the heaviest one. You could hold each apple in turn. Or you could run a **tournament**: split the apples into two groups of 4 and give each group to a friend. Each friend splits again, and so on, until someone holds just one apple. That apple is trivially the heaviest of its group of one. Then the winners come back up: two apples meet, the heavier one goes on, until one apple is left.
 
-## Mathematical model — then immediately translate it
+That is the whole recipe:
+
+1. **Divide**: cut the problem into smaller copies of the same problem.
+2. **Conquer**: solve the small copies the same way, until they are so small the answer is obvious.
+3. **Combine**: glue the small answers into the big answer.
+
+Aditya Bhargava's *Grokking Algorithms* (Chapter 4) teaches the idea with a farmer who wants to cut a 1,680 m by 640 m field into equal square plots, as large as possible. Cut off the biggest square you can, and the leftover strip is the same problem, only smaller. Repeat until a strip divides evenly. The answer is 80 m squares. The trick in every divide-and-conquer algorithm is the same: notice that the leftover piece is a smaller copy of the problem you started with.
+:::
+
+## From simple to advanced
+
+### Level 1: split, solve, combine
+
+The tournament in code. To find the largest value in `a[lo..hi]`, split at the middle, find the largest of each half, and keep the bigger one. A range of one element is the base case.
+
+```java
+static int maxOf(int[] a, int lo, int hi) {          // largest value in a[lo..hi]
+    if (lo == hi) return a[lo];                       // one element: nothing to split
+    int mid = (lo + hi) / 2;
+    return Math.max(maxOf(a, lo, mid), maxOf(a, mid + 1, hi));
+}
+```
+
+For the 8 apple weights $3, 8, 2, 5, 9, 1, 7, 4$ the left half returns 8, the right half returns 9, and the final comparison returns **9**. How many comparisons is that? Write $T(n)$ for the comparisons on $n$ items:
 
 $$
-T(n)=2T(n/2)+cn
+T(n) = 2\,T\!\left(\frac{n}{2}\right) + 1, \qquad T(1) = 0
 $$
 
-**Explanation of every symbol:** T(n) is the work for n entries, 2 means two half-size recursive sorts, and cn is linear merging cost with constant c. Assume n is a power of two for the simple recurrence.
+where:
 
-**Substitute actual values:** For n=8 and c=1, the merge work at each level is 8: eight length-one objects merge into length-two objects (8 total work), then length-four (8), then length-eight (8). There are log₂8=3 merge levels, hence about 24 merge units.
+- $T(n)$ is the number of comparisons for $n$ items;
+- $2\,T(n/2)$ is the cost of the two halves;
+- the $+1$ is the single `Math.max` that combines them;
+- $T(1) = 0$ because one item needs no comparison.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: $T(2) = 2 \cdot 0 + 1 = 1$, $T(4) = 2 \cdot 1 + 1 = 3$, $T(8) = 2 \cdot 3 + 1 = 7$. That is $n - 1 = 7$, exactly what a simple loop costs too. Divide and conquer only pays off when combining the halves is cheaper than the work it saves. The next levels show when that happens.
 
-## Work through the algorithm
+### Level 2: recurrences and the recursion tree
 
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
+**Merge sort** splits an array in half, sorts each half recursively, and merges the two sorted halves in $n$ steps:
 
-**Why this is correct:** A merge picks the smaller current head from two sorted halves, so the emitted prefix stays sorted. Recursion bottoms out at a single sorted element.
+$$
+T(n) = 2\,T\!\left(\frac{n}{2}\right) + n, \qquad T(1) = 0
+$$
 
-## Actual code — keep it small
+where:
 
-The original [Node.js example library](../examples/patterns.mjs) implements this technique as `mergeSort` and tests it against boundary cases:
+- $T(n)$ is the work, counted as elements moved, to sort $n$ items;
+- $2\,T(n/2)$ is the work for the two halves;
+- $n$ is the work to merge them.
 
-~~~js
-import { mergeSort } from '../examples/patterns.mjs';
+Draw the calls as a tree. Level 0 is one problem of size $n$, level 1 is two problems of size $n/2$, level $j$ is $2^j$ problems of size $n/2^j$. Every level does $2^j \cdot \frac{n}{2^j} = n$ work, and there are $\log_2 n$ levels before the sizes reach 1. So the total is $n \log_2 n$.
 
-console.log(mergeSort([5,1,4,1,3]));
-~~~
+Example: $n = 8$ has $\log_2 8 = 3$ levels of 8 moves each, so $T(8) = 3 \cdot 8 = 24$. Unrolling the formula gives the same: $T(2) = 2$, $T(4) = 2 \cdot 2 + 4 = 8$, $T(8) = 2 \cdot 8 + 8 = 24$. For $n = 2^{20} = 1{,}048{,}576$ it is $20 \cdot 2^{20} \approx 2.1 \times 10^7$ moves, while comparing every pair would be about $n^2 \approx 1.1 \times 10^{12}$.
 
-Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
+The lab evaluates the recurrence directly, so the formula is checked rather than trusted:
 
-## Analyse the work; do not guess big-O
+```java
+static long mergeSortWork(long n) {                   // T(n) = 2 T(n/2) + n, T(1) = 0
+    return n <= 1 ? 0 : 2 * mergeSortWork(n / 2) + n;
+}
+```
 
-**Cost:** Θ(n log n) time and O(n) auxiliary merging memory; n is number of elements.
+### Level 3: the master theorem
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+Most divide-and-conquer algorithms have a recurrence of one shape, and the **master theorem** solves all of them at once by comparing two forces: how fast the number of subproblems grows, and how much work each level adds.
 
-## Break the technique deliberately
+$$
+T(n) = a\,T\!\left(\frac{n}{b}\right) + f(n) \quad \Longrightarrow \quad
+T(n) =
+\begin{cases}
+\Theta\!\left(n^{\log_b a}\right) & \text{if } f(n) \text{ is polynomially smaller than } n^{\log_b a} \\[4pt]
+\Theta\!\left(n^{\log_b a} \log n\right) & \text{if } f(n) = \Theta\!\left(n^{\log_b a}\right) \\[4pt]
+\Theta\!\left(f(n)\right) & \text{if } f(n) \text{ is polynomially larger, and } a f(n/b) \le c f(n) \text{ for some } c < 1
+\end{cases}
+$$
 
-Not every problem can divide independently: if combining partial results is expensive or subproblems overlap heavily, this recurrence and complexity may fail.
+where:
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+- $a \ge 1$ is the number of subproblems each call makes;
+- $b > 1$ is the factor by which the size shrinks;
+- $f(n)$ is the work to divide and combine at one call;
+- $n^{\log_b a}$ is the number of leaves of the recursion tree, the *critical* term that $f(n)$ is compared with;
+- $\Theta(g)$ means "grows like $g$, up to a constant factor";
+- "polynomially smaller" means smaller by a factor $n^{\varepsilon}$ for some $\varepsilon > 0$; the last condition, called *regularity*, says the work shrinks as you go down the tree.
 
-## Source connections and practice
+In words: if the leaves dominate, the answer is the number of leaves (case 1); if every level costs the same, multiply by the number of levels (case 2); if the top dominates, the answer is the top's cost (case 3).
 
-**Textbook:** CLRS Chapter 4 (divide and conquer), Chapter 2 (insertion/merge sort).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+Example: five recurrences, worked.
 
-**LeetCode problem:** LeetCode 912 — Sort an Array; merge sort. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/sort-an-array/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+| Algorithm | $a$ | $b$ | $f(n)$ | $n^{\log_b a}$ | Case | $T(n)$ |
+| --- | --- | --- | --- | --- | --- | --- |
+| Binary search | 1 | 2 | 1 | $n^0 = 1$ | 2: equal | $\Theta(\log n)$ |
+| Merge sort | 2 | 2 | $n$ | $n^1 = n$ | 2: equal | $\Theta(n \log n)$ |
+| Split multiplication, 4 products | 4 | 2 | $n$ | $n^2$ | 1: leaves win | $\Theta(n^2)$ |
+| Karatsuba, 3 products | 3 | 2 | $n$ | $n^{\log_2 3} \approx n^{1.585}$ | 1: leaves win | $\Theta(n^{1.585})$ |
+| Two halves, quadratic combine | 2 | 2 | $n^2$ | $n$ | 3: top wins | $\Theta(n^2)$ |
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+For the last row the regularity check is $2 \cdot (n/2)^2 = n^2 / 2 \le c \cdot n^2$ with $c = 1/2 < 1$. The critical exponent $\log_b a$ is the one number to compute:
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+```java
+static double criticalExponent(int a, int b) {        // the exponent in n^(log_b a)
+    return Math.log(a) / Math.log(b);
+}
+```
+
+It returns $0$ for binary search, $1$ for merge sort, $2$ for four products and $1.585$ for three.
+
+The theorem does not cover everything. Unequal splits such as $T(n) = T(n/5) + T(7n/10) + n$ (the median-of-medians recurrence in [quickselect](../quickselect/index.qmd)) need the recursion tree or the more general Akra–Bazzi method instead.
+
+### Level 4: Karatsuba, three multiplications instead of four
+
+Split each $n$-digit number into a high half and a low half of $m = n/2$ digits:
+
+$$
+x = x_1 \cdot 10^m + x_0, \quad y = y_1 \cdot 10^m + y_0, \qquad
+xy = x_1 y_1 \cdot 10^{2m} + (x_1 y_0 + x_0 y_1) \cdot 10^m + x_0 y_0
+$$
+
+where:
+
+- $x_1, y_1$ are the high halves and $x_0, y_0$ the low halves;
+- multiplying by $10^m$ just shifts digits left, which costs no multiplications;
+- the formula needs **four** half-size products: $x_1 y_1$, $x_1 y_0$, $x_0 y_1$, $x_0 y_0$.
+
+Four half-size products give $T(n) = 4T(n/2) + O(n)$, which the master theorem says is still $\Theta(n^2)$: splitting alone gains nothing. Karatsuba's insight is that the middle term does not need two products, because
+
+$$
+x_1 y_0 + x_0 y_1 = (x_1 + x_0)(y_1 + y_0) - x_1 y_1 - x_0 y_0
+$$
+
+where the two subtracted products are already needed for the outer terms. So three products suffice: $z_2 = x_1 y_1$, $z_0 = x_0 y_0$ and $z_1 = (x_1 + x_0)(y_1 + y_0) - z_2 - z_0$.
+
+Example: $1234 \times 5678$ with $m = 2$, so $x_1 = 12$, $x_0 = 34$, $y_1 = 56$, $y_0 = 78$.
+
+- $z_2 = 12 \cdot 56 = 672$;
+- $z_0 = 34 \cdot 78 = 2{,}652$;
+- $z_1 = (12 + 34)(56 + 78) - 672 - 2{,}652 = 46 \cdot 134 - 3{,}324 = 6{,}164 - 3{,}324 = 2{,}840$;
+- $xy = 672 \cdot 10^4 + 2{,}840 \cdot 10^2 + 2{,}652 = 6{,}720{,}000 + 284{,}000 + 2{,}652 = 7{,}006{,}652$.
+
+That matches $1234 \times 5678 = 7{,}006{,}652$.
+
+```java
+static long karatsuba(long x, long y) {
+    if (x < 10 || y < 10) return x * y;                // one digit: multiply directly
+    int m = Math.max(Long.toString(x).length(), Long.toString(y).length()) / 2;
+    long p = (long) Math.pow(10, m);
+    long x1 = x / p, x0 = x % p, y1 = y / p, y0 = y % p;
+    long high = karatsuba(x1, y1);
+    long low = karatsuba(x0, y0);
+    long middle = karatsuba(x1 + x0, y1 + y0) - high - low;   // the third and last product
+    return high * p * p + middle * p + low;
+}
+```
+
+This version uses `long`, so it only shows the idea; real code works on digit arrays. The saving is in the count of one-digit products, $T(n) = a \cdot T(n/2)$ with $T(1) = 1$:
+
+```java
+static long digitProducts(long n, int a) {            // T(n) = a T(n/2), T(1) = 1
+    return n <= 1 ? 1 : a * digitProducts(n / 2, a);
+}
+```
+
+For $n = 2^k$ digits this is $a^k$. With $n = 4$: $4^2 = 16$ products for the school method against $3^2 = 9$ for Karatsuba. With $n = 1{,}024 = 2^{10}$: $4^{10} = 1{,}048{,}576$ against $3^{10} = 59{,}049$, about 18 times fewer. In general $3^{\log_2 n} = n^{\log_2 3} \approx n^{1.585}$.
+
+Java uses exactly this. `java.math.BigInteger.multiply` switches to Karatsuba once both numbers are longer than 80 `int` words (`KARATSUBA_THRESHOLD = 80`, which is 2,560 bits, about 770 decimal digits), and to the three-way Toom–Cook method once one of them also passes 240 words (`TOOM_COOK_THRESHOLD`). Below the threshold the school method wins, because Karatsuba's extra additions cost more than the multiplication they save. The same "one fewer product" trick on matrices is Strassen's algorithm (CLRS Section 4.2): 7 half-size matrix products instead of 8, giving $n^{\log_2 7} \approx n^{2.807}$.
+
+### Level 5: split at every position
+
+Some problems have no single middle. To find every value of $2 * 3 - 4 * 5$ under all possible bracketings, the **last** operation applied could be any of the three operators. So try each operator as the split, solve the left and right sides recursively, and combine every pair. The number of bracketings of $k + 1$ numbers is the **Catalan number** $C_k$:
+
+$$
+C_0 = 1, \qquad C_k = \sum_{i=0}^{k-1} C_i \, C_{k-1-i}
+$$
+
+where:
+
+- $k$ is the number of operators;
+- the operator chosen as the last one leaves $i$ operators on its left and $k - 1 - i$ on its right;
+- $C_i \, C_{k-1-i}$ counts the bracketings of the two sides independently, by the product rule.
+
+Example: $C_1 = 1$, $C_2 = C_0 C_1 + C_1 C_0 = 2$, $C_3 = C_0 C_2 + C_1 C_1 + C_2 C_0 = 2 + 1 + 2 = 5$. So $2 * 3 - 4 * 5$, which has 3 operators, has 5 bracketings. That matches LeetCode 241 below.
+
+```java
+static long catalan(int n) {                          // C(n) = sum of C(i) * C(n-1-i)
+    if (n <= 1) return 1;
+    long total = 0;
+    for (int i = 0; i < n; i++) total += catalan(i) * catalan(n - 1 - i);
+    return total;
+}
+```
+
+This code also shows the danger of this kind of splitting. `catalan(9)` ends up calling `catalan(2)` 1,458 times, so the subproblems **overlap**. Merge sort's halves never overlap, but here they do, and the cure is to remember each answer the first time it is computed ([memoization](../memoization/index.qmd)). That is where divide and conquer turns into [dynamic programming](../dynamic-programming/index.qmd).
+
+## Why it works and what it costs
+
+**Correctness by strong induction.** Suppose the algorithm is correct on every input smaller than $n$. On an input of size $n$, either it is a base case, which is checked directly, or it splits into strictly smaller inputs, which are solved correctly by that assumption, and then combines them. So it is correct on size $n$ exactly when the **combine step** is correct. For `maxOf` the combine is correct because the largest of the whole is the larger of the two largests. Each problem in this lesson needs one such sentence, and that sentence is the real proof.
+
+**Termination.** Every recursive call must be on a strictly smaller input. With `mid = (lo + hi) / 2` and `lo < hi`, both `lo..mid` and `mid + 1..hi` are shorter than `lo..hi`, so the sizes reach the base case after about $\log_2 n$ splits.
+
+**Cost by the recursion tree.** Add up the work level by level:
+
+$$
+T(n) = \sum_{j=0}^{\log_b n} a^j \, f\!\left(\frac{n}{b^j}\right)
+$$
+
+where:
+
+- $j$ is the depth in the tree, from the root ($j = 0$) to the leaves ($j = \log_b n$);
+- $a^j$ is the number of calls at depth $j$;
+- $f(n / b^j)$ is the work done by each of them.
+
+Example: Karatsuba on $n = 4$ digits with $f(n) = n$: depth 0 has $1 \cdot 4 = 4$, depth 1 has $3 \cdot 2 = 6$, depth 2 has $9 \cdot 1 = 9$. The sum $4 + 6 + 9 = 19$ is dominated by the leaves, which grow by a factor $a / b = 3 / 2$ per level. That growth is case 1 of the master theorem.
+
+| Algorithm | Recurrence | Time | Extra space |
+| --- | --- | --- | --- |
+| `maxOf` | $2T(n/2) + 1$ | $\Theta(n)$ | $O(\log n)$ call stack |
+| Merge sort | $2T(n/2) + n$ | $\Theta(n \log n)$ | $O(n)$ |
+| Karatsuba | $3T(n/2) + n$ | $\Theta(n^{1.585})$ | $O(n)$ |
+| Maximum subarray (below) | $2T(n/2) + n$ | $\Theta(n \log n)$ | $O(\log n)$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| A split that does not shrink, such as `lo..mid` with `mid = hi` | `StackOverflowError` | Make sure both parts are strictly smaller; test sizes 1 and 2 |
+| No base case, or the wrong one | Infinite recursion, or an error on one element | Write the base case first and test it on its own |
+| `(lo + hi) / 2` on huge indices | Overflow to a negative index | `lo + (hi - lo) / 2` or `(lo + hi) >>> 1` |
+| Expecting a speed-up from splitting alone | Four half-size products are still $n^2$ | Compute $n^{\log_b a}$ first; only a smaller $a$ or a cheaper combine helps |
+| A combine step slower than planned, such as copying or sorting each level | $n \log^2 n$ instead of $n \log n$ | Count the combine work per level in the recursion tree |
+| Overlapping subproblems solved again and again | Exponential time on LeetCode 241 style splits | Memoize by subproblem |
+| Applying the master theorem to unequal splits or to $f(n) = n / \log n$ | A wrong bound | Draw the recursion tree, or use Akra–Bazzi |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the split and the combine are written as formulas, the code follows.
+
+### 1. LeetCode 53: Maximum Subarray (Medium)
+
+**Problem.** Find the largest sum of a non-empty contiguous subarray. For `[-2, 1, -3, 4, -1, 2, 1, -5, 4]` the answer is 6, from `[4, -1, 2, 1]`.
+
+**Math first.** Split at the middle index $m$. The best subarray lies entirely left, entirely right, or **crosses** the middle, using both $a_m$ and $a_{m+1}$:
+
+$$
+\text{best}(lo, hi) = \max\Big( \text{best}(lo, m),\; \text{best}(m + 1, hi),\; \max_{i \le m} \sum_{t=i}^{m} a_t + \max_{j > m} \sum_{t=m+1}^{j} a_t \Big)
+$$
+
+where:
+
+- $\text{best}(lo, hi)$ is the answer for the range $a_{lo}, \dots, a_{hi}$;
+- $m = \lfloor (lo + hi) / 2 \rfloor$ is the middle index;
+- the first sum is the best *suffix* of the left half: it must end at $m$;
+- the second sum is the best *prefix* of the right half: it must start at $m + 1$;
+- the crossing subarray is a best suffix glued to a best prefix, and the two choices are independent, so their maxima add.
+
+Example: indices 0 to 8, $m = 4$. The left half $[-2, 1, -3, 4, -1]$ has best 4, and the right half $[2, 1, -5, 4]$ also has best 4. Suffix sums ending at index 4, walking left: $-1, 3, 0, 1, -1$, so the best is 3, from $[4, -1]$. Prefix sums starting at index 5: $2, 3, -2, 2$, so the best is 3, from $[2, 1]$. Crossing $= 3 + 3 = 6$, and $\max(4, 4, 6) = \mathbf{6}$.
+
+**Idea.** Recurse on the halves. Find the crossing value with two loops that walk outward from the middle. Return the largest of the three.
+
+```java
+static int maxSubArray(int[] a, int lo, int hi) {
+    if (lo == hi) return a[lo];
+    int mid = (lo + hi) / 2;
+    int leftSuffix = Integer.MIN_VALUE, rightPrefix = Integer.MIN_VALUE;
+    for (int i = mid, sum = 0; i >= lo; i--) {
+        sum += a[i];
+        leftSuffix = Math.max(leftSuffix, sum);       // best sum ending exactly at mid
+    }
+    for (int j = mid + 1, sum = 0; j <= hi; j++) {
+        sum += a[j];
+        rightPrefix = Math.max(rightPrefix, sum);     // best sum starting exactly at mid + 1
+    }
+    int crossing = leftSuffix + rightPrefix;
+    return Math.max(crossing, Math.max(maxSubArray(a, lo, mid), maxSubArray(a, mid + 1, hi)));
+}
+```
+
+**Answer.** 6 for the example; $-1$ for `[-3, -1, -2]`, where the best is a single element. The crossing loops do $n$ work per level, so $T(n) = 2T(n/2) + n = \Theta(n \log n)$. For $n = 10^5$ that is about $10^5 \times 17 = 1.7 \times 10^6$ steps, against $n^2 / 2 = 5 \times 10^9$ for trying every subarray. Space is $O(\log n)$ for the call stack. A single left-to-right scan (Kadane's algorithm, the last step in Jon Bentley's *Programming Pearls*, Column 8) does it in $O(n)$, but interviewers ask for this version to test divide and conquer.
+
+### 2. LeetCode 241: Different Ways to Add Parentheses (Medium)
+
+**Problem.** Given an expression of numbers and the operators `+`, `-`, `*`, return the results of every possible way to bracket it, in any order. For `"2*3-4*5"` the answer is `[-34, -14, -10, -10, 10]`.
+
+**Math first.** Let $V(e)$ be the list of values of expression $e$. If $e$ is a single number, $V(e)$ is that number. Otherwise the last operator applied splits $e$ into a left and a right part:
+
+$$
+V(e) = \bigcup_{k \,:\, e_k \text{ is an operator}} \lbrace\, l \circ_k r \;:\; l \in V(e_{<k}),\; r \in V(e_{>k}) \,\rbrace, \qquad \lvert V(e) \rvert = C_{\text{operators}}
+$$
+
+where:
+
+- $e_k$ is the operator at position $k$ and $\circ_k$ is its operation;
+- $e_{<k}$ and $e_{>k}$ are the parts of the string before and after it;
+- $\bigcup$ collects the results of every choice of $k$, keeping duplicates;
+- $C$ is the Catalan number of Level 5.
+
+Example: `"2*3-4*5"`.
+
+- Last operator is the first `*`: $V(\texttt{2}) = \lbrace 2 \rbrace$ and $V(\texttt{3-4*5}) = \lbrace 3 - 20, (3-4) \cdot 5 \rbrace = \lbrace -17, -5 \rbrace$, giving $-34$ and $-10$.
+- Last operator is `-`: $V(\texttt{2*3}) = \lbrace 6 \rbrace$ and $V(\texttt{4*5}) = \lbrace 20 \rbrace$, giving $-14$.
+- Last operator is the second `*`: $V(\texttt{2*3-4}) = \lbrace 2 \cdot (3 - 4), 6 - 4 \rbrace = \lbrace -2, 2 \rbrace$ and $V(\texttt{5}) = \lbrace 5 \rbrace$, giving $-10$ and $10$.
+
+That is $2 + 1 + 2 = 5 = C_3$ results.
+
+**Idea.** Loop over the string. At each operator, recurse on both sides and combine every left value with every right value. A string with no operator is a plain number.
+
+```java
+static List<Integer> diffWaysToCompute(String expression) {
+    List<Integer> results = new ArrayList<>();
+    for (int i = 0; i < expression.length(); i++) {
+        char op = expression.charAt(i);
+        if (op != '+' && op != '-' && op != '*') continue;
+        for (int left : diffWaysToCompute(expression.substring(0, i)))
+            for (int right : diffWaysToCompute(expression.substring(i + 1)))
+                results.add(op == '+' ? left + right : op == '-' ? left - right : left * right);
+    }
+    if (results.isEmpty()) results.add(Integer.parseInt(expression));   // no operator: a plain number
+    return results;
+}
+```
+
+**Answer.** `[-34, -10, -14, -10, 10]` in split order, the same multiset as LeetCode's answer; `[2, 0]` for `"2-1-1"`. The output alone has $C_k$ values. With at most 20 characters there are at most 9 operators, and $C_9 = 4{,}862$, so this plain version is fast enough. The same substring is solved many times, though; storing each substring's list in a `HashMap` solves each of the $O(n^2)$ substrings once.
+
+### 3. LeetCode 327: Count of Range Sum (Hard)
+
+**Problem.** Given `nums` and bounds `lower` and `upper`, count the pairs $i \le j$ whose subarray sum $a_i + \dots + a_j$ lies in $[\text{lower}, \text{upper}]$. With $n \le 10^5$, trying all pairs is too slow. For `nums = [-2, 5, -1]`, `lower = -2`, `upper = 2` the answer is 3.
+
+**Math first.** With prefix sums $P_0 = 0$ and $P_{t} = a_0 + \dots + a_{t-1}$, every subarray sum is a difference of two prefixes. So we count pairs of prefix indices:
+
+$$
+\text{count} = \#\lbrace (i, j) : i < j,\; \text{lower} \le P_j - P_i \le \text{upper} \rbrace
+$$
+
+where:
+
+- $P_t$ is the sum of the first $t$ elements, and the subarray from index $i$ to $j - 1$ has sum $P_j - P_i$;
+- $i < j$ are positions in the prefix array, which has $n + 1$ entries.
+
+Divide the prefix array in half. A pair lies in the left half, in the right half, or **crosses**, with $i$ on the left and $j$ on the right. The first two are recursive calls. For crossing pairs the order inside each half no longer matters, only which half an index is in, so both halves may be **sorted**. Then, for each $P_i$ on the left in increasing order, the matching $P_j$ form a window $[P_i + \text{lower}, P_i + \text{upper}]$ in the sorted right half, and that window only slides right.
+
+Example: `[-2, 5, -1]` gives $P = [0, -2, 3, 2]$. Split into left $[0, -2]$ and right $[3, 2]$.
+
+- Inside the left: $-2 - 0 = -2$ is in range, so 1 pair. Sorted: $[-2, 0]$.
+- Inside the right: $2 - 3 = -1$ is in range, so 1 pair. Sorted: $[2, 3]$.
+- Crossing: $P_i = -2$ needs $P_j \in [-4, 0]$, and there is none. $P_i = 0$ needs $P_j \in [-2, 2]$, which is just 2, so 1 pair.
+
+Total $1 + 1 + 1 = \mathbf{3}$. These are the subarrays $[-2]$, $[-1]$ and $[-2, 5, -1]$.
+
+**Idea.** This is merge sort with a counting step before each merge. Two pointers, `from` and `to`, mark the window of valid right-half indices; both only move forward as $P_i$ grows. Use `long` prefix sums, because two values near $-2^{31}$ add to something that does not fit in `int`.
+
+```java
+static int countRangeSum(int[] nums, int lower, int upper) {
+    long[] prefix = new long[nums.length + 1];
+    for (int i = 0; i < nums.length; i++) prefix[i + 1] = prefix[i] + nums[i];
+    return countAndSort(prefix, 0, prefix.length - 1, lower, upper);
+}
+
+static int countAndSort(long[] p, int lo, int hi, int lower, int upper) {
+    if (lo >= hi) return 0;
+    int mid = (lo + hi) / 2;
+    int count = countAndSort(p, lo, mid, lower, upper) + countAndSort(p, mid + 1, hi, lower, upper);
+    int from = mid + 1, to = mid + 1;                 // right-half window where lower <= p[j] - p[i] <= upper
+    for (int i = lo; i <= mid; i++) {
+        while (from <= hi && p[from] - p[i] < lower) from++;
+        while (to <= hi && p[to] - p[i] <= upper) to++;
+        count += to - from;
+    }
+    Arrays.sort(p, lo, hi + 1);                        // both halves sorted: a merge would also do
+    return count;
+}
+```
+
+**Answer.** 3 for the example, and 1 for `[0]` with bounds $[0, 0]$; the lab also compares 500 random arrays with the brute force. The counting pass is linear, because each pointer moves at most $n$ times per level. Re-sorting each range with `Arrays.sort` keeps the code short but costs $O(n \log n)$ per level, so the total is $O(n \log^2 n)$, about $3 \times 10^7$ steps for $n = 10^5$. Replacing the sort by a linear merge of the two sorted halves, as in [merge sort](../merge-sort/index.qmd), gives $O(n \log n)$. Either is far below the $n^2 / 2 = 5 \times 10^9$ pairs of brute force. Space $O(n)$.
+
+## Mathematical Abstraction
+
+A divide-and-conquer algorithm is a recurrence, and the master theorem reads its cost off three numbers:
+
+$$
+T(n) = a\,T\!\left(\frac{n}{b}\right) + f(n), \qquad
+T(n) =
+\begin{cases}
+\Theta(n^{\log_b a}) & f \text{ smaller than } n^{\log_b a} \\
+\Theta(n^{\log_b a} \log n) & f \text{ equal to } n^{\log_b a} \\
+\Theta(f(n)) & f \text{ larger, with regularity}
+\end{cases}
+$$
+
+where:
+
+- $a$ is the number of subproblems, $b$ the shrink factor and $f(n)$ the divide-and-combine work;
+- $n^{\log_b a}$ counts the leaves of the recursion tree, and "smaller" and "larger" mean by a polynomial factor $n^{\varepsilon}$.
+
+Example: Karatsuba has $a = 3$, $b = 2$, $f(n) = n$. Then $\log_2 3 \approx 1.585 > 1$, so the leaves win and $T(n) = \Theta(n^{1.585})$. For $n = 1{,}024$ digits that is $3^{10} = 59{,}049$ digit products instead of $4^{10} = 1{,}048{,}576$. Merge sort has $a = b = 2$ and $f(n) = n = n^{\log_2 2}$, so every level costs the same and $T(n) = \Theta(n \log n)$: 24 moves for $n = 8$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Section 2.3 "Designing algorithms" (merge sort and its recurrence) and Chapter 4, "Divide-and-Conquer", including Strassen's algorithm (Section 4.2) and the master method (Section 4.5). The divide-and-conquer maximum-subarray algorithm is Section 4.1 of the 3rd edition (2009).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, Section 2.2 "Mergesort": <https://algs4.cs.princeton.edu/22mergesort/>.
+- Jeff Erickson, *Algorithms* (2019), Chapter 1 "Recursion", including the recursion-tree method and "Fast Multiplication", which tells the story of Kolmogorov's seminar and Karatsuba's discovery: <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- A. Karatsuba and Yu. Ofman, "Multiplication of many-digital numbers by automatic computers", *Doklady Akademii Nauk SSSR* 145 (1962).
+- Jon Bentley, *Programming Pearls*, 2nd edition (Addison-Wesley, 2000), Column 8 "Algorithm Design Techniques": the maximum-sum subvector solved in cubic, quadratic, $n \log n$ divide-and-conquer and linear time.
+- Aditya Bhargava, *Grokking Algorithms* (Manning), Chapter 4, "Quicksort", which introduces divide and conquer with the farm-plot example: <https://livebook.manning.com/book/grokking-algorithms/chapter-4>.
+- OpenJDK `java.math.BigInteger` source (`KARATSUBA_THRESHOLD`, `TOOM_COOK_THRESHOLD`): <https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/math/BigInteger.java>.
+- LeetCode: [53. Maximum Subarray](https://leetcode.com/problems/maximum-subarray/), [241. Different Ways to Add Parentheses](https://leetcode.com/problems/different-ways-to-add-parentheses/), [327. Count of Range Sum](https://leetcode.com/problems/count-of-range-sum/).
+
+[← Enumeration](../enumeration/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Meet in the Middle →](../meet-in-the-middle/index.qmd)

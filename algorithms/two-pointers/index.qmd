@@ -1,101 +1,382 @@
 ---
 title: "Two Pointers"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "From two hands on a sorted shelf to interview level: opposite-end pointers and the grid-elimination proof, same-direction read/write pointers, three-way partitioning, one pointer per sequence, and hard problems (3Sum, Container With Most Water, Trapping Rain Water) solved math-first."
 ---
 
-## Start with the problem, not a formula
+Two pointers means walking two indices through an array at the same time, so that one pass does the work that nested loops would otherwise do. The trick only works when each move can **rule out** many candidates at once. This lesson shows the four common shapes of the technique and proves, for each one, why nothing is missed.
 
-**LeetCode 167 — Two Sum II; LeetCode 42 — Trapping Rain Water**. Maintain two moving indices with a shared invariant.
+All code is in [`TwoPointersLab.java`](TwoPointersLab.java). Run it from this folder with `java TwoPointersLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+A gift card is worth exactly 10. A shelf has 6 items with sorted prices:
 
-Checking every pair in a sorted array repeats impossible combinations: once an extreme pair is too small, many pairs can be ruled out.
+```text
+index:  0   1   2   3   4   5
+price:  1   3   4   6   8   11
+```
 
-## Discover the key idea
+Which two items cost exactly 10 together?
 
-Start with indices at both ends. Use ordering to justify which pointer you may move. The discarded side cannot contain a new solution under the current invariant.
+- Trying every pair means $\frac{6 \times 5}{2} = 15$ sums. For $n = 100{,}000$ items it is about $5 \times 10^9$ sums, far too slow.
+- The prices are **sorted**, and trying every pair ignores that.
+- Two pointers find the answer, $4 + 6$, after 5 sums, and never need more than $n - 1$.
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+## Explain it like I'm ten
 
-## Mathematical model — then immediately translate it
+::: {.callout-tip}
+Put your left hand on the cheapest item and your right hand on the most expensive one, and add the two prices.
+
+- **Too much?** The expensive item is useless: even with the cheapest item it costs too much, so it is too much with anything else. Move your **right** hand one step left.
+- **Too little?** The cheap item is useless: even with the dearest item left it is not enough. Move your **left** hand one step right.
+- **Exactly right?** Done.
+
+Every sum throws one item away for good, so your hands meet after at most $n - 1$ sums.
+
+The other shapes of the trick are just as physical. A **reader and a writer** walk the same way along a line of children, and the writer only writes down children the reader has not seen before. And Edsger Dijkstra's famous **Dutch national flag** puzzle (in *A Discipline of Programming*, 1976) asks you to sort red, white and blue balls in one pass. Three fingers mark where the red, white and unknown regions end.
+:::
+
+## From simple to advanced
+
+### Level 1: opposite ends, and why nothing is missed
+
+Picture every pair as a cell of a grid: row $i$, column $j$, holding the sum $S_{ij} = a_i + a_j$ for $i < j$. Because the array is sorted, the sums **grow** to the right along a row and downward along a column. The pointers $lo$ and $hi$ stand on cell $(lo, hi)$, the top-right corner of the part of the grid still alive.
 
 $$
-s=a_l+a_r
+S_{lo,hi} > t \implies S_{i,hi} > t \ \text{ for every } i \in [lo, hi), \qquad S_{lo,hi} < t \implies S_{lo,j} < t \ \text{ for every } j \in (lo, hi]
 $$
 
-**Explanation of every symbol:** a_l is the leftmost candidate, a_r the rightmost candidate, and s their sum. l and r are integer indices in a sorted array.
+where:
 
-**Substitute actual values:** For a=[2,7,11,15], target 9: l=0,r=3 gives s=2+15=17, too large, so decrease r. Next s=2+11=13, decrease r. Next s=2+7=9, found indices 0 and 1.
+- $a_0 \le a_1 \le \dots \le a_{n-1}$ is the sorted array, and $t$ is the target sum;
+- $S_{ij} = a_i + a_j$ is the sum of the pair at indices $i < j$;
+- the first rule says: if the corner is too big, the **whole column** $hi$ is too big, because every other cell in it uses a smaller or equal $a_i$, so $hi$ can move left;
+- the second rule says: if the corner is too small, the **whole row** $lo$ is too small, so $lo$ can move right.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: $a = [1, 3, 4, 6, 8, 11]$ and $t = 10$.
 
-## Work through the algorithm
+| Step | $lo$ | $hi$ | $S_{lo,hi}$ | What is ruled out |
+| --- | --- | --- | --- | --- |
+| 1 | 0 | 5 | $1 + 11 = 12 > 10$ | column 5: price 11 pairs with nothing |
+| 2 | 0 | 4 | $1 + 8 = 9 < 10$ | row 0: price 1 pairs with nothing |
+| 3 | 1 | 4 | $3 + 8 = 11 > 10$ | column 4: price 8 |
+| 4 | 1 | 3 | $3 + 6 = 9 < 10$ | row 1: price 3 |
+| 5 | 2 | 3 | $4 + 6 = 10$ | found: indices 2 and 3 |
 
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
+Each step removes one row or one column, so $hi - lo$ falls by exactly 1 per step. It starts at $n - 1 = 5$, so at most 5 steps are possible, and here all 5 were used.
 
-**Why this is correct:** If the sum is too large, increasing the left value cannot help; only reducing the right value can. If too small, decreasing the right value cannot help; increase the left.
-
-## Actual code — keep it small
-
-The original [Node.js example library](../examples/patterns.mjs) implements this technique as `twoSumSorted` and tests it against boundary cases:
-
-~~~js
-import { twoSumSorted } from '../examples/patterns.mjs';
-
-console.log(twoSumSorted([2,7,11,15],9));
-~~~
-
-Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function twoSumSorted(a, target) {
-  let l = 0, r = a.length - 1;
-  while (l < r) {
-    const sum = a[l] + a[r];
-    if (sum === target) return [l, r];
-    if (sum < target) l++;
-    else r--;
-  }
-  return null;
+```java
+static int[] pairWithSum(int[] a, int target) {   // a is sorted ascending
+    int lo = 0, hi = a.length - 1;
+    while (lo < hi) {
+        int sum = a[lo] + a[hi];
+        if (sum == target) return new int[] {lo, hi};
+        if (sum < target) lo++;    // a[lo] is too small even with the largest partner left
+        else hi--;                 // a[hi] is too big even with the smallest partner left
+    }
+    return new int[0];
 }
-~~~
+```
 
-**Walk through the important lines:**
+This is LeetCode 167, *Two Sum II - Input Array Is Sorted* (Medium), except that LeetCode numbers positions from 1, so it expects `{lo + 1, hi + 1}`.
 
-1. With a sorted array, the current smallest and largest candidates are `a[l]` and `a[r]`.
-2. When their sum exceeds target, increasing the smaller number cannot help; reduce the larger number by moving `r`.
-3. When the sum is too small, decreasing the larger number cannot help; advance `l`.
-4. For `[2,7,11,15]`, target 9, the sequence 17→13→9 discards only impossible pairs.
+### Level 2: same direction, a reader and a writer
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+Sometimes both pointers move forward. The **reader** visits every element; the **writer** marks where the next element worth keeping should go. Remove the duplicates from a sorted array, in place:
 
-## Analyse the work; do not guess big-O
+$$
+0 \le w \le r \le n, \qquad a_0, \dots, a_{w-1} = \text{the distinct values among the first } r \text{ elements}
+$$
 
-**Cost:** O(n) pointer movements after sorting; if sorting is required first, total can be O(n log n). n is number of values.
+where:
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+- $r$ is the reader's index: the elements before it have all been looked at;
+- $w$ is the writer's index: the first $w$ slots hold the answer built so far;
+- $n$ is the length of the array; the writer can never overtake the reader, so it never overwrites anything unread.
 
-## Break the technique deliberately
+Example: $a = [1, 1, 2, 3, 3, 3, 4]$.
 
-Two-pointer is not a magic recipe: for an unsorted array, pointer movement has no monotonic justification. Trapping Rain Water uses a DIFFERENT invariant based on left/right maximum walls.
+- $r = 0$: value 1 is new, so write it: $a_0 = 1$, $w = 1$.
+- $r = 1$: value 1 equals $a_{w-1} = 1$, so skip it.
+- $r = 2$: value 2 is new, so $a_1 = 2$, $w = 2$. $r = 3$: value 3 gives $a_2 = 3$, $w = 3$.
+- $r = 4, 5$: copies of 3, skipped. $r = 6$: value 4 gives $a_3 = 4$, $w = 4$.
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+The answer is $w = 4$ with $[1, 2, 3, 4]$ at the front. The reader moved 7 times and the writer 4 times: $11 \le 2n = 14$ moves.
 
-## Source connections and practice
+```java
+static int removeDuplicates(int[] a) {            // a is sorted; returns how many distinct values
+    int write = 0;
+    for (int read = 0; read < a.length; read++) {
+        if (write == 0 || a[read] != a[write - 1]) a[write++] = a[read];
+    }
+    return write;
+}
+```
 
-**Textbook:** CLRS Chapter 8 (sorting) and Chapter 9 (selection); the pointer trick is an interview-era pattern.. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+This is LeetCode 26, *Remove Duplicates from Sorted Array* (Easy). "Move all zeros to the end" and "remove every copy of a value" are the same shape.
 
-**LeetCode problem:** LeetCode 167 — Two Sum II; LeetCode 42 — Trapping Rain Water. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/trapping-rain-water/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+### Level 3: three pointers, partitioning
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+Sort an array of 0s, 1s and 2s in one pass (LeetCode 75, *Sort Colors*). Three pointers cut the array into four regions:
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+$$
+\underbrace{a_0 \dots a_{low-1}}_{= 0} \ \underbrace{a_{low} \dots a_{mid-1}}_{= 1} \ \underbrace{a_{mid} \dots a_{high}}_{\text{unknown}} \ \underbrace{a_{high+1} \dots a_{n-1}}_{= 2}, \qquad u = high - mid + 1
+$$
+
+where:
+
+- $low$ is where the next 0 goes, $mid$ is the element being examined, and $high$ is where the next 2 goes;
+- $u$ is the size of the unknown region, which starts at $n$;
+- each step either moves $mid$ right or moves $high$ left, so $u$ shrinks by exactly 1 per step, and the pass takes exactly $n$ steps.
+
+Example: $a = [2, 0, 2, 1, 1, 0]$, $n = 6$.
+
+| Step | $a$ before | $low$, $mid$, $high$ | $a_{mid}$ | Action |
+| --- | --- | --- | --- | --- |
+| 1 | `2 0 2 1 1 0` | 0, 0, 5 | 2 | swap with $a_5$, $high = 4$ |
+| 2 | `0 0 2 1 1 2` | 0, 0, 4 | 0 | swap with $a_{low}$, $low = mid = 1$ |
+| 3 | `0 0 2 1 1 2` | 1, 1, 4 | 0 | swap with $a_{low}$, $low = mid = 2$ |
+| 4 | `0 0 2 1 1 2` | 2, 2, 4 | 2 | swap with $a_4$, $high = 3$ |
+| 5 | `0 0 1 1 2 2` | 2, 2, 3 | 1 | $mid = 3$ |
+| 6 | `0 0 1 1 2 2` | 2, 3, 3 | 1 | $mid = 4 > high$, stop |
+
+Six steps for six elements, and the result is `0 0 1 1 2 2`.
+
+```java
+static void sortColors(int[] a) {
+    int low = 0, mid = 0, high = a.length - 1;    // a[0..low-1] = 0, a[low..mid-1] = 1, a[high+1..] = 2
+    while (mid <= high) {
+        if (a[mid] == 0) swap(a, low++, mid++);
+        else if (a[mid] == 1) mid++;
+        else swap(a, mid, high--);                // the swapped-in value is unknown, so mid stays
+    }
+}
+```
+
+The same three-region idea is the *3-way partition* that makes quicksort fast on arrays with many equal keys.
+
+### Level 4: one pointer in each of two sequences
+
+The pointers can live in **different** arrays. Is `small` a subsequence of `big`, meaning its letters appear in `big` in the same order, not necessarily side by side? Match each letter of `small` as early as possible:
+
+$$
+i \leftarrow i + 1 \ \text{ exactly when } \ s_i = b_j, \qquad \text{answer} = (i = \lvert s \rvert \text{ at the end})
+$$
+
+where:
+
+- $s$ is `small`, $b$ is `big`, and $\lvert s \rvert$ is the length of $s$;
+- $j$ walks through every letter of $b$ once, and $i$ counts how many letters of $s$ have been matched;
+- matching as early as possible is never worse, because it leaves the most of $b$ for the letters still to match.
+
+Example: $s = $ `ace`, $b = $ `abcde`. The letter `a` matches at $j = 0$ ($i = 1$), `c` at $j = 2$ ($i = 2$) and `e` at $j = 4$ ($i = 3$). Since $i = 3 = \lvert s \rvert$, the answer is yes. For $s = $ `aec`, `a` matches at $j = 0$ and `e` at $j = 4$, and then $b$ is used up with `c` unmatched, so the answer is no. Either way at most $\lvert b \rvert = 5$ steps.
+
+```java
+static boolean isSubsequence(String small, String big) {
+    int i = 0;
+    for (int j = 0; j < big.length() && i < small.length(); j++) {
+        if (small.charAt(i) == big.charAt(j)) i++;   // matched small[i]; look for the next letter
+    }
+    return i == small.length();
+}
+```
+
+This is LeetCode 392, *Is Subsequence* (Easy). The merge step of merge sort is the same shape: one pointer per sorted list, always advancing the smaller one.
+
+## Why it works and what it costs
+
+**Correctness of opposite-end pointers.** The invariant is: *every pair that could still be a solution has both indices in $[lo, hi]$.*
+
+- *Initially* $lo = 0$ and $hi = n - 1$, which includes every pair.
+- *Each step keeps it.* Level 1's two rules show that the row or column being discarded contains no solution, because the array is sorted.
+- *It terminates.* $hi - lo$ falls by 1 per step, from $n - 1$ down to 0.
+- *Therefore* if the loop ends without finding the target, no pair has that sum.
+
+The same proof shape covers the other levels. Write down which region of the array is already settled, show that one step settles one more element, and count the steps.
+
+**Costs.**
+
+| Shape | Moves | Time | On the examples |
+| --- | --- | --- | --- |
+| Opposite ends (Level 1) | at most $n - 1$ | $O(n)$ | 5 sums for 6 prices, against 15 pairs |
+| Reader and writer (Level 2) | at most $2n$ | $O(n)$ | 11 moves for 7 elements |
+| Three-way partition (Level 3) | exactly $n$ | $O(n)$ | 6 steps for 6 colours |
+| One pointer per sequence (Level 4) | at most $\lvert b \rvert$ | $O(\lvert b \rvert)$ | at most 5 steps for `abcde` |
+
+All four use $O(1)$ extra space. If the input is not sorted, Level 1 needs an $O(n \log n)$ sort first, or a hash set instead (see [Hash Table](../hash-table/index.qmd)).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Opposite-end pointers on an unsorted array | Pairs are missed, because the elimination rules are false | Sort first, or use a hash set |
+| `while (lo <= hi)` in a pair search | An element is paired with itself, for example $5 + 5 = 10$ from one 5 | `lo < hi`: two different indices |
+| Advancing `mid` after swapping with `high` in the flag partition | A 0 or 2 is left in the middle region | The value swapped in from `high` is unexamined, so keep `mid` |
+| Not skipping duplicates in 3Sum | The same triple is reported several times | Skip equal first numbers, and equal `lo` values after a match |
+| Moving the taller wall in Container With Most Water | The best container is skipped | Move the shorter wall; the proof only removes it |
+| `int` overflow in `a[lo] + a[hi]` | Wrong comparisons near $\pm 2^{31}$ | Use `long` for the sum when values can be large |
+
+## Interview problems
+
+Each solution starts with the mathematics: what does one pointer move rule out?
+
+### 1. LeetCode 15: 3Sum (Medium)
+
+**Problem.** Return every distinct triple of values that sums to 0, with three different indices. For `[-1, 0, 1, 2, -1, -4]` the answer is `[[-1, -1, 2], [-1, 0, 1]]`.
+
+**Math first.** After sorting, fix the smallest member $a_i$ of the triple. The other two must solve Level 1's pair problem to the right of $i$:
+
+$$
+a_i + a_j + a_k = 0 \iff a_j + a_k = -a_i, \qquad i < j < k
+$$
+
+where:
+
+- $a$ is the sorted array, and $i$, $j$, $k$ are three different indices;
+- $-a_i$ is the target for the inner pair search on $a_{i+1}, \dots, a_{n-1}$;
+- skipping an $a_i$ equal to $a_{i-1}$ avoids repeating triples, because it would find the same pairs again.
+
+Example: sorted, $a = [-4, -1, -1, 0, 1, 2]$.
+
+- $i = 0$, $a_i = -4$: need a pair summing to 4 in $[-1, -1, 0, 1, 2]$. The largest possible is $1 + 2 = 3$, so none.
+- $i = 1$, $a_i = -1$: need 1 in $[-1, 0, 1, 2]$. The pairs are $-1 + 2 = 1$ and $0 + 1 = 1$, giving $[-1, -1, 2]$ and $[-1, 0, 1]$.
+- $i = 2$, $a_i = -1$ again: skipped.
+- $i = 3$, $a_i = 0$: need 0 in $[1, 2]$; $1 + 2 = 3 > 0$, none.
+
+**Idea.** Sort, loop over $i$, and run the opposite-end pair search for $-a_i$, skipping duplicates.
+
+```java
+static List<List<Integer>> threeSum(int[] nums) {
+    int[] a = nums.clone();
+    Arrays.sort(a);
+    List<List<Integer>> triples = new ArrayList<>();
+    for (int i = 0; i < a.length - 2; i++) {
+        if (i > 0 && a[i] == a[i - 1]) continue;            // same first number, same triples
+        int lo = i + 1, hi = a.length - 1;
+        while (lo < hi) {
+            int sum = a[i] + a[lo] + a[hi];
+            if (sum < 0) lo++;
+            else if (sum > 0) hi--;
+            else {
+                triples.add(List.of(a[i], a[lo], a[hi]));
+                while (lo < hi && a[lo] == a[lo + 1]) lo++; // skip copies of this pair
+                lo++;
+                hi--;
+            }
+        }
+    }
+    return triples;
+}
+```
+
+**Answer.** `[[-1, -1, 2], [-1, 0, 1]]`, and `[0, 0, 0, 0]` gives the single triple `[[0, 0, 0]]`. Checking every triple would cost $\binom{6}{3} = 20$ sums. Here the inner searches cost at most $4 + 3 + 2 + 1 = 10$. In general that is $O(n^2)$ time, after an $O(n \log n)$ sort, and $O(1)$ extra space besides the output.
+
+### 2. LeetCode 11: Container With Most Water (Medium)
+
+**Problem.** Vertical lines of heights $h_0, \dots, h_{n-1}$ stand at positions $0, \dots, n-1$. Pick two lines that, with the floor, hold the most water. For `[1, 8, 6, 2, 5, 4, 8, 3, 7]` the answer is 49.
+
+**Math first.** Water is width times the shorter wall:
+
+$$
+A(i, j) = (j - i) \cdot \min(h_i, h_j), \qquad h_{lo} \le h_{hi} \implies A(lo, k) < A(lo, hi) \ \text{ for every } lo < k < hi
+$$
+
+where:
+
+- $A(i, j)$ is the area held by lines $i < j$;
+- the second part is the elimination rule: if the left wall is the shorter one, then every **narrower** container that keeps it has a smaller width, $k - lo < hi - lo$, and a height of at most $h_{lo}$;
+- so line $lo$ is finished and $lo$ can move right. The mirror rule moves $hi$ left when $h_{hi} < h_{lo}$.
+
+Example: $h = [1, 8, 6, 2, 5, 4, 8, 3, 7]$.
+
+- $(0, 8)$: $A = 8 \cdot \min(1, 7) = 8$. The left wall is shorter, so $lo = 1$.
+- $(1, 8)$: $A = 7 \cdot \min(8, 7) = 49$. The right wall is shorter, so $hi = 7$.
+- $(1, 7)$: $A = 6 \cdot 3 = 18$, then $(1, 6)$: $5 \cdot 8 = 40$, then $(2, 6)$: $4 \cdot 6 = 24$, and so on down to $(5, 6)$: $1 \cdot 4 = 4$.
+
+The best is $\mathbf{49}$, after $n - 1 = 8$ steps instead of $\binom{9}{2} = 36$ pairs.
+
+**Idea.** Start with the widest container. Record its area, then move the shorter wall inward, because only a taller wall can make up for the lost width.
+
+```java
+static int maxArea(int[] h) {
+    int lo = 0, hi = h.length - 1, best = 0;
+    while (lo < hi) {
+        best = Math.max(best, (hi - lo) * Math.min(h[lo], h[hi]));
+        if (h[lo] <= h[hi]) lo++;    // every narrower container using h[lo] is no better
+        else hi--;
+    }
+    return best;
+}
+```
+
+**Answer.** 49 for the example, and 1 for `[1, 1]`. One pass: $O(n)$ time, $O(1)$ space.
+
+### 3. LeetCode 42: Trapping Rain Water (Hard)
+
+**Problem.** Bars of width 1 have heights $h_0, \dots, h_{n-1}$. After rain, how much water stays on top of them? For `[3, 0, 2, 0, 4]` the answer is 7.
+
+**Math first.** Water above bar $i$ is limited by the tallest bar on each side, and the lower of the two decides:
+
+$$
+w_i = \min(L_i, R_i) - h_i, \qquad L_i = \max(h_0, \dots, h_i), \quad R_i = \max(h_i, \dots, h_{n-1})
+$$
+
+where:
+
+- $w_i$ is the water standing on bar $i$, in squares;
+- $L_i$ is the tallest bar from the left end up to $i$, and $R_i$ the tallest from $i$ to the right end; both include $h_i$, so $w_i \ge 0$;
+- the total is $\sum_i w_i$.
+
+Example: $h = [3, 0, 2, 0, 4]$.
+
+| $i$ | $h_i$ | $L_i$ | $R_i$ | $\min(L_i, R_i)$ | $w_i$ |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 3 | 3 | 4 | 3 | $3 - 3 = 0$ |
+| 1 | 0 | 3 | 4 | 3 | $3 - 0 = 3$ |
+| 2 | 2 | 3 | 4 | 3 | $3 - 2 = 1$ |
+| 3 | 0 | 3 | 4 | 3 | $3 - 0 = 3$ |
+| 4 | 4 | 4 | 4 | 4 | $4 - 4 = 0$ |
+
+The total is $0 + 3 + 1 + 3 + 0 = 7$.
+
+**Idea.** The table needs two extra arrays. Two pointers need none. Keep the tallest bar seen so far from each end: $M_L$ from the left (`maxLeft`) and $M_R$ from the right (`maxRight`). If $M_L \le M_R$, then bar $lo$ has $L_{lo} = M_L$, and somewhere to its right stands a bar of height $M_R \ge M_L$, so $R_{lo} \ge M_L$ and $\min(L_{lo}, R_{lo}) = M_L$ is already known: settle bar $lo$ and move right. Otherwise settle bar $hi$ the same way.
+
+```java
+static int trap(int[] h) {
+    int lo = 0, hi = h.length - 1, maxLeft = 0, maxRight = 0, water = 0;
+    while (lo < hi) {
+        maxLeft = Math.max(maxLeft, h[lo]);
+        maxRight = Math.max(maxRight, h[hi]);
+        if (maxLeft <= maxRight) water += maxLeft - h[lo++];   // the right wall is at least maxLeft
+        else water += maxRight - h[hi--];                     // the left wall is more than maxRight
+    }
+    return water;
+}
+```
+
+**Answer.** 7 for `[3, 0, 2, 0, 4]`: $M_R = 4$ stays at least $M_L = 3$, so bars 0 to 3 are settled from the left, adding $0 + 3 + 1 + 3$. The LeetCode example `[0, 1, 0, 2, 1, 0, 1, 3, 2, 1, 2, 1]` gives 6. One pass: $O(n)$ time and $O(1)$ space, against $O(n)$ extra space for the table method.
+
+## Mathematical Abstraction
+
+Opposite-end two pointers search the triangle of index pairs, and each step deletes a whole row or column of it:
+
+$$
+\mathcal{R}_t = \lbrace (i, j) : lo_t \le i < j \le hi_t \rbrace, \qquad hi_{t+1} - lo_{t+1} = hi_t - lo_t - 1, \qquad \text{steps} \le n - 1
+$$
+
+where:
+
+- $\mathcal{R}_t$ is the set of pairs still alive after $t$ steps, and $lo_t$, $hi_t$ are the pointers at that moment;
+- a monotone rule (sortedness for pair sums, the shorter wall for containers, the smaller maximum for rain water) proves that every deleted pair is no answer;
+- each step shrinks the gap $hi - lo$ by one, starting from $n - 1$.
+
+Example: for 6 prices, $\mathcal{R}_0$ holds $\frac{6 \times 5}{2} = 15$ pairs, and the gap shrinks $5 \to 4 \to 3 \to 2 \to 1$, finding $4 + 6 = 10$ on step 5. For the 9 container lines, 36 pairs are covered by 8 steps. The other shapes follow the same pattern with a different settled region: the writer's prefix in Level 2, and the three coloured regions in Level 3.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 7, "Quicksort", for in-place partitioning with moving indices. "Two pointers" is a LeetCode tag, not a textbook chapter. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition: §1.4, the 3-sum problem and its faster versions, <https://algs4.cs.princeton.edu/14analysis/>; §2.3, quicksort with Dijkstra's 3-way partitioning, <https://algs4.cs.princeton.edu/23quicksort/>.
+- Edsger W. Dijkstra, *A Discipline of Programming* (Prentice-Hall, 1976), the Dutch national flag problem.
+- LeetCode: [167. Two Sum II - Input Array Is Sorted](https://leetcode.com/problems/two-sum-ii-input-array-is-sorted/), [26. Remove Duplicates from Sorted Array](https://leetcode.com/problems/remove-duplicates-from-sorted-array/), [75. Sort Colors](https://leetcode.com/problems/sort-colors/), [392. Is Subsequence](https://leetcode.com/problems/is-subsequence/), [15. 3Sum](https://leetcode.com/problems/3sum/), [11. Container With Most Water](https://leetcode.com/problems/container-with-most-water/), [42. Trapping Rain Water](https://leetcode.com/problems/trapping-rain-water/).
+
+[← Binary Search](../binary-search/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Sliding Window →](../sliding-window/index.qmd)

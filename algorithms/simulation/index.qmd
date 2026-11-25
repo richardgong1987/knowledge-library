@@ -1,67 +1,377 @@
 ---
 title: "Simulation"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "Following the rules step by step: modelling the state, updating every cell at once, counting the steps, detecting a cycle and skipping whole laps with modular arithmetic, event-driven simulation with a priority queue, and hard interview problems (Game of Life, prison cells, text justification) solved math-first."
 ---
 
-## Start with the problem, not a formula
+A simulation answers "what happens?" by doing exactly what the rules say, one step at a time. There is no clever formula to find. The work is in three decisions: **what the state is**, **how one step changes it**, and **how many steps you can afford**. When the step count is huge, the trick is usually that the state repeats, and a repeating state can be skipped with one division.
 
-**LeetCode 874 — Walking Robot Simulation**. Evolve an explicit state according to a rule and input sequence.
+All code is in [`SimulationLab.java`](SimulationLab.java). Run it from this folder with `java SimulationLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+Eight prison cells stand in a row. Each day, a cell becomes occupied if its two neighbours were **both** occupied or **both** empty the day before, and empty otherwise. The two end cells have only one neighbour each, so they are always empty after the first day. The row starts as `1 0 0 1 0 0 1 0`. What does it look like after $10^9$ days?
 
-Trying to infer a closed-form endpoint from arbitrary turn and move instructions often creates more complexity than the rules themselves.
+- Simulating day by day costs $10^9 \times 8 = 8 \times 10^9$ cell updates. At roughly $10^8$ simple steps per second that is over a minute, far too slow for an interview judge.
+- But a row of 8 cells has only $2^8 = 256$ possible patterns. Within 257 days some pattern **must** appear twice, and from then on the days repeat forever.
+- So: simulate until a pattern repeats, measure the length of the repeat, and jump. For this row the repeat appears on day 15, and the answer comes from 15 simulated days instead of a billion.
 
-## Discover the key idea
+## Explain it like I'm ten
 
-Represent the entire state explicitly: position and direction. Apply each command one step at a time, checking obstacle rules.
+::: {.callout-tip}
+A board game is a simulation. The board and the pieces are the **state**. The rulebook says how one turn changes the state. To find out what happens after 10 turns, you just play 10 turns carefully. You do not need to be clever; you need to be exact.
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+Two things go wrong when people play carelessly. First, they move one piece and then let the next piece react to the move that "already happened" this turn, when the rules said everyone moves at the same time. The fix is to write tomorrow's board on a fresh sheet while you read today's. Second, they try to play a billion turns.
 
-## Mathematical model — then immediately translate it
+For the billion turns, think of a merry-go-round with 14 horses. You climb on at horse 1. Where are you after a billion moves? You do not count them one by one. Every 14 moves you are back where you started, so only the **remainder** matters: a billion divided by 14 leaves 6, so you end on horse 7, six moves along.
+
+Martin Gardner introduced millions of readers to the most famous simulation of all, John Conway's Game of Life, in his "Mathematical Games" column in *Scientific American* in October 1970. It has four short rules and endlessly surprising behaviour, and it is LeetCode problem 289 below.
+:::
+
+## From simple to advanced
+
+### Level 1: state and rules
+
+Pick the **smallest state** that fully describes the situation, then write the rule that turns one state into the next. A robot on a grid that obeys `G` (go forward one square), `L` (turn left) and `R` (turn right) has state $(x, y, d)$, where the direction $d$ is a number: 0 north, 1 east, 2 south, 3 west.
 
 $$
-S_{t+1}=F(S_t,u_t)
+d' = \begin{cases} (d + 1) \bmod 4 & \text{after } \texttt{R} \\ (d + 3) \bmod 4 & \text{after } \texttt{L} \end{cases}, \qquad
+(x', y') = (x + \Delta x_d, \; y + \Delta y_d) \text{ after } \texttt{G}
 $$
 
-**Explanation of every symbol:** S_t is robot state after t commands (for example position and facing direction); u_t is the next command; F is the deterministic transition rule.
+where:
 
-**Substitute actual values:** Start at (0,0) facing north. Command 'move 2' yields (0,2); 'turn right' makes direction east; 'move 1' yields (1,2). The output follows directly from three state transitions.
+- $(x, y)$ is the robot's square and $d$ its direction; a prime ($d'$) marks the value after the command;
+- $\bmod 4$ wraps the direction around, so turning right from west (3) gives north (0);
+- turning left is the same as turning right three times, which avoids a negative number;
+- $(\Delta x_d, \Delta y_d)$ is the step for direction $d$: $(0, 1)$, $(1, 0)$, $(0, -1)$ and $(-1, 0)$.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: the commands `GGLLGG` from $(0, 0)$ facing north ($d = 0$). Two `G`s reach $(0, 1)$ and $(0, 2)$. `L` gives $d = (0 + 3) \bmod 4 = 3$ (west) and the second `L` gives $(3 + 3) \bmod 4 = 2$ (south). Two more `G`s step back to $(0, 1)$ and $(0, 0)$. The final state is $(0, 0, 2)$: home, facing south.
 
-## Work through the algorithm
+```java
+static int[] walk(String commands) {                 // returns {x, y, direction}
+    int[] dx = {0, 1, 0, -1}, dy = {1, 0, -1, 0};    // north, east, south, west
+    int x = 0, y = 0, d = 0;
+    for (char c : commands.toCharArray()) {
+        if (c == 'G') { x += dx[d]; y += dy[d]; }
+        else if (c == 'R') d = (d + 1) % 4;
+        else d = (d + 3) % 4;                        // left = three rights; avoids a negative index
+    }
+    return new int[] {x, y, d};
+}
+```
 
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
+Turning a direction into an index of two small arrays replaces four `if` branches per step, and it is the standard way to write grid moves.
 
-**Why this is correct:** If the transition function is correctly defined for each command and applied sequentially, induction on the command count gives the final state.
+### Level 2: update every cell at once
 
-## Actual code — keep it small
+In grid and row simulations every cell changes **at the same time**, based on yesterday. The prison rule is
 
-The key here is the mathematical state and the progression of decisions. Implement the described transition in a short function before choosing a full production implementation; test the explicit numbers above as your first assertion.
+$$
+c'_i = \begin{cases} 1 & \text{if } c_{i-1} = c_{i+1} \\ 0 & \text{otherwise} \end{cases} \quad \text{for } 1 \le i \le 6, \qquad c'_0 = c'_7 = 0
+$$
 
-## Analyse the work; do not guess big-O
+where:
 
-**Cost:** O(total unit moves + command count) with a naive step-by-step simulation; obstacle lookup can be expected O(1) using a set.
+- $c_i$ is cell $i$ today (1 occupied, 0 empty), with $i$ from 0 to 7;
+- $c'_i$ is cell $i$ tomorrow;
+- the end cells have only one neighbour, so the rule makes them 0.
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+Example: today `01011001`. Cell 1 compares $c_0 = 0$ with $c_2 = 0$: equal, so 1. Cell 2 compares $c_1 = 1$ with $c_3 = 1$: equal, so 1. Cell 3 compares $c_2 = 0$ with $c_4 = 1$: different, so 0. Continuing, tomorrow is `01100000`, which matches LeetCode's day 1.
 
-## Break the technique deliberately
+The classic bug is to update the row **in place**:
 
-A simulation can still be wrong because of coordinate convention, negative turns or obstacle-check ordering. Explicitly define orientation and boundary handling.
+```java
+// sketch: wrong, cell i reads cell i - 1 after it has already changed
+for (int i = 1; i < 7; i++) cells[i] = cells[i - 1] == cells[i + 1] ? 1 : 0;
+```
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+On `01011001`, cell 1 becomes 1 as it should. Then cell 3 compares the **new** $c_2 = 1$ with $c_4 = 1$ and becomes 1, when the right answer is 0. The fix is to read the old row and write a new one. Java strings are immutable, which makes that automatic:
 
-## Source connections and practice
+```java
+static String nextDay(String cells) {                // e.g. "01011001", one character per cell
+    StringBuilder next = new StringBuilder("0");     // the first cell has only one neighbour
+    for (int i = 1; i + 1 < cells.length(); i++)
+        next.append(cells.charAt(i - 1) == cells.charAt(i + 1) ? '1' : '0');
+    return next.append('0').toString();              // and so does the last
+}
+```
 
-**Textbook:** CLRS Chapter 1 (what an algorithm specifies) and Chapter 10 (representing state).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+Writing into a second buffer costs memory for one extra state. When even that is not allowed, store tomorrow's value in spare bits of today's cell, as LeetCode 289 does.
 
-**LeetCode problem:** LeetCode 874 — Walking Robot Simulation. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/walking-robot-simulation/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+### Level 3: count the steps, then skip the cycle
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+The cost of a simulation is the number of steps times the cost of one step. When the number of steps $T$ is huge, use one fact: a **deterministic** rule on a **finite** set of states must eventually repeat. Once state $s_\mu$ comes back at time $\mu + p$, everything after it repeats with period $p$:
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+$$
+s_T = s_{\mu + (T - \mu) \bmod p} \qquad \text{for every } T \ge \mu, \qquad \mu + p \le \lvert S \rvert
+$$
+
+where:
+
+- $s_t$ is the state after $t$ steps, with $s_0$ the start;
+- $\mu$ (mu) is the length of the *tail*, the first time step at which the state that will repeat appears;
+- $p$ is the *period*, the length of the cycle;
+- $(T - \mu) \bmod p$ is how far into the cycle step $T$ lands, after all the whole laps are skipped;
+- $\lvert S \rvert$ is the number of possible states, and by the pigeonhole principle a repeat must occur within $\lvert S \rvert$ steps.
+
+Example: the rule $f(x) = (x^2 + 1) \bmod 11$ from $s_0 = 0$ gives
+
+$$
+s_0 = 0,\; s_1 = 1,\; s_2 = 2,\; s_3 = 5,\; s_4 = 26 \bmod 11 = 4,\; s_5 = 17 \bmod 11 = 6,\; s_6 = 37 \bmod 11 = 4.
+$$
+
+The state 4 first appears at time 4 and returns at time 6, so $\mu = 4$ and $p = 2$: a tail $0, 1, 2, 5$ and then the loop $4, 6, 4, 6, \dots$ The picture looks like the Greek letter $\rho$ (rho). For $T = 10^9$: $(10^9 - 4) \bmod 2 = 0$, so $s_{10^9} = s_4 = 4$. For $T = 7$: $(7 - 4) \bmod 2 = 1$, so $s_7 = s_5 = 6$.
+
+```java
+static <S> S stateAfter(S start, long steps, UnaryOperator<S> rule) {
+    Map<S, Integer> firstSeen = new HashMap<>();
+    List<S> history = new ArrayList<>();
+    S state = start;
+    for (int t = 0; t < steps; t++) {
+        Integer mu = firstSeen.putIfAbsent(state, t);
+        if (mu != null) return history.get(mu + (int) ((steps - mu) % (t - mu)));   // t - mu is the period
+        history.add(state);
+        state = rule.apply(state);
+    }
+    return state;
+}
+```
+
+`putIfAbsent` returns the earlier time if the state was seen before, which is exactly $\mu$, and the current time $t$ is $\mu + p$. The state type must have **value equality**: a `String`, an `Integer` or a `List` works as a map key, but an `int[]` does not, because arrays use identity, so the repeat would never be noticed.
+
+Storing every state costs memory. Robert Floyd's "tortoise and hare" finds the cycle with only two states in memory: one copy steps once per turn and another steps twice, and they must meet inside the cycle. Knuth credits it to Floyd in *The Art of Computer Programming*, Volume 2.
+
+### Level 4: jump from event to event
+
+Some simulations have long stretches where nothing happens. Ticking a clock through them wastes time. An **event-driven** simulation jumps straight to the next moment something changes, keeping future events in a priority queue.
+
+A shop has 2 tills. Customers arrive at minutes $0, 1, 2, 3$ and need $5, 2, 4, 1$ minutes each. Each customer, in arrival order, goes to the till that frees up first:
+
+$$
+\text{start}_i = \max(\text{arrive}_i, \; \min \text{freeAt}), \qquad \text{finish}_i = \text{start}_i + \text{service}_i
+$$
+
+where:
+
+- $\text{arrive}_i$ and $\text{service}_i$ are customer $i$'s arrival time and service length;
+- $\min \text{freeAt}$ is the earliest time any till becomes free;
+- the $\max$ says a customer cannot start before arriving, or before a till is free.
+
+Example:
+
+| Customer | arrives | earliest free till | starts | finishes |
+| --- | --- | --- | --- | --- |
+| 0 | 0 | 0 | $\max(0, 0) = 0$ | $0 + 5 = 5$ |
+| 1 | 1 | 0 | $\max(1, 0) = 1$ | $1 + 2 = 3$ |
+| 2 | 2 | 3 (till of customer 1) | $\max(2, 3) = 3$ | $3 + 4 = 7$ |
+| 3 | 3 | 5 (till of customer 0) | $\max(3, 5) = 5$ | $5 + 1 = 6$ |
+
+```java
+static int[] finishTimes(int[] arrive, int[] service, int tills) {
+    PriorityQueue<Integer> freeAt = new PriorityQueue<>();   // when each till is next free
+    for (int t = 0; t < tills; t++) freeAt.add(0);
+    int[] finish = new int[arrive.length];
+    for (int i = 0; i < arrive.length; i++) {               // customers in arrival order
+        int start = Math.max(arrive[i], freeAt.poll());       // wait for the earliest free till
+        finish[i] = start + service[i];
+        freeAt.add(finish[i]);
+    }
+    return finish;
+}
+```
+
+The cost is $O(n \log k)$ for $n$ customers and $k$ tills, however long the services are. A minute-by-minute simulation would cost the total time multiplied by the number of tills, and if service times were in seconds over a year, that would be about $3 \times 10^7$ ticks per till. Sedgewick and Wayne's particle-collision simulation (Section 6.1) is the same idea with physics: compute when the next collision happens and jump there.
+
+## Why it works and what it costs
+
+**Correctness by induction on time.** If $s_t$ is correct and the step function implements the rules exactly, then $s_{t+1}$ is correct. So everything rests on the step function, and that is where the tests should go: one hand-checked step, plus the edges (border cells, empty input, a single word).
+
+**Why skipping laps is safe.** The rule is deterministic: the next state depends only on the current one. If $s_{\mu + p} = s_\mu$, apply the rule $j$ times to both sides to get $s_{\mu + p + j} = s_{\mu + j}$ for every $j \ge 0$. So the sequence after $\mu$ repeats with period $p$, and any $T \ge \mu$ can be reduced to $\mu + (T - \mu) \bmod p$.
+
+**Costs:**
+
+| Method | Steps simulated | Prison example, $T = 10^9$ |
+| --- | --- | --- |
+| Day by day | $T$ | $10^9$ days, $8 \times 10^9$ cell updates |
+| With cycle detection | at most $\mu + p \le \lvert S \rvert$ | $1 + 14 = 15$ days, plus 15 hash-map lookups |
+| Floyd's tortoise and hare | $O(\mu + p)$ | the same order, with $O(1)$ memory |
+| Event-driven queue | one step per event, $O(\log k)$ each | not needed for a row of cells |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Updating cells in place | Cells react to neighbours' new values; results differ from the expected output | Write into a new buffer, or store tomorrow in a spare bit |
+| `(d - 1) % 4` for a left turn | `-1` when $d = 0$, then `ArrayIndexOutOfBoundsException` | `(d + 3) % 4` or `Math.floorMod(d - 1, 4)` |
+| Using `int[]` as a `HashMap` key | The cycle is never detected, so the program runs all $10^9$ steps | Use a `String`, a `List`, or an encoded `int` as the state key |
+| Off by one in $\mu + (T - \mu) \bmod p$ | The answer is one day early or late | Store $s_0$ at index 0 and test the formula against step-by-step for small $T$ |
+| Forgetting the border cells | Index errors, or ends that should be 0 | Handle borders explicitly, or clamp the neighbour range |
+| Ticking a clock when events are rare | Time limit exceeded | Jump between events with a priority queue |
+| Fully justifying the last line, or a one-word line, in LeetCode 68 | Wrong spacing on those lines | Left-justify them and pad on the right |
+
+## Interview problems
+
+Each solution starts with the mathematics: write the state and the step as formulas, then count how many steps are really needed.
+
+### 1. LeetCode 289: Game of Life (Medium)
+
+**Problem.** Given an $m \times n$ board of live (1) and dead (0) cells, compute the next generation **in place**. A live cell with 2 or 3 live neighbours survives; a dead cell with exactly 3 live neighbours comes alive; every other cell is dead next turn. All eight surrounding cells count as neighbours. For
+
+```text
+0 1 0          0 0 0
+0 0 1   -->    1 0 1
+1 1 1          0 1 1
+0 0 0          0 1 0
+```
+
+**Math first.** Let $N(r, c)$ be the number of live neighbours of cell $(r, c)$ today. The rule is one line, and storing two days in one integer avoids a second board:
+
+$$
+\text{alive}'(r, c) = [\, N = 3 \,] \lor \big( \text{alive}(r, c) \land [\, N = 2 \,] \big), \qquad v = \text{today} + 2 \cdot \text{tomorrow}
+$$
+
+where:
+
+- $\lor$ is "or" and $\land$ is "and";
+- $[\, N = 3 \,]$ is true exactly when $N$ is 3;
+- $v$ is the value stored in the cell during the update: bit 0 (`v & 1`) is today and bit 1 (`v >> 1`) is tomorrow, so reading `v & 1` always sees today's state even for cells already processed.
+
+Example: cell $(1, 0)$ is dead. Its neighbours $(0, 0), (0, 1), (1, 1), (2, 0), (2, 1)$ hold $0, 1, 0, 1, 1$, so $N = 3$ and it is born: $v = 0 + 2 \cdot 1 = 2$. Cell $(0, 1)$ is alive with neighbours $0, 0, 0, 0, 1$, so $N = 1$ and it dies: $v = 1 + 2 \cdot 0 = 1$. After all cells are processed, shifting every $v$ right by one bit keeps only tomorrow: $2 \gg 1 = 1$ and $1 \gg 1 = 0$.
+
+**Idea.** One pass computes $N$ from bit 0 and sets bit 1 for cells alive tomorrow. A second pass shifts every cell right by one bit.
+
+```java
+static void gameOfLife(int[][] board) {
+    int rows = board.length, cols = board[0].length;
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            int live = liveNeighbours(board, r, c);
+            boolean isAlive = (board[r][c] & 1) == 1;
+            if (live == 3 || (isAlive && live == 2)) board[r][c] |= 2;   // bit 1 = alive tomorrow
+        }
+    }
+    for (int[] row : board)
+        for (int c = 0; c < cols; c++) row[c] >>= 1;                    // tomorrow becomes today
+}
+
+static int liveNeighbours(int[][] board, int r, int c) {   // reads bit 0 only: today's state
+    int live = 0;
+    for (int i = Math.max(0, r - 1); i <= Math.min(board.length - 1, r + 1); i++)
+        for (int j = Math.max(0, c - 1); j <= Math.min(board[0].length - 1, c + 1); j++)
+            if (i != r || j != c) live += board[i][j] & 1;
+    return live;
+}
+```
+
+**Answer.** The board above becomes `[[0,0,0],[1,0,1],[0,1,1],[0,1,0]]`, and `[[1,1],[1,0]]` becomes `[[1,1],[1,1]]`. Each of the $m n$ cells reads at most 8 neighbours: for the $4 \times 3$ example that is at most $12 \times 8 = 96$ reads. Time $O(mn)$, extra space $O(1)$.
+
+### 2. LeetCode 957: Prison Cells After N Days (Medium)
+
+**Problem.** The eight-cell prison from the start of this lesson. Given the first day's cells and $n \le 10^9$, return the cells after $n$ days. For `[1, 0, 0, 1, 0, 0, 1, 0]` and $n = 10^9$ the answer is `[0, 0, 1, 1, 1, 1, 1, 0]`.
+
+**Math first.** The step is the rule of Level 2, and the number of states is at most $2^8 = 256$ (in fact $2^6 = 64$ after day 1, since the ends are 0). So the cycle formula of Level 3 applies:
+
+$$
+s_n = s_{\mu + (n - \mu) \bmod p}
+$$
+
+where:
+
+- $s_t$ is the row after $t$ days;
+- $\mu$ is the first day of the repeating part and $p$ its length, found by simulating until a row repeats.
+
+Example: from `10010010` the rows are
+
+| day | 0 | 1 | 2 | 3 | 4 | 5 | 6 | … | 14 | 15 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| row | `10010010` | `00010010` | `01010010` | `01110010` | `00100010` | `00101010` | `00111110` | … | `00111000` | `00010010` |
+
+Day 15 repeats day 1, so $\mu = 1$ and $p = 14$. Then $(10^9 - 1) \bmod 14 = 999{,}999{,}999 - 14 \times 71{,}428{,}571 = 5$, and $s_{10^9} = s_{1 + 5} = s_6 = $ `00111110`.
+
+**Idea.** Turn the array into a string, which has value equality, run `stateAfter` from Level 3 with `nextDay` as the rule, and turn the result back into an array.
+
+```java
+static int[] prisonAfterNDays(int[] cells, int n) {
+    StringBuilder start = new StringBuilder();
+    for (int cell : cells) start.append(cell);
+    String end = stateAfter(start.toString(), n, SimulationLab::nextDay);
+    return end.chars().map(ch -> ch - '0').toArray();
+}
+```
+
+**Answer.** `[0, 0, 1, 1, 1, 1, 1, 0]` for $n = 10^9$, and `[0, 0, 1, 1, 0, 0, 0, 0]` for LeetCode's other example, `[0, 1, 0, 1, 1, 0, 0, 1]` with $n = 7$. At most $\lvert S \rvert + 1 = 257$ days are simulated (here 15), each costing 8 cell updates and one hash lookup: $O(\min(n, 2^8))$ time, which is $O(1)$, and $O(2^8)$ space for the history.
+
+### 3. LeetCode 68: Text Justification (Hard)
+
+**Problem.** Given words and a line width $W$, lay the words out greedily, as many per line as fit with one space between them. Then pad each line to exactly $W$ characters by spreading spaces as evenly as possible, giving the extra spaces to the **left** gaps. The last line, and any line with a single word, is left-justified and padded on the right. For `["This", "is", "an", "example", "of", "text", "justification."]` and $W = 16$:
+
+```text
+"This    is    an"
+"example  of text"
+"justification.  "
+```
+
+**Math first.** A line holding words $i$ to $j - 1$ fits when their letters plus one space per gap fit. Then the spaces are dealt out like cards:
+
+$$
+\sum_{t=i}^{j-1} \lvert w_t \rvert + (j - i - 1) \le W, \qquad
+\text{gap}_q = \left\lfloor \frac{S}{g} \right\rfloor + [\, q < S \bmod g \,], \quad S = W - \sum_{t=i}^{j-1} \lvert w_t \rvert, \; g = j - i - 1
+$$
+
+where:
+
+- $\lvert w_t \rvert$ is the length of word $t$;
+- $g$ is the number of gaps on the line and $S$ the number of spaces to place;
+- $\text{gap}_q$ is the width of gap $q = 0, 1, \dots, g - 1$: every gap gets $\lfloor S / g \rfloor$, and the first $S \bmod g$ gaps get one more.
+
+Example: line 2 holds `example`, `of`, `text`. The letters are $7 + 2 + 4 = 13$, and with 2 single spaces that is $15 \le 16$, while adding `justification.` would need $13 + 14 + 3 = 30$. So $S = 16 - 13 = 3$ and $g = 2$. Then $\lfloor 3 / 2 \rfloor = 1$ and $3 \bmod 2 = 1$, so gap 0 gets $1 + 1 = 2$ spaces and gap 1 gets 1: `example  of text`. Line 1 has letters $4 + 2 + 2 = 8$, $S = 8$, $g = 2$, so both gaps get 4: `This    is    an`.
+
+**Idea.** For each line, extend $j$ while the next word fits. Compute $S$ and $g$, then append each word after its gap width, using one space per gap on the last line. Finally pad the right side to $W$, which also handles one-word lines.
+
+```java
+static List<String> fullJustify(String[] words, int maxWidth) {
+    List<String> lines = new ArrayList<>();
+    for (int i = 0, j; i < words.length; i = j) {
+        int letters = words[i].length();
+        for (j = i + 1; j < words.length && letters + words[j].length() + (j - i) <= maxWidth; j++)
+            letters += words[j].length();                     // j - i single spaces are needed so far
+        int gaps = j - i - 1, spaces = maxWidth - letters;
+        boolean isLastLine = j == words.length;
+        StringBuilder line = new StringBuilder(words[i]);
+        for (int g = 0; g < gaps; g++) {
+            int width = isLastLine ? 1 : spaces / gaps + (g < spaces % gaps ? 1 : 0);   // left gaps get the extra
+            line.append(" ".repeat(width)).append(words[i + 1 + g]);
+        }
+        lines.add(line + " ".repeat(maxWidth - line.length()));   // pads the last line and one-word lines
+    }
+    return lines;
+}
+```
+
+**Answer.** The three lines above, and `"What   must   be"`, `"acknowledgment  "`, `"shall be        "` for LeetCode's second example, where `acknowledgment` stands alone and is left-justified. Every word is measured once and every output character written once, so the time is $O(L \cdot W)$ for $L$ output lines, which is $3 \times 16 = 48$ characters here, and the space is the output itself. The difficulty is entirely in following the rules exactly. TeX's line breaker (Knuth and Plass, 1981) does something cleverer, choosing breaks for the whole paragraph by dynamic programming, but LeetCode asks for the greedy rule.
+
+## Mathematical Abstraction
+
+A simulation is a function applied over and over. On a finite set of states it must end in a cycle:
+
+$$
+s_{t+1} = F(s_t), \qquad s_T = s_{\mu + (T - \mu) \bmod p} \;\; (T \ge \mu), \qquad \mu + p \le \lvert S \rvert
+$$
+
+where:
+
+- $F$ is the step rule and $s_t$ the state after $t$ steps;
+- $\mu$ is the tail length, $p$ the cycle length and $\lvert S \rvert$ the number of possible states.
+
+Example: the prison row has $\lvert S \rvert = 2^8 = 256$, and from `10010010` it has $\mu = 1$ and $p = 14$. So $s_{10^9} = s_{1 + (10^9 - 1) \bmod 14} = s_{1 + 5} = s_6$, found after simulating 15 days instead of $10^9$. The merry-go-round of the analogy is the same formula with $\mu = 0$, $p = 14$ and $T = 10^9$: $10^9 \bmod 14 = 6$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Section 6.5 "Priority queues", which names event-driven simulation as a use of a min-priority queue. CLRS has no chapter on simulation as such.
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, Section 6.1 "Event-Driven Simulation": <https://algs4.cs.princeton.edu/61event/>.
+- Martin Gardner, "Mathematical Games: The fantastic combinations of John Conway's new solitaire game 'life'", *Scientific American* 223(4), October 1970.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 2, *Seminumerical Algorithms*, Section 3.1, exercise 6, where the tortoise-and-hare cycle detection is credited to Robert W. Floyd.
+- Donald E. Knuth and Michael F. Plass, "Breaking paragraphs into lines", *Software: Practice and Experience* 11(11), 1981.
+- LeetCode: [289. Game of Life](https://leetcode.com/problems/game-of-life/), [957. Prison Cells After N Days](https://leetcode.com/problems/prison-cells-after-n-days/), [68. Text Justification](https://leetcode.com/problems/text-justification/).
+
+[← Quickselect](../quickselect/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Brainteaser →](../brainteaser/index.qmd)

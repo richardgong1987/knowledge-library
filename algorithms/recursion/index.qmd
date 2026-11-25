@@ -1,67 +1,444 @@
 ---
 title: "Recursion"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "From a dark cinema to interview level: the base case and the smaller subproblem, call-stack frames and StackOverflowError, recursion on nested data, the recursion tree, the recurrences T(n) = T(n − 1) + 1, T(n) = T(n/2) + 1 and T(n) = 2T(n/2) + n with numbers, and problems (Merge Two Sorted Lists, Pow(x, n), Parsing A Boolean Expression) solved math-first."
 ---
 
-## Start with the problem, not a formula
+A recursive function solves a problem by calling **itself** on a smaller version of the same problem, until the problem is so small that the answer is obvious. Recursion is the engine under backtracking, depth-first search, divide and conquer and dynamic programming. This lesson shows what a recursive call really does inside the machine, how to draw and count all the calls, and how to read a recurrence to get the running time.
 
-**LeetCode 104 — Maximum Depth of Binary Tree**. Define a computation in terms of smaller instances with a base case.
+All code is in [`RecursionLab.java`](RecursionLab.java). Run it from this folder with `java RecursionLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+A parcel holds 2 marbles and two bags. Bag A holds 3 marbles. Bag B holds 1 marble and another bag, C, which holds 4 marbles. How many marbles are there in total?
 
-A giant while loop with nested special cases obscures a problem whose subtrees already have the same form as the whole problem.
+```text
+parcel: 2 marbles
+├── bag A: 3 marbles
+└── bag B: 1 marble
+    └── bag C: 4 marbles
+```
 
-## Discover the key idea
+- One loop can count the marbles in one bag. Bags inside bags need a loop inside the loop, and bags inside those a third loop. We do not know in advance how deep the bags go.
+- But "count the marbles in a bag" is the **same question** for every bag. Answer it for the parcel by asking it again for each bag inside.
+- That is recursion: $2 + 3 + (1 + 4) = 10$ marbles, with one short function and no idea of the depth.
 
-Define a base case and a strictly smaller recursive instance; use returned solutions to combine into the answer.
+## Explain it like I'm ten
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+::: {.callout-tip}
+You are sitting in a dark cinema and want to know which row you are in. You cannot see the front, so you whisper to the person in front of you: "Which row are you in?" They do not know either, so they ask the person in front of *them*, and so on. The person in the front row knows the answer straight away: "Row 1!" That is the **base case**. Each person then whispers back their answer plus one: "2", "3", ..., until the answer reaches you.
 
-## Mathematical model — then immediately translate it
+Two things make this work. Every question goes to someone **closer to the front** (a smaller problem), and somebody can answer **without asking** (the base case). Everyone waiting for an answer has to remember that they still need to add one, and that memory is the **call stack**.
+
+Jeff Erickson's *Algorithms* (Chapter 1) gives the trick a name: hand the smaller problem to the **Recursion Fairy**. You only have to simplify the problem, or solve it directly when it is tiny, and trust that the fairy solves the smaller copy correctly. Erickson points out that the fairy's formal name is the *induction hypothesis*. Russian nesting dolls are the same picture: open a doll, and inside is a smaller doll of the same kind, until the last one is solid.
+:::
+
+## From simple to advanced
+
+### Level 1: a base case and a smaller subproblem
+
+The factorial $n! = n \cdot (n-1) \cdots 2 \cdot 1$ is defined by recursion:
 
 $$
-h(v)=1+\max(h(left(v)),h(right(v)))
+0! = 1, \qquad n! = n \cdot (n - 1)! \ \text{ for } n \ge 1
 $$
 
-**Explanation of every symbol:** h(v) is height in number of nodes rooted at v; left(v) and right(v) are child nodes; height of an absent child is defined as zero.
+where:
 
-**Substitute actual values:** If a node has left height 2 and right height 4, its height is 1+max(2,4)=5. If both children are absent, height is 1+max(0,0)=1.
+- $n$ is a whole number, $n \ge 0$;
+- $0! = 1$ is the **base case**: it is answered without any further call;
+- $(n - 1)!$ is the **smaller subproblem**, the same question asked about $n - 1$.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: $4! = 4 \cdot 3! = 4 \cdot 3 \cdot 2! = 4 \cdot 3 \cdot 2 \cdot 1! = 4 \cdot 3 \cdot 2 \cdot 1 \cdot 0! = 4 \cdot 3 \cdot 2 \cdot 1 \cdot 1 = 24$.
 
-## Work through the algorithm
+```java
+static long factorial(int n) {
+    if (n == 0) return 1;                  // base case: stops the recursion
+    return n * factorial(n - 1);           // smaller subproblem: n - 1 < n
+}
+```
 
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
+**Why it stops.** The argument is a whole number that falls by 1 with every call and never goes below 0, so after at most $n$ calls it reaches the base case. Such a number is called a *termination measure*. Counting the calls gives the first recurrence:
 
-**Why this is correct:** The recursion is correct by induction on subtree size: assume child heights correct; every path from the parent chooses one of those children, so the maximum is correct.
+$$
+C(0) = 1, \qquad C(n) = C(n - 1) + 1 \implies C(n) = n + 1
+$$
 
-## Actual code — keep it small
+where $C(n)$ is the number of calls made by `factorial(n)`: one for this call plus those of `factorial(n - 1)`. Example: $C(4) = C(3) + 1 = \dots = C(0) + 4 = 5$ calls, for $n = 4, 3, 2, 1, 0$.
 
-The key here is the mathematical state and the progression of decisions. Implement the described transition in a short function before choosing a full production implementation; test the explicit numbers above as your first assertion.
+A `long` holds $20! = 2{,}432{,}902{,}008{,}176{,}640{,}000$, but $21!$ overflows and wraps around to a negative number, which the lab confirms.
 
-## Analyse the work; do not guess big-O
+### Level 2: frames on the call stack
 
-**Cost:** For tree height, O(n) work for n nodes; recursion stack O(h), where h is maximum tree depth.
+A call that is waiting for a smaller call must remember where it was: its arguments, its local variables and where to return. That memory is a **frame** on the *call stack*. Frames are pushed when a call starts and popped when it returns, so the deepest point of the recursion has the most frames alive:
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+$$
+S(0) = 0, \quad S(n) = n + S(n - 1), \qquad \text{frames alive at the deepest point} = D(n) = n + 1
+$$
 
-## Break the technique deliberately
+where:
 
-Recursion alone is not memoization: when identical subproblems recur, plain recursion may be exponentially expensive (e.g. naive Fibonacci). Also identify a decreasing termination measure.
+- $S(n) = 1 + 2 + \dots + n$ is the sum that `sumTo(n)` computes, by asking for $S(n - 1)$ first;
+- $D(n)$ is the *recursion depth*: the calls for $n, n - 1, \dots, 0$ are all waiting at once.
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+Example: `sumTo(3)` at its deepest point:
 
-## Source connections and practice
+```text
+sumTo(0)   returns 0                  ← top of the stack
+sumTo(1)   waiting to add 1
+sumTo(2)   waiting to add 2
+sumTo(3)   waiting to add 3           ← the first call, at the bottom
+```
 
-**Textbook:** CLRS Chapter 2 (recursive algorithm design) and Chapter 4 (divide and conquer).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+That is $D(3) = 4$ frames. Then the stack unwinds: $0$, then $1 + 0 = 1$, then $2 + 1 = 3$, then $3 + 3 = 6$.
 
-**LeetCode problem:** LeetCode 104 — Maximum Depth of Binary Tree. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/maximum-depth-of-binary-tree/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+```java
+static long sumTo(int n) {                 // 1 + 2 + ... + n
+    if (n == 0) return 0;
+    return n + sumTo(n - 1);
+}
+```
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+The stack is small; a Java thread gets about 1 MB by default (the `-Xss` option changes it). `sumTo(1000)` returns 500,500 with no trouble, but `sumTo(10_000_000)` needs ten million frames and throws `StackOverflowError`. The same sum with a loop uses one frame:
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+```java
+static long sumToLoop(int n) {             // the same sum, using one frame
+    long total = 0;
+    for (int i = 1; i <= n; i++) total += i;
+    return total;
+}
+```
+
+It returns $50{,}000{,}005{,}000{,}000$ for ten million. Java does not remove tail calls, so when the recursion depth can reach the size of the input (a long list, a deep tree, a path-shaped graph), use a loop or an explicit stack.
+
+### Level 3: recursion follows nested data
+
+Now the parcel. A bag holds some marbles and a list of bags. The definition of the answer has the same shape as the data:
+
+$$
+\text{count}(B) = m(B) + \sum_{B' \in \text{inside}(B)} \text{count}(B')
+$$
+
+where:
+
+- $B$ is a bag, $m(B)$ the marbles lying directly in it, and $\text{inside}(B)$ the bags directly inside it;
+- the base case is hidden in the sum: a bag with nothing inside has an empty sum, which is 0, so no further call is made;
+- every inner bag is strictly smaller than the bag around it, which guarantees that the recursion ends.
+
+Example: $\text{count}(C) = 4 + 0 = 4$, $\text{count}(B) = 1 + 4 = 5$, $\text{count}(A) = 3$, and $\text{count}(\text{parcel}) = 2 + 3 + 5 = 10$.
+
+```java
+record Bag(int marbles, List<Bag> inside) {}
+
+static int countMarbles(Bag bag) {
+    int total = bag.marbles();
+    for (Bag inner : bag.inside()) total += countMarbles(inner);   // the same question, one level down
+    return total;
+}
+```
+
+Folders inside folders, JSON inside JSON, trees and nested expressions all work like this. Interview problem 3 is a nested expression.
+
+### Level 4: two calls per call make a tree
+
+The Fibonacci numbers are $F(0) = 0$, $F(1) = 1$ and $F(n) = F(n-1) + F(n-2)$. The direct translation makes **two** calls per call, so the calls form a **recursion tree**:
+
+```text
+                  fib(4)
+               /          \
+           fib(3)          fib(2)
+          /      \         /    \
+      fib(2)    fib(1)  fib(1)  fib(0)
+      /    \
+   fib(1) fib(0)
+```
+
+```java
+static long fib(int n) {
+    calls++;
+    if (n <= 1) return n;                  // base cases: fib(0) = 0, fib(1) = 1
+    return fib(n - 1) + fib(n - 2);
+}
+```
+
+Each node of the tree is one call. Counting them:
+
+$$
+C(0) = C(1) = 1, \qquad C(n) = C(n - 1) + C(n - 2) + 1 \implies C(n) = 2F(n + 1) - 1
+$$
+
+where:
+
+- $C(n)$ is the number of calls made by `fib(n)`: this call plus the two subtrees;
+- $F(n + 1)$ is the next Fibonacci number, so the calls grow like the Fibonacci numbers themselves, about $1.618^n$.
+
+Example: $C(2) = 1 + 1 + 1 = 3$, $C(3) = 3 + 1 + 1 = 5$, $C(4) = 5 + 3 + 1 = 9$, the 9 nodes drawn above, and $C(5) = 9 + 5 + 1 = 15 = 2F(6) - 1 = 2 \cdot 8 - 1$. For $n = 30$ the lab counts $2 \cdot 1{,}346{,}269 - 1 = 2{,}692{,}537$ calls to compute $F(30) = 832{,}040$.
+
+The tree shows the waste: `fib(2)` is computed twice for $n = 4$, and for $n = 30$ some values are computed hundreds of thousands of times. Remembering each answer the first time cuts the work to $n + 1$ distinct calls; that is the [Memoization](../memoization/index.qmd) lesson.
+
+### Level 5: halve the problem, $T(n) = T(n/2) + 1$
+
+If each call makes **one** call on **half** the input, the depth is only logarithmic. Count the binary digits of $n$ by dropping the last digit, which is integer division by 2:
+
+$$
+D(1) = 1, \qquad D(n) = D(\lfloor n/2 \rfloor) + 1 \implies D(n) = \lfloor \log_2 n \rfloor + 1
+$$
+
+where:
+
+- $\lfloor n/2 \rfloor$ is $n$ divided by 2 and rounded down, Java's `n / 2`;
+- $D(n)$ is both the number of calls and the answer, the number of binary digits of $n$;
+- $\log_2 n$ is how many times 2 must be multiplied by itself to reach $n$.
+
+Example: $13 \to 6 \to 3 \to 1$, so $D(13) = 4$, and indeed $13 = 1101_2$ has 4 binary digits, and $\lfloor \log_2 13 \rfloor + 1 = \lfloor 3.70 \rfloor + 1 = 4$. A million needs only $D(10^6) = 20$ calls.
+
+```java
+static int binaryDigits(int n) {           // n >= 1
+    if (n == 1) return 1;
+    return 1 + binaryDigits(n / 2);        // n / 2 drops the last binary digit
+}
+```
+
+Binary search and fast exponentiation (interview problem 2) follow the same recurrence.
+
+### Level 6: two halves and linear work, $T(n) = 2T(n/2) + n$
+
+If each call makes **two** calls on halves and also does work proportional to its size (as merge sort does when it merges), the recursion tree has the same total work on every level:
+
+$$
+T(1) = 0, \qquad T(n) = 2\,T(n/2) + n \implies T(n) = n \log_2 n \ \text{ for } n = 2^j
+$$
+
+where:
+
+- $T(n)$ is the total work for an input of size $n$, a power of two;
+- $2\,T(n/2)$ is the work of the two half-size calls, and $n$ is the work done by this call itself;
+- level $j$ of the tree has $2^j$ calls of size $n / 2^j$, so it does $2^j \cdot n/2^j = n$ work, and there are $\log_2 n$ levels above the leaves.
+
+Example: $n = 8$.
+
+| Level $j$ | Calls $2^j$ | Size of each | Work of each | Level total |
+| --- | --- | --- | --- | --- |
+| 0 | 1 | 8 | 8 | 8 |
+| 1 | 2 | 4 | 4 | 8 |
+| 2 | 4 | 2 | 2 | 8 |
+| 3 | 8 | 1 | 0 | 0 |
+
+The total is $8 + 8 + 8 = 24 = 8 \log_2 8$. The lab evaluates the recurrence directly:
+
+```java
+static long work(int n) {                  // T(n) = 2 T(n / 2) + n, T(1) = 0
+    if (n == 1) return 0;
+    return 2 * work(n / 2) + n;
+}
+```
+
+It gives $T(2) = 2$, $T(4) = 2 \cdot 2 + 4 = 8$, $T(8) = 2 \cdot 8 + 8 = 24$, and $T(1024) = 10{,}240 = 1024 \times 10$. The general tool for such recurrences, the master theorem, is in the [Divide and Conquer](../divide-and-conquer/index.qmd) lesson.
+
+## Why it works and what it costs
+
+**Correctness is induction.** To trust a recursive function, check three things:
+
+- *Base case:* the function is correct on the smallest inputs. `factorial(0)` returns $1 = 0!$.
+- *Inductive step:* if every smaller call returns the right answer, this call does too. If `factorial(n - 1)` returns $(n-1)!$, then `factorial(n)` returns $n \cdot (n-1)! = n!$. This is the Recursion Fairy: you may assume the smaller call works.
+- *Termination:* a whole-number measure (here $n$; for bags, the nesting depth; for lists, the length) falls with every call and cannot go below 0.
+
+Together these prove the function correct for every input, exactly like a proof by induction.
+
+**What it costs.** Write a recurrence by reading the code: one term per recursive call, plus the work done in the call itself. Then solve it.
+
+| Recurrence | Code shape | Solution | $n = 8$ | $n = 1024$ |
+| --- | --- | --- | --- | --- |
+| $T(n) = T(n - 1) + 1$ | one call, one smaller | $n + 1$ | 9 | 1,025 |
+| $T(n) = T(n/2) + 1$ | one call, half the size | $\lfloor \log_2 n \rfloor + 1$ | 4 | 11 |
+| $T(n) = 2T(n/2) + 1$, $T(1) = 1$ | two calls, halves, constant work | $2n - 1$ | 15 | 2,047 |
+| $T(n) = 2T(n/2) + n$, $T(1) = 0$ | two calls, halves, linear work | $n \log_2 n$ | 24 | 10,240 |
+| $C(n) = C(n-1) + C(n-2) + 1$ | two calls, barely smaller | $2F(n+1) - 1 \approx 1.618^n$ | 67 | more than $10^{214}$ |
+
+The **space** is the deepest stack, not the total number of calls: `fib(30)` makes 2,692,537 calls but never has more than 30 frames alive at once.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| No base case, or one that is never reached | `StackOverflowError` | Make sure every path reaches a case that returns without calling |
+| The subproblem is not smaller, as in `f(n)` calling `f(n)` | `StackOverflowError` | Name the termination measure and check that it falls |
+| Recursion as deep as the input on big data | `StackOverflowError` at large $n$ | A loop, or an explicit stack (see [Depth-First Search](../depth-first-search/index.qmd)) |
+| Calling the same subproblem twice: `power(x, e/2) * power(x, e/2)` | $T(n) = 2T(n/2) + 1$, which is $O(n)$ instead of $O(\log n)$ | Store the result in a variable and use it twice |
+| Recomputing overlapping subproblems (naive `fib`) | Exponential time: 2.7 million calls for $n = 30$ | Memoise, or build the answers bottom-up |
+| `int` or `long` overflow, such as $21!$, or `-n` for $n = -2^{31}$ | Negative or wrong results with no error | Use `long`, `Math.multiplyExact`, or `BigInteger` |
+| Keeping the parse position in a local variable | Each call starts reading from the wrong place | Keep shared state such as the position in a field |
+
+## Interview problems
+
+Each solution starts with the mathematics: the recursive definition, its base case and its measure.
+
+### 1. LeetCode 21: Merge Two Sorted Lists (Easy)
+
+**Problem.** Merge two sorted linked lists into one sorted list, reusing their nodes. For `[1, 2, 4]` and `[1, 3, 4]` the answer is `[1, 1, 2, 3, 4, 4]`.
+
+**Math first.** The smaller of the two heads comes first, followed by the merge of everything else:
+
+$$
+\text{merge}(a, b) =
+\begin{cases}
+b & \text{if } a \text{ is empty} \\
+a & \text{if } b \text{ is empty} \\
+a_1 \cdot \text{merge}(a_{2..}, b) & \text{if } a_1 \le b_1 \\
+b_1 \cdot \text{merge}(a, b_{2..}) & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $a_1$ is the first value of list $a$, and $a_{2..}$ is the rest of $a$ after it;
+- $x \cdot L$ means "the node $x$ followed by the list $L$";
+- the measure is $\lvert a \rvert + \lvert b \rvert$, the total length, which falls by 1 with every call, so there are at most $\lvert a \rvert + \lvert b \rvert + 1$ calls.
+
+Example: $\text{merge}([1,2,4], [1,3,4])$ takes $1$ from $a$ (because $1 \le 1$), then $1$ from $b$, then $2$, $3$ and $4$ from $a$; then $a$ is empty, and the base case returns the rest of $b$, which is $[4]$. The result is $[1, 1, 2, 3, 4, 4]$, after 6 calls, within the bound $3 + 3 + 1 = 7$.
+
+**Idea.** Compare the heads, keep the smaller one, and let the recursive call merge the rest behind it.
+
+```java
+static ListNode mergeTwoLists(ListNode a, ListNode b) {
+    if (a == null) return b;                     // base cases: one list is empty
+    if (b == null) return a;
+    if (a.val <= b.val) {
+        a.next = mergeTwoLists(a.next, b);       // a's head is the smallest; merge the rest behind it
+        return a;
+    }
+    b.next = mergeTwoLists(a, b.next);
+    return b;
+}
+```
+
+**Answer.** `[1, 1, 2, 3, 4, 4]`, and two empty lists give an empty list. Time $O(m + n)$, here 6 calls. The recursion is $m + n$ frames deep, which is fine for LeetCode's limit of 50 nodes per list; for very long lists, the same idea with a loop and a dummy head node uses $O(1)$ space.
+
+### 2. LeetCode 50: Pow(x, n) (Medium)
+
+**Problem.** Compute $x^n$ for a double $x$ and an `int` $n$, which may be negative. For $x = 2$ and $n = 13$ the answer is 8192; for $n = -2$ it is 0.25.
+
+**Math first.** Square the half power, and multiply by one more $x$ when $n$ is odd:
+
+$$
+x^0 = 1, \qquad x^n = \big(x^{\lfloor n/2 \rfloor}\big)^2 \cdot
+\begin{cases}
+1 & n \text{ even} \\
+x & n \text{ odd}
+\end{cases}, \qquad x^{-n} = \frac{1}{x^n}
+$$
+
+where:
+
+- $n \ge 0$ in the first two parts, and the last part turns a negative exponent into a positive one;
+- $\lfloor n/2 \rfloor$ halves the exponent, so this is Level 5's recurrence $T(n) = T(n/2) + 1$: about $\log_2 n$ calls;
+- unrolled, it multiplies the powers $x^{2^i}$ for the 1-bits of $n$ in binary.
+
+Example: $13 = 1101_2 = 8 + 4 + 1$, so $2^{13} = 2^8 \cdot 2^4 \cdot 2^1 = 256 \cdot 16 \cdot 2 = 8192$. The recursion computes it from the bottom up:
+
+- $2^0 = 1$;
+- $2^1 = (2^0)^2 \cdot 2 = 2$;
+- $2^3 = (2^1)^2 \cdot 2 = 8$;
+- $2^6 = (2^3)^2 = 64$;
+- $2^{13} = (2^6)^2 \cdot 2 = 8192$.
+
+That is 5 calls (exponents 13, 6, 3, 1, 0) and 7 multiplications, against 12 for multiplying 13 twos together.
+
+**Idea.** Convert $n$ to `long` first: $-(-2^{31})$ does not fit in an `int`, so `-n` would stay negative. Then recurse on the halved exponent, calling it **once** and squaring the result.
+
+```java
+static double myPow(double x, int n) {
+    long e = n;                                  // long: -(-2^31) does not fit in an int
+    return e < 0 ? 1 / power(x, -e) : power(x, e);
+}
+
+static double power(double x, long e) {
+    if (e == 0) return 1;
+    double half = power(x, e / 2);               // one recursive call, used twice
+    return e % 2 == 0 ? half * half : half * half * x;
+}
+```
+
+**Answer.** `myPow(2, 13) = 8192`, `myPow(2, 10) = 1024`, `myPow(2, -2) = 0.25`, and `myPow(1, -2147483648) = 1`. Time $O(\log \lvert n \rvert)$: at most 33 calls even for $\lvert n \rvert = 2^{31}$, where multiplying one $x$ at a time would take over 2 billion multiplications. Space is $O(\log \lvert n \rvert)$ for the stack.
+
+### 3. LeetCode 1106: Parsing A Boolean Expression (Hard)
+
+**Problem.** Evaluate an expression built from `t` (true), `f` (false), `!(e)` (not), `&(e1,e2,...)` (and) and `|(e1,e2,...)` (or). For `|(&(t,f,t),!(t))` the answer is false.
+
+**Math first.** The value of an expression is defined by the values of its parts, with the letters as base cases. Writing 1 for true and 0 for false:
+
+$$
+\text{ev}(e) =
+\begin{cases}
+1 & e = \texttt{t} \\
+0 & e = \texttt{f} \\
+1 - \text{ev}(e_1) & e = \text{NOT}(e_1) \\
+\min_i \text{ev}(e_i) & e = \text{AND}(e_1, \dots, e_k) \\
+\max_i \text{ev}(e_i) & e = \text{OR}(e_1, \dots, e_k)
+\end{cases}
+$$
+
+where:
+
+- $\text{ev}(e)$ is the value of the expression $e$;
+- NOT, AND and OR stand for the characters `!`, `&` and `|` followed by a bracketed, comma-separated list of argument expressions $e_1, \dots, e_k$;
+- AND is the minimum because it is 1 only if every part is 1; OR is the maximum because it is 1 if any part is 1;
+- every argument is a shorter piece of the string, so the recursion ends.
+
+Example: $e = \text{OR}(\text{AND}(\texttt{t}, \texttt{f}, \texttt{t}), \text{NOT}(\texttt{t}))$.
+
+- $\text{ev}(\text{AND}(\texttt{t}, \texttt{f}, \texttt{t})) = \min(1, 0, 1) = 0$;
+- $\text{ev}(\text{NOT}(\texttt{t})) = 1 - 1 = 0$;
+- $\text{ev}(e) = \max(0, 0) = 0$, which is **false**.
+
+**Idea.** Read the string from left to right with one shared position. A letter is a base case. An operator skips `(`, then parses arguments, each a recursive call, until it reads `)`.
+
+```java
+boolean parse() {
+    char c = s.charAt(pos++);
+    if (c == 't') return true;               // base cases: a single letter
+    if (c == 'f') return false;
+    pos++;                                   // skip '('
+    List<Boolean> args = new ArrayList<>();
+    do {
+        args.add(parse());                   // each argument is a smaller expression
+    } while (s.charAt(pos++) == ',');        // the loop ends after reading ')'
+    if (c == '!') return !args.get(0);
+    return c == '&' ? !args.contains(false) : args.contains(true);
+}
+```
+
+`parse` is a method of a small `BoolParser` class whose fields hold the string `s` and the position `pos`, and `parseBoolExpr(expression)` returns `new BoolParser(expression).parse()`.
+
+**Answer.** False for the example; `&(|(t),!(f))` gives true and `!(&(f,t))` gives true. Every character is read exactly once, so the time is $O(n)$: 16 characters here. The stack depth equals the nesting depth, here 3 (the `|`, then `&` or `!`, then a letter), which is at most $O(n)$.
+
+## Mathematical Abstraction
+
+A recursive definition has base cases, a rule that reduces every other input to smaller inputs, and a measure that proves the reduction ends; its cost is a recurrence:
+
+$$
+f(x) =
+\begin{cases}
+b(x) & x \in B \\
+g\big(x, f(s_1(x)), \dots, f(s_a(x))\big) & x \notin B
+\end{cases}
+\qquad \mu(s_i(x)) < \mu(x), \qquad T(n) = a\,T(n/c) + w(n)
+$$
+
+where:
+
+- $B$ is the set of base cases and $b(x)$ their direct answers;
+- $s_1(x), \dots, s_a(x)$ are the $a$ smaller subproblems, and $g$ combines their answers;
+- $\mu$ is a whole-number measure (a size, a length, a depth) that every call strictly lowers, so the recursion ends;
+- in the recurrence, each call makes $a$ calls on inputs of size $n/c$ and does $w(n)$ work of its own.
+
+Example: fast power has $B = \lbrace 0 \rbrace$, $a = 1$ call on $\lfloor n/2 \rfloor$, measure $\mu(n) = n$, and $w(n) = O(1)$, so $T(n) = T(n/2) + 1$: 5 calls for $n = 13$. The $T(n) = 2T(n/2) + n$ of Level 6 has $a = 2$, $c = 2$ and $w(n) = n$, giving $24$ for $n = 8$. Factorial has $a = 1$ call on $n - 1$, giving $n + 1 = 5$ calls for $n = 4$.
+
+## References
+
+- Jeff Erickson, *Algorithms* (2019), Chapter 1, "Recursion", which introduces the Recursion Fairy and the Tower of Hanoi: <https://jeffe.cs.illinois.edu/teaching/algorithms/book/01-recursion.pdf>.
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): §2.3 "Designing algorithms" (the divide-and-conquer recurrence of merge sort), and Chapter 4, "Divide-and-Conquer", §4.3 the substitution method, §4.4 the recursion-tree method and §4.5 the master method. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Computer Science: An Interdisciplinary Approach*, §2.3 "Recursion", with Java examples including Euclid's algorithm, the Tower of Hanoi and the exponential cost of naive Fibonacci: <https://introcs.cs.princeton.edu/java/23recursion/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 2, *Seminumerical Algorithms*, §4.6.3 "Evaluation of Powers", for the binary method of exponentiation.
+- LeetCode: [21. Merge Two Sorted Lists](https://leetcode.com/problems/merge-two-sorted-lists/), [50. Pow(x, n)](https://leetcode.com/problems/powx-n/), [1106. Parsing A Boolean Expression](https://leetcode.com/problems/parsing-a-boolean-expression/).
+
+[← Backtracking](../backtracking/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Enumeration →](../enumeration/index.qmd)

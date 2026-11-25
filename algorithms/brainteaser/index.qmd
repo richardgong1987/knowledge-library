@@ -1,67 +1,355 @@
 ---
 title: "Brainteaser"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "Puzzles that collapse to one line of code once the right idea is found: trying small cases, invariants and parity, pairing arguments, counting bounds on what tests can reveal, winning and losing positions in games, and hard interview problems (Nim, bulbs, the divisor game, poor pigs) proved step by step."
 ---
 
-## Start with the problem, not a formula
+A brainteaser is a problem where the obvious search is huge but the answer is a short formula, such as `n % 4 != 0` or `(int) Math.sqrt(n)`. Interviewers ask them to see whether you can find **why** the formula holds. This lesson collects the handful of ideas that crack almost all of them: try small cases, find something that never changes, pair things up, count what an experiment can tell you, and sort game positions into wins and losses.
 
-**LeetCode 319 — Bulb Switcher**. Use logical constraints and deductions rather than a fixed algorithmic template.
+All code is in [`BrainteaserLab.java`](BrainteaserLab.java). Run it from this folder with `java BrainteaserLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+Take a chessboard and cut off two opposite corners, the square at the top left and the one at the bottom right. That leaves 62 squares. Can you cover them exactly with 31 dominoes, each covering two neighbouring squares?
 
-A story about toggling bulbs on every round looks like a simulation of n rounds times n bulbs.
+- Trying layouts by hand never ends, and a computer search has a lot to rule out: the **full** board alone has 12,988,816 different domino tilings.
+- Yet one sentence settles it. Colour the board as usual. Every domino covers one dark and one light square, whichever way it lies. The two removed corners have the **same** colour, so 30 squares of that colour remain and 32 of the other. Thirty-one dominoes would cover 31 of each. So it is **impossible**.
 
-## Discover the key idea
+The philosopher Max Black posed this puzzle in his 1946 book *Critical Thinking*. The colouring argument is an **invariant**: a quantity that no move can change. Finding the right invariant is the core skill of this lesson.
 
-Rephrase the repeated actions as a counting property. Bulb i is toggled once for each positive divisor of i; it ends ON exactly when toggled an odd number of times.
+## Explain it like I'm ten
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+::: {.callout-tip}
+You and a friend share a pile of stones. On your turn you take 1, 2 or 3 stones. Whoever takes the **last** stone wins. Who wins with 10 stones?
 
-## Mathematical model — then immediately translate it
+Start small. With 1, 2 or 3 stones you take them all and win. With **4** stones you are stuck: take 1, 2 or 3 and your friend takes the rest. So 4 is a trap. With 5, 6 or 7 you take 1, 2 or 3 to leave your friend the trap of 4. With 8, every move leaves 5, 6 or 7, and your friend then hands the trap of 4 back to you. So the traps are 4, 8, 12, … With 10 stones, take 2 and leave your friend 8.
+
+That is how most puzzles crack: try the tiny cases, notice the pattern, then explain why it must continue. George Pólya's *How to Solve It* (1945), a classic book for students of every age, gives the same advice as questions to ask yourself: can you solve a more special version of the problem first, or just a part of it?
+:::
+
+## From simple to advanced
+
+### Level 1: solve small cases, then spot the pattern
+
+Before looking for a clever formula, compute the answer for small inputs by brute force. For the stone game, call a pile size *winning* if the player to move can force a win:
 
 $$
-\operatorname{on}(i)\iff i=j^2\text{ for some integer }j
+\text{win}(0) = \text{false}, \qquad \text{win}(n) = \exists\, t \in \lbrace 1, 2, 3 \rbrace,\; t \le n : \lnot\, \text{win}(n - t)
 $$
 
-**Explanation of every symbol:** i is the 1-based bulb index; j is an integer whose square equals i; on(i) is the final ON/OFF property.
+where:
 
-**Substitute actual values:** Bulb 9 is toggled on rounds 1,3,9: three times, so it ends ON. Bulb 12 is toggled at 1,2,3,4,6,12: six times, so it ends OFF. Divisors pair up except for perfect squares.
+- $n$ is the number of stones left, and $t$ the number taken this turn;
+- $\exists$ means "there is at least one", and $\lnot$ means "not";
+- a pile is winning when some move leaves the opponent a losing pile;
+- $\text{win}(0)$ is false because the player facing an empty pile has no move: the previous player took the last stone and won.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: $\text{win}(1)$, $\text{win}(2)$ and $\text{win}(3)$ are true, because taking everything leaves 0. $\text{win}(4)$ is false, because the moves leave 3, 2 or 1, all winning for the opponent. Then $\text{win}(5) = \lnot\,\text{win}(4) = $ true, and so on:
 
-## Work through the algorithm
+| $n$ | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| win? | W | W | W | **L** | W | W | W | **L** |
 
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
+```java
+static boolean[] nimTable(int max) {                  // win[n]: can the player to move win with n stones?
+    boolean[] win = new boolean[max + 1];             // win[0] = false: no stones, no move, you lost
+    for (int n = 1; n <= max; n++)
+        for (int take = 1; take <= 3 && take <= n; take++)
+            if (!win[n - take]) win[n] = true;        // leave the opponent a losing pile
+    return win;
+}
+```
 
-**Why this is correct:** Divisors d and i/d form pairs. Only a perfect square contains an unpaired divisor at sqrt(i), so it has an odd count.
+The table suggests "lose exactly when $n$ is a multiple of 4", and the lab confirms it up to 1,000. A pattern is only a guess until it is proved, though; LeetCode 292 below gives the proof. The brute force earns its place twice: it suggests the formula, and it checks it.
 
-## Actual code — keep it small
+### Level 2: invariants and parity
 
-The key here is the mathematical state and the progression of decisions. Implement the described transition in a short function before choosing a full production implementation; test the explicit numbers above as your first assertion.
+An **invariant** is a number that every allowed move leaves unchanged. If the start and the goal have different values of it, the goal can never be reached, however long you search.
 
-## Analyse the work; do not guess big-O
+$$
+I(\text{after a move}) = I(\text{before}) \quad \text{for every move} \qquad \Longrightarrow \qquad I(\text{start}) \ne I(\text{goal}) \text{ means unreachable}
+$$
 
-**Cost:** O(1) answer for count of ON bulbs via floor(sqrt(n)); n is number of bulbs, although one may simulate O(n²) actions for verification.
+where:
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+- $I$ is the invariant, a number computed from a position;
+- "move" is any allowed step, here placing one domino.
 
-## Break the technique deliberately
+Example: for the chessboard take $I = (\text{uncovered dark squares}) - (\text{uncovered light squares})$. A domino always covers one of each, so it changes both counts by 1 and leaves $I$ the same. The cut board starts with $I = 30 - 32 = -2$ (the two removed corners were dark). A fully covered board has $I = 0 - 0 = 0$. Since $-2 \ne 0$, no sequence of 31 dominoes can cover it.
 
-The insight depends on the exact toggling rule. Change the rounds and the perfect-square conclusion may no longer hold.
+```java
+static int colourImbalance(int size) {                // opposite corners removed; both are the same colour
+    int dark = 0, light = 0;
+    for (int r = 0; r < size; r++)
+        for (int c = 0; c < size; c++) {
+            boolean isRemoved = (r == 0 && c == 0) || (r == size - 1 && c == size - 1);
+            if (isRemoved) continue;
+            if ((r + c) % 2 == 0) dark++; else light++;
+        }
+    return Math.abs(dark - light);
+}
+```
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+It returns 2 for the $8 \times 8$ board. The lab also searches every possible tiling of a $4 \times 4$ board with the same two corners removed and finds none, while the full $4 \times 4$ board has 36 tilings. *Parity* (even or odd) is the most common invariant of all: LeetCode 1025 below is decided by it.
 
-## Source connections and practice
+### Level 3: pairing arguments
 
-**Textbook:** CLRS Appendix C (counting) and Chapter 31 (number theory).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+Many counts become obvious once the objects are put into **pairs**. The famous case is divisors: $d$ divides $n$ exactly when its partner $n / d$ does. Pairs contribute 2 to the count, so the count can only be odd if some divisor is its own partner, $d = n / d$, which means $n = d^2$:
 
-**LeetCode problem:** LeetCode 319 — Bulb Switcher. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/bulb-switcher/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+$$
+\tau(n) \text{ is odd} \iff n \text{ is a perfect square}
+$$
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+where:
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+- $\tau(n)$ (tau) is the number of positive divisors of $n$;
+- $\iff$ means "exactly when".
+
+Example: $\tau(12) = 6$ from the pairs $(1, 12), (2, 6), (3, 4)$, which is even. $\tau(16) = 5$ from $(1, 16), (2, 8)$ and the lone $(4, 4)$, which is odd.
+
+This solves the classic **locker puzzle**. A corridor has 100 closed lockers. Student 1 opens every locker; student 2 toggles every 2nd locker; student 3 toggles every 3rd; and so on up to student 100. Locker $m$ is toggled once by each student $r$ that divides $m$, which is $\tau(m)$ times, so it ends open exactly when $\tau(m)$ is odd, that is, when $m$ is a square. The open lockers are $1, 4, 9, \dots, 100$: **10** of them. The simulation agrees:
+
+```java
+static int openAfterToggling(int n) {                 // round r toggles every r-th locker
+    boolean[] open = new boolean[n + 1];
+    for (int r = 1; r <= n; r++)
+        for (int locker = r; locker <= n; locker += r) open[locker] = !open[locker];
+    int count = 0;
+    for (int locker = 1; locker <= n; locker++) if (open[locker]) count++;
+    return count;
+}
+```
+
+The simulation performs $\sum_{r=1}^{100} \lfloor 100 / r \rfloor = 482$ toggles. The pairing argument needs none.
+
+### Level 4: counting what tests can reveal
+
+Each test has a fixed number of possible outcomes. A plan of $t$ tests produces one sequence of outcomes, and different answers must produce different sequences, otherwise the plan cannot tell them apart. That gives a **lower bound**:
+
+$$
+k^t \ge N \quad \Longrightarrow \quad t \ge \lceil \log_k N \rceil
+$$
+
+where:
+
+- $N$ is the number of possible answers;
+- $k$ is the number of outcomes of one test;
+- $t$ is the number of tests, and $k^t$ the number of different outcome sequences;
+- $\lceil x \rceil$ ("ceiling") rounds up to a whole number.
+
+Example 1: guessing a number from 1 to 100 with yes/no questions has $N = 100$ and $k = 2$. Since $2^6 = 64 < 100 \le 128 = 2^7$, at least **7** questions are needed, and binary search achieves exactly 7.
+
+Example 2: twelve coins, one fake, which is either heavier or lighter, and a balance scale. There are $N = 12 \times 2 = 24$ possible answers, and a weighing has $k = 3$ outcomes (left heavier, right heavier, balance). Since $3^2 = 9 < 24 \le 27 = 3^3$, at least **3** weighings are needed, and a clever plan does it in 3.
+
+```java
+static int minTests(long cases, int outcomes) {       // smallest t with outcomes^t >= cases
+    int t = 0;
+    for (long reach = 1; reach < cases; reach *= outcomes) t++;
+    return t;
+}
+```
+
+The bound says what is impossible; a plan that meets it must be built separately. The same argument proves that comparison sorting needs at least $\log_2 n!$ comparisons (CLRS Section 8.1), and it is the whole of LeetCode 458 below.
+
+### Level 5: winning and losing positions in games
+
+In a two-player game with no luck, where the player who cannot move loses, every position is either a win or a loss for the player to move:
+
+- a position is **losing** if every move leads to a winning position for the opponent;
+- a position is **winning** if some move leads to a losing position.
+
+To solve a game, find a simple test that is true on exactly the losing positions, and check those two properties. For Nim with several piles, where a move removes any number of stones from one pile, Charles Bouton (1901) found the test:
+
+$$
+\text{losing} \iff x_1 \oplus x_2 \oplus \dots \oplus x_m = 0
+$$
+
+where:
+
+- $x_1, \dots, x_m$ are the pile sizes;
+- $\oplus$ is exclusive or (XOR, Java's `^`): write the numbers in binary and add each column without carrying, keeping 1 where the column has an odd number of ones.
+
+Example: piles $(3, 4, 5)$ are $011$, $100$ and $101$ in binary. Their XOR is $011 \oplus 100 = 111$, then $111 \oplus 101 = 010 = 2 \ne 0$, so the first player wins. The winning move makes the XOR zero: the pile 3 becomes $3 \oplus 2 = 1$, by taking 2 stones, leaving $(1, 4, 5)$ with $001 \oplus 100 \oplus 101 = 000$.
+
+```java
+static boolean firstPlayerWinsNim(int[] piles) {      // Bouton (1901): lose exactly when the XOR is 0
+    int xor = 0;
+    for (int pile : piles) xor ^= pile;
+    return xor != 0;
+}
+```
+
+Why it works: from XOR 0, any move changes exactly one pile, so the XOR becomes nonzero. From a nonzero XOR $X$, pick a pile whose binary form has a 1 where the highest 1 of $X$ is; replacing that pile $x$ by $x \oplus X$ makes it smaller and makes the total XOR 0. The lab checks Bouton's rule against a full game search for every position with three piles of up to 5 stones. The general theory of such games (the Sprague–Grundy theorem) belongs to [game theory](../game-theory/index.qmd).
+
+## Why it works and what it costs
+
+**Proof patterns.** Every formula in this lesson rests on one of four arguments:
+
+- *Induction on positions* (Levels 1 and 5): show that the claimed losing positions only lead to winning ones, and that every winning position has a move to a losing one. Then the claim holds for all sizes, starting from the smallest.
+- *An invariant* (Level 2): a quantity that moves cannot change separates the start from the goal.
+- *A pairing* (Level 3): objects that pair up off contribute an even count, so the parity is decided by the unpaired ones.
+- *Counting outcomes* (Level 4): $k^t$ outcome sequences cannot distinguish more than $k^t$ answers.
+
+**Costs.** Brute force is still worth writing, to find and check the formula, but the formula itself is $O(1)$ or $O(\log n)$:
+
+| Puzzle | Brute force | Formula |
+| --- | --- | --- |
+| Stone game, $n$ stones | $3n$ steps for the table | `n % 4 != 0`, one step |
+| Lockers, $n = 100$ | 482 toggles; about $n \ln n$ in general | $\lfloor \sqrt{100} \rfloor = 10$, one square root |
+| Mutilated $8 \times 8$ board | search among millions of tilings | count the colours of 62 squares, one subtraction |
+| Nim, piles up to 5 | a game search over $6^3 = 216$ positions | $m$ XORs |
+| Poor pigs, 1,000 buckets | no obvious search at all | a few multiplications |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Trusting a pattern from small cases without proof | A formula that fails later: $n^2 + n + 41$ is prime for $n = 0$ to $39$, but at $n = 40$ it is $1{,}681 = 41^2$ | Prove it by induction, an invariant or a pairing; test it far beyond the cases that suggested it |
+| Treating a lower bound as a plan | "3 weighings suffice" claimed without a strategy | The counting bound only rules out fewer tests; build the plan separately |
+| Off by one in the number of outcomes | Poor pigs with $\lfloor T/t \rfloor$ states instead of $\lfloor T/t \rfloor + 1$ | Count "survives every round" as an outcome too |
+| Forgetting the trivial inputs | Wrong answers for $n = 1$, one bucket, an empty pile | Check $n = 0$ and $n = 1$ against the brute force |
+| `Math.sqrt` on very large `long` values | The floor is one too high or too low near a perfect square | Adjust with `while (r * r > n) r--`; for `int` inputs it is exact |
+| Choosing the wrong invariant | The argument "proves" nothing, or proves something false | Check that every allowed move really preserves it |
+
+## Interview problems
+
+Each solution starts with the mathematics. The code is one line, so the proof is the real answer.
+
+### 1. LeetCode 292: Nim Game (Easy)
+
+**Problem.** A heap has $n$ stones. You and a friend take turns, you first, removing 1 to 3 stones; whoever removes the last stone wins. Both play perfectly. Return whether you win. For $n = 4$ the answer is `false`.
+
+**Math first.** Level 1's table suggests the rule; prove it by induction:
+
+$$
+\text{win}(n) \iff n \bmod 4 \ne 0
+$$
+
+where $n \bmod 4$ is the remainder of $n$ divided by 4.
+
+- *Multiples of 4 lose.* From $n = 4j$ any move leaves $4j - 1$, $4j - 2$ or $4j - 3$, none of which is a multiple of 4. By induction those are winning positions for the opponent. The base case is $n = 0$: no move, a loss.
+- *Everything else wins.* From $n = 4j + r$ with $r \in \lbrace 1, 2, 3 \rbrace$, take $r$ stones and leave the multiple of 4 that is $4j$.
+
+Example: $n = 7 = 4 + 3$, so take 3 and leave 4; whatever your friend takes, you take the rest. $n = 4$ leaves remainder 0, so you lose against perfect play.
+
+**Idea.** Return whether the remainder is nonzero; if you are winning, the winning move is to take that remainder.
+
+```java
+static boolean canWinNim(int n) {
+    return n % 4 != 0;                                // a multiple of 4 is the only losing pile
+}
+```
+
+**Answer.** `false` for 4, `true` for 1, 2, 3 and 7, and `true` for $n = 2^{31} - 1$, which leaves remainder 3. The lab compares the rule with the brute-force table for every $n$ up to 1,000. $O(1)$ time and space, where the table would need $O(n)$ for $n$ up to $2^{31} - 1$.
+
+### 2. LeetCode 1025: Divisor Game (Easy)
+
+**Problem.** A number $n$ is on the board. On each turn a player picks $x$ with $0 < x < n$ and $x$ dividing $n$, and replaces $n$ by $n - x$. A player who cannot move loses. Alice moves first. Return whether she wins with perfect play. For $n = 2$ the answer is `true`; for $n = 3$ it is `false`.
+
+**Math first.** Parity is the invariant:
+
+$$
+\text{Alice wins} \iff n \text{ is even}
+$$
+
+where "even" means divisible by 2.
+
+- *From an even $n$*, the player can choose $x = 1$, which always divides $n$, and hand over the odd number $n - 1$.
+- *From an odd $n$*, every divisor $x$ is odd, because an odd number has no even divisors. So $n - x$ is odd minus odd, which is even.
+- The only position with no move is $n = 1$, which is odd. So the player who always faces odd numbers is the one who eventually faces 1 and loses. Alice, holding an even $n$, keeps handing over odd numbers and never faces one herself.
+
+Example: $n = 6$. Alice takes 1, leaving 5. Bob's only divisor of 5 below 5 is 1, leaving 4. Alice takes 1, leaving 3. Bob takes 1, leaving 2. Alice takes 1, leaving 1, and Bob cannot move. Alice wins, as the rule says for even 6. With $n = 3$, Alice must leave 2, and Bob then leaves 1 for her.
+
+**Idea.** Return whether $n$ is even.
+
+```java
+static boolean divisorGame(int n) {
+    return n % 2 == 0;                                // even: take 1 and hand back an odd number
+}
+```
+
+**Answer.** `true` for 2, `false` for 3 and 1. The lab checks the parity rule against a full game search for every $n$ up to 1,000. $O(1)$ time and space, against $O(n^2)$ for that game search.
+
+### 3. LeetCode 319: Bulb Switcher (Medium)
+
+**Problem.** $n$ bulbs start off. In round 1 you turn every bulb on; in round 2 you toggle every 2nd bulb; in round $r$ you toggle every $r$-th bulb, up to round $n$. How many bulbs are on at the end? For $n = 3$ the answer is 1. Here $n \le 10^9$.
+
+**Math first.** This is the locker puzzle of Level 3. Bulb $m$ is toggled once for each divisor of $m$, so it ends on exactly when $\tau(m)$ is odd, that is, when $m$ is a perfect square. Count the squares up to $n$:
+
+$$
+\text{on} = \#\lbrace m \le n : m = k^2 \rbrace = \lfloor \sqrt{n} \rfloor
+$$
+
+where:
+
+- $m$ is a bulb's position and $k$ a positive whole number;
+- the squares up to $n$ are $1^2, 2^2, \dots, \lfloor \sqrt{n} \rfloor^2$.
+
+Example: $n = 3$. Bulb 1 is toggled once (on), bulb 2 twice (off), bulb 3 twice (off): 1 bulb, and $\lfloor \sqrt{3} \rfloor = 1$. For $n = 100$ it is $\lfloor \sqrt{100} \rfloor = 10$. For $n = 10^9$ it is $31{,}622$, because $31{,}622^2 = 999{,}950{,}884 \le 10^9 < 31{,}623^2 = 1{,}000{,}014{,}129$.
+
+**Idea.** Return the integer square root.
+
+```java
+static int bulbSwitch(int n) {
+    return (int) Math.sqrt(n);                        // bulbs left on are the squares 1, 4, 9, ...
+}
+```
+
+**Answer.** 1 for $n = 3$, 0 for $n = 0$, 9 for $n = 99$, and $31{,}622$ for $n = 10^9$; the lab compares it with the toggling simulation for every $n$ up to 300. `Math.sqrt` is correctly rounded and every `int` is exactly representable as a `double`, so the floor is exact here. $O(1)$ time, against about $n \ln n \approx 2 \times 10^{10}$ toggles for simulating $n = 10^9$.
+
+### 4. LeetCode 458: Poor Pigs (Hard)
+
+**Problem.** Exactly one of `buckets` buckets is poisonous. A pig that drinks from it dies `minutesToDie` minutes later. You can feed pigs any buckets at once, and you have `minutesToTest` minutes in total. Return the fewest pigs that always identify the poisonous bucket. For 1,000 buckets, 15 minutes to die and 60 minutes to test, the answer is 5.
+
+**Math first.** There are $R = \lfloor T / t \rfloor$ rounds of feeding. Each pig ends in one of $s = R + 1$ states: it dies after round 1, after round 2, …, after round $R$, or it survives. With $p$ pigs there are $s^p$ different outcomes, and by Level 4 they must distinguish all buckets:
+
+$$
+s = \left\lfloor \frac{T}{t} \right\rfloor + 1, \qquad \text{pigs} = \min \lbrace p : s^p \ge B \rbrace
+$$
+
+where:
+
+- $B$ is the number of buckets;
+- $t$ is `minutesToDie` and $T$ is `minutesToTest`;
+- $s$ is the number of states one pig can end in.
+
+The bound is also achievable. Number the buckets $0$ to $B - 1$ and write each number in base $s$ with $p$ digits. Pig $j$ reads digit $j$: in round $r$ it drinks from every bucket whose digit $j$ equals $r - 1$, and it never drinks from buckets whose digit is $s - 1$. A pig that dies after round $r$ reveals that digit $j$ of the poisoned bucket is $r - 1$, and a pig that survives reveals $s - 1$. Together the pigs spell out the bucket's number.
+
+Example: $B = 1{,}000$, $t = 15$, $T = 60$. Then $R = 4$ rounds and $s = 5$ states. $5^4 = 625 < 1{,}000 \le 3{,}125 = 5^5$, so $p = 5$. If the poison is in bucket 738, its base-5 digits are $738 = 1 \cdot 625 + 0 \cdot 125 + 4 \cdot 25 + 2 \cdot 5 + 3$, that is $10423_5$. So the first pig dies after round 2, the second after round 1, the third survives, the fourth dies after round 3 and the fifth after round 4. Reading those back gives $1, 0, 4, 2, 3$, which is bucket 738.
+
+**Idea.** Compute $s$, then the smallest $p$ with $s^p \ge B$, using `minTests` from Level 4.
+
+```java
+static int poorPigs(int buckets, int minutesToDie, int minutesToTest) {
+    int states = minutesToTest / minutesToDie + 1;    // dies after round 1, 2, ..., or survives
+    return minTests(buckets, states);
+}
+```
+
+**Answer.** 5 for the example above. For LeetCode's examples, 4 buckets with 15 and 15 minutes give $s = 2$ and $2^2 = 4 \ge 4$, so 2 pigs, the binary labelling 00, 01, 10, 11; with 15 and 30 minutes, $s = 3$ and $3^1 = 3 < 4 \le 9 = 3^2$, so again 2 pigs. One bucket needs 0 pigs. With a single round, 1,000 buckets need 10 pigs, since $2^9 = 512 < 1{,}000 \le 1{,}024 = 2^{10}$. The loop runs $p = \lceil \log_s B \rceil$ times, so the time is $O(\log B)$ and the space $O(1)$.
+
+## Mathematical Abstraction
+
+Most brainteasers are one of two statements: an invariant that rules a goal out, or a count that bounds what can be learned.
+
+$$
+\big( \forall \text{ moves } m : I(m(x)) = I(x) \big) \land I(\text{start}) \ne I(\text{goal}) \;\Longrightarrow\; \text{goal unreachable}, \qquad\quad
+k^t \ge N
+$$
+
+where:
+
+- $\forall$ means "for all" and $\land$ means "and";
+- $I$ is an invariant, $m(x)$ the position after move $m$ from position $x$;
+- $k$ is the number of outcomes per test, $t$ the number of tests and $N$ the number of answers to tell apart.
+
+Example: on the cut chessboard $I$ is dark minus light uncovered squares; each domino leaves it unchanged, the start has $I = 30 - 32 = -2$, and a covered board has $I = 0$, so no tiling exists. For the pigs, $k = 5$ states and $N = 1{,}000$ buckets give $5^4 = 625 < 1{,}000 \le 5^5 = 3{,}125$, so $t = 5$ pigs are needed, and the base-5 labelling shows 5 are enough.
+
+## References
+
+- George Pólya, *How to Solve It* (Princeton University Press, 1945): heuristics such as looking at the unknown, solving a more special problem first, and working backwards.
+- Max Black, *Critical Thinking* (Prentice-Hall, 1946), where the mutilated chessboard problem first appeared.
+- Charles L. Bouton, "Nim, a game with a complete mathematical theory", *Annals of Mathematics* 3 (1901–1902), 35–39.
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Section 8.1 "Lower bounds for sorting" (the same outcome-counting argument as Level 4), and Appendix C, "Counting and Probability". CLRS has no chapter on puzzles as such.
+- LeetCode: [292. Nim Game](https://leetcode.com/problems/nim-game/), [1025. Divisor Game](https://leetcode.com/problems/divisor-game/), [319. Bulb Switcher](https://leetcode.com/problems/bulb-switcher/), [458. Poor Pigs](https://leetcode.com/problems/poor-pigs/).
+
+[← Simulation](../simulation/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd)

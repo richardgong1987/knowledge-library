@@ -1,105 +1,424 @@
 ---
 title: "Breadth-First Search"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "From ripples in a pond to interview level: the queue and its layers, dist(v) = dist(u) + 1, the layer proof that BFS finds shortest paths in unweighted graphs, parent pointers, multi-source BFS, and hard problems (Rotting Oranges, Word Ladder, Bus Routes) solved math-first."
 ---
 
-## Start with the problem, not a formula
+Breadth-first search (BFS) explores a graph in **rings**: first everything one step from the start, then everything two steps away, and so on. Because it reaches each vertex through the fewest possible edges, BFS is *the* shortest-path algorithm when every edge counts the same. This lesson builds BFS with a queue, proves why its distances are shortest, recovers the paths themselves, starts from many places at once, and solves three interview problems whose graphs are hidden inside grids, words and bus routes.
 
-**LeetCode 752 — Open the Lock; classic shortest unweighted path**. Explore states by increasing path length in an unweighted graph.
+All code is in [`BreadthFirstSearchLab.java`](BreadthFirstSearchLab.java). Run it from this folder with `java BreadthFirstSearchLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+A small metro has 5 stations and 5 tracks:
 
-Depth-first exploration may reach a node along a long path before discovering a short one.
+```text
+  0 ──── 1
+  │      │
+  3 ──── 2
+  │
+  4
+```
 
-## Discover the key idea
+The tracks are 0–1, 1–2, 2–3, 0–3 and 3–4. What is the fewest number of stops from station 0 to each station?
 
-Visit vertices in layers, using a FIFO queue. The first time an unweighted vertex is reached, its distance is minimal.
+- Depth-first search (the previous lesson) does find a way to station 4, but following the lists in order it goes $0 \to 1 \to 2 \to 3 \to 4$: 4 stops. The best route, $0 \to 3 \to 4$, has 2.
+- Trying every route and keeping the shortest is exponential in general.
+- BFS gives every station's fewest stops in one pass: $\text{dist} = [0, 1, 2, 1, 2]$, in $V + 2E = 5 + 10 = 15$ steps.
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+## Explain it like I'm ten
 
-## Mathematical model — then immediately translate it
+::: {.callout-tip}
+Drop a stone into a still pond. A ring of ripples spreads out: first a small circle, then a bigger one, then a bigger one. Every point of the water is reached by the **first** ripple that gets there, and that ripple took the shortest way.
+
+BFS is that ripple. Suppose you want to find someone who sells mangoes. You ask all your friends first. If none of them sells mangoes, you ask your friends' friends, and then *their* friends. To keep the order fair, you write the people to ask on a list, add new names at the **bottom**, and always ask the person at the **top**. That list is a *queue*: first in, first out, like the line at a shop. Because you finish every friend before any friend-of-a-friend, the first mango seller you find is the closest one.
+
+This mango-seller story is how Aditya Bhargava teaches BFS in Chapter 6 of *Grokking Algorithms*. Edward F. Moore published the method in 1959 as a way to find the shortest path through a maze.
+:::
+
+## From simple to advanced
+
+### Level 1: a queue and one rule
+
+Keep a queue of vertices to explore and an array `dist`, where $-1$ means "not reached yet". Take the vertex at the front; each neighbour it reaches for the first time is **one step further**:
 
 $$
-d(v)=d(u)+1\quad\text{when }u\text{ first discovers }v
+\text{dist}(s) = 0, \qquad \text{dist}(v) = \text{dist}(u) + 1 \ \text{ when } v \text{ is first reached from } u
 $$
 
-**Explanation of every symbol:** d(u) is the known shortest number of edges from the source to u, v is a previously unseen neighbour, and each edge counts as one step.
+where:
 
-**Substitute actual values:** With 0→1, 0→2, 1→3 and 2→3: d(0)=0, both 1 and 2 get distance 1, then 3 gets distance 2. We never set d(3)=3 merely because a longer path exists.
+- $s$ is the start vertex, the *source*;
+- $u$ is the vertex just taken from the front of the queue, and $v$ a neighbour of $u$ that has not been reached before;
+- once $\text{dist}(v)$ is set it never changes, so every vertex enters the queue at most once.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: the metro, with neighbour lists $N(0) = [1, 3]$, $N(1) = [0, 2]$, $N(2) = [1, 3]$, $N(3) = [2, 0, 4]$, $N(4) = [3]$.
 
-## Work through the algorithm
+| Step | Take $u$ | Newly reached $v$ | $\text{dist}(v)$ | Queue after the step |
+| --- | --- | --- | --- | --- |
+| start | | 0 | 0 | `[0]` |
+| 1 | 0 | 1, 3 | $0 + 1 = 1$ | `[1, 3]` |
+| 2 | 1 | 2 | $1 + 1 = 2$ | `[3, 2]` |
+| 3 | 3 | 4 | $1 + 1 = 2$ | `[2, 4]` |
+| 4 | 2 | none | | `[4]` |
+| 5 | 4 | none | | `[]` |
 
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
+The result is $\text{dist} = [0, 1, 2, 1, 2]$. Station 4 is 2 stops away.
 
-**Why this is correct:** FIFO order ensures all distance-k nodes are removed before any distance-(k+1) node; first discovery cannot skip a shorter path.
-
-## Actual code — keep it small
-
-The original [Node.js example library](../examples/patterns.mjs) implements this technique as `bfsDistances` and tests it against boundary cases:
-
-~~~js
-import { bfsDistances } from '../examples/patterns.mjs';
-
-console.log(bfsDistances([[1,2],[3],[3],[]],0));
-~~~
-
-Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function bfsDistances(graph, source) {
-  const d = Array(graph.length).fill(Infinity);
-  d[source] = 0;
-  const queue = [source];
-  for (let head = 0; head < queue.length; head++) {
-    const v = queue[head];
-    for (const u of graph[v]) if (d[u] === Infinity) {
-      d[u] = d[v] + 1;
-      queue.push(u);
+```java
+static int[] distances(List<List<Integer>> graph, int... sources) {
+    int[] dist = new int[graph.size()];
+    Arrays.fill(dist, -1);                           // -1 = not reached yet
+    Deque<Integer> queue = new ArrayDeque<>();
+    for (int s : sources) { dist[s] = 0; queue.add(s); }
+    while (!queue.isEmpty()) {
+        int u = queue.poll();
+        for (int v : graph.get(u)) {
+            if (dist[v] == -1) {                     // first time seen: one step further than u
+                dist[v] = dist[u] + 1;
+                queue.add(v);
+            }
+        }
     }
-  }
-  return d;
+    return dist;
 }
-~~~
+```
 
-**Walk through the important lines:**
+It accepts several sources (`int... sources`); with one source it is plain BFS, and Level 4 uses more. Marking a vertex when it is **added** to the queue, not when it is taken out, is what keeps it from being added twice.
 
-1. Initialise all distances to infinity except the source at zero; unvisited means no path has yet been established.
-2. The queue processes already-discovered vertices in nondecreasing distance layers.
-3. The first time you discover a neighbour, assign `d[u] = d[v] + 1` and enqueue it.
-4. The integer `head` advances through the array instead of repeatedly shifting it.
-5. For edges 0→1, 0→2, 1→3 and 2→3, results are **[0,1,1,2]**.
+### Level 2: layers, and why DFS gets distances wrong
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+The queue always holds the end of one ring followed by the start of the next. We can make the rings, called *layers*, explicit:
 
-## Analyse the work; do not guess big-O
+$$
+L_0 = \lbrace s \rbrace, \qquad L_{k+1} = \lbrace v \notin L_0 \cup \dots \cup L_k : v \in N(u) \text{ for some } u \in L_k \rbrace
+$$
 
-**Cost:** O(V+E) time, O(V) memory; V is number of vertices and E number of adjacency-list entries.
+where:
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+- $L_k$ is the set of vertices exactly $k$ steps from $s$;
+- $N(u)$ is the set of neighbours of $u$;
+- the next layer is everything next to the current layer that has not appeared in any layer yet.
 
-## Break the technique deliberately
+Example: $L_0 = \lbrace 0 \rbrace$. Next to it are 1 and 3, so $L_1 = \lbrace 1, 3 \rbrace$. Next to those are 0, 2 and 4, and 0 is already used, so $L_2 = \lbrace 2, 4 \rbrace$. Next to those are only used stations, so $L_3 = \emptyset$ and the search stops.
 
-BFS is optimal only when edges have equal cost (or are treated as unweighted). For varying positive costs use Dijkstra, not a plain FIFO queue.
+```java
+static List<List<Integer>> layers(List<List<Integer>> graph, int source) {
+    boolean[] seen = new boolean[graph.size()];
+    seen[source] = true;
+    List<List<Integer>> layers = new ArrayList<>();
+    List<Integer> current = List.of(source);
+    while (!current.isEmpty()) {
+        layers.add(current);
+        List<Integer> next = new ArrayList<>();
+        for (int u : current) {
+            for (int v : graph.get(u)) {
+                if (!seen[v]) { seen[v] = true; next.add(v); }
+            }
+        }
+        current = next;
+    }
+    return layers;
+}
+```
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+**Why not DFS?** DFS goes as deep as it can before turning back. From 0 it follows the first track to 1, then 2, then 3, then 4, so its search tree puts station 4 at depth 4. BFS finishes all of layer 1, which contains 3, before it looks at anything two steps away, so it reaches 4 through 3, at depth 2. The proof that this is always right is in "Why it works" below.
 
-## Source connections and practice
+### Level 3: recovering the path
 
-**Textbook:** CLRS Chapter 20 §20.2 (breadth-first search).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+Distances say *how far*; to say *which way*, remember who discovered each vertex:
 
-**LeetCode problem:** LeetCode 752 — Open the Lock; classic shortest unweighted path. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/open-the-lock/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+$$
+\text{parent}(v) = u \ \text{ when } v \text{ is first reached from } u, \qquad \text{path}(v) = \text{path}(\text{parent}(v)) + [v], \quad \text{path}(s) = [s]
+$$
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+where:
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+- $\text{parent}(v)$ is the vertex one step before $v$ on a shortest path;
+- the path is read **backwards**, from $v$ to its parent, to its parent's parent, until the source.
+
+Example: from source 0, $\text{parent}(1) = 0$, $\text{parent}(3) = 0$, $\text{parent}(2) = 1$ and $\text{parent}(4) = 3$. Walking back from 4 gives $4 \to 3 \to 0$, so the path is $[0, 3, 4]$, with 2 tracks.
+
+```java
+static List<Integer> shortestPath(List<List<Integer>> graph, int source, int target) {
+    int[] parent = new int[graph.size()];
+    Arrays.fill(parent, -1);
+    parent[source] = source;
+    Deque<Integer> queue = new ArrayDeque<>(List.of(source));
+    while (!queue.isEmpty()) {
+        int u = queue.poll();
+        for (int v : graph.get(u)) {
+            if (parent[v] == -1) { parent[v] = u; queue.add(v); }   // u discovered v
+        }
+    }
+    if (parent[target] == -1) return List.of();
+    LinkedList<Integer> path = new LinkedList<>();
+    for (int v = target; v != source; v = parent[v]) path.addFirst(v);
+    path.addFirst(source);
+    return path;
+}
+```
+
+The parent links form the *BFS tree*. Every vertex appears in it once, at the depth of its distance.
+
+### Level 4: many sources at once
+
+"How far is each house from the **nearest** fire station?" Running BFS from every station separately costs one full BFS per station. Instead, put all the stations in the queue at distance 0:
+
+$$
+\text{dist}_S(v) = \min_{s \in S} \delta(s, v)
+$$
+
+where:
+
+- $S$ is the set of sources (the fire stations);
+- $\delta(s, v)$ is the true fewest number of steps from $s$ to $v$;
+- $\min_{s \in S}$ picks the closest source. Starting all of them together is the same as adding an imaginary vertex joined to every source, running ordinary BFS from it, and subtracting 1.
+
+Example: a street of houses $0, 1, 2, 3, 4, 5$ in a line, with fire stations at 0 and 5.
+
+- House 2: $\delta(0, 2) = 2$ and $\delta(5, 2) = 3$, so $\text{dist}_S(2) = \min(2, 3) = 2$.
+- House 3: $\min(3, 2) = 2$.
+- All six: $\text{dist}_S = [0, 1, 2, 2, 1, 0]$, from one call, `distances(street, 0, 5)`.
+
+LeetCode 542, *01 Matrix* (Medium), is exactly this on a grid: the sources are all the 0 cells, and the answer is each cell's distance to the nearest 0. Interview problem 1 below is another one.
+
+## Why it works and what it costs
+
+**BFS distances are shortest.** Let $\delta(s, v)$ be the true fewest number of edges from $s$ to $v$. Claim: *for every $k$, layer $L_k$ is exactly the set of vertices with $\delta(s, v) = k$.* By induction on $k$:
+
+- *Base:* $L_0 = \lbrace s \rbrace$, and $s$ is the only vertex at distance 0.
+- *Step, nothing is too early:* every $v$ placed in $L_{k+1}$ has a neighbour in $L_k$, so $\delta(s, v) \le k + 1$. It is in no earlier layer, so by the induction hypothesis $\delta(s, v) \ne 0, \dots, k$. Hence $\delta(s, v) = k + 1$.
+- *Step, nothing is missed:* if $\delta(s, v) = k + 1$, the vertex $u$ just before $v$ on a shortest path has $\delta(s, u) = k$, so $u \in L_k$. When $L_k$ is expanded, $v$ is next to $u$ and in no earlier layer, so it goes into $L_{k+1}$.
+
+The queue version of Level 1 builds the same layers. A FIFO queue always holds some vertices at distance $k$ followed by some at distance $k + 1$, never anything else, so the whole of layer $k$ leaves the queue before any of layer $k + 1$.
+
+This proof needs **every edge to cost the same**. With weights, a path with more edges can be cheaper, and you need Dijkstra's algorithm (see [Shortest Path](../shortest-path/index.qmd)). Edges of weight 0 or 1 can still use a deque: weight-0 neighbours go to the front ("0-1 BFS").
+
+**Costs.** Each vertex enters the queue once, and each adjacency list is scanned once, when its vertex leaves:
+
+$$
+T_{\text{BFS}} = \sum_{v} \big(1 + \deg(v)\big) = V + 2E \ \text{ (undirected)}, \qquad V + E \ \text{ (directed)}
+$$
+
+where:
+
+- $V$ and $E$ are the numbers of vertices and edges, and $\deg(v)$ is the number of neighbours of $v$;
+- each undirected edge is listed twice, once at each end.
+
+Example: the metro has $V = 5$ and $E = 5$, so $T = 5 + 10 = 15$. The street has $V = 6$ and $E = 5$, so $T = 6 + 10 = 16$, for both fire stations together. The queue and the `dist` array use $O(V)$ space.
+
+| Version | Time | Space | Gives |
+| --- | --- | --- | --- |
+| Distances (Level 1) | $O(V + E)$ | $O(V)$ | fewest steps to every vertex |
+| Layers (Level 2) | $O(V + E)$ | $O(V)$ | the rings, for "how many rounds" questions |
+| Parent pointers (Level 3) | $O(V + E)$ | $O(V)$ | one shortest path per target |
+| Multi-source (Level 4) | $O(V + E)$ | $O(V)$ | distance to the nearest source |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Marking vertices when they leave the queue | The same vertex is queued many times; time can blow up | Mark (set `dist` or `seen`) when you **add** to the queue |
+| Using a stack instead of a queue | It becomes DFS, and distances are wrong (4 instead of 2 for station 4) | `ArrayDeque` with `add` and `poll` |
+| Counting layers with `while (!queue.isEmpty())` alone | Off-by-one minutes or levels | Freeze `size = queue.size()` and process exactly that many per layer |
+| BFS on a weighted graph | Paths with fewer but heavier edges are chosen | Dijkstra, or 0-1 BFS for weights 0 and 1 |
+| One BFS per source for "nearest source" | $\lvert S \rvert$ times slower | Put all sources in the queue at distance 0 |
+| In Word Ladder, marking a word visited only when it is taken out | Many copies of the same word fill the queue | Remove it from the word set as soon as it is queued |
+
+## Interview problems
+
+Each solution starts with the mathematics: what are the vertices, what is one step, and which distance is the answer?
+
+### 1. LeetCode 994: Rotting Oranges (Medium)
+
+**Problem.** In a grid, 0 is empty, 1 is a fresh orange and 2 is a rotten one. Every minute, each fresh orange next to a rotten one (up, down, left or right) rots. Return the minutes until no fresh orange is left, or $-1$ if that never happens.
+
+```text
+2 1 1
+1 1 0
+0 1 1
+```
+
+The answer is 4.
+
+**Math first.** All rotten oranges start together, so this is Level 4's multi-source BFS, and the answer is the farthest fresh orange:
+
+$$
+\text{minutes} =
+\begin{cases}
+\max_{v \in F} \text{dist}_S(v) & \text{if every } v \in F \text{ is reached} \\
+-1 & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $S$ is the set of rotten cells at minute 0, and $F$ the set of fresh cells;
+- $\text{dist}_S(v)$ is the number of minutes until $v$ rots: its BFS layer;
+- a fresh orange walled off by empty cells is never reached, which gives $-1$; with no fresh oranges, the maximum over nothing is 0.
+
+Example: the distances, with `·` for empty cells, are
+
+```text
+0 1 2
+1 2 ·
+· 3 4
+```
+
+Minute 1 rots $(0, 1)$ and $(1, 0)$, minute 2 rots $(0, 2)$ and $(1, 1)$, minute 3 rots $(2, 1)$, and minute 4 rots $(2, 2)$. The maximum is **4**.
+
+**Idea.** Queue every rotten orange, count the fresh ones, and run BFS one whole layer per minute until nothing fresh is left or the queue is empty.
+
+```java
+static int orangesRotting(int[][] grid) {
+    int rows = grid.length, cols = grid[0].length, fresh = 0;
+    Deque<int[]> queue = new ArrayDeque<>();
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            if (grid[r][c] == 2) queue.add(new int[] {r, c});    // every rotten orange is a source
+            if (grid[r][c] == 1) fresh++;
+        }
+    }
+    int minutes = 0;
+    while (!queue.isEmpty() && fresh > 0) {
+        for (int size = queue.size(); size > 0; size--) {        // one layer = one minute
+            int[] cell = queue.poll();
+            for (int[] d : DIRECTIONS) {
+                int r = cell[0] + d[0], c = cell[1] + d[1];
+                if (r >= 0 && r < rows && c >= 0 && c < cols && grid[r][c] == 1) {
+                    grid[r][c] = 2;
+                    fresh--;
+                    queue.add(new int[] {r, c});
+                }
+            }
+        }
+        minutes++;
+    }
+    return fresh == 0 ? minutes : -1;
+}
+```
+
+**Answer.** 4 for the example. For `[[2,1,1],[0,1,1],[1,0,1]]` the bottom-left orange has no rotten path and the answer is $-1$; for `[[0,2]]` it is 0. Each of the $R \times C = 9$ cells is queued at most once and checks 4 neighbours: $O(RC)$ time and space.
+
+### 2. LeetCode 127: Word Ladder (Hard)
+
+**Problem.** Change `beginWord` into `endWord` one letter at a time, where every intermediate word must be in `wordList`. Return the number of words in the shortest such sequence, or 0 if there is none. For `hit` to `cog` with `[hot, dot, dog, lot, log, cog]` the answer is 5: `hit → hot → dot → dog → cog`.
+
+**Math first.** The words are vertices, and two words are joined when they differ in exactly one position:
+
+$$
+u \sim v \iff H(u, v) = 1, \qquad H(u, v) = \#\lbrace i : u_i \ne v_i \rbrace, \qquad \text{answer} = \delta(\text{begin}, \text{end}) + 1
+$$
+
+where:
+
+- $u_i$ is the $i$-th letter of word $u$, and $H(u, v)$ is the *Hamming distance*: how many positions differ;
+- $u \sim v$ means "one step apart";
+- $\delta$ counts steps (edges), but the problem counts words, which is one more.
+
+Example: $H(\texttt{hit}, \texttt{hot}) = 1$, because only the middle letter differs, but $H(\texttt{hit}, \texttt{dot}) = 2$. The BFS layers from `hit` are $\lbrace \texttt{hit} \rbrace$, $\lbrace \texttt{hot} \rbrace$, $\lbrace \texttt{dot}, \texttt{lot} \rbrace$, $\lbrace \texttt{dog}, \texttt{log} \rbrace$, $\lbrace \texttt{cog} \rbrace$. So $\delta = 4$, and the answer is $4 + 1 = \mathbf{5}$ words.
+
+**Idea.** Do not compare every pair of words. Generate each word's neighbours by trying all 26 letters in every position, and keep the ones still in the word set. Removing a word from the set as it is queued marks it visited.
+
+```java
+static int ladderLength(String begin, String end, List<String> wordList) {
+    Set<String> unused = new HashSet<>(wordList);
+    if (!unused.contains(end)) return 0;
+    Deque<String> queue = new ArrayDeque<>(List.of(begin));
+    for (int words = 1; !queue.isEmpty(); words++) {             // words in the ladder so far
+        for (int size = queue.size(); size > 0; size--) {
+            String word = queue.poll();
+            if (word.equals(end)) return words;
+            char[] letters = word.toCharArray();
+            for (int i = 0; i < letters.length; i++) {
+                char original = letters[i];
+                for (char c = 'a'; c <= 'z'; c++) {
+                    letters[i] = c;
+                    String next = new String(letters);
+                    if (unused.remove(next)) queue.add(next);     // removing it marks it visited
+                }
+                letters[i] = original;
+            }
+        }
+    }
+    return 0;
+}
+```
+
+**Answer.** 5 for the example, and 0 when `cog` is missing from the list. With $N$ words of length $L$, each word is dequeued once and builds $26L$ candidate strings of length $L$: $O(N \cdot 26 \cdot L^2)$ time. Here that is at most $7 \times 26 \times 3 = 546$ candidates. Searching from both ends at once (*bidirectional BFS*) is a common speed-up: two rings of radius $\delta/2$ are much smaller than one of radius $\delta$.
+
+### 3. LeetCode 815: Bus Routes (Hard)
+
+**Problem.** `routes[i]` lists the stops of bus $i$, which loops forever. Starting at stop `source`, return the fewest buses you must take to reach stop `target`, or $-1$. For `routes = [[1, 2, 7], [3, 6, 7]]`, `source = 1` and `target = 6` the answer is 2: bus 0 to stop 7, then bus 1 to stop 6.
+
+**Math first.** We count **buses**, not stops, so make the buses the vertices. Two buses are joined when they share a stop, because you can change there:
+
+$$
+i \sim j \iff r_i \cap r_j \ne \emptyset, \qquad \text{answer} = 1 + \min \lbrace \delta(i, j) : \text{source} \in r_i,\ \text{target} \in r_j \rbrace
+$$
+
+where:
+
+- $r_i$ is the set of stops of bus $i$, and $\cap$ is set intersection;
+- $\delta(i, j)$ is the fewest changes from bus $i$ to bus $j$; the $+1$ counts the first bus you board;
+- the start is every bus through `source` at once (multi-source BFS, Level 4), and the answer is 0 if `source = target`.
+
+Example: $r_0 = \lbrace 1, 2, 7 \rbrace$ and $r_1 = \lbrace 3, 6, 7 \rbrace$ share stop 7, so $0 \sim 1$. Stop 1 is only on bus 0 and stop 6 only on bus 1, so the answer is $1 + \delta(0, 1) = 1 + 1 = \mathbf{2}$.
+
+**Idea.** Map each stop to the buses through it. BFS over buses in layers: layer $k$ holds the buses reachable with $k$ boardings. Ride each bus once; at each of its stops not seen before, queue every bus not yet boarded.
+
+```java
+static int numBusesToDestination(int[][] routes, int source, int target) {
+    if (source == target) return 0;
+    Map<Integer, List<Integer>> busesAtStop = new HashMap<>();
+    for (int bus = 0; bus < routes.length; bus++) {
+        for (int stop : routes[bus]) busesAtStop.computeIfAbsent(stop, s -> new ArrayList<>()).add(bus);
+    }
+    boolean[] boarded = new boolean[routes.length];
+    Set<Integer> seenStops = new HashSet<>();
+    Deque<Integer> queue = new ArrayDeque<>();
+    for (int bus : busesAtStop.getOrDefault(source, List.of())) { boarded[bus] = true; queue.add(bus); }
+    for (int buses = 1; !queue.isEmpty(); buses++) {             // the vertices are buses, not stops
+        for (int size = queue.size(); size > 0; size--) {
+            int bus = queue.poll();
+            for (int stop : routes[bus]) {
+                if (stop == target) return buses;
+                if (!seenStops.add(stop)) continue;               // its buses are already queued
+                for (int next : busesAtStop.get(stop)) {
+                    if (!boarded[next]) { boarded[next] = true; queue.add(next); }
+                }
+            }
+        }
+    }
+    return -1;
+}
+```
+
+**Answer.** 2 for the example. For `[[7,12],[4,5,15],[6],[15,19],[9,12,13]]` from 15 to 12 it is $-1$: buses 1 and 3 through stop 15 share no stop with any bus through 12. Each bus is ridden once and each stop's bus list is scanned once, so the time is $O(\sum_i \lvert r_i \rvert)$, here at most $3 + 3 = 6$ stop visits, and the space is the same. BFS over stops instead would count stops, not changes, and would give the wrong answer.
+
+## Mathematical Abstraction
+
+BFS computes the unweighted distance from the source, one layer at a time:
+
+$$
+\delta(s, v) = \min \lbrace \lvert p \rvert : p \text{ is a path from } s \text{ to } v \rbrace, \qquad L_k = \lbrace v : \delta(s, v) = k \rbrace, \qquad \text{dist}(v) = \text{dist}(\text{parent}(v)) + 1
+$$
+
+where:
+
+- $\lvert p \rvert$ is the number of edges on the path $p$, and $\delta(s, v) = \infty$ when there is no path;
+- $L_k$ is the $k$-th ring, which BFS empties completely before touching $L_{k+1}$;
+- the last part is the update rule, and it is correct because the parent is in the previous layer.
+
+Example: in the metro, $L_0 = \lbrace 0 \rbrace$, $L_1 = \lbrace 1, 3 \rbrace$ and $L_2 = \lbrace 2, 4 \rbrace$, so $\delta(0, 4) = 2$, along $0 \to 3 \to 4$, with $\text{dist}(4) = \text{dist}(3) + 1 = 1 + 1 = 2$. Grids (oranges), word graphs (ladders) and bus graphs (routes) are the same formula with different vertices and edges.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 20, "Elementary Graph Algorithms", §20.2 "Breadth-first search", with the proof that BFS computes shortest-path distances and breadth-first trees. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §4.1, "Undirected Graphs", `BreadthFirstPaths.java`: <https://algs4.cs.princeton.edu/41graph/>.
+- Edward F. Moore, "The shortest path through a maze", *Proceedings of the International Symposium on the Theory of Switching*, Harvard University Press, 1959.
+- Aditya Bhargava, *Grokking Algorithms* (Manning), Chapter 6, "Breadth-first search": <https://livebook.manning.com/book/grokking-algorithms/chapter-6>.
+- Jeff Erickson, *Algorithms* (2019), Chapter 5, "Basic Graph Algorithms", where BFS and DFS are two cases of "whatever-first search": <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- LeetCode: [542. 01 Matrix](https://leetcode.com/problems/01-matrix/), [994. Rotting Oranges](https://leetcode.com/problems/rotting-oranges/), [127. Word Ladder](https://leetcode.com/problems/word-ladder/), [815. Bus Routes](https://leetcode.com/problems/bus-routes/).
+
+[← Depth-First Search](../depth-first-search/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Backtracking →](../backtracking/index.qmd)

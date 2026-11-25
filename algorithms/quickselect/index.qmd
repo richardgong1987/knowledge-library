@@ -1,110 +1,416 @@
 ---
 title: "Quickselect"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "Finding the k-th smallest without sorting: Lomuto partition traced step by step, recursing into one side only, expected linear cost with honest numbers, the quadratic worst case, random pivots and three-way partitioning, median of medians, and hard interview problems including selection by binary search."
 ---
 
-## Start with the problem, not a formula
+Quickselect finds the $k$-th smallest value in an unsorted array, for example the median, without sorting the array. It borrows quicksort's partition step and then throws half of the work away: after each split it keeps only the side that contains the answer. On average that costs a small constant times $n$ comparisons, against $n \log_2 n$ for sorting.
 
-**LeetCode 215 — Kth Largest Element in an Array**. Use partitioning to locate an order statistic without fully sorting.
+All code is in [`QuickselectLab.java`](QuickselectLab.java). Run it from this folder with `java QuickselectLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+A teacher has the heights of six children, measured in centimetres above one metre: $[7, 2, 9, 4, 1, 5]$. She wants the **second shortest**. A national survey has $10^6$ test scores and wants the **median**.
 
-Sorting the entire array costs n log n comparisons even though you only want one rank.
+- Sorting answers both: sort, then read position $k$. For $10^6$ scores that is about $n \log_2 n \approx 2 \times 10^7$ comparisons.
+- But sorting puts **all** $10^6$ scores in order, and we only asked about one position. Almost all of that work is wasted.
+- Quickselect finds the median of $10^6$ random scores in about $3.4 \times 10^6$ comparisons on average.
 
-## Discover the key idea
+## Explain it like I'm ten
 
-Partition around a pivot. The pivot divides values into left and right regions; after partition, only ONE side can contain the requested rank.
+::: {.callout-tip}
+The teacher wants the second-shortest child. She does not line up the whole class by height. Instead she picks one child, say Sam, and says: "Everyone shorter than Sam, go to the left wall. Everyone taller, go to the right wall."
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+Now she counts the left wall. Suppose 3 children stand there. Then Sam is the 4th shortest, and the 2nd shortest must be one of the 3 children by the left wall. The children by the right wall can go out to play, because none of them can be the answer. She repeats the trick with just the left-wall group, which is smaller every time, until the child she picks is exactly the one she wants.
 
-## Mathematical model — then immediately translate it
+Tony Hoare published this method in 1961 as "Algorithm 65: Find", printed on the same page as his famous quicksort. Jeff Erickson's *Algorithms* calls it "one-armed quicksort": quicksort sorts **both** walls, while quickselect only follows **one**.
+:::
+
+## From simple to advanced
+
+### Level 1: sort, then read one position
+
+The obvious method sorts a copy and reads position $k$:
 
 $$
-k<p\Rightarrow\text{search left};\quad k>p\Rightarrow\text{search right}
+\operatorname{select}(A, k) = \operatorname{sort}(A)[k - 1], \qquad \text{cost} \approx n \log_2 n
 $$
 
-**Explanation of every symbol:** k is the wanted zero-based sorted rank, p is the pivot's final sorted rank after a suitable partition; left/right refer to elements smaller/larger than the pivot.
+where:
 
-**Substitute actual values:** Take [8,2,7,1,9] and ask for the middle value k=2 (the third smallest). If pivot 7 is placed at p=2, the answer is already 7. If pivot 2 ended at p=1, discard all elements at ranks ≤1 and search the right side.
+- $A$ is the array and $n$ its length;
+- $k$ counts from 1, so $k = 1$ asks for the minimum and $k = n$ for the maximum, while Java arrays count from 0, hence $k - 1$;
+- $n \log_2 n$ is the usual comparison count of a good sort.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: $A = [7, 2, 9, 4, 1, 5]$ sorts to $[1, 2, 4, 5, 7, 9]$, so the 2nd smallest is $\operatorname{sort}(A)[1] = 2$. For $n = 10^6$ the cost is about $10^6 \times 19.93 \approx 1.99 \times 10^7$ comparisons.
 
-## Work through the algorithm
-
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
-
-**Why this is correct:** Partition establishes that elements left of the pivot are no larger and elements right are no smaller. Therefore the desired order statistic cannot be in the discarded side.
-
-## Actual code — keep it small
-
-The original [Node.js example library](../examples/patterns.mjs) implements this technique as `quickselect` and tests it against boundary cases:
-
-~~~js
-import { quickselect } from '../examples/patterns.mjs';
-
-console.log(quickselect([8,2,7,1,9],2));
-~~~
-
-Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function quickselect(a, k) {
-  if (!Number.isInteger(k) || k < 0 || k >= a.length) throw Error('invalid k');
-  const b = [...a];
-  let left = 0, right = b.length - 1;
-  while (left <= right) {
-    const pivot = b[Math.floor((left + right)/2)];
-    let i=left,j=right;
-    while (i <= j) {
-      while (b[i] < pivot) i++;
-      while (b[j] > pivot) j--;
-      if (i <= j) { [b[i],b[j]]=[b[j],b[i]]; i++; j--; }
-    }
-    if (k <= j) right = j;
-    else if (k >= i) left = i;
-    else return b[k];
-  }
-  return b[k];
+```java
+static int kthSmallestBySorting(int[] a, int k) {    // k = 1 is the minimum
+    int[] copy = a.clone();
+    Arrays.sort(copy);
+    return copy[k - 1];
 }
-~~~
+```
 
-**Walk through the important lines:**
+This is correct and often good enough. It is also the slow, obviously correct check that the lab compares quickselect against.
 
-1. Copy the array so the caller's input remains unchanged.
-2. Choose a pivot value and partition the current candidate segment with two pointers.
-3. If desired rank `k` lies completely left/right of the partition boundaries, discard the other side.
-4. If it lies between the boundaries, the element at `k` has the target rank.
-5. For `[8,2,7,1,9]` and zero-based k=2, the third-smallest value is **7**.
+### Level 2: partition around a pivot
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+**Partition** rearranges a range around a *pivot* value so that smaller values come first, then the pivot, then the rest. The pivot then sits exactly where it would be in sorted order. The scheme below, named after Nico Lomuto and used by CLRS, takes the last element as the pivot and grows a block of "smaller" values from the left:
 
-## Analyse the work; do not guess big-O
+$$
+a[lo..store-1] < \text{pivot} \le a[store..j-1]
+$$
 
-**Cost:** Expected O(n) time with suitable randomisation, worst-case O(n²) for naive pivoting; O(n) copied space in this educational implementation.
+where:
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+- $\text{pivot} = a[hi]$ is the last value of the range;
+- $j$ scans the range from $lo$ to $hi - 1$;
+- $store$ is the end of the "smaller" block: every value left of it is below the pivot, and every scanned value from $store$ up to $j - 1$ is at least the pivot;
+- when $a[j] < \text{pivot}$, swapping $a[j]$ into position $store$ and adding 1 to $store$ keeps this true.
 
-## Break the technique deliberately
+Example: partition $[7, 2, 9, 4, 1, 5]$ with pivot 5.
 
-A bad pivot can repeatedly leave size n−1 and yield O(n²) time. Randomised or carefully chosen pivots improve expected or worst-case guarantees. Duplicates require a correct partition scheme.
+| $j$ | $a[j]$ | $a[j] < 5$? | action | array after | $store$ |
+| --- | --- | --- | --- | --- | --- |
+| 0 | 7 | no | — | $[7, 2, 9, 4, 1, 5]$ | 0 |
+| 1 | 2 | yes | swap positions 0 and 1 | $[2, 7, 9, 4, 1, 5]$ | 1 |
+| 2 | 9 | no | — | $[2, 7, 9, 4, 1, 5]$ | 1 |
+| 3 | 4 | yes | swap positions 1 and 3 | $[2, 4, 9, 7, 1, 5]$ | 2 |
+| 4 | 1 | yes | swap positions 2 and 4 | $[2, 4, 1, 7, 9, 5]$ | 3 |
+| end | | | swap pivot into position 3 | $[2, 4, 1, 5, 9, 7]$ | 3 |
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+The pivot 5 lands at index 3, so 5 is the 4th smallest. Everything on its left ($2, 4, 1$) is smaller, everything on its right ($9, 7$) is larger, and neither side is sorted. It took $n - 1 = 5$ comparisons.
 
-## Source connections and practice
+```java
+static int partition(int[] a, int lo, int hi) {     // pivot a[hi]; returns its final index
+    int pivot = a[hi], store = lo;
+    for (int j = lo; j < hi; j++) {
+        if (a[j] < pivot) swap(a, store++, j);      // grow the "smaller than pivot" block
+    }
+    swap(a, store, hi);
+    return store;
+}
 
-**Textbook:** CLRS Chapter 9 (selection in expected and worst-case linear time).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+static void swap(int[] a, int i, int j) {
+    int t = a[i];
+    a[i] = a[j];
+    a[j] = t;
+}
+```
 
-**LeetCode problem:** LeetCode 215 — Kth Largest Element in an Array. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/kth-largest-element-in-an-array/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+### Level 3: recurse into one side only
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+After a partition the pivot sits at its final index $p$. Compare $p$ with the index $t$ we want:
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+$$
+\operatorname{select}(lo, hi, t) =
+\begin{cases}
+a[p] & \text{if } t = p \\
+\operatorname{select}(lo, p - 1, t) & \text{if } t < p \\
+\operatorname{select}(p + 1, hi, t) & \text{if } t > p
+\end{cases}
+$$
+
+where:
+
+- $t = k - 1$ is the 0-based position of the answer in sorted order;
+- $p$ is the pivot's index after `partition(a, lo, hi)`;
+- only **one** of the two sides is ever visited again, which is the whole difference from quicksort.
+
+Example: find the 2nd smallest, $t = 1$, in $[7, 2, 9, 4, 1, 5]$.
+
+1. Partition indices 0 to 5 with pivot 5: the array becomes $[2, 4, 1, 5, 9, 7]$ and $p = 3$. Since $1 < 3$, keep indices 0 to 2. 5 comparisons.
+2. Partition indices 0 to 2, which hold $[2, 4, 1]$, with pivot 1: they become $[1, 4, 2]$ and $p = 0$. Since $1 > 0$, keep indices 1 to 2. 2 comparisons.
+3. Partition indices 1 to 2, which hold $[4, 2]$, with pivot 2: they become $[2, 4]$ and $p = 1 = t$. 1 comparison.
+
+The answer is $a[1] = \mathbf{2}$, after $5 + 2 + 1 = 8$ comparisons. The 9 and 7 were never looked at after the first step.
+
+```java
+static int quickselect(int[] a, int target) {      // target = 0-based index in sorted order
+    int lo = 0, hi = a.length - 1;
+    while (true) {
+        int p = partition(a, lo, hi);
+        if (p == target) return a[p];
+        if (target < p) hi = p - 1; else lo = p + 1;   // keep only the side that holds the target
+    }
+}
+```
+
+The recursion is a tail call, so it becomes a `while` loop with $O(1)$ extra space.
+
+### Level 4: what it costs, honestly
+
+**If every pivot split the range in half**, each round would scan half as much as the last:
+
+$$
+n + \frac{n}{2} + \frac{n}{4} + \frac{n}{8} + \dots < 2n
+$$
+
+where:
+
+- $n$ is the length of the array, and each term is the length of the range scanned in one round;
+- the sum is a geometric series with ratio $\frac{1}{2}$, whose total is $\frac{n}{1 - 1/2} = 2n$.
+
+Example: $n = 10^6$ gives $1{,}000{,}000 + 500{,}000 + 250{,}000 + \dots \approx 2{,}000{,}000$ comparisons, ten times fewer than the $1.99 \times 10^7$ of sorting.
+
+**In the worst case** every pivot is the largest (or smallest) value left, and each round removes only the pivot:
+
+$$
+(n - 1) + (n - 2) + \dots + 1 = \frac{n(n - 1)}{2} \approx \frac{n^2}{2}
+$$
+
+where each term is the comparisons of one round, and the range shrinks by one each time.
+
+Example: the sorted array $[1, 2, 3, 4, 5, 6]$ with the last element as pivot, asking for the minimum, costs $5 + 4 + 3 + 2 + 1 = 15 = \frac{6 \cdot 5}{2}$ comparisons. For $n = 10^6$ it is about $5 \times 10^{11}$, hours instead of milliseconds. Sorted input is common in practice, so a fixed pivot is dangerous.
+
+**With a random pivot** the splits are uneven but rarely terrible. Call a pivot *good* if its rank lands in the middle half, between $n/4$ and $3n/4$. Half of all values are good, so on average 2 rounds pass before a good one, and a good pivot leaves at most $\frac{3}{4}$ of the range. Grouping the rounds between good pivots into phases gives the bound
+
+$$
+E[\text{comparisons}] \le \sum_{j \ge 0} 2 \cdot \left(\frac{3}{4}\right)^j n = 2n \cdot \frac{1}{1 - 3/4} = 8n
+$$
+
+where:
+
+- $E[\cdot]$ is the average over the random pivot choices, for **any** input;
+- phase $j$ works on a range of at most $(3/4)^j n$ values;
+- the factor 2 is the expected number of rounds per phase, each costing at most the range length.
+
+Example: for $n = 10^6$ the guarantee is at most $8 \times 10^6$ comparisons on average, whatever the input order. The bound is loose. Knuth's exact analysis of Hoare's method (*The Art of Computer Programming*, Volume 3, exercise 5.2.2–32) gives about $2(1 + \ln 2)\,n \approx 3.39n$ comparisons for the median, and the lab measures $3.43n$ on average over 20 random arrays of $100{,}001$ values. All three statements are about the **expected** cost: a random pivot can still be unlucky every time, with a probability that is tiny for large $n$.
+
+### Level 5: random pivots and duplicate values
+
+Two changes make quickselect safe in practice.
+
+1. **Pick the pivot at random**, so no input order is bad on purpose.
+2. **Split three ways**: smaller, equal and larger. Lomuto puts every value equal to the pivot on one side. For an array of six 5s and the target "largest", each round removes only one element, which is $5 + 4 + 3 + 2 + 1 = 15$ comparisons again, and for $10^5$ equal values it is about $5 \times 10^9$. A three-way split puts all copies of the pivot in the middle block, and if the target falls inside that block we are done in one pass.
+
+The three-way split is Edsger Dijkstra's "Dutch national flag" problem: three pointers keep the regions $[lo, lt)$ below the pivot, $[lt, i)$ equal to it, and $(gt, hi]$ above it, while $i$ scans the unknown middle.
+
+```java
+static int select(int[] a, int target, Random random) {
+    int lo = 0, hi = a.length - 1;
+    while (true) {
+        int pivot = a[lo + random.nextInt(hi - lo + 1)];
+        int lt = lo, i = lo, gt = hi;               // [lo, lt) < pivot, [lt, i) == pivot, (gt, hi] > pivot
+        while (i <= gt) {
+            if (a[i] < pivot) swap(a, lt++, i++);
+            else if (a[i] > pivot) swap(a, i, gt--);
+            else i++;
+        }
+        if (target < lt) hi = lt - 1;
+        else if (target > gt) lo = gt + 1;
+        else return pivot;                          // the target lies in the block of pivot copies
+    }
+}
+```
+
+The lab runs it on $10^5$ copies of the value 1 and on $10^5$ sorted values; both finish at once.
+
+**Other ways to select.** A heap of the $k$ largest values seen so far costs $n \log_2 k$: for $n = 10^6$ and $k = 10$ that is about $3.3 \times 10^6$ steps, it works on a stream, and it never has a bad case. Sorting is simplest when the array is small. The JDK has no built-in selection method, so in Java you write quickselect yourself or use a `PriorityQueue`.
+
+### Level 6: median of medians, linear in the worst case
+
+Blum, Floyd, Pratt, Rivest and Tarjan (1973) showed how to pick a pivot that is **guaranteed** to be good. Split the array into groups of 5, take the median of each group, and recursively find the median of those medians. At least half the groups have a median no larger than the pivot, and each such group has 3 values no larger than its median, so the pivot is larger than about $\frac{3n}{10}$ values and smaller than about $\frac{3n}{10}$ values. The side we keep has at most about $\frac{7n}{10}$ values:
+
+$$
+T(n) \le T\!\left(\frac{n}{5}\right) + T\!\left(\frac{7n}{10}\right) + cn \quad \Longrightarrow \quad T(n) \le 10cn
+$$
+
+where:
+
+- $T(n/5)$ is the recursive call that finds the median of the $n/5$ group medians;
+- $T(7n/10)$ is the recursive call on the side that is kept;
+- $cn$ covers sorting the groups of 5 and partitioning, for some constant $c$;
+- the two sizes add up to $\frac{1}{5} + \frac{7}{10} = \frac{9}{10}$ of $n$, less than 1, so the work shrinks geometrically level by level.
+
+Example: $n = 1{,}000$ gives 200 groups, and the pivot is the median of their 200 medians. At least 100 groups have a median at most the pivot, and each contributes 3 values, so at least 300 values are at most the pivot and at most 700 remain. The total work is at most $cn(1 + 0.9 + 0.81 + \dots) = cn \cdot \frac{1}{1 - 0.9} = 10cn$. The constant is large, so this method is mainly a theoretical guarantee. Libraries prefer random pivots, sometimes falling back to median of medians when the recursion runs too long.
+
+## Why it works and what it costs
+
+**Correctness.** The loop keeps one invariant: *the range $a[lo..hi]$ holds exactly the values whose sorted positions are $lo$ to $hi$, and $lo \le t \le hi$.*
+
+- *Initially* the range is the whole array, so it holds.
+- *After a partition* everything left of $p$ is smaller than the pivot and everything right is at least the pivot, so the pivot's sorted position is exactly $p$. If $t = p$ the pivot is the answer. If $t < p$, the values with sorted positions $lo$ to $p - 1$ are exactly those now in $a[lo..p-1]$, so the invariant holds for the left side, and likewise for the right.
+- *Termination:* the pivot is removed from the range each round, so the range shrinks by at least one, and the loop ends after at most $n$ rounds.
+
+**Costs:**
+
+| Method | Average comparisons | Worst case | Extra space |
+| --- | --- | --- | --- |
+| Sort, then index | $n \log_2 n$ ($2 \times 10^7$ for $n = 10^6$) | same | $O(n)$ copy |
+| Quickselect, fixed pivot, random input | about $3.4n$ for the median | $n^2 / 2$ on sorted input | $O(1)$ |
+| Quickselect, random pivot, three-way | at most $8n$ for every input; about $3.4n$ for the median | $n^2/2$ with tiny probability | $O(1)$ |
+| Median of medians | $O(n)$, large constant | $O(n)$ | $O(\log n)$ |
+| Heap of size $k$ | $n \log_2 k$ | same | $O(k)$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Mixing up $k$-th largest and $k$-th smallest | The answer is mirrored, such as 2 instead of 5 | $k$-th largest is position $n - k$ in sorted order |
+| Using 1-based $k$ as an array index | Off by one: the 3rd smallest comes back as the 4th | Convert once: $t = k - 1$ |
+| Always taking the last element as the pivot | Sorted input takes $n^2 / 2$ steps and times out | Swap a random element into place first |
+| Lomuto partition on many equal values | All-equal input is quadratic | Three-way partition |
+| Recursing into both sides | You wrote quicksort: $n \log n$ instead of linear | Follow only the side that contains $t$ |
+| Partitioning the caller's array | The caller's data comes back shuffled | Work on `nums.clone()` |
+| Comparing points by `Math.sqrt` distance | Slower, and floating-point ties | Compare $x^2 + y^2$; the square root does not change the order |
+
+## Interview problems
+
+Each solution starts with the mathematics: say which position in sorted order is wanted, then find it without sorting.
+
+### 1. LeetCode 215: Kth Largest Element in an Array (Medium)
+
+**Problem.** Return the $k$-th largest element of `nums`, counting duplicates, without sorting. For `[3, 2, 1, 5, 6, 4]` and $k = 2$ the answer is 5.
+
+**Math first.** The $k$-th largest is the $(n - k)$-th smallest in 0-based positions, because exactly $k - 1$ values come after it in sorted order:
+
+$$
+\text{kth largest}(A, k) = \operatorname{sort}(A)[\,n - k\,]
+$$
+
+where:
+
+- $n$ is the length of the array;
+- $\operatorname{sort}(A)[t]$ is the value at 0-based position $t$ of the sorted array;
+- quickselect finds that value without sorting.
+
+Example: $n = 6$ and $k = 2$, so $t = 6 - 2 = 4$. Sorted, the array is $[1, 2, 3, 4, 5, 6]$, and position 4 holds **5**. Suppose the random pivot is 4: the three-way split gives $\lbrace 3, 2, 1 \rbrace$, then $\lbrace 4 \rbrace$ at position 3, then $\lbrace 5, 6 \rbrace$. Since $4 > 3$, keep the right part; with pivot 5 the target position 4 falls in the "equal" block, so the answer is 5.
+
+**Idea.** Convert $k$ to a 0-based target and call `select` from Level 5, which uses a random pivot and a three-way split. Inputs with long runs of equal values make a plain Lomuto partition quadratic, so the three-way split matters here.
+
+```java
+static int findKthLargest(int[] nums, int k) {
+    return select(nums.clone(), nums.length - k, new Random(42));   // k-th largest = (n - k)-th smallest
+}
+```
+
+**Answer.** 5 for the example, and 4 for `[3, 2, 3, 1, 2, 4, 5, 5, 6]` with $k = 4$. Expected time $O(n)$: for $n = 10^5$, at most $8 \times 10^5$ comparisons on average and typically fewer. Worst case $O(n^2)$ with vanishing probability. Extra space $O(n)$ for the copy, or $O(1)$ if modifying the input is allowed.
+
+### 2. LeetCode 973: K Closest Points to Origin (Medium)
+
+**Problem.** Given points $(x_i, y_i)$ and $k$, return the $k$ points closest to $(0, 0)$, in any order. For $(3, 3), (5, -1), (-2, 4)$ and $k = 2$ the answer is $(3, 3)$ and $(-2, 4)$.
+
+**Math first.** Compare squared distances, which have the same order as distances because $\sqrt{\cdot}$ is increasing:
+
+$$
+d^2(x, y) = x^2 + y^2, \qquad \text{answer} = \text{the } k \text{ points with the smallest } d^2
+$$
+
+where:
+
+- $(x, y)$ is a point and $d^2$ its squared distance from the origin;
+- "the $k$ smallest" is a selection problem: partition until the boundary between position $k - 1$ and position $k$ is in place.
+
+Example: $d^2(3, 3) = 9 + 9 = 18$, $d^2(5, -1) = 25 + 1 = 26$ and $d^2(-2, 4) = 4 + 16 = 20$. One Lomuto partition with pivot $(-2, 4)$, $d^2 = 20$: 18 is smaller and moves left, 26 stays right, and the pivot lands at index $1 = k - 1$. So the first two slots hold $(3, 3)$ and $(-2, 4)$.
+
+**Idea.** Run quickselect on the points, ordered by $d^2$, until the pivot lands at index $k - 1$. Everything before it is closer, so the first $k$ slots are the answer.
+
+```java
+static int[][] kClosest(int[][] points, int k) {
+    int[][] a = points.clone();
+    int lo = 0, hi = a.length - 1;
+    while (lo < hi) {                               // stop once the first k slots hold the k closest
+        int p = partitionByDistance(a, lo, hi);
+        if (p == k - 1) break;
+        if (k - 1 < p) hi = p - 1; else lo = p + 1;
+    }
+    return Arrays.copyOf(a, k);
+}
+
+static int partitionByDistance(int[][] a, int lo, int hi) {   // Lomuto on squared distance
+    int pivot = squaredDistance(a[hi]), store = lo;
+    for (int j = lo; j < hi; j++) {
+        if (squaredDistance(a[j]) < pivot) swap(a, store++, j);
+    }
+    swap(a, store, hi);
+    return store;
+}
+
+static int squaredDistance(int[] point) {           // x^2 + y^2: same order as the distance, no sqrt
+    return point[0] * point[0] + point[1] * point[1];
+}
+```
+
+**Answer.** $(3, 3)$ and $(-2, 4)$ for the example, and $(-2, 2)$ for $(1, 3), (-2, 2)$ with $k = 1$. With coordinates up to $10^4$, $d^2 \le 2 \times 10^8$ fits in `int`. Expected time $O(n)$, against $O(n \log n)$ for sorting and $O(n \log k)$ for a heap. This version uses the last point as the pivot; for $n \le 10^4$ even the worst case is $5 \times 10^7$ comparisons, and a random swap before each partition removes it. Space $O(n)$ for the copy.
+
+### 3. LeetCode 719: Find K-th Smallest Pair Distance (Hard)
+
+**Problem.** The distance of a pair is $\lvert a_i - a_j \rvert$. Given $n \le 10^4$ values in $[0, 10^6]$ and $k$, return the $k$-th smallest distance among all $\frac{n(n-1)}{2}$ pairs. For `[1, 3, 6, 10]` and $k = 3$ the answer is 4.
+
+**Math first.** This is a selection problem, the $k$-th smallest of $N = \frac{n(n-1)}{2}$ values, but those values are never stored. For $n = 10^4$ there are $49{,}995{,}000$ pairs, about 200 MB as `int`s, so quickselect on them is out. Instead, **select by value**. Sort the array and count how many pairs are within a distance $d$:
+
+$$
+C(d) = \sum_{j} \#\lbrace i < j : a_j - a_i \le d \rbrace, \qquad \text{answer} = \min \lbrace d : C(d) \ge k \rbrace
+$$
+
+where:
+
+- $a$ is the sorted array, so $a_j - a_i = \lvert a_j - a_i \rvert$ for $i < j$;
+- $C(d)$ is the *rank* of the value $d$: how many pair distances are at most $d$;
+- $C$ never decreases as $d$ grows, so the smallest $d$ with $C(d) \ge k$ can be found by binary search over $d \in [0, a_{n-1} - a_0]$.
+
+This is the same question quickselect answers, "which value has rank $k$?", but asked of a value instead of a position. Counting $C(d)$ plays the role of a partition step: it tells us how many values fall at or below $d$, without moving them.
+
+Example: $a = [1, 3, 6, 10]$, $k = 3$. The six distances are $2, 5, 9, 3, 7, 4$, sorted $2, 3, 4, 5, 7, 9$, so the answer should be 4. The binary search runs on $[0, 9]$:
+
+- $d = 4$: pairs within 4 are $(1, 3)$, $(3, 6)$ and $(6, 10)$, so $C(4) = 3 \ge 3$; keep $[0, 4]$.
+- $d = 2$: only $(1, 3)$, so $C(2) = 1 < 3$; keep $[3, 4]$.
+- $d = 3$: $(1, 3)$ and $(3, 6)$, so $C(3) = 2 < 3$; keep $[4, 4]$.
+
+The answer is **4**.
+
+**Idea.** Sort. Binary search $d$. To count $C(d)$ in $O(n)$, slide two pointers: for each $j$, move $i$ forward until $a_j - a_i \le d$; then the $j - i$ pairs $(i, j), \dots, (j - 1, j)$ all qualify, and $i$ never moves back.
+
+```java
+static int smallestDistancePair(int[] nums, int k) {
+    int[] a = nums.clone();
+    Arrays.sort(a);
+    int lo = 0, hi = a[a.length - 1] - a[0];
+    while (lo < hi) {                               // smallest d with pairsWithin(d) >= k
+        int mid = (lo + hi) / 2;
+        if (pairsWithin(a, mid) >= k) hi = mid; else lo = mid + 1;
+    }
+    return lo;
+}
+
+static long pairsWithin(int[] sorted, int d) {      // pairs i < j with sorted[j] - sorted[i] <= d
+    long count = 0;
+    for (int i = 0, j = 0; j < sorted.length; j++) {
+        while (sorted[j] - sorted[i] > d) i++;
+        count += j - i;
+    }
+    return count;
+}
+```
+
+**Answer.** 4 for the traced example, and 0, 0 and 5 for LeetCode's examples; the lab also checks 300 random arrays against listing every pair. The cost is one sort, $O(n \log n)$, plus about $\log_2 10^6 \approx 20$ rounds of a $2n$-step count. For $n = 10^4$ that is about $1.3 \times 10^5 + 20 \times 2 \times 10^4 = 5.3 \times 10^5$ steps, instead of $5 \times 10^7$ pairs. Space $O(n)$ for the sorted copy.
+
+## Mathematical Abstraction
+
+Selection asks for the value of a given **rank**, and quickselect finds it with a cost that is linear on average:
+
+$$
+\operatorname{select}(A, t) = x \;\text{ such that }\; \#\lbrace a \in A : a < x \rbrace \le t < \#\lbrace a \in A : a \le x \rbrace, \qquad E[\text{comparisons}] \le 8n
+$$
+
+where:
+
+- $t$ is the 0-based rank wanted, and $\#\lbrace \dots \rbrace$ counts elements of $A$, with duplicates;
+- the two counts bracket $t$: fewer than $t + 1$ values are strictly smaller than $x$, and at least $t + 1$ values are at most $x$;
+- the bound $8n$ holds on average over random pivots, for every input.
+
+Example: in $[7, 2, 9, 4, 1, 5]$ with $t = 1$, the value $x = 2$ has $\#\lbrace a < 2 \rbrace = 1$ (just the 1) and $\#\lbrace a \le 2 \rbrace = 2$, and $1 \le 1 < 2$, so $\operatorname{select}(A, 1) = 2$, the second smallest, found in 8 comparisons. LeetCode 719 uses the same definition, with $C(d)$ playing the role of $\#\lbrace a \le x \rbrace$: $C(3) = 2 < 3 \le C(4) = 3$, so the 3rd smallest distance is 4.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 9, "Medians and Order Statistics", Section 9.2 "Selection in expected linear time" and Section 9.3 "Selection in worst-case linear time"; and Chapter 7, "Quicksort", Section 7.1, for the Lomuto `PARTITION` procedure.
+- C. A. R. Hoare, "Algorithm 65: Find", *Communications of the ACM* 4(7), 1961, published on the same page as his quicksort.
+- Manuel Blum, Robert W. Floyd, Vaughan Pratt, Ronald L. Rivest and Robert E. Tarjan, "Time bounds for selection", *Journal of Computer and System Sciences* 7(4), 1973.
+- Jeff Erickson, *Algorithms* (2019), Chapter 1 "Recursion", section "Linear-Time Selection": <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 3, *Sorting and Searching*, 2nd edition (1998), Section 5.2.2, exercise 32, on the average cost of Hoare's `FIND`.
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, Section 2.3 "Quicksort", including Dijkstra's three-way partitioning: <https://algs4.cs.princeton.edu/23quicksort/>; and Section 2.5, "Median and order statistics", with `Quick.select`: <https://algs4.cs.princeton.edu/25applications/>.
+- Edsger W. Dijkstra, *A Discipline of Programming* (Prentice-Hall, 1976), the Dutch national flag problem.
+- LeetCode: [215. Kth Largest Element in an Array](https://leetcode.com/problems/kth-largest-element-in-an-array/), [973. K Closest Points to Origin](https://leetcode.com/problems/k-closest-points-to-origin/), [719. Find K-th Smallest Pair Distance](https://leetcode.com/problems/find-k-th-smallest-pair-distance/).
+
+[← Meet in the Middle](../meet-in-the-middle/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Simulation →](../simulation/index.qmd)

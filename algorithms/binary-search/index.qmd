@@ -1,100 +1,420 @@
 ---
 title: "Binary Search"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "From the number-guessing game to interview level: the half-open [lo, hi) invariant, the overflow-safe midpoint, the exact step count, lower and upper bounds, binary search on the answer, and hard problems (rotated arrays, splitting an array, the median of two sorted arrays) solved math-first."
 ---
 
-## Start with the problem, not a formula
+Binary search finds a value in a **sorted** array by looking at the middle and throwing away the half that cannot contain it. Each look halves the problem, so a million elements need only 20 looks. This lesson builds the search from a guessing game, makes it correct with one invariant, counts its steps exactly, and then turns it into a general tool: searching for the *first place where something becomes true*.
 
-**LeetCode 35 — Search Insert Position**. Locate a boundary using a monotone predicate on an ordered domain.
+All code is in [`BinarySearchLab.java`](BinarySearchLab.java). Run it from this folder with `java BinarySearchLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+A shop lists 8 prices in increasing order:
 
-Scanning 100,000 sorted entries from left to right ignores the fact that the values are already ordered.
+```text
+index:  0   1   2   3   4   5   6   7
+price:  3   8   15  21  30  42  57  64
+```
 
-## Discover the key idea
+A customer asks: "Do you have something that costs 42?"
 
-Search for the FIRST position where a monotone predicate becomes true, rather than vaguely 'searching for a number'. Keep [left,right) as the only possible location.
+- Reading the list from the left checks up to 8 prices. For a catalogue of 1,000,000 prices that is up to 1,000,000 checks.
+- The list is **sorted**, and reading from the left ignores that. If the middle price is 30 and we want 42, then every price left of 30 is also too small. One look rules out half the list.
+- Binary search uses this to answer in 3 looks here, and in at most 20 looks for a million prices.
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+## Explain it like I'm ten
 
-## Mathematical model — then immediately translate it
+::: {.callout-tip}
+I am thinking of a number between 1 and 100. You guess, and I only say "higher" or "lower".
+
+A bad player guesses 1, 2, 3, ... and may need 100 guesses. A clever player always guesses **the middle of what is still possible**: 50 ("higher"), then 75 ("lower"), then 62, and so on. Every answer throws away half of the numbers that are left, so after 7 guesses only one number can remain, because $2^7 = 128$ is more than 100.
+
+Looking up a word in a paper dictionary works the same way: you open it near the middle, see whether your word comes before or after, and never look at the wrong half again.
+
+Aditya Bhargava's *Grokking Algorithms* opens Chapter 1 with exactly this guessing game. And the idea is easier to say than to code: Jon Bentley asked professional programmers to write a binary search in his courses, and only about one in ten got it right ("Writing Correct Programs", *Communications of the ACM*, 1983, later in *Programming Pearls*). The invariant in Level 1 is what makes it right.
+:::
+
+## From simple to advanced
+
+### Level 1: the half-open range and its invariant
+
+Keep two indices, `lo` and `hi`, and promise one thing at all times:
 
 $$
-P(i)=[a_i\geq x],\qquad m=l+\lfloor(r-l)/2\rfloor
+\text{target} \in a \implies \text{target} \in \lbrace a_{lo}, a_{lo+1}, \dots, a_{hi-1} \rbrace, \qquad \text{size} = hi - lo
 $$
 
-**Explanation of every symbol:** P(i) is true when array entry a_i is at least target x. l is the current inclusive left boundary, r is exclusive right, m is its middle index, and floor means round down.
+where:
 
-**Substitute actual values:** In a=[1,3,3,6] with target x=3, start [l,r)=[0,4) and m=2. Since a₂=3 qualifies, set r=2. Now m=1 and a₁=3 qualifies, so r=1. Now m=0 and a₀=1 does not qualify, so l=1. Answer is index 1.
+- $a_0, \dots, a_{n-1}$ is the sorted array and $n$ its length;
+- $[lo, hi)$ is a *half-open* range: it includes index $lo$ and stops just before index $hi$;
+- $\implies$ means "if ... then ...": if the target is anywhere in the array, it is inside the range;
+- the size $hi - lo$ counts the indices still in play. The range is empty when $lo = hi$.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: at the start $lo = 0$ and $hi = 8$, so the range is all $8 - 0 = 8$ prices. The promise holds trivially. Looking at the middle, index 4, shows 30. Since $30 < 42$ and the array is sorted, $a_0, \dots, a_4$ are all at most 30, so the target is not among them, and setting $lo = 5$ keeps the promise. The range now has $8 - 5 = 3$ indices.
 
-## Work through the algorithm
-
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
-
-**Why this is correct:** Everything strictly left of l is known too small; everything at/after r is already known to qualify. A middle comparison discards half without discarding the true boundary.
-
-## Actual code — keep it small
-
-The original [Node.js example library](../examples/patterns.mjs) implements this technique as `lowerBound` and tests it against boundary cases:
-
-~~~js
-import { lowerBound } from '../examples/patterns.mjs';
-
-console.log(lowerBound([1,3,3,6],3));
-~~~
-
-Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function lowerBound(a, target) {
-  let l = 0, r = a.length;
-  while (l < r) {
-    const mid = l + Math.floor((r - l) / 2);
-    if (a[mid] < target) l = mid + 1;
-    else r = mid;
-  }
-  return l;
+```java
+static int search(int[] a, int target) {
+    int lo = 0, hi = a.length;                 // if target is in a, it is in a[lo..hi-1]
+    while (lo < hi) {                          // the range still holds something
+        int mid = lo + (hi - lo) / 2;
+        if (a[mid] == target) return mid;
+        if (a[mid] < target) lo = mid + 1;     // a[lo..mid] are all too small
+        else hi = mid;                         // a[mid..hi-1] are all too big
+    }
+    return -1;
 }
-~~~
+```
 
-**Walk through the important lines:**
+The full trace for 42:
 
-1. `l` and `r` delimit a **half-open** candidate interval. Initially the answer may be anywhere from index zero through array length.
-2. `mid` divides the interval. If `a[mid] < target`, the entire left portion is impossible, so advance `l` beyond `mid`.
-3. Otherwise keep `mid` as a possible first qualifying index and set `r = mid`.
-4. When `l === r`, the boundary has been located. For `[1,3,3,6]` and target `3`, the result is index **1**, not 2.
+| Step | $lo$ | $hi$ | $mid = lo + \lfloor (hi - lo)/2 \rfloor$ | $a_{mid}$ | Decision |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0 | 8 | $0 + 4 = 4$ | 30 | $30 < 42$, so $lo = 5$ |
+| 2 | 5 | 8 | $5 + 1 = 6$ | 57 | $57 > 42$, so $hi = 6$ |
+| 3 | 5 | 6 | $5 + 0 = 5$ | 42 | found, return 5 |
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+The range shrank from 8 to 3 to 1. This function is exactly LeetCode 704, *Binary Search* (Easy).
 
-## Analyse the work; do not guess big-O
+Why half-open? Because the two updates are then `lo = mid + 1` and `hi = mid`, and both remove `mid` itself. The loop condition `lo < hi` means "the range is not empty". The length of $[lo, hi)$ is simply $hi - lo$, with no "+ 1" to forget.
 
-**Cost:** O(log n) comparisons, where n is sorted array length; with n=16 there are at most around 5 halving decisions.
+### Level 2: the midpoint, and a bug that hid for decades
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+The obvious midpoint is `(lo + hi) / 2`. In Java an `int` holds at most $2^{31} - 1$, and a larger sum silently **wraps around** to a negative number:
 
-## Break the technique deliberately
+$$
+\text{mid}_{\text{naive}} = \left\lfloor \frac{lo + hi}{2} \right\rfloor, \qquad \text{mid}_{\text{safe}} = lo + \left\lfloor \frac{hi - lo}{2} \right\rfloor
+$$
 
-Using <= rather than < changes lower_bound into upper_bound. Off-by-one mistakes usually come from changing between inclusive and half-open intervals mid-loop.
+where:
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+- $\lfloor x \rfloor$ rounds $x$ down to a whole number, which is what Java's integer `/` does for non-negative numbers;
+- both formulas give the same value in exact arithmetic;
+- in 32-bit arithmetic, $lo + hi$ can exceed $2^{31} - 1 = 2{,}147{,}483{,}647$, but $hi - lo$ never can, because $0 \le lo \le hi$.
 
-## Source connections and practice
+Example: $lo = 1{,}500{,}000{,}000$ and $hi = 2{,}000{,}000{,}000$.
 
-**Textbook:** CLRS 4e, Chapter 2 (elementary algorithm design) and Chapter 3 (running times).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Naive: $lo + hi = 3{,}500{,}000{,}000$ does not fit. It wraps to $3{,}500{,}000{,}000 - 2^{32} = 3{,}500{,}000{,}000 - 4{,}294{,}967{,}296 = -794{,}967{,}296$, and half of that is $-397{,}483{,}648$. Using it as an index throws `ArrayIndexOutOfBoundsException`.
+- Safe: $1{,}500{,}000{,}000 + \lfloor 500{,}000{,}000 / 2 \rfloor = 1{,}750{,}000{,}000$, the correct middle.
 
-**LeetCode problem:** LeetCode 35 — Search Insert Position. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/discuss/post/2371234/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+```java
+static int naiveMid(int lo, int hi) {
+    return (lo + hi) / 2;                      // lo + hi can pass 2^31 - 1 and wrap negative
+}
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+static int safeMid(int lo, int hi) {
+    return lo + (hi - lo) / 2;                 // hi - lo always fits in an int
+}
+```
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+This is no thought experiment. In 2006 Joshua Bloch reported that `java.util.Arrays.binarySearch`, which he had written, contained the naive line and failed on arrays of about $2^{30}$ (a billion) elements. So did the binary search in Bentley's *Programming Pearls*. The JDK now uses `(low + high) >>> 1`, an unsigned shift that reads the wrapped sum correctly; `lo + (hi - lo) / 2` is the version that is safe in every language.
+
+### Level 3: exactly how many steps
+
+After a probe at `mid`, the range of size $s$ splits into a left part of $\lfloor s/2 \rfloor$ elements and a right part of $s - \lfloor s/2 \rfloor - 1 \le \lfloor s/2 \rfloor$ elements. So in the worst case the size goes $s \to \lfloor s/2 \rfloor$, and the number of probes is
+
+$$
+P(n) = \lfloor \log_2 n \rfloor + 1 = \lceil \log_2 (n + 1) \rceil
+$$
+
+where:
+
+- $P(n)$ is the largest number of array elements the search ever looks at, for an array of $n$ elements (target present or not);
+- $\log_2 n$ is the power you must raise 2 to in order to get $n$; for example $\log_2 8 = 3$;
+- $\lceil x \rceil$ rounds up and $\lfloor x \rfloor$ rounds down.
+
+Example:
+
+| $n$ | Sizes in the worst case | $\lceil \log_2(n + 1) \rceil$ | $P(n)$ |
+| --- | --- | --- | --- |
+| 8 | $8 \to 4 \to 2 \to 1 \to 0$ | $\lceil \log_2 9 \rceil = \lceil 3.17 \rceil = 4$ | 4 |
+| 100 | $100 \to 50 \to 25 \to 12 \to 6 \to 3 \to 1 \to 0$ | $\lceil \log_2 101 \rceil = \lceil 6.66 \rceil = 7$ | 7 |
+| 1,000,000 | | $\lceil 19.93 \rceil = 20$ | 20 |
+| 1,000,000,000 | | $\lceil 29.90 \rceil = 30$ | 30 |
+
+A linear scan of a billion elements may need a billion looks; binary search needs 30. The lab runs the search for every possible target in arrays of 8 and 100 elements and confirms that the worst cases are exactly 4 and 7.
+
+```java
+static int worstProbes(int n) {
+    int probes = 0;
+    while (n > 0) {
+        n /= 2;
+        probes++;
+    }
+    return probes;
+}
+```
+
+### Level 4: lower bound and upper bound
+
+With duplicates, "is 2 here?" is less useful than "**where do the 2s start and end?**". Rewrite the question as a yes/no test on each index:
+
+$$
+\text{lower}(x) = \min \lbrace i : a_i \ge x \rbrace, \qquad \text{upper}(x) = \min \lbrace i : a_i > x \rbrace, \qquad \text{count}(x) = \text{upper}(x) - \text{lower}(x)
+$$
+
+where:
+
+- $\min \lbrace i : \dots \rbrace$ is the smallest index that passes the test, or $n$ if none does;
+- $\text{lower}(x)$ is the first index whose value is at least $x$: it is also where $x$ should be inserted to keep the array sorted;
+- $\text{upper}(x)$ is the first index whose value is greater than $x$;
+- the copies of $x$ occupy exactly the half-open range $[\text{lower}(x), \text{upper}(x))$.
+
+Example: $a = [1, 2, 2, 2, 5, 7]$ and $x = 2$.
+
+- The test $a_i \ge 2$ gives `F T T T T T`, so $\text{lower}(2) = 1$.
+- The test $a_i > 2$ gives `F F F F T T`, so $\text{upper}(2) = 4$.
+- $\text{count}(2) = 4 - 1 = 3$ copies, at indices 1, 2 and 3.
+- For an absent value, $\text{lower}(4) = 4$: 4 belongs just before the 5.
+
+Because the array is sorted, each test is **monotone**: all `F` first, then all `T`. Binary search finds the first `T` without ever stopping early:
+
+```java
+static int lowerBound(int[] a, int x) {        // first index i with a[i] >= x, or a.length
+    int lo = 0, hi = a.length;
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (a[mid] < x) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+```
+
+`upperBound` is the same with `a[mid] <= x` in place of `a[mid] < x`. These two functions solve LeetCode 35 (*Search Insert Position*) and LeetCode 34 (*Find First and Last Position of Element in Sorted Array*); Java's own `Arrays.binarySearch` returns *some* matching index, not necessarily the first.
+
+### Level 5: binary search on the answer
+
+The array was never essential. Binary search needs only a **monotone yes/no question** over a range of whole numbers:
+
+$$
+P(v) \implies P(v + 1) \ \text{ for all } v, \qquad v^{\ast} = \min \lbrace v \in [\ell, h] : P(v) \rbrace
+$$
+
+where:
+
+- $v$ is a candidate answer, a whole number between a low guess $\ell$ and a high guess $h$;
+- $P(v)$ is a yes/no test such as "is $v$ big enough?";
+- the first part says that once the answer is "yes", it stays "yes" for every bigger $v$;
+- $v^{\ast}$ is the smallest candidate that passes; we choose $h$ so that $P(h)$ is surely true.
+
+Example: what is the smallest side $s$ of a square that holds at least 30 tiles? The test is $P(s) = (s^2 \ge 30)$, false for $s = 5$ (25 tiles) and true for $s = 6$ (36 tiles). Searching $[0, 30]$:
+
+- $mid = 15$: $225 \ge 30$, true, so $h = 15$;
+- $mid = 7$: $49 \ge 30$, true, so $h = 7$;
+- $mid = 3$: $9 < 30$, false, so $\ell = 4$;
+- $mid = 5$: $25 < 30$, false, so $\ell = 6$. Now $\ell = h = 6$, and $v^{\ast} = 6$.
+
+```java
+static long firstTrue(long lo, long hi, LongPredicate ok) {
+    while (lo < hi) {
+        long mid = lo + (hi - lo) / 2;
+        if (ok.test(mid)) hi = mid;            // mid works, so the first true is mid or to its left
+        else lo = mid + 1;                     // mid fails, and so does everything to its left
+    }
+    return lo;
+}
+```
+
+The lab calls it as `firstTrue(0, 30, side -> side * side >= 30)`. Many "minimise the maximum" problems become easy this way: guess the answer, check it greedily, and let binary search choose the next guess. Interview problem 2 is one of them.
+
+## Why it works and what it costs
+
+**Correctness.** The invariant is the promise from Level 1: *if the target is in the array, it is in $a[lo..hi-1]$.*
+
+- *Initially* $lo = 0$ and $hi = n$: the range is the whole array, so the promise holds.
+- *Each step keeps it.* If $a_{mid} < \text{target}$, then by sortedness $a_{lo}, \dots, a_{mid}$ are all smaller than the target, so moving $lo$ to $mid + 1$ discards nothing useful. If $a_{mid} > \text{target}$, then $a_{mid}, \dots, a_{hi-1}$ are all too big, so $hi = mid$ is safe.
+- *It terminates.* Since $lo \le mid < hi$, both updates make $hi - lo$ strictly smaller. A whole number that keeps shrinking cannot stay positive forever.
+- *Therefore* when the loop ends with $lo = hi$ the range is empty, so by the promise the target is not in the array, and `-1` is the right answer.
+
+For `firstTrue` the invariant is: *$P(hi)$ is true, and $P$ is false for every value below $lo$.* When $lo = hi$, that value is the first true one.
+
+**Costs.**
+
+| Operation | Time | Extra space | On the examples |
+| --- | --- | --- | --- |
+| `search`, `lowerBound`, `upperBound` | $O(\log n)$ | $O(1)$ | at most 4 probes for 8 prices |
+| `firstTrue` over $[\ell, h]$ | $O(\log(h - \ell + 1))$ tests | $O(1)$ | 4 tests to find the side 6 |
+| linear scan | $O(n)$ | $O(1)$ | up to 8 looks for 8 prices |
+
+The array must already be sorted. Sorting costs $O(n \log n)$, so binary search pays off when you search the same array many times.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `mid = (lo + hi) / 2` | Negative index and a crash on arrays of about $2^{30}$ elements | `lo + (hi - lo) / 2`, or `(lo + hi) >>> 1` in Java |
+| Mixing conventions: `while (lo <= hi)` with `hi = mid` | Infinite loop once `lo == hi == mid` | Pick one convention: half-open uses `lo < hi` and `hi = mid`; closed uses `lo <= hi` and `hi = mid - 1` |
+| `lo = mid` instead of `lo = mid + 1` | Infinite loop when `hi = lo + 1`, because `mid` equals `lo` | Always remove `mid` from the range after testing it |
+| Searching an unsorted array | Wrong answers, with no error | Sort first, or use a hash set |
+| A test that is not monotone in Level 5 | The answer is some point where the test flips, not the first one | Prove $P(v) \implies P(v+1)$ before coding |
+| Returning `lo` from `lowerBound` as "found" | Claims that an absent value is present | Check `lo < n && a[lo] == x` |
+
+## Interview problems
+
+Each solution starts with the mathematics: name the monotone fact, and the code follows.
+
+### 1. LeetCode 33: Search in Rotated Sorted Array (Medium)
+
+**Problem.** A sorted array of distinct numbers was rotated: some prefix was moved to the end. Find the index of `target` in $O(\log n)$ time, or return $-1$. For `[4, 5, 6, 7, 0, 1, 2]` and target 0 the answer is 4.
+
+**Math first.** Cutting a rotated array at any $mid$ leaves **at least one sorted half**, and comparing the two ends of a half tells which:
+
+$$
+a_{lo} \le a_{mid} \implies a_{lo..mid} \text{ is sorted}, \qquad \text{otherwise } a_{mid..hi} \text{ is sorted}
+$$
+
+where:
+
+- $a_{lo..mid}$ means the elements from index $lo$ to index $mid$, both included;
+- the rotation point (where a big number is followed by a small one) can be in only one of the two halves;
+- inside a sorted half, "is the target here?" is answered by its two end values: $a_{lo} \le t < a_{mid}$ for the left half, or $a_{mid} < t \le a_{hi}$ for the right half, where $t$ is the target.
+
+Example: $a = [4, 5, 6, 7, 0, 1, 2]$, $t = 0$.
+
+- $lo = 0$, $hi = 6$, $mid = 3$, $a_3 = 7$. Since $a_0 = 4 \le 7$, the left half $[4, 5, 6, 7]$ is sorted. Is $4 \le 0 < 7$? No, so $lo = 4$.
+- $lo = 4$, $hi = 6$, $mid = 5$, $a_5 = 1$. Since $a_4 = 0 \le 1$, the left half $[0, 1]$ is sorted. Is $0 \le 0 < 1$? Yes, so $hi = 4$.
+- $lo = hi = 4$, $mid = 4$, $a_4 = 0$: found at index **4**.
+
+**Idea.** Find the sorted half, check whether the target lies between its ends, and keep that half or the other one. This uses the closed range $[lo, hi]$ because the right-half test reads $a_{hi}$.
+
+```java
+static int searchRotated(int[] a, int target) {
+    int lo = 0, hi = a.length - 1;             // closed range [lo, hi]: a[hi] is compared below
+    while (lo <= hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (a[mid] == target) return mid;
+        if (a[lo] <= a[mid]) {                 // the left half a[lo..mid] is sorted
+            if (a[lo] <= target && target < a[mid]) hi = mid - 1;
+            else lo = mid + 1;
+        } else {                               // the right half a[mid..hi] is sorted
+            if (a[mid] < target && target <= a[hi]) lo = mid + 1;
+            else hi = mid - 1;
+        }
+    }
+    return -1;
+}
+```
+
+**Answer.** `searchRotated([4, 5, 6, 7, 0, 1, 2], 0) = 4` after 3 probes, and target 3 gives $-1$. Each probe halves the range, so the time is $O(\log n)$: at most $\lceil \log_2 8 \rceil = 3$ probes for these 7 elements. Space is $O(1)$.
+
+### 2. LeetCode 410: Split Array Largest Sum (Hard)
+
+**Problem.** Split an array of non-negative integers into $k$ non-empty contiguous pieces so that the largest piece sum is as small as possible, and return that sum. For `[7, 2, 5, 10, 8]` and $k = 2$ the answer is 18, from `[7, 2, 5]` and `[10, 8]`.
+
+**Math first.** Guess a cap $c$ on every piece sum. Let $\text{pieces}(c)$ be how many pieces you need if you fill each one greedily until the next number would pass $c$. A bigger cap never needs more pieces, so the test is monotone:
+
+$$
+c^{\ast} = \min \lbrace c \in [\max_i a_i, \textstyle\sum_i a_i] : \text{pieces}(c) \le k \rbrace
+$$
+
+where:
+
+- $c$ is a candidate for the largest piece sum;
+- $\max_i a_i$ is the smallest possible cap, since the biggest number must fit in some piece;
+- $\sum_i a_i$ is the largest cap anyone could need: one piece holding everything;
+- $\text{pieces}(c) \le k$ is the yes/no test; with fewer than $k$ pieces you can always split one further, because pieces only need to be non-empty.
+
+Example: $a = [7, 2, 5, 10, 8]$, $k = 2$, so $c \in [10, 32]$.
+
+- $\text{pieces}(18)$: $7 + 2 + 5 = 14$, adding 10 would make 24, so start a new piece: $10 + 8 = 18$. That is 2 pieces, which passes.
+- $\text{pieces}(17)$: again $14$, then $10 + 8 = 18 > 17$, so 8 needs a third piece. That is 3 pieces, which fails.
+
+So $c^{\ast} = 18$. Binary search reaches it with the tests $c = 21$ (pass), $15$ (fail), $18$ (pass) and $17$ (fail): 4 tests, within the bound $\lceil \log_2 23 \rceil = 5$ for the 23 candidates.
+
+**Idea.** Binary search the cap with Level 5's `firstTrue`, and answer each guess with one greedy pass.
+
+```java
+static int splitArray(int[] nums, int k) {
+    long lo = 0, hi = 0;
+    for (int x : nums) { lo = Math.max(lo, x); hi += x; }
+    return (int) firstTrue(lo, hi, cap -> piecesNeeded(nums, cap) <= k);
+}
+
+static int piecesNeeded(int[] nums, long cap) { // greedy: fill each piece as far as cap allows
+    int pieces = 1;
+    long sum = 0;
+    for (int x : nums) {
+        if (sum + x > cap) { pieces++; sum = 0; }
+        sum += x;
+    }
+    return pieces;
+}
+```
+
+**Answer.** `splitArray([7, 2, 5, 10, 8], 2) = 18`, and `splitArray([1, 2, 3, 4, 5], 2) = 9`. Each test is one $O(n)$ pass, and there are $O(\log S)$ tests, where $S = \sum_i a_i$: $O(n \log S)$ time and $O(1)$ space. Here that is 4 passes over 5 numbers.
+
+### 3. LeetCode 4: Median of Two Sorted Arrays (Hard)
+
+**Problem.** Given sorted arrays $A$ (length $m$) and $B$ (length $n$), return the median of all $m + n$ numbers in $O(\log(m + n))$ time. For $A = [1, 3, 8]$ and $B = [2, 7, 10, 11]$ the answer is 7.
+
+**Math first.** Do not merge. Instead, cut $A$ after $i$ elements and $B$ after $j$ elements so that the two left parts together hold half of everything:
+
+$$
+j = \left\lfloor \frac{m + n + 1}{2} \right\rfloor - i, \qquad \text{valid}(i) \iff A_{i-1} \le B_j \ \land\ B_{j-1} \le A_i
+$$
+
+where:
+
+- $i \in [0, m]$ is how many elements of $A$ go to the left side, and $j$ is how many from $B$;
+- $A_{-1} = B_{-1} = -\infty$ and $A_m = B_n = +\infty$, so a cut at either end always passes that side's test;
+- $\land$ means "and"; the cut is valid when everything on the left is at most everything on the right;
+- if $A_{i-1} > B_j$, then $i$ is too big; if $B_{j-1} > A_i$, then $i$ is too small. That is a monotone test, so binary search on $i$ works;
+- with a valid cut, the median is $\max(A_{i-1}, B_{j-1})$ when $m + n$ is odd, and the average of that and $\min(A_i, B_j)$ when it is even.
+
+Example: $m = 3$, $n = 4$, so the left side needs $\lfloor 8 / 2 \rfloor = 4$ elements.
+
+- $i = 1$, $j = 3$: left side $\lbrace 1 \rbrace \cup \lbrace 2, 7, 10 \rbrace$. Test $B_2 = 10 \le A_1 = 3$? No: too few from $A$, so search $i > 1$.
+- $i = 2$, $j = 2$: left side $\lbrace 1, 3 \rbrace \cup \lbrace 2, 7 \rbrace$. Test $A_1 = 3 \le B_2 = 10$, yes, and $B_1 = 7 \le A_2 = 8$, yes. Valid.
+- $m + n = 7$ is odd, so the median is $\max(3, 7) = \mathbf{7}$. Check: merged, the numbers are $1, 2, 3, 7, 8, 10, 11$, and the middle one is 7.
+
+**Idea.** Binary search $i$ over the shorter array, compute $j$ from it, and move left or right according to which half of the validity test fails.
+
+```java
+static double findMedianSortedArrays(int[] a, int[] b) {
+    if (a.length > b.length) return findMedianSortedArrays(b, a); // search the shorter array
+    int m = a.length, n = b.length, half = (m + n + 1) / 2;
+    int lo = 0, hi = m;
+    while (true) {
+        int i = lo + (hi - lo) / 2, j = half - i;         // a[0..i-1] and b[0..j-1] form the left side
+        int aLeft = i == 0 ? Integer.MIN_VALUE : a[i - 1];
+        int aRight = i == m ? Integer.MAX_VALUE : a[i];
+        int bLeft = j == 0 ? Integer.MIN_VALUE : b[j - 1];
+        int bRight = j == n ? Integer.MAX_VALUE : b[j];
+        if (aLeft > bRight) hi = i - 1;                   // took too many from a
+        else if (bLeft > aRight) lo = i + 1;              // took too few from a
+        else if ((m + n) % 2 == 1) return Math.max(aLeft, bLeft);
+        else return (Math.max(aLeft, bLeft) + (double) Math.min(aRight, bRight)) / 2;
+    }
+}
+```
+
+**Answer.** 7 for the example after 2 cuts, and 2.5 for $[1, 2]$ and $[3, 4]$ (the left side is $\lbrace 1, 2 \rbrace$, so $(2 + 3)/2 = 2.5$). The loop always ends, because a valid cut exists and every failed test shrinks $[lo, hi]$. Time is $O(\log \min(m, n))$: at most $\lceil \log_2 5 \rceil = 3$ cuts for the 4 candidates $i \in \lbrace 0, 1, 2, 3 \rbrace$ here. Space is $O(1)$.
+
+## Mathematical Abstraction
+
+Every binary search in this lesson finds the first point where a monotone test turns true:
+
+$$
+P : \lbrace \ell, \dots, h \rbrace \to \lbrace \text{false}, \text{true} \rbrace, \quad P(v) \implies P(v+1), \qquad v^{\ast} = \min \lbrace v : P(v) \rbrace, \qquad \text{tests} \le \lceil \log_2 (h - \ell + 1) \rceil
+$$
+
+where:
+
+- $\lbrace \ell, \dots, h \rbrace$ is the range of candidates: array indices, or possible answers;
+- $P$ is the yes/no test, and monotone means a "true" is never followed by a "false";
+- $v^{\ast}$ is the boundary we want, and the last part is the number of tests in the worst case.
+
+Example: for $a = [1, 2, 2, 2, 5, 7]$ and $P(i) = (a_i \ge 2)$ over the indices $0, \dots, 6$ (index 6 stands for "past the end"), the boundary is $v^{\ast} = 1$, found with at most $\lceil \log_2 7 \rceil = 3$ tests. With $P(s) = (s^2 \ge 30)$ the boundary is $s = 6$; with $P(c) = (\text{pieces}(c) \le 2)$ on $[7, 2, 5, 10, 8]$ it is $c = 18$. Classic search, insert positions, ranges of duplicates and "minimise the maximum" problems are all this one formula.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 2, "Getting Started", where binary search appears in the exercises, and Chapter 4, "Divide-and-Conquer", for recurrences such as $T(n) = T(n/2) + \Theta(1)$. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition: §1.1, with `BinarySearch.java`, <https://algs4.cs.princeton.edu/11model/>; and §3.1, binary search in an ordered symbol table, <https://algs4.cs.princeton.edu/31elementary/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 3, *Sorting and Searching*, §6.2.1, "Searching an Ordered Table".
+- Jon Bentley, "Programming Pearls: Writing Correct Programs", *Communications of the ACM* 26(12), 1983; collected in *Programming Pearls*, 2nd edition (Addison-Wesley, 2000).
+- Joshua Bloch, "Extra, Extra – Read All About It: Nearly All Binary Searches and Mergesorts are Broken", Google Research blog, 2 June 2006: <https://research.google/blog/extra-extra-read-all-about-it-nearly-all-binary-searches-and-mergesorts-are-broken/>.
+- Aditya Bhargava, *Grokking Algorithms* (Manning), Chapter 1, "Introduction to Algorithms": <https://livebook.manning.com/book/grokking-algorithms/chapter-1>.
+- LeetCode: [704. Binary Search](https://leetcode.com/problems/binary-search/), [35. Search Insert Position](https://leetcode.com/problems/search-insert-position/), [34. Find First and Last Position of Element in Sorted Array](https://leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array/), [33. Search in Rotated Sorted Array](https://leetcode.com/problems/search-in-rotated-sorted-array/), [410. Split Array Largest Sum](https://leetcode.com/problems/split-array-largest-sum/), [4. Median of Two Sorted Arrays](https://leetcode.com/problems/median-of-two-sorted-arrays/).
+
+[← Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Two Pointers →](../two-pointers/index.qmd)

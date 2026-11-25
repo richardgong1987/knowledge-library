@@ -1,102 +1,373 @@
 ---
 title: "Sliding Window"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "From a caterpillar on a branch to interview level: fixed and variable windows, the window invariant, why each index enters and leaves at most once (at most 2n moves), counting windows, the at-most-k trick, and hard problems (Minimum Window Substring, Subarrays with K Different Integers) solved math-first."
 ---
 
-## Start with the problem, not a formula
+A sliding window is a stretch of consecutive elements, `a[left..right]`, that moves along an array. Instead of recomputing everything for each new stretch, you **add the element that enters** on the right and **remove the element that leaves** on the left. This lesson starts with windows of a fixed size, then lets the window grow and shrink, and ends with counting windows and two hard problems.
 
-**LeetCode 3 — Longest Substring Without Repeating Characters**. Update a contiguous interval incrementally rather than rescanning it.
+All code is in [`SlidingWindowLab.java`](SlidingWindowLab.java). Run it from this folder with `java SlidingWindowLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+A museum counted its visitors for 6 days:
 
-Enumerating every substring and checking all its letters from scratch wastes the overlap between neighbouring substrings.
+```text
+day:       0   1   2   3   4   5
+visitors:  2   1   5   1   3   2
+```
 
-## Discover the key idea
+Which 3 days in a row had the most visitors?
 
-Keep one valid window. Expand right once; when a duplicate appears, move left only as far as needed to restore the invariant. Last-seen indices let left jump directly.
+- The obvious method adds up every 3-day stretch from scratch: 4 stretches of 3 numbers, so 12 additions. For 100,000 days and stretches of 1,000 days that is about 99 million additions.
+- Neighbouring stretches share almost everything. Days 0–2 and days 1–3 share days 1 and 2.
+- A sliding window updates the total with one addition and one subtraction per move: here 3 + 6 = 9 operations, and about 199,000 for the big case.
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+## Explain it like I'm ten
 
-## Mathematical model — then immediately translate it
+::: {.callout-tip}
+Watch a caterpillar crawl along a branch covered in leaves. Its **head** moves forward and eats a new leaf. When it has eaten too much, its **tail** moves forward and lets a leaf go. The head never moves backwards, and neither does the tail. So however long the branch, each leaf is eaten once and let go once.
+
+That is a sliding window: the head is `right`, the tail is `left`, and the leaves between them are the window. Codility's training lessons call exactly this the *caterpillar method*.
+
+Another picture: you sit on a train and count the houses you can see through the window. When the train moves, one house appears at the front and one disappears at the back. You do not count all the houses again; you add one and take one away.
+:::
+
+## From simple to advanced
+
+### Level 1: a fixed window
+
+A window of exactly $k$ elements moves one step at a time. Its sum changes by what enters and what leaves:
 
 $$
-l\leftarrow\max(l,\operatorname{last}(s_r)+1),\qquad L=r-l+1
+S_r = S_{r-1} + a_r - a_{r-k}
 $$
 
-**Explanation of every symbol:** l is the inclusive window start, r the new character index; last(s_r) is the previous position of that character if it was seen; L is the current valid length. If the character has never appeared, leave l unchanged.
+where:
 
-**Substitute actual values:** For 'abba': r=0 gives 'a', L=1. r=1 gives 'ab', L=2. r=2 sees a second 'b' last at 1, so l=max(0,2)=2 and the valid window becomes 'b', L=1. r=3 sees 'a' last at 0, but l=max(2,1)=2, keeping 'ba' with L=2.
+- $a_0, \dots, a_{n-1}$ are the values and $k$ is the window size;
+- $S_r$ is the sum of the window that **ends** at index $r$, that is $a_{r-k+1} + \dots + a_r$;
+- $a_r$ is the element that enters and $a_{r-k}$ the one that leaves.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: $a = [2, 1, 5, 1, 3, 2]$, $k = 3$.
 
-## Work through the algorithm
+- $S_2 = 2 + 1 + 5 = 8$, the first window, computed directly.
+- $S_3 = 8 + a_3 - a_0 = 8 + 1 - 2 = 7$.
+- $S_4 = 7 + a_4 - a_1 = 7 + 3 - 1 = 9$.
+- $S_5 = 9 + a_5 - a_2 = 9 + 2 - 5 = 6$.
 
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
+The best is $\max(8, 7, 9, 6) = 9$, for days 2–4.
 
-**Why this is correct:** After each iteration s[l..r] contains no repeated characters, and left never moves backwards. Every right index is processed once; left also only advances.
-
-## Actual code — keep it small
-
-The original [Node.js example library](../examples/patterns.mjs) implements this technique as `longestUniqueSubstring` and tests it against boundary cases:
-
-~~~js
-import { longestUniqueSubstring } from '../examples/patterns.mjs';
-
-console.log(longestUniqueSubstring('abba'));
-~~~
-
-Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function longestUniqueSubstring(s) {
-  let left = 0, best = 0;
-  const last = new Map();
-  for (let right = 0; right < s.length; right++) {
-    const old = last.get(s[right]);
-    if (old !== undefined && old >= left) left = old + 1;
-    last.set(s[right], right);
-    best = Math.max(best, right - left + 1);
-  }
-  return best;
+```java
+static int maxSumOfK(int[] a, int k) {
+    int sum = 0;
+    for (int i = 0; i < k; i++) sum += a[i];
+    int best = sum;
+    for (int right = k; right < a.length; right++) {
+        sum += a[right] - a[right - k];     // a[right] enters, a[right - k] leaves
+        best = Math.max(best, sum);
+    }
+    return best;
 }
-~~~
+```
 
-**Walk through the important lines:**
+The cost is $k$ additions for the first window and 2 operations for each of the other $n - k$ moves: $k + 2(n - k) = 3 + 6 = 9$ here, against $(n - k + 1) \cdot k = 4 \times 3 = 12$ for starting over each time. This is LeetCode 643, *Maximum Average Subarray I* (Easy), up to a division by $k$.
 
-1. `left` is the beginning of a valid substring; `right` is the newly examined character.
-2. `last` remembers the most recent index of each character. A duplicate matters **only if that previous index is inside the current window**.
-3. The `Math.max`-like monotonic effect comes from checking `old >= left` before moving `left = old + 1`; never move the left pointer backwards.
-4. `best` stores the maximum length encountered. For `abba`, the answer remains **2**, including after the second `b` forces the window to shrink.
+### Level 2: a window that grows and shrinks
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+Now the size is not given. Find the **shortest** stretch whose sum is at least a target (LeetCode 209, *Minimum Size Subarray Sum*). The right end moves forward one step at a time; while the window is valid, record it and pull the left end in to look for a shorter one.
 
-## Analyse the work; do not guess big-O
+This only works because the values are **positive**, which makes sums monotone:
 
-**Cost:** O(n) expected time and O(min(n,alphabet)) space; n is number of indexed characters. Each pointer moves at most n steps.
+$$
+a_i > 0 \implies \text{sum}(l, r) < \text{sum}(l, r + 1) \ \text{ and } \ \text{sum}(l + 1, r) < \text{sum}(l, r)
+$$
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+where:
 
-## Break the technique deliberately
+- $\text{sum}(l, r) = a_l + a_{l+1} + \dots + a_r$ is the window from $l$ to $r$, both included;
+- growing on the right makes the sum bigger, and shrinking on the left makes it smaller;
+- consequence: if the window starting at $l$ is valid when it ends at $r$, it stays valid for every later end. So the best start for a later end is never to the left of the best start for an earlier one, and `left` never has to move back.
 
-Do not use the same shrink rule for sum constraints with negative numbers: removing a negative value increases the sum. For LeetCode 560 use prefix sums and a frequency map, not a naive sum window.
+Example: $a = [2, 3, 1, 2, 4, 3]$, target 7.
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+| `right` | Value added | Window after adding | Sum | Valid windows recorded while shrinking | Best so far |
+| --- | --- | --- | --- | --- | --- |
+| 0–2 | 2, 3, 1 | `2 3 1` | 6 | none | — |
+| 3 | 2 | `2 3 1 2` | 8 | `2 3 1 2` (length 4) | 4 |
+| 4 | 4 | `3 1 2 4` | 10 | `3 1 2 4` (4), `1 2 4` (3) | 3 |
+| 5 | 3 | `2 4 3` | 9 | `2 4 3` (3), `4 3` (2) | **2** |
 
-## Source connections and practice
+The answer is 2, the window `[4, 3]`.
 
-**Textbook:** CLRS Chapter 2 loop invariants and Chapter 11 hash tables; sliding windows are not a named CLRS chapter.. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+```java
+static int shortestWithSumAtLeast(int[] a, int target) {   // every a[i] > 0
+    int left = 0, sum = 0, best = Integer.MAX_VALUE;
+    for (int right = 0; right < a.length; right++) {
+        sum += a[right];
+        while (sum >= target) {                     // valid: record it, then try a shorter one
+            best = Math.min(best, right - left + 1);
+            sum -= a[left++];
+        }
+    }
+    return best == Integer.MAX_VALUE ? 0 : best;
+}
+```
 
-**LeetCode problem:** LeetCode 3 — Longest Substring Without Repeating Characters. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/discuss/post/7077374/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+With a negative number the monotone rule breaks: adding $-5$ makes a longer window smaller. Then use prefix sums and a hash map instead, as in LeetCode 560 in the [Hash Table](../hash-table/index.qmd) lesson.
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+### Level 3: a window that keeps counts
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+Many windows must know **what** is inside them, not just a sum. Keep a map from each value to how many times it is in the window. Find the longest stretch of a string with at most $k$ different letters:
+
+$$
+\text{moves} = \underbrace{n}_{\texttt{right}\ \text{moves}} + \underbrace{\#\lbrace \texttt{left}\ \text{moves} \rbrace}_{\le\, n} \le 2n
+$$
+
+where:
+
+- $n$ is the length of the string;
+- `right` moves exactly once per index: every letter **enters** the window once;
+- `left` only moves forward and never passes `right`, so every letter **leaves** at most once;
+- $\#\lbrace \dots \rbrace$ means "how many", so the whole loop does at most $2n$ moves, even though it has a `while` inside a `for`.
+
+Example: `eceba` with $k = 2$.
+
+- `e`, `c`, `e` enter: counts $\lbrace e{:}2, c{:}1 \rbrace$, 2 kinds, window `ece` of length 3.
+- `b` enters: 3 kinds. `left` drops `e` (now $e{:}1$), still 3 kinds, then drops `c` (gone): window `eb`.
+- `a` enters: 3 kinds again; `left` drops `e`: window `ba`.
+
+The best is 3. `right` moved 5 times and `left` 3 times: $8 \le 2 \times 5 = 10$.
+
+```java
+static int longestWithAtMostKDistinct(String s, int k) {
+    Map<Character, Integer> count = new HashMap<>();
+    int left = 0, best = 0;
+    for (int right = 0; right < s.length(); right++) {
+        count.merge(s.charAt(right), 1, Integer::sum);
+        while (count.size() > k) {                  // too many kinds: drop letters from the left
+            char out = s.charAt(left++);
+            if (count.merge(out, -1, Integer::sum) == 0) count.remove(out);
+        }
+        best = Math.max(best, right - left + 1);
+    }
+    return best;
+}
+```
+
+Removing a letter whose count reaches 0 matters: otherwise `count.size()` would still count it as a kind in the window. LeetCode 904, *Fruit Into Baskets* (Medium), is this function with $k = 2$.
+
+### Level 4: counting windows, and "exactly" from "at most"
+
+Sometimes we want **how many** windows are valid. If shrinking a valid window always leaves it valid ("at most $k$ kinds" has this property), then once `left` is settled for a given `right`, *every* window ending at `right` and starting at or after `left` is valid:
+
+$$
+N_{\le k} = \sum_{r=0}^{n-1} (r - l_r + 1), \qquad N_{=k} = N_{\le k} - N_{\le k-1}
+$$
+
+where:
+
+- $l_r$ is the position of `left` after the window ending at $r$ has been made valid;
+- $r - l_r + 1$ counts the windows $a[l_r..r], a[l_r + 1..r], \dots, a[r..r]$;
+- $N_{\le k}$ is that count for the property "at most $k$ different values", and $N_{=k}$ is the number of windows with exactly $k$;
+- "exactly $k$" is not preserved by shrinking, so it cannot be counted directly. But a window with exactly $k$ kinds is one with at most $k$ kinds and not at most $k - 1$, which gives the subtraction.
+
+Example: $a = [1, 2, 1, 2, 3]$.
+
+- For $k = 2$: $l_r = 0, 0, 0, 0, 3$, so the count is $1 + 2 + 3 + 4 + 2 = 12$. (Check: there are 15 windows, and only `1 2 1 2 3`, `2 1 2 3` and `1 2 3` have 3 kinds; $15 - 3 = 12$.)
+- For $k = 1$: every window of length 1, and no longer one, so 5.
+- $N_{=2} = 12 - 5 = 7$.
+
+```java
+static int countAtMostKDistinct(int[] a, int k) {
+    Map<Integer, Integer> count = new HashMap<>();
+    int left = 0, total = 0;
+    for (int right = 0; right < a.length; right++) {
+        count.merge(a[right], 1, Integer::sum);
+        while (count.size() > k) {
+            int out = a[left++];
+            if (count.merge(out, -1, Integer::sum) == 0) count.remove(out);
+        }
+        total += right - left + 1;                  // the windows a[i..right] for i = left..right
+    }
+    return total;
+}
+```
+
+## Why it works and what it costs
+
+**The window invariant.** For a "longest" problem such as Level 3, the invariant is: *after processing `right`, the window `a[left..right]` is valid, and no valid window ending at `right` starts before `left`.*
+
+- *Why `left` never moves back:* the property is preserved by shrinking, and broken windows stay broken when they grow. If `a[l..r]` has too many kinds, so does `a[l..r']` for every $r' > r$, because adding letters never removes a kind. So a start that failed once can be thrown away for good.
+- *Why the answer is found:* the best window ends at some $r^{\ast}$. When `right` $= r^{\ast}$, the invariant says the code's window is the longest valid one ending there, so `best` records it.
+
+For a "shortest" problem such as Level 2, the roles swap: a valid window stays valid when it grows, so the code records it and then shrinks.
+
+**Costs.** Each index enters once and leaves at most once, so every version is linear. This is *aggregate* amortised analysis: one `while` may run many times, but all of them together are bounded by $n$.
+
+| Version | Moves | Time | Extra space | On the examples |
+| --- | --- | --- | --- | --- |
+| Fixed window (Level 1) | $n$ | $O(n)$ | $O(1)$ | 9 operations for 6 days |
+| Grow and shrink (Level 2) | $\le 2n$ | $O(n)$ | $O(1)$ | at most 12 moves for 6 values |
+| With counts (Levels 3, 4) | $\le 2n$ | $O(n)$ expected | $O(\sigma)$ | 8 moves for `eceba` |
+
+Here $\sigma$ is the number of different values that can be in the window, at most 26 for lowercase letters.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| A sum window over negative numbers | Misses answers: shrinking can raise the sum | Prefix sums with a hash map, or a monotonic deque |
+| Leaving zero counts in the map | `count.size()` overcounts the kinds, so the window shrinks too much | Remove a key when its count reaches 0 |
+| In LeetCode 3, jumping `left` to `last[c] + 1` without checking that it is ahead | `abba` gives 3 instead of 2, because `left` moves backwards | Only jump if `last[c] >= left` (that is, take the maximum) |
+| Window length as `right - left` | Every answer is one too short | Inclusive ends: `right - left + 1` |
+| Recording `best` before restoring validity in a "longest" problem | Reports an invalid, too-long window | Shrink first, then record |
+| Counting "exactly $k$" with one window | Undercounts, because "exactly" is not preserved by shrinking | `atMost(k) - atMost(k - 1)` |
+
+## Interview problems
+
+Each solution starts with the mathematics: what makes a window valid, and why can `left` only move forward?
+
+### 1. LeetCode 3: Longest Substring Without Repeating Characters (Medium)
+
+**Problem.** Return the length of the longest substring with no repeated character. For `abcabcbb` the answer is 3 (`abc`).
+
+**Math first.** Remember where each character was last seen. When character $s_r$ arrives and its previous copy is inside the window, the window must start just after that copy:
+
+$$
+l_r = \max\big(l_{r-1},\ \text{last}(s_r) + 1\big), \qquad \text{answer} = \max_r \,(r - l_r + 1)
+$$
+
+where:
+
+- $l_r$ is the left end of the window after reading index $r$, with $l_{-1} = 0$;
+- $\text{last}(s_r)$ is the last index before $r$ holding the same character, or $-1$ if there is none;
+- the $\max$ keeps $l$ from moving **backwards** when the old copy is already outside the window.
+
+Example: `abcabcbb`.
+
+| $r$ | $s_r$ | $\text{last}(s_r)$ | $l_r$ | Window | Length |
+| --- | --- | --- | --- | --- | --- |
+| 0, 1, 2 | `a`, `b`, `c` | $-1$ | 0 | `abc` | 1, 2, 3 |
+| 3 | `a` | 0 | $\max(0, 1) = 1$ | `bca` | 3 |
+| 4 | `b` | 1 | 2 | `cab` | 3 |
+| 5 | `c` | 2 | 3 | `abc` | 3 |
+| 6 | `b` | 4 | 5 | `cb` | 2 |
+| 7 | `b` | 6 | 7 | `b` | 1 |
+
+The best length is **3**. For `abba` at $r = 3$, $\text{last}(\texttt{a}) = 0$ but $l_2 = 2$, so $l_3 = \max(2, 1) = 2$ and the length is 2; without the $\max$ it would wrongly be 3.
+
+**Idea.** One pass. Jump `left` past the previous copy when that copy is in the window, then record the length.
+
+```java
+static int lengthOfLongestSubstring(String s) {
+    Map<Character, Integer> lastSeen = new HashMap<>();
+    int left = 0, best = 0;
+    for (int right = 0; right < s.length(); right++) {
+        char c = s.charAt(right);
+        if (lastSeen.getOrDefault(c, -1) >= left) left = lastSeen.get(c) + 1; // jump past the copy
+        lastSeen.put(c, right);
+        best = Math.max(best, right - left + 1);
+    }
+    return best;
+}
+```
+
+**Answer.** 3 for `abcabcbb`, 3 for `pwwkew` (`wke`), 1 for `bbbbb` and 2 for `abba`. Each character is read once: $O(n)$ time, 8 steps here, and $O(\sigma)$ space for the last-seen map.
+
+### 2. LeetCode 76: Minimum Window Substring (Hard)
+
+**Problem.** Given strings $s$ and $t$, return the shortest substring of $s$ that contains every character of $t$, with multiplicity. For $s = $ `ADOBECODEBANC` and $t = $ `ABC` the answer is `BANC`.
+
+**Math first.** Track how many characters of $t$ the window still lacks:
+
+$$
+\text{missing}(W) = \sum_{c} \max\big(0,\ \text{need}(c) - \text{have}_W(c)\big), \qquad W \text{ is valid} \iff \text{missing}(W) = 0
+$$
+
+where:
+
+- $W$ is the current window of $s$, and $c$ ranges over all characters;
+- $\text{need}(c)$ is how many times $c$ occurs in $t$, and $\text{have}_W(c)$ how many times it occurs in $W$;
+- surplus copies count as 0, so they never hide a shortage of another letter;
+- adding one character changes $\text{missing}$ by at most 1, so it can be updated in $O(1)$ per move.
+
+Example: $t = $ `ABC`, so $\text{need}(A) = \text{need}(B) = \text{need}(C) = 1$.
+
+- $W = $ `ADOBE` has $A$ and $B$ but no $C$: $\text{missing} = 0 + 0 + 1 = 1$, invalid.
+- $W = $ `ADOBEC`: $\text{missing} = 0$, valid, length 6. Shrinking drops `A`, so $\text{missing} = 1$ again.
+- The next valid window appears when the second `A` arrives: `CODEBA`, length 6. Dropping `C` breaks it.
+- When the last `C` arrives the window is `ODEBANC`. Shrinking passes through `DEBANC` (6) and `EBANC` (5) to `BANC` (4), and dropping `B` breaks it.
+
+The shortest valid window is `BANC`, of length **4**.
+
+**Idea.** Store $\text{need}(c) - \text{have}_W(c)$ in one array, which goes negative for surplus letters. Grow on the right; whenever $\text{missing} = 0$, record the window and shrink from the left until it breaks.
+
+```java
+static String minWindow(String s, String t) {
+    int[] need = new int[128];                          // negative = more than needed
+    for (char c : t.toCharArray()) need[c]++;
+    int missing = t.length(), left = 0, bestStart = 0, bestLen = Integer.MAX_VALUE;
+    for (int right = 0; right < s.length(); right++) {
+        if (need[s.charAt(right)]-- > 0) missing--;     // this letter was still needed
+        while (missing == 0) {                          // valid: shrink from the left
+            if (right - left + 1 < bestLen) { bestStart = left; bestLen = right - left + 1; }
+            if (++need[s.charAt(left++)] > 0) missing++; // dropped a letter we needed
+        }
+    }
+    return bestLen == Integer.MAX_VALUE ? "" : s.substring(bestStart, bestStart + bestLen);
+}
+```
+
+**Answer.** `BANC`. If $t$ needs more copies than $s$ has, for example $s = $ `a` and $t = $ `aa`, the answer is the empty string. Each index of $s$ enters and leaves at most once: $O(\lvert s \rvert + \lvert t \rvert)$ time, at most $2 \times 13 + 3 = 29$ moves here, and $O(1)$ space for the 128-entry array.
+
+### 3. LeetCode 992: Subarrays with K Different Integers (Hard)
+
+**Problem.** Count the contiguous subarrays with **exactly** $k$ different integers. For `[1, 2, 1, 2, 3]` and $k = 2$ the answer is 7.
+
+**Math first.** This is Level 4's formula:
+
+$$
+N_{=k} = N_{\le k} - N_{\le k-1}
+$$
+
+where:
+
+- $N_{\le k}$ is the number of subarrays with at most $k$ different values, counted with the window sum $\sum_r (r - l_r + 1)$, and $N_{=k}$ the number with exactly $k$;
+- every subarray with at most $k$ values has either exactly $k$ or at most $k - 1$, never both, so the subtraction removes exactly the second group.
+
+Example: $N_{\le 2} = 12$ and $N_{\le 1} = 5$, so $N_{=2} = 12 - 5 = 7$. The seven are `[1,2]`, `[2,1]`, `[1,2]`, `[2,3]`, `[1,2,1]`, `[2,1,2]` and `[1,2,1,2]`.
+
+**Idea.** Call Level 4's `countAtMostKDistinct` twice and subtract.
+
+```java
+static int subarraysWithKDistinct(int[] nums, int k) {
+    return countAtMostKDistinct(nums, k) - countAtMostKDistinct(nums, k - 1);
+}
+```
+
+**Answer.** 7 for the example, and 3 for `[1, 2, 1, 3, 4]` with $k = 3$ (`[1,2,1,3]`, `[2,1,3]`, `[1,3,4]`). Two linear passes: $O(n)$ time, at most $2 \times 2n = 20$ moves for $n = 5$, and $O(n)$ space for the counts in the worst case. Trying every subarray and counting its kinds would take $O(n^2)$.
+
+## Mathematical Abstraction
+
+A sliding window is a pair of indices that only move forward, together with a window property that survives shrinking:
+
+$$
+0 \le l_r \le r + 1, \qquad l_{r} \le l_{r+1}, \qquad P(l, r) \implies P(l + 1, r), \qquad \text{total moves} \le 2n
+$$
+
+where:
+
+- $l_r$ is the left end chosen for the right end $r$ (with $l_r = r + 1$ meaning an empty window);
+- the second part says the left end never moves back;
+- $P(l, r)$ is the validity property ("sum at most $S$ with positive values", "at most $k$ kinds", "no repeats"), and the third part says shrinking keeps a valid window valid;
+- together they bound the work by $n$ moves of each end.
+
+Example: on `eceba` with "at most 2 kinds", the left ends are $l_r = 0, 0, 0, 2, 3$, never decreasing, and the moves total $5 + 3 = 8 \le 10$. The longest valid window is $\max_r (r - l_r + 1) = 3$, and the number of valid windows is $\sum_r (r - l_r + 1) = 1 + 2 + 3 + 2 + 2 = 10$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 16, "Amortized Analysis", §16.1 "Aggregate analysis", the argument behind "at most $2n$ moves". "Sliding window" is a LeetCode tag, not a textbook chapter. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Codility, Lesson 15, "Caterpillar method": <https://app.codility.com/programmers/lessons/15-caterpillar_method/>.
+- LeetCode: [643. Maximum Average Subarray I](https://leetcode.com/problems/maximum-average-subarray-i/), [209. Minimum Size Subarray Sum](https://leetcode.com/problems/minimum-size-subarray-sum/), [904. Fruit Into Baskets](https://leetcode.com/problems/fruit-into-baskets/), [3. Longest Substring Without Repeating Characters](https://leetcode.com/problems/longest-substring-without-repeating-characters/), [76. Minimum Window Substring](https://leetcode.com/problems/minimum-window-substring/), [992. Subarrays with K Different Integers](https://leetcode.com/problems/subarrays-with-k-different-integers/).
+
+[← Two Pointers](../two-pointers/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Depth-First Search →](../depth-first-search/index.qmd)

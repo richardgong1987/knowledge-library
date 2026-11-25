@@ -1,75 +1,453 @@
 ---
 title: "Depth-First Search"
-description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
+description: "From a ball of string in a maze to interview level: recursive and explicit-stack DFS, the visited set, discovery and finish times, white/grey/black cycle detection in directed graphs, grid flood fill, the O(V + E) count, and hard problems (Number of Islands, Eventual Safe States, Longest Increasing Path in a Matrix) solved math-first."
 ---
 
-## Start with the problem, not a formula
+Depth-first search (DFS) explores a graph by always going **deeper** first: walk through a door, then through a door of that room, and so on, and only step back when every door from the current room leads somewhere already seen. This lesson builds DFS from a maze walk, writes it with recursion and with an explicit stack, timestamps it, uses colours to find cycles, and applies it to grids.
 
-**LeetCode 200 — Number of Islands**. Explore one branch as deeply as possible before backtracking.
+All code is in [`DepthFirstSearchLab.java`](DepthFirstSearchLab.java). Run it from this folder with `java DepthFirstSearchLab.java`; it checks every number on this page and prints `OK`.
 
-Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
+## The problem
 
-## Why the obvious approach is expensive
+A house has 6 rooms and 5 doors. Each door joins two rooms:
 
-Trying to count an island by looking at one land cell misses other land cells connected to it. Recounting visited cells counts the same island twice.
+```text
+   0 ──── 1
+   │      │
+   2      3
+    \    /
+     \  /
+      4          5
+```
 
-## Discover the key idea
+The doors are 0–1, 0–2, 1–3, 2–4 and 3–4; room 5 has none. Starting in room 0, which rooms can you reach?
 
-From each unseen land cell, keep following neighbours until the entire connected component has been marked. Only then start the next component.
+- Wandering at random may go $0 \to 1 \to 0 \to 1 \to \dots$ forever, or stop before seeing room 4.
+- We need a method that visits every reachable room **exactly once** and knows when it is finished.
+- DFS does that, in $V + 2E = 6 + 10 = 16$ steps for this house, where $V$ is the number of rooms and $E$ the number of doors.
 
-This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+## Explain it like I'm ten
 
-## Mathematical model — then immediately translate it
+::: {.callout-tip}
+You are exploring a maze, and you have a ball of string and a piece of chalk.
+
+- Tie the string at the entrance and unroll it as you walk.
+- Chalk a mark in every room you enter.
+- At each room, take any door to a room **without** a chalk mark.
+- When every door leads to a marked room, follow the string **back** to the previous room and try its other doors.
+- When the string brings you back to the entrance and it has no unmarked doors left, you have seen every room you can reach.
+
+The chalk is the *visited set*, and the string is the *stack* of rooms you came through. This is Trémaux's method for solving mazes. Sedgewick and Wayne's *Algorithms* lectures tell it with Theseus, who escaped the Minotaur's labyrinth by following Ariadne's thread. When you write DFS as a recursive function, the call stack plays the part of the string.
+:::
+
+## From simple to advanced
+
+### Level 1: recursive DFS and the visited set
+
+Store the graph as **adjacency lists**: for each vertex, the list of its neighbours. For the house, $N(0) = [1, 2]$, $N(1) = [0, 3]$, $N(2) = [0, 4]$, $N(3) = [1, 4]$, $N(4) = [2, 3]$ and $N(5) = []$.
 
 $$
-\operatorname{DFS}(v):\ \operatorname{mark}(v);\ \forall u\in N(v)\setminus Seen,\ \operatorname{DFS}(u)
+\text{DFS}(v): \ \text{mark } v, \ \text{then } \text{DFS}(u) \text{ for each } u \in N(v) \text{ that is not yet marked}
 $$
 
-**Explanation of every symbol:** v is the current vertex or grid cell; N(v) is its set of permitted neighbours; Seen is the set of already discovered vertices. The notation means visit each not-yet-seen neighbour recursively.
+where:
 
-**Substitute actual values:** For graph with edges A−B and B−C, starting at A marks A, then B, then C. A second start at B adds no component because B is already seen. A separate vertex D starts component number two.
+- $v$ is the current vertex (room);
+- $N(v)$ is the list of neighbours of $v$, the rooms one door away;
+- "mark" adds $v$ to the visited set, so no vertex is entered twice.
 
-Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
+Example: start with $\text{DFS}(0)$.
 
-## Work through the algorithm
+```text
+visit 0
+  visit 1          first unmarked neighbour of 0
+    visit 3        1's neighbour 0 is marked, so try 3
+      visit 4      3's neighbour 1 is marked, so try 4
+        visit 2    4's first neighbour; both of 2's neighbours are marked
+      back to 4    4's other neighbour, 3, is marked
+    back to 3, then 1
+  back to 0        0's other neighbour, 2, is marked
+```
 
-1. Identify the initial state using the small example above.
-2. Make one legal decision and update only state affected by that decision.
-3. Verify the invariant again. If it fails, correct the state before making another decision.
-4. Repeat until the search space is exhausted or the answer has been justified.
+The visiting order is $0, 1, 3, 4, 2$. Room 5 is never marked: it is not reachable.
 
-**Why this is correct:** Each explored edge leads either to a newly marked vertex or to an already marked one. No vertex is counted twice, and all reachable vertices eventually receive a mark.
+```java
+static void dfs(List<List<Integer>> graph, int v, boolean[] visited, List<Integer> order) {
+    visited[v] = true;
+    order.add(v);
+    for (int next : graph.get(v)) {
+        if (!visited[next]) dfs(graph, next, visited, order);
+    }
+}
+```
 
-## Actual code — keep it small
+Without `visited`, the call for 0 would call 1, which would call 0 again, and so on until the program crashes.
 
-The original [Node.js example library](../examples/patterns.mjs) implements this technique as `componentsDFS` and tests it against boundary cases:
+### Level 2: an explicit stack instead of recursion
 
-~~~js
-import { componentsDFS } from '../examples/patterns.mjs';
+Each recursive call uses a frame on Java's call stack, which is small: usually about 1 MB. A corridor of 300,000 rooms in a line makes DFS 300,000 calls deep, and the lab shows that this throws `StackOverflowError`. The cure is to keep the "string" yourself, in a stack on the heap:
 
-console.log(componentsDFS([[1],[0,2],[1],[]]));
-~~~
+$$
+\text{pushes} \le 1 + \sum_{v} \deg(v) = 1 + 2E
+$$
 
-Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
+where:
 
-## Analyse the work; do not guess big-O
+- a *push* puts a vertex on top of the stack, and a *pop* takes the top one off;
+- $\deg(v)$ is the number of neighbours of $v$; visiting $v$ pushes all of them;
+- each undirected edge appears in two adjacency lists, so the degrees add up to $2E$, and the 1 is the start vertex.
 
-**Cost:** O(V+E) time with adjacency lists and O(V) visited/stack memory; V is vertices, E is listed edges.
+Example: for the house, the degrees of rooms 0 to 4 are $2, 2, 2, 2, 2$, so at most $1 + 10 = 11$ pushes. A vertex may be pushed twice (room 0 is pushed again by room 1) and is simply skipped the second time it is popped.
 
-The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+```java
+static List<Integer> dfsIterative(List<List<Integer>> graph, int start) {
+    boolean[] visited = new boolean[graph.size()];
+    Deque<Integer> stack = new ArrayDeque<>(List.of(start));
+    List<Integer> order = new ArrayList<>();
+    while (!stack.isEmpty()) {
+        int v = stack.pop();
+        if (visited[v]) continue;                 // a vertex can be pushed twice before it is visited
+        visited[v] = true;
+        order.add(v);
+        List<Integer> next = graph.get(v);
+        for (int i = next.size() - 1; i >= 0; i--) stack.push(next.get(i)); // reversed: pop in list order
+    }
+    return order;
+}
+```
 
-## Break the technique deliberately
+Pushing the neighbours in reverse order makes the first neighbour come off the stack first, so the order is again $0, 1, 3, 4, 2$, the same as the recursion. The lab walks the 300,000-room corridor with this version without trouble.
 
-DFS does NOT in general find the shortest path. For a very deep graph, recursive JavaScript DFS can overflow the call stack; use an explicit stack when necessary.
+### Level 3: discovery and finish times
 
-If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+Give DFS a clock. It ticks when a vertex is entered (its *discovery time* $d$) and again when the vertex is left for good (its *finish time* $f$). Running DFS from every unvisited vertex covers the whole graph. The times have a nesting property, proved in CLRS §20.3 as the *parenthesis theorem*:
 
-## Source connections and practice
+$$
+v \text{ is a descendant of } u \text{ in the DFS forest} \iff d(u) < d(v) < f(v) < f(u)
+$$
 
-**Textbook:** CLRS 4e, Chapter 20 §20.3 (depth-first search).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+where:
 
-**LeetCode problem:** LeetCode 200 — Number of Islands. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/number-of-islands/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+- $d(v)$ and $f(v)$ are the discovery and finish times of $v$, from a clock that starts at 1;
+- the *DFS forest* links each vertex to the vertex that first discovered it;
+- the intervals $[d(u), f(u)]$ and $[d(v), f(v)]$ of any two vertices are either nested or completely separate, like matched brackets.
 
-**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+Example: the house gives
 
-[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)
+| Room $v$ | 0 | 1 | 2 | 3 | 4 | 5 |
+| --- | --- | --- | --- | --- | --- | --- |
+| $d(v)$ | 1 | 2 | 5 | 3 | 4 | 11 |
+| $f(v)$ | 10 | 9 | 6 | 8 | 7 | 12 |
+
+Room 4 lies inside room 1's interval: $d(1) = 2 < d(4) = 4 < f(4) = 7 < f(1) = 9$, so 4 is a descendant of 1 (it was reached through 1). Room 5's interval $[11, 12]$ is separate from room 0's $[1, 10]$: it is in a different tree of the forest. Written as brackets in time order: `( 0 ( 1 ( 3 ( 4 ( 2 ) ) ) ) ) ( 5 )`.
+
+```java
+void visit(int v) {
+    discovered[v] = ++time;                   // v turns grey
+    for (int next : graph.get(v)) if (discovered[next] == 0) visit(next);
+    finished[v] = ++time;                     // v turns black
+}
+```
+
+Finish times are what topological sorting and strongly connected components are built on: in a graph without cycles, every arrow $u \to v$ has $f(u) > f(v)$.
+
+### Level 4: white, grey and black for cycle detection
+
+In a **directed** graph (one-way doors), "already visited" is not enough to detect a cycle. Give each vertex one of three colours:
+
+$$
+\text{color}(v) =
+\begin{cases}
+\text{white} & \text{not discovered yet} \\
+\text{grey} & \text{discovered, not finished: } v \text{ is on the current path} \\
+\text{black} & \text{finished: everything reachable from } v \text{ is explored}
+\end{cases}
+\qquad \text{cycle} \iff \text{some edge } (u, v) \text{ meets a grey } v
+$$
+
+where:
+
+- $(u, v)$ is an arrow from $u$ to $v$ that DFS examines while standing at $u$;
+- the grey vertices are exactly the string from the start to the current vertex, so a grey $v$ is an *ancestor* of $u$, and the arrow closes a loop. Such an arrow is called a *back edge*;
+- an arrow into a black vertex only reaches something already finished, which is not a loop.
+
+Example 1: arrows $0 \to 1$, $1 \to 2$, $2 \to 0$, $2 \to 3$. DFS colours 0, 1 and 2 grey along the path $0 \to 1 \to 2$; then the arrow $2 \to 0$ meets the grey vertex 0, which closes the cycle $0 \to 1 \to 2 \to 0$.
+
+Example 2: arrows $0 \to 1$, $0 \to 2$, $1 \to 2$, $2 \to 3$, with no cycle. DFS goes $0 \to 1 \to 2 \to 3$, and 3, 2 and 1 finish and turn black. Back at 0, the arrow $0 \to 2$ meets 2, which is **black**: no cycle. A plain visited flag would see "2 was visited" and wrongly report one.
+
+```java
+static final int WHITE = 0, GREY = 1, BLACK = 2;
+
+static boolean hasCycle(List<List<Integer>> graph) {
+    int[] color = new int[graph.size()];          // every vertex starts WHITE
+    for (int v = 0; v < graph.size(); v++) {
+        if (color[v] == WHITE && reachesCycle(graph, v, color)) return true;
+    }
+    return false;
+}
+
+static boolean reachesCycle(List<List<Integer>> graph, int v, int[] color) {
+    color[v] = GREY;                              // v is on the current path
+    for (int next : graph.get(v)) {
+        if (color[next] == GREY) return true;     // back edge: next is an ancestor of v
+        if (color[next] == WHITE && reachesCycle(graph, next, color)) return true;
+    }
+    color[v] = BLACK;                             // v and everything below it are finished
+    return false;
+}
+```
+
+In an **undirected** graph every door can be walked both ways, so the door back to your parent is not a cycle. There, a cycle is a visited neighbour other than the parent.
+
+### Level 5: grids and flood fill
+
+A grid is a graph with no lists stored at all. Cell $(r, c)$ has up to four neighbours:
+
+$$
+N(r, c) = \lbrace (r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1) \rbrace \cap \lbrace (i, j) : 0 \le i < R,\ 0 \le j < C \rbrace
+$$
+
+where:
+
+- $r$ is the row, $c$ the column, and $R \times C$ the size of the grid;
+- $\cap$ keeps only neighbours inside the grid, so a corner cell has 2 neighbours and an edge cell has 3;
+- the graph has $V = RC$ cells and at most $4RC$ neighbour checks.
+
+Example: in a $3 \times 3$ grid, the corner $(0, 0)$ has neighbours $(1, 0)$ and $(0, 1)$; the centre $(1, 1)$ has all four.
+
+**Flood fill** is DFS on this graph: start at a land cell, and spread to every connected land cell, like the paint-bucket tool in a drawing program. Turning the land into water is itself the visited mark, so no extra array is needed:
+
+```java
+static final int[][] DIRECTIONS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+
+static int sink(char[][] grid, int r, int c) {    // flood fill: returns how many cells it sank
+    if (r < 0 || r >= grid.length || c < 0 || c >= grid[0].length || grid[r][c] != '1') return 0;
+    grid[r][c] = '0';                             // sinking the cell is the visited mark
+    int cells = 1;
+    for (int[] d : DIRECTIONS) cells += sink(grid, r + d[0], c + d[1]);
+    return cells;
+}
+```
+
+On the grid `110 / 010 / 101`, `sink(grid, 0, 0)` sinks $(0, 0)$, $(0, 1)$ and $(1, 1)$ and returns 3; the two bottom corners are separate islands.
+
+## Why it works and what it costs
+
+**Correctness.** Claim: *$\text{DFS}(s)$ marks exactly the vertices reachable from $s$.*
+
+- *Nothing unreachable is marked:* DFS only moves along edges, so every marked vertex is joined to $s$ by a path.
+- *Everything reachable is marked:* suppose some reachable $v$ were never marked. Take a path $s = x_0, x_1, \dots, x_k = v$ and the first unmarked vertex $x_i$ on it. Its predecessor $x_{i-1}$ was marked, so DFS scanned all of $N(x_{i-1})$, which includes $x_i$, and it would have called DFS on $x_i$. That is a contradiction.
+- *It terminates:* each vertex is marked at most once, and each call scans one finite list.
+
+**Costs.** Each vertex is entered once, and each adjacency list is scanned once, when its vertex is entered:
+
+$$
+T = \sum_{v \in V} \big(1 + \deg(v)\big) = V + 2E \ \text{ (undirected)}, \qquad V + E \ \text{ (directed)}
+$$
+
+where:
+
+- the 1 is the work of entering $v$, and $\deg(v)$ the work of scanning its list;
+- in a directed graph each arrow is in one list only, so the degrees add up to $E$.
+
+Example: the house has $V = 6$ and $E = 5$, so $T = 6 + 10 = 16$. A $4 \times 5$ grid has $V = 20$ cells and at most $4 \times 20 = 80$ neighbour checks. The extra space is $O(V)$ for the visited marks plus the stack, whose depth can reach $V$: the 300,000-room corridor.
+
+| Version | Time | Extra space | Watch out for |
+| --- | --- | --- | --- |
+| Recursive | $O(V + E)$ | $O(V)$ call stack | `StackOverflowError` on very deep graphs, such as the 300,000-room corridor |
+| Explicit stack | $O(V + E)$ | $O(V + E)$ heap stack | push order decides the visiting order |
+| Grid flood fill | $O(RC)$ | $O(RC)$ deep in the worst case | bounds checks before reading the grid |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Marking a vertex only when it is *finished* | Infinite recursion on any cycle | Mark when you *enter* it |
+| A visited flag for directed cycle detection | Reports a cycle in a graph without one (Example 2 of Level 4) | Three colours; only a grey neighbour means a cycle |
+| Treating the parent edge as a cycle in an undirected graph | Every graph with an edge "has a cycle" | Skip the edge back to the vertex you came from |
+| Deep recursion on a big grid or a long path | `StackOverflowError` | An explicit `ArrayDeque` stack, or BFS |
+| Reading `grid[r][c]` before checking bounds | `ArrayIndexOutOfBoundsException` | Check `r` and `c` first, as `sink` does |
+| Starting DFS from one vertex only | Misses other components (room 5) | Loop over all vertices and start from each unvisited one |
+| Using DFS for shortest paths | Finds *a* path, not the shortest | Breadth-first search, in the next lesson |
+
+## Interview problems
+
+Each solution starts with the mathematics: what is the graph, and what does one DFS compute on it?
+
+### 1. LeetCode 200: Number of Islands (Medium)
+
+**Problem.** A grid of `'1'` (land) and `'0'` (water) is given. Count the islands: groups of land cells joined up, down, left or right.
+
+```text
+1 1 0 0 0
+1 1 0 0 0
+0 0 1 0 0
+0 0 0 1 1
+```
+
+The answer is 3.
+
+**Math first.** An island is a *connected component* of the land graph, so the answer is how many times a fresh DFS has to start:
+
+$$
+\text{islands} = \#\lbrace \text{land cells } x : x \text{ is unvisited when the scan reaches it} \rbrace
+$$
+
+where:
+
+- the land graph has one vertex per `'1'` cell and an edge between land cells that share a side (Level 5's $N(r, c)$);
+- the scan reads the grid row by row; every DFS it starts sinks a whole component, so each component is counted exactly once, at its first cell.
+
+Example: the scan meets land at $(0, 0)$ first; DFS sinks the $2 \times 2$ block of 4 cells, count 1. The next unvisited land is $(2, 2)$, a single cell, count 2. Then $(3, 3)$, which sinks $(3, 3)$ and $(3, 4)$, count 3. All 7 land cells are now water, so the answer is **3**.
+
+**Idea.** Scan every cell; at each remaining `'1'`, add one island and flood-fill it with Level 5's `sink`.
+
+```java
+static int numIslands(char[][] grid) {
+    int islands = 0;
+    for (int r = 0; r < grid.length; r++) {
+        for (int c = 0; c < grid[0].length; c++) {
+            if (grid[r][c] == '1') {              // land no earlier island reached: a new island
+                islands++;
+                sink(grid, r, c);
+            }
+        }
+    }
+    return islands;
+}
+```
+
+**Answer.** 3. Each of the $R \times C = 20$ cells is scanned once and each of the 7 land cells is sunk once, checking 4 neighbours: $O(RC)$ time. The recursion can be $O(RC)$ deep when the whole grid is land.
+
+### 2. LeetCode 802: Find Eventual Safe States (Medium)
+
+**Problem.** In a directed graph, a vertex is *safe* if every path from it ends at a vertex with no outgoing arrows; that is, no path from it can reach a cycle. Return all safe vertices in increasing order. For `graph = [[1,2],[2,3],[5],[0],[5],[],[]]` (vertex $i$ has arrows to the vertices in list $i$) the answer is `[2, 4, 5, 6]`.
+
+**Math first.** Safety is a recursive property, and Level 4's colours compute it:
+
+$$
+\text{safe}(v) \iff v \text{ is on no cycle} \ \land\ \forall u \in N(v):\ \text{safe}(u)
+$$
+
+where:
+
+- $N(v)$ is the list of vertices that $v$ points to, and $\forall$ means "for every";
+- a vertex with no arrows is safe, because "for every $u$" over an empty list is true;
+- in DFS terms: a vertex is safe exactly when it turns **black**. If DFS meets a grey vertex below it, there is a cycle on its path, and the vertex is left grey, meaning unsafe.
+
+Example: DFS from 0 goes $0 \to 1 \to 2 \to 5$. Vertex 5 has no arrows, so it turns black (safe), and so does 2. Back at 1, the arrow $1 \to 3$ leads to 3 and then $3 \to 0$ meets 0, which is **grey**: the cycle $0 \to 1 \to 3 \to 0$. So 3, 1 and 0 stay grey and are unsafe. Then 4 reaches only the black 5, so it is safe, and 6 has no arrows. The safe vertices are $\lbrace 2, 4, 5, 6 \rbrace$.
+
+**Idea.** Run the colour DFS. A grey vertex reached again means "unsafe", a black one means "safe", and a vertex that finishes all its arrows safely turns black.
+
+```java
+static List<Integer> eventualSafeNodes(int[][] graph) {
+    int[] color = new int[graph.length];
+    List<Integer> safe = new ArrayList<>();
+    for (int v = 0; v < graph.length; v++) if (isSafe(graph, v, color)) safe.add(v);
+    return safe;
+}
+
+static boolean isSafe(int[][] graph, int v, int[] color) {
+    if (color[v] != WHITE) return color[v] == BLACK;       // grey: v is on a path that loops
+    color[v] = GREY;
+    for (int next : graph[v]) if (!isSafe(graph, next, color)) return false; // v stays grey
+    color[v] = BLACK;
+    return true;
+}
+```
+
+**Answer.** `[2, 4, 5, 6]`. Every vertex is coloured once and every arrow followed at most once: $O(V + E)$ time, here $7 + 7 = 14$ steps, and $O(V)$ space.
+
+### 3. LeetCode 329: Longest Increasing Path in a Matrix (Hard)
+
+**Problem.** Return the length of the longest path in a grid of integers that moves up, down, left or right and is **strictly increasing**. For
+
+```text
+9 9 4
+6 6 8
+2 1 1
+```
+
+the answer is 4: $1 \to 2 \to 6 \to 9$.
+
+**Math first.** Let $L(r, c)$ be the length of the longest increasing path that **starts** at cell $(r, c)$:
+
+$$
+L(r, c) = 1 + \max \big\lbrace L(r', c') : (r', c') \in N(r, c),\ m_{r'c'} > m_{rc} \big\rbrace, \qquad \max \emptyset = 0
+$$
+
+where:
+
+- $m_{rc}$ is the number in row $r$, column $c$, and $N(r, c)$ its grid neighbours from Level 5;
+- only strictly bigger neighbours count, so the arrows "to a bigger cell" can never form a cycle; DFS on this graph needs no visited set;
+- $\max \emptyset = 0$ means a cell with no bigger neighbour has $L = 1$, a path of just itself;
+- the answer is the largest $L(r, c)$ over all cells.
+
+Example: compute from the biggest numbers down.
+
+- Both 9s have no bigger neighbour: $L = 1$. The 8 has none either (its neighbours are 4, 6 and 1): $L = 1$.
+- The 4 at $(0, 2)$ has bigger neighbours 9 and 8: $L = 1 + \max(1, 1) = 2$.
+- The 6 at $(1, 0)$ has the bigger neighbour 9: $L = 2$. The 6 at $(1, 1)$ has 9 and 8: $L = 2$.
+- The 2 at $(2, 0)$ has the bigger neighbour 6: $L = 1 + 2 = 3$.
+- The 1 at $(2, 1)$ has bigger neighbours 6 ($L = 2$) and 2 ($L = 3$): $L = 1 + 3 = 4$.
+
+```text
+L:  1 1 2
+    2 2 1
+    3 4 2
+```
+
+The maximum is **4**.
+
+**Idea.** DFS from every cell, and **memoise**: store each $L(r, c)$ the first time it is computed, so every later call returns it at once.
+
+```java
+static int longestIncreasingPath(int[][] m) {
+    int[][] memo = new int[m.length][m[0].length];          // 0 = not computed yet
+    int best = 0;
+    for (int r = 0; r < m.length; r++) {
+        for (int c = 0; c < m[0].length; c++) best = Math.max(best, longestFrom(m, r, c, memo));
+    }
+    return best;
+}
+
+static int longestFrom(int[][] m, int r, int c, int[][] memo) {
+    if (memo[r][c] > 0) return memo[r][c];
+    int best = 1;                                           // the path of just this cell
+    for (int[] d : DIRECTIONS) {
+        int nr = r + d[0], nc = c + d[1];
+        if (nr >= 0 && nr < m.length && nc >= 0 && nc < m[0].length && m[nr][nc] > m[r][c]) {
+            best = Math.max(best, 1 + longestFrom(m, nr, nc, memo));
+        }
+    }
+    return memo[r][c] = best;
+}
+```
+
+**Answer.** 4 for the example, and 4 for `[[3,4,5],[3,2,6],[2,2,1]]` ($3 \to 4 \to 5 \to 6$). With the memo, each of the $RC = 9$ cells is computed once with 4 neighbour checks: $O(RC)$ time, here at most 36 checks, and $O(RC)$ space. Without the memo, the same cells are recomputed along every path, which is exponential in the worst case.
+
+## Mathematical Abstraction
+
+DFS computes the set of vertices reachable from a start, and timestamps them so that the nesting of intervals mirrors the search tree:
+
+$$
+\text{Reach}(s) = \lbrace v : \exists \text{ path } s \leadsto v \rbrace, \qquad T_{\text{DFS}} = V + \sum_v \deg(v), \qquad \text{cycle} \iff \exists (u, v) : v \text{ is grey at } u
+$$
+
+where:
+
+- $\text{Reach}(s)$ is everything DFS from $s$ marks, and $s \leadsto v$ means "there is a path from $s$ to $v$";
+- $T_{\text{DFS}}$ counts the work: one entry per vertex and one look per list entry;
+- the last part is the cycle test of Level 4: an edge into a vertex on the current path.
+
+Example: in the house, $\text{Reach}(0) = \lbrace 0, 1, 2, 3, 4 \rbrace$, $T_{\text{DFS}} = 6 + 10 = 16$, and the intervals $[1, 10] \supset [2, 9] \supset [3, 8] \supset [4, 7] \supset [5, 6]$ show the path $0 \to 1 \to 3 \to 4 \to 2$. In the directed graph $0 \to 1 \to 2 \to 0$, the edge $(2, 0)$ meets the grey vertex 0, so there is a cycle.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 20, "Elementary Graph Algorithms": §20.1 representations, §20.3 depth-first search (colours, discovery and finish times, the parenthesis theorem, edge classification), §20.4 topological sort. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition: §4.1, "Undirected Graphs", <https://algs4.cs.princeton.edu/41graph/>, with the Trémaux maze exploration in the lecture slides, <https://algs4.cs.princeton.edu/lectures/keynote/41UndirectedGraphs.pdf>; and §4.2, "Directed Graphs", directed cycle detection, <https://algs4.cs.princeton.edu/42digraph/>.
+- Robert Tarjan, "Depth-first search and linear graph algorithms", *SIAM Journal on Computing* 1(2), 1972.
+- Jeff Erickson, *Algorithms* (2019), Chapter 6, "Depth-First Search": <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- LeetCode: [200. Number of Islands](https://leetcode.com/problems/number-of-islands/), [802. Find Eventual Safe States](https://leetcode.com/problems/find-eventual-safe-states/), [329. Longest Increasing Path in a Matrix](https://leetcode.com/problems/longest-increasing-path-in-a-matrix/).
+
+[← Sliding Window](../sliding-window/index.qmd) · [Searching, Traversal, and Enumeration](../groups/02-search-and-exploration.qmd) · [Breadth-First Search →](../breadth-first-search/index.qmd)

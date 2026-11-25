@@ -1,48 +1,163 @@
 ---
 title: "Searching, Traversal, and Enumeration"
-description: "A connected learning path through 13 worked algorithms topics."
+description: "Thirteen tools for exploring a space of candidates: halving it, sweeping it with pointers and windows, walking graphs depth-first and breadth-first, backtracking with pruning, recursion, enumeration, divide and conquer, meet in the middle, quickselect, simulation and brainteasers, with a reading order, a which-tool-when table and a cheat sheet of formulas with worked numbers."
 ---
 
-## What you are really learning
+Every topic in this group is a **search**. There is a set of candidates (positions in an array, rooms in a maze, ways to place queens, subsets of numbers) and we want the ones that work. Looking at every candidate is often far too slow, so each tool here is a different reason why most candidates can be skipped, or a careful way to visit them all once when they cannot.
 
-Explore a search space while preserving the reason that discarded candidates cannot be answers.
+::: {.callout-tip}
+## Explain it like I'm ten
 
-The goal is not to learn 13 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+You have lost a sock somewhere in a big house.
 
-## Begin with a small example
+- If the socks are in a **sorted** drawer, open it in the middle, see which half yours is in, and never look in the other half (**binary search**).
+- If you need two socks that make a pair, put one hand at each end of a sorted row and walk them towards each other (**two pointers**).
+- If you are looking for the best stretch of the row, slide a shoebox along it like a caterpillar: the head eats a sock, the tail lets one go (**sliding window**).
+- In a maze of rooms, unroll a ball of string and always go deeper first, walking back along the string at a dead end (**depth-first search**).
+- To find the *nearest* room, spread out like ripples in a pond: every room one door away, then two doors, then three (**breadth-first search**).
+- When you must try outfits one piece at a time, take off only the last piece when something clashes (**backtracking**), and when a job contains a smaller copy of itself, hand the smaller copy to a helper (**recursion**).
+- Sometimes you really must check everything, so count first how much "everything" is (**enumeration**); split a big job into halves (**divide and conquer**), or meet a friend halfway through the house (**meet in the middle**).
+- To find the 5th-tallest child without lining everyone up, pick one child and split the others into "shorter" and "taller" (**quickselect**). To know what a game looks like after a million turns, follow its rules until it starts repeating (**simulation**). And some puzzles need no searching at all, only one clever observation (**brainteaser**).
+:::
 
-Half-open intervals reduce off-by-one mistakes.
+## Reading order, from simple to advanced
+
+1. **[Binary Search](../binary-search/index.qmd)**: the half-open $[lo, hi)$ invariant, the overflow-safe midpoint, exactly $\lceil \log_2(n+1) \rceil$ probes, lower and upper bounds, and binary search on the answer.
+2. **[Two Pointers](../two-pointers/index.qmd)**: opposite ends with the grid-elimination proof, reader and writer, three-way partitioning, and Trapping Rain Water.
+3. **[Sliding Window](../sliding-window/index.qmd)**: fixed and variable windows, why each index enters and leaves once, counting windows, and "exactly $k$" from "at most $k$".
+4. **[Depth-First Search](../depth-first-search/index.qmd)**: recursion versus an explicit stack, discovery and finish times, white/grey/black cycle detection, and flood fill.
+5. **[Breadth-First Search](../breadth-first-search/index.qmd)**: queues and layers, the proof that BFS finds shortest paths, parent pointers and multi-source BFS.
+6. **[Backtracking](../backtracking/index.qmd)**: the state-space tree, exact node counts, pruning predicates with nodes counted before and after, and N-Queens.
+7. **[Recursion](../recursion/index.qmd)**: base cases, call-stack frames, recursion trees and the three recurrences every later lesson uses.
+8. **[Enumeration](../enumeration/index.qmd)**: counting the search space with the product rule, shrinking loops to $\sqrt{n}$, enumerating answers instead of inputs, and counting by complement.
+9. **[Divide and Conquer](../divide-and-conquer/index.qmd)**: split, solve, combine; recurrences and the master theorem; Karatsuba's three multiplications.
+10. **[Meet in the Middle](../meet-in-the-middle/index.qmd)**: two searches of $2^{n/2}$ instead of one of $2^n$, combined by hashing or by sorting.
+11. **[Quickselect](../quickselect/index.qmd)**: partitioning to find the $k$-th smallest in expected linear time, its quadratic worst case, and median of medians.
+12. **[Simulation](../simulation/index.qmd)**: state and rules, updating every cell at once, and skipping whole cycles with modular arithmetic.
+13. **[Brainteaser](../brainteaser/index.qmd)**: small cases, invariants, parity, pairing and counting arguments that turn a search into a formula.
+
+Recursion is seventh in the menu, but if recursive functions are new to you, read it **first**: depth-first search, backtracking and divide and conquer are all built on it. Read binary search, two pointers and sliding window together, because they are three ways to avoid nested loops over an array. Read DFS and BFS together, because they are the same loop with a stack in one and a queue in the other.
+
+## Which tool when
+
+| If the problem says… | Reach for… | Because… |
+| --- | --- | --- |
+| "sorted array", "first position where", "insert position" | [Binary Search](../binary-search/index.qmd) | every probe halves the candidates |
+| "minimise the largest", "smallest speed or capacity that works" | [Binary Search](../binary-search/index.qmd) on the answer | "is $v$ enough?" is monotone in $v$ |
+| "pair or triple with a given sum", "sorted", "in place" | [Two Pointers](../two-pointers/index.qmd) | each step rules out a whole row or column of pairs |
+| "longest or shortest contiguous subarray or substring with ..." | [Sliding Window](../sliding-window/index.qmd) | both ends only move forward, so at most $2n$ moves |
+| "connected", "islands", "reachable", "is there a cycle" | [Depth-First Search](../depth-first-search/index.qmd) | one visit per vertex and per edge; grey vertices reveal cycles |
+| "fewest steps, moves, minutes or changes", all steps cost the same | [Breadth-First Search](../breadth-first-search/index.qmd) | layer $k$ is exactly the set at distance $k$ |
+| "nearest" to any of several places | [Breadth-First Search](../breadth-first-search/index.qmd), multi-source | start every source at distance 0 |
+| "list all subsets, permutations or placements", small $n$, constraints | [Backtracking](../backtracking/index.qmd) | build one decision at a time and cut dead branches |
+| the input is nested, or the answer is defined by smaller answers | [Recursion](../recursion/index.qmd) | a base case plus a smaller copy of the same question |
+| the search space is small enough to count and test | [Enumeration](../enumeration/index.qmd) | count $\lvert \Omega \rvert$ first; if it fits, try everything |
+| "split into halves and combine the results" | [Divide and Conquer](../divide-and-conquer/index.qmd) | the master theorem gives the cost |
+| subset sums with $n$ up to about 40 | [Meet in the Middle](../meet-in-the-middle/index.qmd) | $2 \cdot 2^{n/2}$ half-sums instead of $2^n$ subsets |
+| "$k$-th smallest or largest", "top $k$", no full order needed | [Quickselect](../quickselect/index.qmd) | recurse into one side of a partition only |
+| "after $N$ steps or days", the rules are given exactly | [Simulation](../simulation/index.qmd) | apply the rule; a finite state space must eventually repeat |
+| huge $n$, a game, or an answer that seems to follow a pattern | [Brainteaser](../brainteaser/index.qmd) | small cases reveal an invariant or a formula |
+
+## Cheat sheet
+
+**Binary search: how many probes.**
 
 $$
-|[l,r)|=r-l
+P(n) = \lceil \log_2 (n + 1) \rceil
 $$
 
-**What the symbols mean:** l is the included first index and r the excluded final boundary; the vertical bars count positions.
+where $n$ is the number of elements and $P(n)$ the worst-case number of elements looked at. Example: $P(8) = \lceil \log_2 9 \rceil = 4$, and $P(1{,}000{,}000) = 20$.
 
-**Substitute actual numbers:** For [l,r)=[1,4), the positions are 1,2,3, exactly 4−1=3 indices. Binary Search and Sliding Window use this same convention but preserve different invariants.
+**Two pointers: steps for a sorted pair sum.**
 
-This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+$$
+\text{steps} \le n - 1
+$$
 
-## The chapters in this family
+where $n$ is the array length; each step removes one row or one column from the $n \times n$ grid of pairs. Example: 6 sorted prices need at most 5 sums, where trying every pair needs $\frac{6 \times 5}{2} = 15$.
 
-1. **[Binary Search](../binary-search/index.qmd)** — Locate a boundary using a monotone predicate on an ordered domain.
-2. **[Two Pointers](../two-pointers/index.qmd)** — Maintain two moving indices with a shared invariant.
-3. **[Sliding Window](../sliding-window/index.qmd)** — Update a contiguous interval incrementally rather than rescanning it.
-4. **[Depth-First Search](../depth-first-search/index.qmd)** — Explore one branch as deeply as possible before backtracking.
-5. **[Breadth-First Search](../breadth-first-search/index.qmd)** — Explore states by increasing path length in an unweighted graph.
-6. **[Backtracking](../backtracking/index.qmd)** — Build partial solutions and abandon branches violating constraints.
-7. **[Recursion](../recursion/index.qmd)** — Define a computation in terms of smaller instances with a base case.
-8. **[Enumeration](../enumeration/index.qmd)** — Systematically inspect a finite or bounded space of candidates.
-9. **[Divide and Conquer](../divide-and-conquer/index.qmd)** — Split the problem into subproblems, solve them, then combine results.
-10. **[Meet in the Middle](../meet-in-the-middle/index.qmd)** — Split an exponential search into two smaller exhaustive searches.
-11. **[Quickselect](../quickselect/index.qmd)** — Use partitioning to locate an order statistic without fully sorting.
-12. **[Simulation](../simulation/index.qmd)** — Evolve an explicit state according to a rule and input sequence.
-13. **[Brainteaser](../brainteaser/index.qmd)** — Use logical constraints and deductions rather than a fixed algorithmic template.
+**Sliding window: moves, and counting windows.**
+
+$$
+\text{moves} \le 2n, \qquad N_{=k} = N_{\le k} - N_{\le k-1}
+$$
+
+where $n$ is the array length, and $N_{\le k}$ and $N_{=k}$ count the windows with at most and exactly $k$ different values. Example: for `[1, 2, 1, 2, 3]`, $N_{\le 2} = 12$ and $N_{\le 1} = 5$, so $N_{=2} = 7$.
+
+**DFS and BFS: the cost of visiting a graph.**
+
+$$
+T = V + 2E \ \text{ (undirected)}, \qquad V + E \ \text{ (directed)}
+$$
+
+where $V$ is the number of vertices and $E$ the number of edges; each undirected edge appears in two adjacency lists. Example: 6 rooms and 5 doors cost $6 + 2 \times 5 = 16$ steps.
+
+**BFS: distances grow by one per layer.**
+
+$$
+\text{dist}(s) = 0, \qquad \text{dist}(v) = \text{dist}(u) + 1 \ \text{ when } u \text{ first reaches } v
+$$
+
+where $s$ is the source and $u$ the vertex taken from the front of the queue. Example: in a metro with tracks 0–1, 1–2, 2–3, 0–3 and 3–4, the layers from 0 are $\lbrace 0 \rbrace$, $\lbrace 1, 3 \rbrace$, $\lbrace 2, 4 \rbrace$, so station 4 is 2 stops away.
+
+**Backtracking: sizes of the state-space tree.**
+
+$$
+\text{subsets: } 2^{n+1} - 1, \qquad \text{permutations: } \sum_{k=0}^{n} \frac{n!}{(n-k)!} = \lfloor e \cdot n! \rfloor
+$$
+
+where $n$ is the number of items and each tree node is one partial solution $(x_1, \dots, x_k)$. Example: $n = 3$ gives $15$ and $1 + 3 + 6 + 6 = 16$ nodes. With pruning, 4-queens visits 17 nodes and 8-queens 2,057.
+
+**Recursion and divide and conquer: three recurrences.**
+
+$$
+T(n) = T(n - 1) + 1 \Rightarrow n + 1, \qquad T(n) = T(n/2) + 1 \Rightarrow \lfloor \log_2 n \rfloor + 1, \qquad T(n) = 2T(n/2) + n \Rightarrow n \log_2 n
+$$
+
+where $T(n)$ is the number of calls or the total work for an input of size $n$, with $T(0) = 1$, $T(1) = 1$ and $T(1) = 0$ respectively. Example: for $n = 8$ they give 9, 4 and 24.
+
+**Divide and conquer: the master theorem.**
+
+$$
+T(n) = a\,T(n/b) + f(n)
+$$
+
+where $a$ is the number of subproblems, $b$ how much smaller each one is, and $f(n)$ the work to split and combine; the cost depends on how $f(n)$ compares with $n^{\log_b a}$. Example: merge sort has $a = b = 2$ and $f(n) = n = n^{\log_2 2}$, so every level costs the same and $T(n) = \Theta(n \log n)$; Karatsuba has $a = 3$, $b = 2$, so $T(n) = \Theta(n^{\log_2 3}) \approx \Theta(n^{1.585})$.
+
+**Enumeration and meet in the middle: the size of the search space.**
+
+$$
+\lvert \Omega \rvert = c_1 c_2 \cdots c_k, \qquad 2^n \ \longrightarrow\ 2 \cdot 2^{n/2}
+$$
+
+where $\Omega$ is the set of candidates built from $k$ choices with $c_1, \dots, c_k$ options each, and the arrow is the saving of splitting $n$ items into two halves. Example: a 3-digit lock has $10 \times 10 \times 10 = 1{,}000$ codes; for $n = 40$ items, $2^{40} \approx 1.1 \times 10^{12}$ subsets become $2 \times 2^{20} \approx 2.1 \times 10^6$ half-sums.
+
+**Quickselect: expected cost.**
+
+$$
+E[\text{comparisons}] \le 8n
+$$
+
+where $n$ is the array length and the expectation is over random pivot choices, for every input. Example: for $n = 1{,}000{,}000$ that is at most $8 \times 10^6$ comparisons on average, against about $n \log_2 n \approx 2 \times 10^7$ to sort.
+
+**Simulation: skipping a cycle.**
+
+$$
+s_{t+1} = F(s_t), \qquad s_T = s_{\mu + (T - \mu) \bmod p} \ \text{ for } T \ge \mu
+$$
+
+where $F$ is the rule, $s_t$ the state after $t$ steps, $\mu$ the steps before the cycle starts and $p$ the cycle length. Example: with $\mu = 1$ and $p = 14$, day $10^9$ equals day $1 + (10^9 - 1) \bmod 14 = 1 + 5 = 6$.
+
+**Brainteaser: how many tests are needed.**
+
+$$
+k^t \ge N
+$$
+
+where each test has $k$ possible outcomes, $t$ tests are made, and $N$ answers must be told apart. Example: with $k = 5$ and $N = 1{,}000$, $5^4 = 625$ is too small and $5^5 = 3{,}125$ is enough, so $t = 5$.
 
 ## Practice method
 
-Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
-
-The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
+Pick one lesson. Before reading its code, redo its first example with paper and pencil, and write down the one fact that lets the method skip candidates: sortedness, monotonicity, a visited mark, a pruning predicate, a repeating state. Then run its lab from the lesson's folder with `java <Name>Lab.java`; every number on the page is checked there. If two tools seem to fit one problem, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
 
 [← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)
