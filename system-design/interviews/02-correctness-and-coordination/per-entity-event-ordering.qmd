@@ -1,0 +1,59 @@
+---
+title: "Preserving Per-Order Event Order with Parallel Workers"
+description: "High-difficulty correctness interview scenario with formal invariants and original reference code."
+---
+
+## Interview challenge
+
+An order emits three state transitions: Created (1), Paid (2), Shipped (3). A broker with parallel consumers delivers sequence 2, then 1, then 3. We want high throughput across thousands of orders, but **one order's state must never advance out of order**.
+
+A single global FIFO queue would be simple but can severely limit concurrency. The key insight is to require a **partial order**: events for the same entity are ordered; independent orders may run in parallel.
+
+## Express the guarantee
+
+For each aggregate key $k$, events carry monotonically increasing sequence numbers $s=1,2,\ldots$. The consumer keeps a next-expected sequence $n_k$ and a bounded buffer of later events.
+
+$$
+\operatorname{apply}(e_{k,s})\quad\text{only when}\quad s=n_k.
+$$
+
+After application, increment $n_k$ and apply any consecutive buffered events. Duplicates with $s<n_k$ are ignored *after verifying the event identity in a durable system*.
+
+## Exercise the actual code
+
+~~~ts
+const inbox = new SequencedInbox<string>(5);
+inbox.receive('order-7',2,'Paid');     // applied: []
+inbox.receive('order-7',1,'Created');  // applied: [Created, Paid]
+inbox.receive('order-7',3,'Shipped');  // applied: [Shipped]
+~~~
+
+Use POST /lab/sequence with key, seq and value; GET /lab/sequence returns the applied history. The core test checks duplicates, gap buffering and maximum gap protection.
+
+## Why a buffer limit matters
+
+What if event 1 is missing permanently but events 2 through 200,000 keep arriving? An unlimited buffer causes unbounded memory growth. Stop accepting arbitrary gaps; request replay, an authoritative snapshot, or reconciliation with the source of truth.
+
+## Distributed semantics
+
+A local in-memory inbox is for learning only. Durable implementation needs a per-aggregate sequence assigned by an authoritative writer, a transactional last-applied marker, and a consumer lease or per-key partition/session. A failed consumer can replay; transactional deduplication keeps effects from being repeated.
+
+Microsoft's **Sequential Convoy** pattern uses broker sessions to preserve per-key processing constraints; competing consumers increase throughput but do not automatically preserve ordering across deliveries.
+
+## Two precise questions
+
+1. Can two different orders be processed at the same time? Yes, if their invariants are independent.
+2. What if event 3 arrives but event 2 is deleted? Treat the gap as an error or recover from a snapshot; silently skipping sequence 2 destroys the state-machine guarantee.
+
+## Mathematical Abstraction
+
+$$
+\forall k,\quad s_1<s_2\Longrightarrow
+\operatorname{commit}(e_{k,s_1})\prec \operatorname{commit}(e_{k,s_2}),
+$$
+
+provided both events are eventually committed. The relation $\prec$ is a **per-key** commit order, not a global timestamp ordering across all messages.
+
+**Reference:** [Microsoft Azure: Sequential Convoy Pattern](https://learn.microsoft.com/en-us/azure/architecture/patterns/sequential-convoy).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

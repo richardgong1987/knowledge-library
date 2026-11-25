@@ -1,0 +1,69 @@
+---
+title: "The Celebrity Fan-Out Problem"
+description: "Advanced interview case: derive the principle, prove assumptions, and run small code."
+---
+
+## Interview challenge
+
+Design a social news feed. A normal account has 200 followers, but a celebrity has 30 million. Should every new post be immediately copied into every follower's home-feed inbox? This is a **fan-out trade-off**, not primarily a question of database selection.
+
+The same question appears in many public discussions of Facebook-style news feeds. Meta publishes engineering descriptions of feed ranking and caching, but this lesson's design and code are original and should not be mistaken for Meta's internal implementation.
+
+## Compare two strategies
+
+**Fan-out on write:** When author A posts, append the post reference into each follower's inbox. Reading an inbox is fast; writing costs roughly the number of followers.
+
+**Fan-out on read:** Store a post once, then when a user requests a feed, gather recent posts from followed authors. Publishing is cheap; every reader's feed construction may be expensive.
+
+For an author with $F$ followers and $R$ feed reads during the relevant period:
+
+$$
+C_{\mathrm{push}}\approx F\,c_{\mathrm{write}},\qquad
+C_{\mathrm{pull}}\approx R\,c_{\mathrm{merge}}.
+$$
+
+The equality is a simplified cost model; cache hit rate, post retention, ranking, and request fan-out alter the real values.
+
+## A hybrid strategy
+
+Use fan-out-on-write for low-follower authors and fan-out-on-read for celebrities. A feed read merges the precomputed inbox and the celebrity candidates, removes duplicates and sorts/ranks consistently.
+
+~~~ts
+const feed = new HybridFeed(3);
+feed.follow('alice','ordinary');
+feed.publish({id:'p1',author:'ordinary',time:1});
+for(const r of ['alice','bob','carol'])feed.follow(r,'celebrity');
+feed.publish({id:'p2',author:'celebrity',time:2}); // pull
+feed.read('alice'); // [p2, p1]
+~~~
+
+Three followers is intentionally tiny so you can reproduce the switch in the one-process lab. Use POST /lab/feed/follow, POST /lab/feed/post, and GET /lab/feed.
+
+## The subtle hard part is correctness
+
+Follow/unfollow changes, deleted posts and privacy settings must be reflected even if an inbox was previously materialised. Treat pushed entries as candidate references, **not permission grants**. At read time, filter by current visibility, blocked users, and deletion/tombstone state.
+
+A real ranking pipeline might score candidate posts by relevance and time. If the ranking model changes, merely sorting all stored inboxes by original timestamps cannot reproduce the new order; separate candidate generation from ranking.
+
+## Hard interviewer follow-ups
+
+- What happens when a creator crosses the celebrity threshold? Provide a backfill/migration strategy that does not duplicate or lose previously pushed posts.
+- What is a cursor? A stable pagination cursor needs deterministic order and a tie-breaker. A time-only cursor risks duplicates or omission at equal timestamps.
+- Would you synchronously write 30 million feed rows before acknowledging the post? That creates an enormous tail-latency risk; asynchronous work may help but still costs fan-out.
+
+## Mathematical Abstraction
+
+$$
+\mathrm{Feed}(u)=
+\operatorname{Rank}\left(
+\operatorname{Dedup}\bigl(
+\mathrm{Inbox}_{\mathrm{push}}(u)\cup
+\mathrm{Recent}_{\mathrm{celebrities}}(u)
+\bigr)\right).
+$$
+
+Correctness additionally requires **visibility filtering**, and the result changes over time as new posts and follow relationships arrive.
+
+**Public sources:** [Meta: News Feed ranking](https://engineering.fb.com/2021/01/26/ml-applications/news-feed-ranking/) and [Hello Interview: Facebook News Feed](https://www.hellointerview.com/learn/system-design/problem-breakdowns/fb-news-feed).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

@@ -1,24 +1,68 @@
 ---
 title: "Data Consistency"
-description: "Understand observable guarantees through a shared data example."
+description: "Foundational system-design reasoning with formal properties, worked examples and failure cases."
 ---
 
-## The problem
+# What are readers allowed to see?
 
-Two users read and update the same order status through different replicas. What should each user be allowed to see?
+Suppose an order status changes from Pending to Confirmed in Region A. The next GET request is routed to Region B, which still contains Pending. Is the system inconsistent? The answer depends on the **consistency contract**.
 
-## A running example
+A correct design explicitly states the guarantees it offers instead of using 'strong' or 'eventual' as vague adjectives.
 
-We will keep this scenario throughout the lesson and change one system constraint at a time.
+## Three contracts worth distinguishing
 
-## Step-by-step reasoning
+**Linearizability:** every successful operation appears to take effect at one point between its invocation and response, consistent with real-time ordering of non-overlapping operations. This is a strong global ordering contract.
 
-This chapter is an outline for a future worked explanation.
+**Read-your-writes:** within one session, successful reads must reflect that session's own completed writes. Other sessions may still see older data.
 
-## Visual experiments
+**Eventual consistency:** if updates stop and required connectivity/recovery assumptions hold, replicas converge eventually. This says nothing by itself about how stale any particular immediate read can be.
 
-Interactive models and failure simulations will be added as the chapter develops.
+## A deliberately precise timeline
 
-## Related topics
+~~~text
+t=0  Client A writes order status Confirmed (version 12) in Region A
+t=1  A receives successful write response with version token 12
+t=2  A reads from Region B; B has version 11
+t=3  Replication delivers version 12 to B
+~~~
 
-Return to the [System Design overview](index.qmd) or explore [Distributed Systems](distributed-systems.qmd).
+If the API promises read-your-writes, the read at t=2 cannot successfully return version 11 as if it satisfied the contract. It can wait, route to A or fail explicitly.
+
+## Use optimistic concurrency on conflicting writes
+
+Two operators read portfolio version 5 and both compute an update. Without a conditional write, the second writer may overwrite the first without noticing. A version-based compare-and-swap update is:
+
+~~~sql
+UPDATE portfolios
+SET positions_json = :new_value, version = version + 1
+WHERE portfolio_id = :id AND version = :expected_version;
+~~~
+
+If zero rows were updated, a concurrent change intervened. The caller must re-read and resolve, not silently claim success. This local SQL transaction does not provide cross-database atomicity on its own.
+
+## Idempotency and atomicity are separate
+
+**Idempotency:** duplicate commands do not create extra business effects.
+
+**Atomicity:** a defined group of state changes commits together or not at all.
+
+A debit transaction, an outbox notification, and a cached read are different parts of the system. Saving an order and its event in one database transaction solves an important dual-write problem. It does not guarantee an email was sent exactly once.
+
+## A versioned-cache race
+
+If a version-1 read starts, then a version-2 update completes, the delayed older read must not overwrite the new cache value. Use version comparison, monotonic authoritative versions, and tombstones when invalidating. Merely deleting a cache entry may be insufficient.
+
+The NestJS teaching lab includes a [VersionedCache](interviews/lab/src/core.ts) demonstrating this local invariant. It is not a distributed consistency protocol.
+
+## Mathematical Abstraction
+
+For read-your-writes with a version token:
+
+$$
+v_{\mathrm{read}}(k,s)\geq
+\max\bigl\{v_{\mathrm{writes}}(k,s)\ \text{acknowledged before read}\bigr\}.
+$$
+
+Here $k$ is a data key and $s$ a client session. This is a *session* lower bound and does not require all other readers to see the same version immediately.
+
+[→ Read-Your-Writes design](interviews/05-reliability-and-data/multi-region-consistency.qmd) · [→ Outbox](interviews/02-correctness-and-coordination/transactional-outbox.qmd) · [→ Cache Races](interviews/03-cache-and-partitioning/cache-invalidation-race.qmd).

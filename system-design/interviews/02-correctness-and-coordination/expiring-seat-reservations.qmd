@@ -1,0 +1,63 @@
+---
+title: "Expiring Seat Holds and Fencing Tokens"
+description: "High-difficulty correctness interview scenario with formal invariants and original reference code."
+---
+
+## Interview challenge
+
+Two customers try to reserve one seat. Customer A obtains a 30-second hold, freezes for 45 seconds, then resumes. During A's pause, the hold expires and customer B acquires the seat. A's slow worker now sends a confirmation. How do you stop A from **stealing B's reservation**?
+
+This is a stale-worker problem. A lease expiration alone is not enough if old workers can still write to the authoritative store.
+
+## A minimal design
+
+Each successful hold gets a strictly increasing **fencing token**. Confirmation must contain the current token, owner, and an unexpired deadline. The storage layer conditionally changes the seat to Confirmed only if all conditions match.
+
+$$
+\operatorname{confirm}(s,u,f,t)
+\iff f=f_{\mathrm{current}}(s)\land u=u_{\mathrm{owner}}(s)
+\land t<t_{\mathrm{expiry}}(s).
+$$
+
+The token monotonicity is what distinguishes B's lease from A's obsolete lease, even if an old worker wakes up late.
+
+## One concrete execution
+
+- Time 0: A holds seat S1, token 1, expiry at 100.
+- Time 50: B cannot hold S1.
+- Time 100: B acquires S1, token 2, expiry at 200.
+- Time 110: A tries confirmation with token 1; reject.
+- Time 110: B confirms with token 2; accept.
+
+~~~ts
+const seats = new SeatHolds();
+const a = seats.hold('S1','A',0,100);        // 1
+const b = seats.hold('S1','B',100,100);      // 2
+seats.confirm('S1','A',a!,110);             // false
+seats.confirm('S1','B',b!,110);             // true
+~~~
+
+POST /lab/seat/hold and POST /lab/seat/confirm reproduce the exercise.
+
+## Where the distributed difficulty actually lives
+
+The sample is single-process. Production should use a **transactional database constraint/conditional update** on the seat row, with an authority that issues and checks fencing tokens atomically. Distributed timers are advisory: the database's actual row state is what stops double booking.
+
+A confirmed reservation must not automatically expire like a temporary hold. Payment flow, cancellation, and eventual seat release are separate state transitions.
+
+## Interview follow-up
+
+What if two workers both decide the hold expired and issue token 2? If tokens are generated independently, your design fails. Allocate a monotonic version using an atomic database update, and compare it on every finalisation.
+
+## Mathematical Abstraction
+
+$$
+\forall s:\quad \#\{\text{confirmed active owners of seat }s\}\leq1,\qquad
+f_{n+1}(s)>f_n(s).
+$$
+
+The first is a **safety invariant**; the second is a fencing requirement. Availability of booking during a database outage is a separate question.
+
+**See also:** [Idempotent Commands](idempotent-payment-api.qmd) and [Per-Entity Ordering](per-entity-event-ordering.qmd).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

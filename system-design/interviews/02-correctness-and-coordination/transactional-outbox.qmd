@@ -1,0 +1,63 @@
+---
+title: "Solving the Dual-Write Problem"
+description: "High-difficulty correctness interview scenario with formal invariants and original reference code."
+---
+
+## Interview challenge
+
+The Order API performs two actions: (1) save an order in the database, (2) publish OrderCreated to a broker. What if the database commit succeeds and the broker publish fails? What if the message publishes before the database commit and the database then rolls back?
+
+Two independent systems cannot be made atomic by writing **two lines of NestJS code** or wrapping only the SQL insert in a database transaction.
+
+## The simplest strong solution
+
+Within **one database transaction**, insert both the order and a durable outbox row. A separate relay publishes pending outbox events. The relay may publish more than once, so consumers must be idempotent.
+
+~~~sql
+BEGIN;
+INSERT INTO orders(id, state) VALUES ('o7', 'created');
+INSERT INTO outbox(event_id, aggregate_id, event_type, payload)
+VALUES ('evt-o7-1', 'o7', 'OrderCreated', '{"orderId":"o7"}');
+COMMIT;
+~~~
+
+The schema must declare primary/unique keys and useful indexes. A relay uses a claim/lease protocol (for example, SKIP LOCKED for a suitable PostgreSQL table) so multiple relays do not all process the same pending row at once.
+
+## Why the relay cannot promise no duplicates
+
+Suppose relay publishes event E, the broker accepts it, and relay crashes **before** marking E as sent. On restart, E will be published again. No two-phase commit with the broker is assumed. This is a valid at-least-once design; the consumer should keep a transactional inbox record keyed by event ID.
+
+~~~sql
+BEGIN;
+INSERT INTO inbox(event_id) VALUES ('evt-o7-1')
+ON CONFLICT (event_id) DO NOTHING;
+-- Apply the business transition ONLY when the insert was new.
+COMMIT;
+~~~
+
+The comment is important: simply executing the update regardless of the insert result does **not** provide idempotency.
+
+## How it connects to the runnable lab
+
+[IdempotencyGate](../lab/src/core.ts) demonstrates suppressing repeated local work. [SequencedInbox](../lab/src/core.ts) demonstrates per-order state ordering. Neither alone replaces a **durable transactional outbox/inbox**, and the NestJS lab does not pretend to run a database.
+
+A production NestJS implementation uses one DB transaction through the repository/ORM or driver, an outbox publisher worker, and consumer-side atomic deduplication.
+
+## Deep follow-ups
+
+- Does the outbox require ordering? Often yes **per aggregate**, through monotonically increasing sequence numbers and careful relay selection.
+- What if the broker is down for two days? The outbox grows. Monitor its oldest unsent age, volume and retention; apply backpressure if the database is endangered.
+- What if the consumer sends an email and crashes? The database inbox record and the external email provider cannot always be atomically committed. Stable provider idempotency keys and reconciliation still matter.
+
+## Mathematical Abstraction
+
+$$
+\operatorname{commit}(\mathrm{Order}(o))\iff
+\operatorname{commit}(\mathrm{OutboxEvent}(o)).
+$$
+
+The equivalence applies to the **same database transaction**, not to delivery of the event. Delivery is subsequently at least once, and must be handled as such.
+
+**Reference:** [Microsoft: Transactional Outbox code sample](https://learn.microsoft.com/en-us/samples/azure-samples/cosmos-db-design-patterns/transactional-outbox/).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

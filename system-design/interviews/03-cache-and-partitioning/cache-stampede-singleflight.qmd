@@ -1,0 +1,63 @@
+---
+title: "One Hot Key, Ten Thousand Simultaneous Misses"
+description: "Advanced system-design reasoning with formal constraints and a small tested code example."
+---
+
+## Interview challenge
+
+A cache item representing a popular profile expires. Ten thousand simultaneous readers all see a miss and request the underlying database. The database was able to serve the item at ordinary load, but the *synchronised miss* now overloads it.
+
+The problem is a **cache stampede**, also called dogpile or thundering-herd amplification.
+
+## Count amplification before solving it
+
+Suppose one database read costs 50 ms and ten thousand callers arrive while a key is missing. Without coordination, they may generate roughly ten thousand identical reads. With **singleflight**, one in-flight load can be shared by the others (inside one process).
+
+$$
+N_{\mathrm{upstream}}(k,\Delta t)\approx1
+\quad\text{instead of}\quad
+N_{\mathrm{callers}}(k,\Delta t)
+$$
+
+This is an illustrative single-process coalescing goal; requests spread across 20 app replicas may still produce 20 loads unless there is cross-replica coordination.
+
+## Small runnable implementation
+
+~~~ts
+const cache = new VersionedCache<string>();
+const fetcher = async () => ({version:3,value:'profile'});
+const [a,b] = await Promise.all([
+  cache.load('profile:7',fetcher),
+  cache.load('profile:7',fetcher)
+]);
+// Only one fetch is started while both callers wait on the same Promise.
+~~~
+
+The code keeps a per-key in-flight Promise and clears it after settlement. The test proves that simultaneous loaders share one fetch and that a newer version cannot be overwritten by an older delayed result.
+
+## What if the one request gets stuck?
+
+Singleflight is a **coordination technique**, not a durability or availability guarantee. If the shared Promise never resolves, many callers now wait on the same failure. Add a deadline, bounded waiter count, and fallback behaviour. For read-only data, stale-while-revalidate may be acceptable.
+
+Other strategies include expiry jitter (to prevent bulk expirations), short negative caching for absent keys, or an explicit per-key refresh lease.
+
+## Cache consistency trade-off
+
+It can be better to serve a slightly stale profile than to take down the database, but not for a funds transfer or security permission change. Define the allowed staleness for each datum.
+
+When combined with the [versioned invalidation lesson](cache-invalidation-race.qmd), stale responses still require a rule that prevents old data from becoming the new canonical cache state.
+
+## Advanced follow-up
+
+What if the hot key has millions of readers in many regions? Local singleflight limits request amplification **per process**; multi-region replication, CDN caching and source-read limits address the next level. Ask whether a global singleflight lock would be worth its coordination and failure costs.
+
+## Mathematical Abstraction
+
+$$
+A(k)=\frac{\text{upstream loads for key }k}
+{\text{cache misses for key }k}.
+$$
+
+In an ideal one-process singleflight interval, $A(k)\approx1/N$, not $1$. This *load amplification ratio* distinguishes a correctly coalesced miss from synchronized independent DB requests.
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

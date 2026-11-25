@@ -1,0 +1,65 @@
+---
+title: "Read Your Writes Across Two Regions"
+description: "Challenging system-design interview scenario: formal guarantee, failures, and an original implementation."
+---
+
+## Interview challenge
+
+A user updates their profile in Region A and is immediately routed to Region B for the next GET request. Region B asynchronously replicates data and currently holds the old version. The user reports that their newly saved settings have disappeared.
+
+How do we guarantee **read-your-writes** without making every read globally synchronous?
+
+## Specify the guarantee first
+
+A client that committed version $v$ should not be served a version older than $v$ on a later read in the same session:
+
+$$
+v_{\mathrm{read}}\geq v_{\mathrm{lastCommittedByClient}}.
+$$
+
+This is **session consistency**, not automatically global linearizability. Other clients may observe a different freshness level under asynchronous replication.
+
+## One small mechanism
+
+Return a version token after each successful write. Carry the highest seen version on subsequent reads. A replica may serve a request only when its local version is sufficient. Otherwise it can wait for replication until the caller's deadline, route the read to the leader/origin region, or return an explicit retryable status.
+
+~~~ts
+const clientRequires = 12;
+const replica = { version: 11, value: 'old' };
+if (replica.version < clientRequires) {
+  // Do not return this replica's stale value as a successful session read.
+}
+~~~
+
+The shared [VersionedCache](../lab/src/core.ts) illustrates monotonic version writes, but the educational lab **does not implement cross-region replication or a session protocol**.
+
+## Why the simple 'always read nearest' answer fails
+
+After a successful write, routing the next request to any available nearest replica breaks read-your-writes if that replica lags. Sticky routing reduces the chance but cannot guarantee the property after failover.
+
+A global strongly consistent read would solve the issue but can increase latency and reduce availability under partitions. Session tokens offer a narrower and often cheaper guarantee.
+
+## The genuinely difficult edge case
+
+What if version 12 was committed only in Region A, but A becomes unreachable and B has only version 11? You cannot simultaneously promise an immediately available read from B and strict read-your-writes from the missing version. Choose to wait, fail, or weaken the guarantee and **tell the client**.
+
+Likewise, independent writes in both regions may require conflict resolution (leader assignment, version vectors, CRDT semantics or business-specific merges). A simple scalar version from one leader does not solve concurrent multi-leader writes.
+
+## Interview follow-ups
+
+- Can you use client-side local state to display an optimistic profile? Yes, but distinguish UI presentation from an authoritative persisted read.
+- How do you bound waiting? Propagate a deadline. Exceeding it returns a clear timeout/unavailable response, not silently stale data.
+- Should every service use global linearizability? No; design per business invariant.
+
+## Mathematical Abstraction
+
+$$
+\operatorname{read}(k,\mathrm{session}\ s)\models
+v(k)\geq \operatorname{maxCommittedVersion}(s,k)
+$$
+
+for a successful session-consistent read. A partially replicated region unable to satisfy the lower bound must not claim success under this contract.
+
+**Related:** [Versioned Cache Races](../03-cache-and-partitioning/cache-invalidation-race.qmd), [Data Consistency](../../data-consistency.qmd).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

@@ -1,0 +1,65 @@
+---
+title: "The Cache Fill That Resurrects Deleted Data"
+description: "Advanced system-design reasoning with formal constraints and a small tested code example."
+---
+
+## Interview challenge
+
+A social-profile cache initially holds version 1. Reader R starts a slow database read of version 1. Meanwhile another request updates the profile to version 2, and invalidation removes the old cache entry. Reader R finally finishes and fills the cache with **version 1**, undoing the effect of invalidation.
+
+The hard problem is not cache TTL. It is the **relative ordering of refill and update**.
+
+## Draw the bad timeline
+
+~~~text
+t=0: Reader R fetches value v1 from the database (slow)
+t=1: Writer W commits v2 to the authoritative store
+t=2: Cache invalidation clears v1
+t=3: R finishes and writes v1 into empty cache
+t=4: Next reader receives stale v1
+~~~
+
+An ordinary 'delete cache after DB update' rule is insufficient without considering delayed in-flight fills. This is one reason caching large social graphs is hard; Meta publicly describes such consistency challenges in its cache engineering work.
+
+## Make versions part of the value
+
+Write cache objects as triples $(k,v,x)$ with key $k$, version $v$, and value $x$. A refill or update can replace a cached value only if its version is no older than the current version. The core comparison is
+
+$$
+v_{\mathrm{incoming}}\geq v_{\mathrm{stored}}.
+$$
+
+If the update changes the value to version 2 before the stale fetch completes, the stale version-1 fill is rejected.
+
+## Actual tested core implementation
+
+~~~ts
+const cache = new VersionedCache<string>();
+cache.put('user:7',2,'new');
+cache.put('user:7',1,'old'); // returns false
+cache.get('user:7');         // version 2 and value 'new'
+~~~
+
+Use POST /lab/cache and GET /lab/cache?key=user:7. A separate test races a delayed fetch against an incoming newer version.
+
+## The subtle missing case
+
+What if the writer **deletes the entry entirely** instead of writing a version-2 tombstone? The stale reader sees no newer version and may still refill old data. Correct version-aware invalidation often requires retaining a **tombstone/high-watermark version** or checking the authoritative version before accepting a fill.
+
+A completely distributed cache additionally needs coherent version allocation, ordered invalidation or version-checking across regions, and a policy for cache failures. Global linearizability cannot be obtained by changing just one node's Map.
+
+## The high-value follow-up
+
+Which source of truth generates $v$? A local timestamp is risky because clocks can disagree. A monotonic database row version or transaction sequence is generally more reliable. Why not use a constant TTL of 5 seconds? Because 'stale for at most five seconds' is a different guarantee from read-your-writes or no-resurrection.
+
+## Mathematical Abstraction
+
+$$
+v_{k}(t+1)\geq v_{k}(t)
+$$
+
+for each accepted write to a **version-aware** cache, including invalidations represented by tombstones. This monotonic-version invariant prevents stale overwrites, but does not automatically enforce global read linearizability.
+
+**Engineering reference:** Meta Engineering, [Cache made consistent](https://engineering.fb.com/2022/06/08/core-infra/cache-made-consistent/) and [TAO: The power of the graph](https://engineering.fb.com/2013/06/25/core-infra/tao-the-power-of-the-graph/).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

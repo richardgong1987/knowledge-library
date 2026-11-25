@@ -1,0 +1,63 @@
+---
+title: "Exact Global Top-K from Distributed Search Shards"
+description: "Advanced interview case: derive the principle, prove assumptions, and run small code."
+---
+
+## Interview challenge
+
+You have hundreds of search shards. Each returns its five best results. The coordinator must output the **global top five**. Can it do that by merging only these local candidates? When would the answer become incorrect?
+
+This is a deceptively mathematical problem. You need a precise ordering assumption before designing any aggregator.
+
+## Prove when local top-k is enough
+
+Assume each document belongs to exactly one shard and all shards use the **same globally comparable score and deterministic tie-breaker**. Let a document $d$ be the sixth-ranked result in its shard when $k=5$. At least five documents in that shard outrank it; therefore $d$ cannot be among the global top five. The exact global top five lies in the **union of each shard's top five**.
+
+$$
+\operatorname{TopK}\Bigl(\bigcup_{s=1}^mD_s\Bigr)
+=\operatorname{TopK}\Bigl(
+\bigcup_{s=1}^m\operatorname{TopK}(D_s)\Bigr).
+$$
+
+This is valid under the assumptions above, not if shards compute incomparable normalised scores or if later diversification/personalisation can rerank excluded candidates.
+
+## Tiny verified implementation
+
+~~~ts
+const result = mergeTopK([
+  [{id:'a',score:9},{id:'d',score:2}],
+  [{id:'b',score:10},{id:'c',score:8}]
+],3);
+// Returns [b,a,c] by descending score.
+~~~
+
+Use POST /lab/rank/merge with shard arrays and k. The test includes stable tie-breaking.
+
+## The failure case that reveals understanding
+
+Imagine shard A scores relevance from 0 to 1, while shard B uses a different model producing values from 0 to 100. The merged order is meaningless unless scores have a shared calibration or the coordinator recomputes them.
+
+If the final feed requires **diversity**, freshness, user-specific exclusions or a neural reranker, a shard's sixth result might beat its top five after those new conditions are considered. You need oversampling, extra metadata or adaptive candidate retrieval.
+
+## Production architecture without unnecessary complexity
+
+Each shard performs local retrieval, applies a cheap candidate score, and returns a bounded list. A coordinator merges candidate lists, deduplicates IDs, applies any global constraints and optionally reranks. Define a global deadline: late shards may be excluded, but then mark results partial rather than silently claiming exact top-k.
+
+## Deep follow-ups
+
+- How do you avoid one slow shard blocking all results? Use bounded waits and a partial-response contract.
+- Can all shards return ten items for a global top ten? Yes only with the common total-order assumptions; otherwise oversample.
+- When is using a heap useful? A k-way merge across sorted lists costs roughly $O(k\log m)$ after obtaining the lists, whereas sorting all candidates costs more.
+
+## Mathematical Abstraction
+
+$$
+\mathcal C=\bigcup_{s=1}^{m}\operatorname{TopK}(D_s),\qquad
+\operatorname{TopK}(\mathcal C)=\operatorname{TopK}\Bigl(\bigcup_sD_s\Bigr)
+$$
+
+for disjoint shard membership and one shared total ranking order. The conclusion is a proof about **selection**, not a universal statement about every search engine's ranking system.
+
+**Related:** [Autocomplete](autocomplete-index.qmd), [Feed Fan-Out](celebrity-news-feed.qmd).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

@@ -1,0 +1,59 @@
+---
+title: "Rate Limiting Without Unfair Bursts"
+description: "A conceptually demanding, mathematically grounded system-design problem with a tiny runnable NestJS example."
+---
+
+## The hard interview question
+
+A public API allows each customer three immediate requests and then one new request per second. Why is a fixed-window counter unsuitable, and how can we support a short burst without admitting unlimited long-run traffic?
+
+A counter that resets every integer second can allow requests just before and just after a boundary to concentrate twice the intended amount in a tiny interval. A token bucket tracks a **budget** that fills continuously.
+
+## Derive token accounting
+
+Let $B$ be capacity, $r$ tokens per second, $t$ time, and $T(t)$ tokens currently available. Between requests:
+
+$$
+T(t)=\min\left(B,T(t_0)+r(t-t_0)\right).
+$$
+
+A request of cost $c$ is admitted only if $T(t)\geq c$. Upon admission, subtract $c$; rejection should not consume the same quota unless the policy intentionally meters attempts.
+
+With $B=3$ and $r=1/s$, three requests at time zero succeed; the fourth is rejected. Half a second later only 0.5 tokens have reappeared. One second later a one-token request is allowed.
+
+## Code and what it actually proves
+
+~~~ts
+const limiter = new TokenBucket(3, 1);
+limiter.allow('tenant-a', 0); // true
+limiter.allow('tenant-a', 0); // true
+limiter.allow('tenant-a', 0); // true
+limiter.allow('tenant-a', 0); // false
+limiter.allow('tenant-a', 1000); // true
+~~~
+
+The NestJS endpoint POST /lab/rate uses a supplied logical clock for deterministic demonstration. A real server uses a trusted monotonic time source and never accepts the client-provided timestamp as authority.
+
+## Hidden distributed-systems problem
+
+Suppose three API replicas each have a local capacity of three tokens. The tenant could obtain **nine immediate admissions**, not three. You must define whether the quota is local, per-region or global. For a global cap, use an atomic shared counter/bucket or coordinated quota leases. This creates consistency/availability trade-offs.
+
+A separate issue is **fairness**. Per-tenant rate limits stop one tenant from overwhelming everybody, but do not allocate shared CPU proportionally. Pair admission limits with a fair work scheduler.
+
+## High-value follow-ups
+
+1. When the Redis quota store fails, do you fail open or closed? The right answer depends on service safety: login brute-force protection differs from a read-only feed.
+2. What should HTTP return on quota exhaustion? Usually 429 with a documented retry signal and jitter; rejecting immediately is more honest than silently queueing indefinitely.
+3. Can a burst of three violate an 'exactly one per second' promise? Yes. A token bucket enforces a sustained rate *plus burst budget*, not exact pacing.
+
+## Mathematical Abstraction
+
+$$
+A(t_2)-A(t_1)\ \leq\ B+r(t_2-t_1)
+$$
+
+where $A(t)$ denotes **cost-weighted admitted work** over time in an ideal token-bucket model. This is the envelope for an allowed burst; it is not a deterministic response-time bound.
+
+**Related:** [Fair Scheduling](fair-multitenant-scheduling.qmd), [Admission Control](deadline-admission-control.qmd).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

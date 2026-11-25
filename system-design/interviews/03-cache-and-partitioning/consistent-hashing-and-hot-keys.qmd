@@ -1,0 +1,67 @@
+---
+title: "Stable Sharding Versus Hot Keys"
+description: "Advanced system-design reasoning with formal constraints and a small tested code example."
+---
+
+## Interview challenge
+
+A distributed key-value store has three nodes. Adding a fourth should not move almost every key. But if a famous user's profile consumes 80% of traffic, moving keys evenly by count will **not** balance CPU.
+
+The surprising point: **stable assignment and balanced load are different optimisation objectives**.
+
+## Start with rendezvous hashing
+
+For key $k$ and node $n$, compute a deterministic score $h(k,n)$. Assign the key to the node with the highest score:
+
+$$
+n^*(k)=\arg\max_{n\in N}h(k,n).
+$$
+
+When one node disappears, keys previously assigned to **other nodes** retain their winner: all surviving scores are unchanged. Only keys whose winner was removed need reassignment.
+
+## Actual small implementation
+
+~~~ts
+const nodes = ['A','B','C'];
+const before = rendezvous('user:7',nodes);
+const after = rendezvous('user:7',['A','B']);
+// If before was A or B, it must stay the same after removal.
+~~~
+
+GET /lab/shard?key=user:7 demonstrates selection. The test checks this minimal-movement property over hundreds of keys. The lab uses simple FNV-like hashing for reproducibility, **not a cryptographic hash**.
+
+## Now change just one assumption
+
+Suppose ten thousand keys are evenly assigned, but the key for one high-profile account receives 80% of requests. A mathematically uniform key distribution can still leave a single node overloaded.
+
+$$
+\operatorname{load}(n)=\sum_{k:\,n^*(k)=n}r_k\,c_k
+$$
+
+where $r_k$ is request rate and $c_k$ per-request compute cost. Even if the number of keys per node is equal, this sum can be wildly unequal.
+
+## The difficult but simple answer
+
+Separate **key ownership** from **read-serving capacity**. For a read-heavy hot key, replicate its cached value to multiple serving nodes, distribute reads to replicas, and keep a clear authoritative write path and invalidation/version policy. For write-hot data, naive replication does not solve contention on one ordered key; consider partitioning the business entity or changing the aggregation model.
+
+Google Research studied **consistent hashing with bounded loads**, which explicitly addresses the risk that an unbounded hash allocation overloads some servers. That is a more precise target than assuming consistent hashing 'balances traffic'.
+
+## Interview follow-ups
+
+- How does a new node affect routing? Only keys that select it as the new maximum should move in rendezvous hashing.
+- What if the key changes value every millisecond? Read replicas may become stale; freshness and fanout are the new bottleneck.
+- Why not replicate every key ten times? Memory cost, write propagation and cache-consistency complexity increase.
+
+## Mathematical Abstraction
+
+$$
+\min\ \operatorname{KeysMoved}(N\to N')
+\quad\text{subject to}\quad
+\max_{n\in N'}\operatorname{load}(n)\leq C_n.
+$$
+
+This expresses two competing goals: minimise movement after topology changes and respect per-node capacity. Plain rendezvous hashing addresses the first; it does not enforce the capacity constraint.
+
+**Research:** Google Research, [Consistent Hashing with Bounded Loads](https://research.google/blog/consistent-hashing-with-bounded-loads/).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

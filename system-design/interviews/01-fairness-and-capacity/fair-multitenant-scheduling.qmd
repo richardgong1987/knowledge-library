@@ -1,0 +1,63 @@
+---
+title: "Fair Scheduling for Multi-Tenant Compute"
+description: "A conceptually demanding, mathematically grounded system-design problem with a tiny runnable NestJS example."
+---
+
+## The hard interview question
+
+An ingestion system has limited CPU and GPU capacity. Tenant A uploads a huge workload (hundreds of thousands of work units), while tenant B submits one small job every few seconds. How can both make progress **without** giving tiny jobs absolute priority and without letting A monopolise capacity?
+
+The difficult part is **defining fairness**, not deploying Kafka. Every request has a different cost, so normal round robin counts the wrong thing. FIFO can trap B behind A's work; shortest-job-first can starve A if B's short jobs keep arriving.
+
+## A small model before any infrastructure
+
+Let $q_i(t)$ be queued work belonging to tenant $i$ and $c(j)>0$ the estimated CPU/GPU cost of task $j$. We want a work-conserving scheduler whose long-run allocated work is approximately proportional to configured weights $w_i$ for continuously backlogged tenants:
+
+$$
+\frac{S_i(T)}{w_i}\approx\frac{S_j(T)}{w_j},
+\quad S_i(T)=\sum_{\text{tasks of tenant }i\text{ served by }T}c(j).
+$$
+
+This is a **long-run scheduling objective**, not a strict latency guarantee. An individual large non-preemptible task can still increase tail latency.
+
+## Derive Deficit Round Robin (DRR)
+
+Give each active tenant a queue and a credit counter $D_i$. Whenever the scheduler visits the queue, it adds quantum $Q_i=Qw_i$. If the head-of-line task costs no more than the credit, the task can run and its cost is subtracted. Otherwise, credit carries forward to a later round. When the queue empties, reset the credit.
+
+Example: $Q=2$, tenant A has one job of cost 8, tenant B has eight jobs each costing 1. B can run two jobs per visit; A receives credits 2, 4, 6, 8 and then runs. FIFO could keep B waiting until A finishes; DRR lets B progress while preserving credit for A.
+
+## Actual small code
+
+The complete runnable implementation is in [DeficitScheduler](../lab/src/core.ts). Its NestJS API is in [main.ts](../lab/src/main.ts):
+
+~~~ts
+const queue = new DeficitScheduler(2);
+queue.enqueue({ id: 'large', tenant: 'A', cost: 8 });
+queue.enqueue({ id: 'small', tenant: 'B', cost: 1 });
+const job = queue.next(); // B may run before A earns 8 credits
+~~~
+
+Run the lab; POST /lab/jobs twice, then GET /lab/jobs/next repeatedly. Tests include a finite large task that does **not** starve and equal-cost queues that alternate.
+
+## The actual traps
+
+Costs must represent **compute**, not merely file bytes. One scanned PDF page can require more OCR than many text pages. Running a 10-minute task without preemption still blocks the worker for 10 minutes: first split it into bounded work units.
+
+A single in-memory scheduler is not a distributed scheduler. To scale workers, persist the queues, atomically claim jobs, use job leases and fencing IDs, and make retries idempotent. Evaluate *cost-normalised service*, **p95 waiting time by tenant**, and maximum waiting time for a backlogged tenant.
+
+## Two deep follow-ups
+
+1. What changes if A pays for twice the capacity? Change $Q_A$ to $2Q_B$; explain the long-run objective, not merely the selection order.
+2. Can strict fairness and the lowest possible average latency always be achieved together? No: favouring short jobs lowers average time under some assumptions but can conflict with a guaranteed share for large jobs.
+
+## Mathematical Abstraction
+
+$$
+D_i^{(r+1)}=D_i^{(r)}+Qw_i-\sum_{j\in\mathcal S_i(r)}c(j),\qquad D_i^{(r+1)}\geq0.
+$$
+
+Here $\mathcal S_i(r)$ is the set served during round $r$. Credits are conserved for active queues. Their accumulation explains why a sufficiently small bounded task eventually becomes schedulable.
+
+**Reference:** Shreedhar and Varghese, [Efficient Fair Queuing using Deficit Round Robin](https://web.stanford.edu/class/ee384x/EE384X/papers/DRR.pdf). Google Research also studies [load balancing for random arrivals](https://research.google/blog/load-balancing-with-random-job-arrivals/). This lesson is an original exercise, not a verified internal Google interview question.
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

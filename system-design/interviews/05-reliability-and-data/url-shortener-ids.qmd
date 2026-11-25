@@ -1,0 +1,76 @@
+---
+title: "URL Shortener: Unique IDs Under Concurrent Writers"
+description: "Challenging system-design interview scenario: formal guarantee, failures, and an original implementation."
+---
+
+## Interview challenge
+
+Design a URL shortener with billions of links and many API servers. Two requests arrive at exactly the same millisecond. How do you guarantee they never receive the same short code? What happens if the server restarts or clocks move backwards?
+
+The basic HTTP redirect is easy. The difficult part is **identifier allocation and durable uniqueness**.
+
+## The simplest correct foundation
+
+Use an authoritative database sequence or an atomic identifier reservation service. Convert the unique positive integer into a compact alphabet, such as Base62:
+
+~~~ts
+function base62(id: bigint): string {
+  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  if (id < 0n) throw new Error('negative ID');
+  let n = id, output = '';
+  do {
+    output = alphabet[Number(n % 62n)] + output;
+    n /= 62n;
+  } while (n > 0n);
+  return output;
+}
+~~~
+
+**This is an executable, standalone TypeScript function**, illustrating the encoding; it is not an allocation service. Database identity uniqueness, not Base62 itself, prevents collisions.
+
+## Why encoding is not generation
+
+Encoding ID 12345 into Base62 produces a unique string **if** every original ID is unique. Generating IDs with the current millisecond timestamp across multiple replicas does not satisfy that premise. Two writes could share the same timestamp, worker ID or local counter after a restart.
+
+For a PostgreSQL-like SQL datastore, a sequence-backed identity and a unique constraint are a compact starting point:
+
+~~~sql
+CREATE TABLE links (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  target_url TEXT NOT NULL
+);
+INSERT INTO links(target_url)
+VALUES ('https://example.com/document')
+RETURNING id;
+~~~
+
+The API then encodes the returned ID. The redirect handler decodes/looks up the mapping and returns an HTTP redirect. Validate the target URL against your application policy before storing it.
+
+## Explore alternatives correctly
+
+- **Random codes:** simple horizontal generation, but require uniqueness checks and collision retries. With $n$ codes chosen from a space of size $M$, the birthday approximation says collision probability grows roughly as $1-e^{-n(n-1)/(2M)}$ under uniform independent sampling.
+- **Snowflake-style IDs:** combine time, worker identity and per-worker sequence. Need unique worker IDs, sequence-exhaustion behaviour and clock-rollback handling.
+- **Range leasing:** a central allocator grants each writer a disjoint block of IDs. Reduces coordination, but gaps on crashes are normal and acceptable for opaque IDs.
+
+## A less obvious security issue
+
+Short code enumeration may expose private links if codes are sequential. Treat URLs as public unless access control is enforced separately. Rate-limit malicious redirect creation, prevent phishing/malware abuse, and understand open-redirect risk.
+
+## Interview follow-ups
+
+- Do you need globally sequential IDs? Usually **no**; only uniqueness and mapping durability are required.
+- Can you cache redirects? Yes, with a versioned invalidation/TTL strategy, especially for deleted or changed destinations.
+- How to support custom aliases? Unique constraint on the alias, clear collision error, and a namespace policy.
+
+## Mathematical Abstraction
+
+$$
+\operatorname{encode}:\mathbb N\to\Sigma_{62}^{*},
+\qquad i\ne j\Rightarrow \operatorname{encode}(i)\ne\operatorname{encode}(j).
+$$
+
+The injectivity of canonical Base62 encoding **transfers** uniqueness; it does not create uniqueness from duplicate source IDs.
+
+**Related:** [Idempotent API Writes](../02-correctness-and-coordination/idempotent-payment-api.qmd), [Cache Invalidation](../03-cache-and-partitioning/cache-invalidation-race.qmd).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

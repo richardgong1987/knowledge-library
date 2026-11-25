@@ -1,0 +1,70 @@
+---
+title: "Search Autocomplete Under a Strict Latency Budget"
+description: "Advanced interview case: derive the principle, prove assumptions, and run small code."
+---
+
+## Interview challenge
+
+When a user types 'sys', the system should suggest useful query completions. You have millions of search terms, a target response time of tens of milliseconds, and continuously changing popularity. Do you scan all terms on every keystroke?
+
+No. The interesting design questions are **precomputation, ranking consistency, and staleness**, rather than the syntax of a trie.
+
+## A simple prefix index
+
+For each known query $w$, index every prefix of $w$ to a count or a bounded list of popular completions. A prefix lookup retrieves candidates instead of scanning the complete dictionary.
+
+~~~ts
+const index = new Autocomplete();
+index.record('system design');
+index.record('system design');
+index.record('systems');
+index.suggest('sys',2); // ['system design','systems']
+~~~
+
+This is the actual original implementation in the shared lab. Use POST /lab/search/record to build counts and GET /lab/search/suggest?prefix=sys to read suggestions.
+
+## Understand the cost
+
+If a term has length $|w|$, creating all prefixes requires $O(|w|)$ prefix entries (but naive string slicing can add character-copying cost). Maintaining the full set of words for every prefix can consume large memory. A production version keeps only top $K$ suggestions per prefix or uses a compact trie and a separate ranking store.
+
+$$
+\operatorname{Suggest}(p)=
+\operatorname{TopK}_{w:\,p\preceq w}(\operatorname{score}(w)).
+$$
+
+Here $p\preceq w$ means that $p$ is a prefix of $w$.
+
+## The harder interview twist
+
+You want popular recent suggestions, not all-time counts. A frequency-only index becomes stale: yesterday's breaking query may remain ranked too high. A simple decayed score is
+
+$$
+S(w,t)=\sum_{e\in\mathrm{queries}(w)}e^{-\gamma(t-t_e)}
+$$
+
+for historical query events at times $t_e\leq t$, with decay rate $\gamma>0$. This is an illustrative scoring model, not code implemented by the small lab.
+
+Update the index asynchronously, then serve a known version of the top-K prefix lists. You need a clear contract for indexing delay and what happens when a prefix has no cached candidates.
+
+## Privacy, abuse and correctness
+
+Raw user queries may contain names, emails and secrets. Popularity telemetry can become a privacy problem; apply retention, filtering and aggregation policies. Offensive or prohibited strings may need filtering before publication, not just after ranking.
+
+## Tough follow-up
+
+A million users search the same prefix in one second. The prefix index still has one hot key. Cache and replicate the already-computed top-K response; do not repeatedly recompute full suggestions from the entire term corpus.
+
+## Mathematical Abstraction
+
+$$
+\mathrm{Memory}_{\mathrm{naive}}\propto\sum_{w\in W}|w|,
+\qquad
+\operatorname{latency}(p)\approx
+T_{\mathrm{lookup}}+T_{\mathrm{topK}}.
+$$
+
+These are high-level cost models; precise memory and latency depend on the chosen index layout, cache hit rate and update method.
+
+**Related:** [Consistent Hashing and Hot Keys](../03-cache-and-partitioning/consistent-hashing-and-hot-keys.qmd).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

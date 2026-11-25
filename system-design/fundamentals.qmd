@@ -1,24 +1,87 @@
 ---
 title: "System Design Fundamentals"
-description: "Translate requirements into architecture and measurable trade-offs."
+description: "Foundational system-design reasoning with formal properties, worked examples and failure cases."
 ---
 
-## The problem
+# From an interview prompt to an engineering model
 
-A trading dashboard must serve many users without showing stale or incorrect data. How do we express its functional requirements, performance goals, and constraints?
+A user asks: **Design a portfolio analytics API serving 20,000 investment users and expensive overnight reports.** Do not start with Kubernetes, a queue or a database. First turn the sentence into a measurable contract.
 
-## A running example
+## 1. Separate functionality from guarantees
 
-We will keep this scenario throughout the lesson and change one system constraint at a time.
+Functionality: request portfolio valuations, retrieve results, ingest reference data, submit a long-running report. Nonfunctional requirements: expected request rate, business correctness, permissions, freshness, latency, durability, recovery time and operational cost.
 
-## Step-by-step reasoning
+A useful table:
 
-This chapter is an outline for a future worked explanation.
+| User operation | Correctness | Latency objective | Processing model |
+|---|---|---|---|
+| Get last published valuation | Authorised and versioned | p99 below a chosen budget | Synchronous cached read |
+| Generate large report | Exact input snapshot and reproducible result | Completion within a published window | Asynchronous job |
+| Post a portfolio change | No duplicated business effect | Prompt acknowledgement | Idempotent, transactional write |
 
-## Visual experiments
+A **target** must be measured; an architecture diagram does not prove it.
 
-Interactive models and failure simulations will be added as the chapter develops.
+## 2. Capacity estimation in three lines
 
-## Related topics
+Let $U$ be active users, $q$ requests per user per day, and $H$ active hours per day. Average rate during active hours is
 
-Return to the [System Design overview](index.qmd) or explore [Distributed Systems](distributed-systems.qmd).
+$$
+\lambda=\frac{Uq}{3600H}.
+$$
+
+For $U=20{,}000$, $q=100$ and $H=8$, this is roughly 69 requests/s. A 10-fold peak would be around 690/s, but peak factors require empirical validation. Multiply by average CPU time or resource units per request to estimate compute cost; multiplying *only* by QPS ignores expensive outliers.
+
+Little's law under stable-flow assumptions connects average work in progress, throughput and response time:
+
+$$
+L=\lambda W.
+$$
+
+At 100/s and 50 ms average sojourn time, approximately five requests are in the system. If a dependency becomes 5 seconds without lowering arrival rate, expected in-flight work becomes approximately 500, which risks exhausting connections or memory.
+
+## 3. Define a deadline budget
+
+For a synchronous request traversing gateway, authorisation, portfolio lookup and aggregation:
+
+$$
+T_{\mathrm{total}}=T_{\mathrm{gateway}}+T_{\mathrm{auth}}+
+T_{\mathrm{lookup}}+T_{\mathrm{aggregate}}\leq D.
+$$
+
+If lookups run concurrently, use the **critical path**, not an incorrect sum of parallel durations. Propagate deadlines to dependencies; reject work unlikely to finish on time.
+
+## 4. Find the core invariant
+
+For a report snapshot, the primary invariant may be *all derived positions use the same published market-data version*. A fast but mixed-version report can be wrong even if all calls succeed.
+
+For an order write, an idempotency key and transaction boundary may matter more than adding extra replicas.
+
+## 5. Start small, then show the scaling boundary
+
+A strong interview answer begins with one API process, one authoritative datastore and one worker queue where justified. Add an extra component only when the simple design violates a named requirement.
+
+For example, the report path is asynchronous because its runtime is unbounded relative to HTTP request timeouts, **not** because queues are fashionable.
+
+## Interview checklist
+
+1. Identify entities, business operations, constraints and trust boundaries.
+2. State read/write volumes, data size and failure budgets; give numbers and assumptions.
+3. Choose one correctness guarantee per critical operation.
+4. Draw the simplest request and persistence path.
+5. Trace a failure at each step, including timeouts and unknown outcomes.
+6. Propose one scaling evolution with a clear bottleneck.
+7. Make the trade-off and monitoring signals explicit.
+
+## Mathematical Abstraction
+
+A system design chooses configuration $a$ from feasible architectures $\mathcal A$ to optimise competing objectives:
+
+$$
+\min_{a\in\mathcal A}\bigl(C_{\mathrm{cost}}(a),L_{99}(a)\bigr)
+\quad\text{subject to}\quad
+\operatorname{Safety}(a)\land\operatorname{AvailabilityTarget}(a).
+$$
+
+This is a **multi-objective formulation**, not a promise that one architecture simultaneously minimises cost and latency. Requirements define the feasible set.
+
+[→ Advanced interview problems](interviews/index.qmd) · [Fair Scheduling](interviews/01-fairness-and-capacity/fair-multitenant-scheduling.qmd).

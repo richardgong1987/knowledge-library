@@ -1,0 +1,69 @@
+---
+title: "Fair RAG Ingestion: Gigabytes vs Megabytes"
+description: "A conceptually demanding, mathematically grounded system-design problem with a tiny runnable NestJS example."
+---
+
+## The hard interview question
+
+Build a multi-tenant RAG ingestion system. One tenant uploads 5 GB PDFs and another uploads 5 MB text files. Compute is finite and parsing, OCR, embedding and indexing all consume resources. If short files always win, the large ones never finish. If files run FIFO, tiny users wait behind hours-long jobs.
+
+This is a **scheduling and work-unit design** question before it is a vector database question.
+
+## First choose the unit of scheduling
+
+A file must not be an indivisible job. After upload, separate *file bytes* from *processing work*: parse in streaming windows, OCR pages, normalise text, create bounded token chunks, embed batches and perform idempotent index writes.
+
+Each work item has an estimated cost $c_i$, such as normalised compute units. Break items into pieces with
+
+$$
+c_i\leq C_{\max}.
+$$
+
+A file containing 23 units with $C_{\max}=5$ becomes tasks of costs $5,5,5,5,3$. Chunk boundaries need **stable identities**: the ID can encode file ID, file content version, processing stage and chunk index.
+
+## Why split-then-schedule works
+
+The scheduler cannot preempt an OCR or embedding RPC that is already running. Smaller tasks put an upper bound on the **per-task** uninterruptible work (when cost estimates are accurate). Apply fair scheduling between tenants **after** splitting; otherwise one enormous file still occupies a worker.
+
+The educational implementation reuses [chunkFile](../lab/src/core.ts) and [DeficitScheduler](../lab/src/core.ts):
+
+~~~ts
+const parts = chunkFile('A','file-7',23,5);
+const scheduler = new DeficitScheduler(2);
+for (const p of parts) scheduler.enqueue(p);
+scheduler.enqueue({ id:'small', tenant:'B', cost:1 });
+~~~
+
+The NestJS route POST /lab/files enqueues the chunks. GET /lab/jobs/next lets you observe the decisions without building an entire cloud pipeline.
+
+## Reliability is the deeper half
+
+A worker can write embeddings and crash before acknowledging the task. Retrying must not create duplicated vectors. Use a deterministic index key based on (tenant, fileVersion, stage, chunkIndex) and make upserts idempotent. Persist a checkpoint for completed chunks. An ingestion run is complete only when *all expected stages/chunks* are terminal and searchable.
+
+Cancellation also needs explicit semantics: cancelling a file should prevent future stage transitions but cannot undo embeddings already committed without a compensating delete/version policy.
+
+## Traps to reject in the interview
+
+- Prioritise smallest file: can starve large uploads forever.
+- Process the whole file in one task: no meaningful fairness within a single long-running job.
+- Equal per-file quotas: a tenant can split files to obtain more capacity; quota on **tenant identity** instead.
+- Retry every failure immediately: increases load during outages.
+- Assume bytes equal compute: OCR, decoding and model tokenisation vary.
+
+## A useful metric
+
+Measure throughput and waiting *by tenant*, not global average. At minimum collect accepted work units, completed work units, oldest queued age and per-stage error rates.
+
+## Mathematical Abstraction
+
+$$
+\text{Work}(f)=\sum_{j\in\mathrm{chunks}(f)}c(j),\qquad
+\max_jc(j)\leq C_{\max},\quad
+\sum_iS_i(T)\leq CT.
+$$
+
+Here $C$ is total compute capacity (units/s), $T$ elapsed time, and $S_i$ served work for tenant $i$. No scheduling algorithm can complete sustained incoming work exceeding total capacity; overload needs admission control or backpressure.
+
+**Related:** [Deficit Round Robin](fair-multitenant-scheduling.qmd), [Idempotency](../02-correctness-and-coordination/idempotent-payment-api.qmd).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

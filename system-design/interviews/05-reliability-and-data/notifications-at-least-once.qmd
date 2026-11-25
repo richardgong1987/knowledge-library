@@ -1,0 +1,61 @@
+---
+title: "Reliable Notifications Without Double-Sending"
+description: "Challenging system-design interview scenario: formal guarantee, failures, and an original implementation."
+---
+
+## Interview challenge
+
+You must send account alerts. The message broker delivers an event, the notification worker calls an email/SMS provider, and then the worker crashes before acknowledging the event. The broker retries. Does your design send the user another email?
+
+The crucial distinction is **at-least-once event delivery** versus **exactly-once external side effects**.
+
+## Identify the separate boundaries
+
+1. An event is committed to durable storage or a broker.
+2. A worker receives the event and may retry.
+3. The worker calls the external notification provider.
+4. The provider accepts or rejects the request.
+5. The worker acknowledges the broker message.
+
+The worker can crash between any two stages. A successful provider call can have an unknown outcome from the worker's perspective, just as with the payment case.
+
+## An idempotency design
+
+Assign each logical notification a stable ID derived from the source event ID and notification type. Persist a per-recipient delivery state. Repeated broker deliveries should not create new logical notification records.
+
+~~~ts
+const gate = new IdempotencyGate<string>();
+const send = async () => 'provider-message-123';
+const first = gate.run('event7:email:alice','template-v1',send);
+const second = gate.run('event7:email:alice','template-v1',send);
+~~~
+
+The core example deduplicates calls **inside one process**, while [SequencedInbox](../lab/src/core.ts) demonstrates ordering for dependent events. A real solution uses an atomic DB unique key or consumer inbox and preferably a provider-supplied idempotency reference.
+
+## The unsolved hard edge case
+
+If the provider sends the email and the network response is lost, you may not know whether the email was delivered. A local SQL transaction cannot atomically commit with an arbitrary email provider. If the provider offers an idempotency key or a lookup API, use it; otherwise acknowledge the possibility of duplicate delivery, and design business and UX semantics accordingly.
+
+Do not assert 'exactly-once email' merely because your broker advertises exactly-once processing semantics within its own infrastructure.
+
+## Additional decisions
+
+Per-recipient rate limits prevent a notification storm; preferences and unsubscribe status must be checked at the correct authoritative moment. Keep sensitive content out of long-lived message payloads when practical. Use retries with jitter and maximum attempts, with dead-letter handling and monitoring for permanently failed notifications.
+
+## Interview follow-ups
+
+- What if a fraud alert and a marketing email share a retry queue? Separate priority and admission policies so low-value bulk email cannot delay security notifications.
+- Can notification order matter? For account state messages, yes; enforce per-recipient or per-aggregate ordering when required.
+- What does a deduplication retention window mean? After eviction, an old replay may be treated as new; align retention with the broker's replay horizon.
+
+## Mathematical Abstraction
+
+$$
+\#\mathrm{LogicalNotifications}(eventId,recipient,type)\leq1.
+$$
+
+This is an **application-level idempotency goal**. It is weaker than a claim that an external recipient observes no duplicate delivery under all possible failures.
+
+**References:** [Microsoft: Idempotent Consumer](https://learn.microsoft.com/en-us/azure/architecture/patterns/idempotent-consumer) and [Competing Consumers](https://learn.microsoft.com/en-us/azure/architecture/patterns/competing-consumers).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

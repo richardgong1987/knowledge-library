@@ -1,0 +1,62 @@
+---
+title: "Exactly-Once Business Effects from At-Least-Once Requests"
+description: "High-difficulty correctness interview scenario with formal invariants and original reference code."
+---
+
+## Interview challenge
+
+A user clicks **Pay**, the payment provider charges the card, and your HTTP response disappears. The client retries. Does a 500/timeout mean the charge failed? No. A network timeout only tells the *caller* that no timely answer arrived.
+
+The hard task is to offer a **single business effect** even when commands are delivered multiple times. 'Exactly-once network delivery' is not necessary; a consistent idempotency contract is.
+
+## Define the real invariant
+
+Identify an operation by (account, idempotency key) and store a canonical request fingerprint. For a fixed identity $k$ and payload $p$, repeats should return the same committed effect:
+
+$$
+\operatorname{effect}(k,p)^n=\operatorname{effect}(k,p),\qquad n\geq1.
+$$
+
+This is idempotence of the **business effect**, not a promise that the HTTP handler runs only once. A second request with the same key but a *different* fingerprint is a conflict, not a new payment.
+
+## Reproduce it in one tiny implementation
+
+~~~ts
+const gate = new IdempotencyGate<number>();
+let charges = 0;
+const action = async () => ++charges;
+
+const a = gate.run('account7:payment8','amount=100',action);
+const b = gate.run('account7:payment8','amount=100',action);
+// Both resolve to 1, and charges == 1 in this process.
+~~~
+
+Run POST /lab/idempotency twice with the same key and fingerprint. The lab coalesces an in-flight Promise and retains completed results. The tests prove local deduplication and payload-conflict detection.
+
+## The distributed version requires a transaction
+
+An in-memory Map **does not survive restarts** or coordinate replicas. Use a database uniqueness constraint on (tenant, key) and commit the idempotency receipt with the local business mutation in the same transaction. Include states such as processing, completed, and failed/retryable, with an explicit retention policy.
+
+The external card processor is a separate system. Use *its* idempotency capability and a stable provider operation ID, reconcile uncertain responses, and never blindly create a second charge.
+
+## A concrete race
+
+Two API replicas receive the same key simultaneously. Both check that it is absent. Both start a charge. This is a classic **check-then-act race**. The winning operation must be chosen by an atomic insert/uniqueness claim, not by a read followed by an unprotected write.
+
+## Interview follow-ups
+
+- What if the first attempt fails before any side effect? Decide whether to evict the reservation and allow retry; the lab does so for rejected Promises.
+- What if the first attempt succeeds but the response body changes after deployment? Store a canonical receipt or stable result schema.
+- What if a customer reuses a key six months later? Scope and retention must be part of the public contract.
+
+## Mathematical Abstraction
+
+$$
+\forall k:\quad \bigl|\{\text{committed business effects with identity }k\}\bigr|\leq1.
+$$
+
+This at-most-one condition, combined with a guaranteed eventual completion process, is more useful than an imprecise claim that the network delivers 'exactly once'.
+
+**Public reference:** [Microsoft Azure: Idempotent Consumer](https://learn.microsoft.com/en-us/azure/architecture/patterns/idempotent-consumer). The same principle applies to duplicate HTTP payments and replayed message processing.
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

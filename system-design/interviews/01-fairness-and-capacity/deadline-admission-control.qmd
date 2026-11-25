@@ -1,0 +1,63 @@
+---
+title: "When to Reject Work Rather Than Queue It"
+description: "A conceptually demanding, mathematically grounded system-design problem with a tiny runnable NestJS example."
+---
+
+## The hard interview question
+
+A service gets 60 requests/s but can process only 40 requests/s. Product managers demand p99 latency under 200 ms. What architecture change solves the problem?
+
+No queue type alone can make this sustainable. If offered work exceeds capacity indefinitely, the backlog grows. The deep answer is deciding **which work to admit**, which to reject, and how to propagate time budgets across dependencies.
+
+## One inequality defeats many designs
+
+In a simple deterministic fluid queue, for positive backlog:
+
+$$
+\frac{dQ(t)}{dt}=\lambda(t)-\mu(t).
+$$
+
+At arrival rate 60 and capacity 40, the backlog grows at 20 requests/s. In ten seconds, approximately 200 extra requests are waiting. Additional workers may change capacity, but an unbounded queue only hides overload temporarily.
+
+## A deadline is a budget, not a timeout on every hop
+
+If the external request has deadline $D=200$ ms and gateway processing costs 20 ms, the remaining services have at most 180 ms for work and communication. Chaining three separate 200 ms timeouts could exceed the user's deadline dramatically.
+
+$$
+T_{\mathrm{gateway}}+T_{\mathrm{queue}}+T_{\mathrm{service}}+T_{\mathrm{network}}\leq D.
+$$
+
+Before placing a request into a queue, estimate whether it can finish before its deadline. Reject work that is almost certainly expired. Otherwise you waste capacity doing work whose result the caller cannot use.
+
+## A minimal policy combination
+
+- Token bucket enforces a per-tenant input envelope.
+- Queue depth and predicted waiting time enforce an **admission boundary**.
+- Deadline propagation stops downstream work on expiry.
+- A bounded number of retries and exponential backoff with jitter avoid retry amplification.
+- Bulkheads reserve concurrency for critical routes.
+
+The runnable lab implements the token bucket and fair scheduler as two small independent primitives. It deliberately **does not promise a p99 SLA**, because that needs latency measurements, service-time distributions and overload tests.
+
+## Two traps
+
+**Always retry a timeout**: if the downstream already processed the request, a retry can duplicate side effects. Combine idempotency and a common deadline.
+
+**Always choose shortest processing time**: may reduce the mean but harm a tenant with expensive, long-running tasks. Keep the fairness and latency objectives separate.
+
+## Interview extension
+
+What if estimated service time is wrong? Measure quantiles per job class, revise budgets and enforce an absolute cap. How would you cancel work already running? Use cancellation signals and idempotent state transitions, but recognise that external side effects may already have happened.
+
+## Mathematical Abstraction
+
+$$
+\lambda_{\mathrm{admitted}}\leq\mu_{\mathrm{sustainable}},\qquad
+\operatorname{Pr}(T>D)\leq 1-\mathrm{SLO\ target}.
+$$
+
+The first inequality is a long-run stability target; the probability requirement is a measurable service objective, not guaranteed by merely setting a timeout.
+
+**Public research connection:** Google Research's [Aequitas admission-control paper](https://research.google/pubs/aequitas-admission-control-for-latency-critical-rpcs-in-datacenters/).
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

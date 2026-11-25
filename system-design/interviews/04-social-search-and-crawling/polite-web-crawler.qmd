@@ -1,0 +1,63 @@
+---
+title: "A Web Crawler That Does Not Overload One Host"
+description: "Advanced interview case: derive the principle, prove assumptions, and run small code."
+---
+
+## Interview challenge
+
+Build a crawler over a billion URLs. You have a large worker fleet, but one site must not receive ten thousand simultaneous fetches merely because it has ten thousand discovered pages. How can the crawler stay fast **and** polite?
+
+A global FIFO queue cannot enforce per-host pacing by itself. The key abstraction is a **frontier with scheduling constraints**.
+
+## Model host-level eligibility
+
+For every host $h$, track the earliest next legal dispatch time $t_h$. A URL at host $h$ may be claimed at time $t$ only if $t\geq t_h$. After dispatch, update $t_h=t+\Delta_h$, where $\Delta_h$ is the site's configured interval.
+
+$$
+\operatorname{eligible}(u,t)\iff t\geq t_{\operatorname{host}(u)}.
+$$
+
+Other hosts remain eligible even when one host is cooling down. Thus one slow or restricted host need not block the entire frontier.
+
+## Original minimal code
+
+~~~ts
+const frontier = new PoliteFrontier();
+frontier.enqueue('https://one.example/a');
+frontier.enqueue('https://one.example/b');
+frontier.enqueue('https://two.example/c');
+frontier.claim(0,1000); // one.example/a
+frontier.claim(0,1000); // two.example/c
+frontier.claim(500,1000); // no eligible URL
+~~~
+
+POST /lab/crawl enqueues a URL; GET /lab/crawl/next?nowMs=0&delayMs=1000 simulates dispatch. The unit test checks that one host's rate limit does not prevent another from making progress.
+
+## Why the code intentionally never fetches URLs
+
+A secure crawler must implement **robots.txt**, site policies, response size caps, content types, redirects and DNS/network restrictions that block SSRF to private or metadata endpoints. The teaching code stops at scheduling so it can be executed safely without contacting external sites.
+
+Real crawlers also deduplicate normalised URLs and content hashes, persist visited state, recover unfinished leases and support distributed ownership of each host's pacing state.
+
+## The difficult part with multiple workers
+
+If each worker keeps an independent next-allowed timestamp, two workers may fetch from the same host simultaneously. Make host scheduling ownership explicit: partition by host, or atomically claim a host lease in a shared store. A mere queue partition on URL hashes is insufficient because URLs of one host may end up on many workers.
+
+## Follow-up interview questions
+
+- How should a domain with one million discovered links compete with ten small domains? Use per-host fair queues and global capacity admission.
+- What happens on DNS changes or redirects? Recheck targets against SSRF policies and destination-host pacing.
+- How would you crawl freshness-sensitive pages without recrawling everything? Add a change-rate model and scheduled revisits.
+
+## Mathematical Abstraction
+
+$$
+t_{h,j+1}-t_{h,j}\geq\Delta_h,
+\qquad \sum_h\lambda_h\leq C.
+$$
+
+The first inequality is the host politeness spacing constraint; the second limits aggregate request rate by crawler capacity $C$. These constraints are independent and both must be satisfied.
+
+**Public practice context:** [System Design Guided Practice](https://www.hellointerview.com/practice/system-design) includes web-crawler and search-related distributed architecture problems.
+
+[← Advanced Interview Problems](../index.qmd) · [Runnable NestJS lab](../lab/README.md)

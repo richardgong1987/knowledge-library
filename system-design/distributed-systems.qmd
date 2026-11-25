@@ -1,24 +1,75 @@
 ---
 title: "Distributed Systems"
-description: "Reason about service failures, replication, and communication between nodes."
+description: "Foundational system-design reasoning with formal properties, worked examples and failure cases."
 ---
 
-## The problem
+# One service, three replicas, and a missing answer
 
-A request travels to one of three service replicas. What changes when a replica crashes or the network becomes partitioned?
+Consider an order service with three replicas and one database. A request is sent to replica A. A processes the command, but the network fails before the response reaches the client. The client cannot infer that the operation failed.
 
-## A running example
+Distributed design begins with a simple observation: **failure to hear a response is not proof of failure to execute the operation**.
 
-We will keep this scenario throughout the lesson and change one system constraint at a time.
+## Failure models
 
-## Step-by-step reasoning
+- **Crash-stop:** a process halts and takes no more steps.
+- **Omission or partition:** messages are delayed, lost or cannot travel between certain nodes.
+- **Slow operation:** a process still runs but exceeds a caller's deadline.
+- **Byzantine fault:** a component behaves arbitrarily or maliciously. Most ordinary backend interview questions do not require this model unless stated.
 
-This chapter is an outline for a future worked explanation.
+A timeout is a *local observation*: it says the caller's wait exceeded the deadline, not which failure occurred.
 
-## Visual experiments
+## Replication creates two independent questions
 
-Interactive models and failure simulations will be added as the chapter develops.
+**Availability:** can some replica serve the request?
 
-## Related topics
+**Consistency:** what values can readers observe when writes and replication overlap?
 
-Return to the [System Design overview](index.qmd) or explore [Distributed Systems](distributed-systems.qmd).
+Replicating stateless API processes helps availability without automatically making the shared database highly available. Replicating the database introduces ordering and conflict questions.
+
+## Safety versus liveness
+
+A safety property says a bad event never happens. For a seat booking system:
+
+$$
+\forall s:\quad \#\operatorname{ConfirmedOwners}(s)\leq1.
+$$
+
+A liveness property says a good event eventually happens under specified assumptions—for example, an accepted job eventually completes while healthy workers and capacity remain available. A system can preserve safety by rejecting all requests, but then has poor liveness. Separately stating both makes trade-offs visible.
+
+## CAP without the slogan
+
+For a replicated data service that experiences a network partition, no design can guarantee both *linearizable consistency* and a successful response from every non-failing partitioned node to every operation. The CAP statement applies to a specific consistency/availability model during partitions. It does **not** say 'pick any two of C, A and P' as independent options at all times.
+
+For a banking transfer, the safer response on an isolated replica may be unavailable rather than accepting conflicting writes. For non-critical cached content, temporarily stale reads can be acceptable.
+
+## Replication quorums are not a magic proof
+
+If there are $N$ replicas, choosing read and write quorum sizes $R$ and $W$ with $R+W>N$ creates **set overlap** under simplified membership assumptions. It does not alone establish linearizability: read-repair rules, version ordering, concurrent writes, failure recovery and the chosen algorithm still matter.
+
+## Retry and idempotency
+
+If a payment times out, retrying can create a second charge unless the business operation is idempotent. A stable command ID and an authoritative uniqueness constraint resolve that business problem; blindly increasing the HTTP timeout does not.
+
+A useful architecture separates control plane (discovery/coordination), data plane (request handling) and a durable source of truth. They have different failure semantics.
+
+## Practical reasoning exercise
+
+1. Worker A receives a lease to process order 7.
+2. A pauses; the lease expires.
+3. Worker B processes order 7 with a new lease.
+4. A resumes with an obsolete result.
+
+Which result may be committed? Use **fencing tokens** checked by the authoritative datastore, not only a time-based assumption in A.
+
+## Mathematical Abstraction
+
+Represent events as a partially ordered set:
+
+$$
+(E,\prec),\qquad
+e_1\prec e_2\ \text{only if the system can establish an ordering relation}.
+$$
+
+Independent events may be concurrent. Physical clock time by itself does not prove a causal ordering across replicas.
+
+[→ Lease Fencing](interviews/02-correctness-and-coordination/expiring-seat-reservations.qmd) · [→ Cross-Region Reads](interviews/05-reliability-and-data/multi-region-consistency.qmd).
