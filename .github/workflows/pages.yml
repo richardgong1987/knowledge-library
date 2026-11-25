@@ -76,6 +76,25 @@ jobs:
           if grep -E 'changed=[1-9]' "$RUNNER_TEMP/second.log"; then exit 1; fi
           ansible-playbook rolling-update.yml -e lab_root="$RUNNER_TEMP/lab" -e lemonade_version=1.1.0
           ansible-playbook vault-demo.yml --vault-password-file secrets/demo-vault-password.txt -e lab_root="$RUNNER_TEMP/lab"
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+      - name: Apply the local Terraform example and prove the second plan is empty
+        working-directory: devops/terraform/examples
+        env:
+          CHECKPOINT_DISABLE: 1
+        run: |
+          terraform fmt -check -recursive
+          cd 01-local
+          terraform init -input=false
+          terraform apply -input=false -auto-approve
+          terraform plan -input=false -detailed-exitcode
+          terraform destroy -input=false -auto-approve
+          cd ../03-module
+          terraform init -input=false
+          terraform validate
       - name: Install Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:

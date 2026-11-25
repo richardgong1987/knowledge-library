@@ -1,0 +1,224 @@
+---
+title: "The Lemonade Stand on AWS and Google Cloud"
+description: "The same small Lemonade infrastructure written twice, as an EC2 web server with a firewall rule on AWS and as a public Cloud Run service on Google Cloud, with a map from the hand-built services of Parts 4 and 5 to Terraform resources."
+---
+
+## The problem
+
+In Part 4 you clicked an EC2 web server and its security group together in the AWS console. In Part 5 you deployed the Lemonade container to Cloud Run with `gcloud run deploy`. Both worked. Both are snowflakes: nobody can rebuild them from a file.
+
+This lesson writes both as Terraform code. The two files sit side by side in [`examples/aws/`](examples/aws/main.tf) and [`examples/gcp/`](examples/gcp/main.tf), so you can see what changes between clouds and what stays the same.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Same drawing, different brick brands"}
+You drew a lemonade stand and want to build it twice: once with LEGO and once with a different brick brand. The **drawing** is the same: a counter, a roof, a sign. But the bricks do not fit each other. A LEGO roof piece is not a roof piece from the other brand.
+
+Terraform is the same. HCL, `plan` and `apply` work the same for every cloud. The **bricks**, the resource types, belong to one cloud: `aws_instance` is an AWS brick and `google_cloud_run_v2_service` is a Google brick. Yevgeniy Brikman makes the same point in his famous Gruntwork article ["Why we use Terraform and not Chef, Puppet, Ansible, Pulumi, or CloudFormation"](https://www.gruntwork.io/blog/why-we-use-terraform-and-not-chef-puppet-ansible-saltstack-or-cloudformation). Terraform gives you **one tool and one language** for every cloud, not one file that runs on any cloud.
+:::
+
+## The concept, precisely
+
+### From hand-built services to Terraform resources
+
+| Keyword | AWS resource (Part 4) | Google Cloud resource (Part 5) | Lemonade use |
+| --- | --- | --- | --- |
+| virtual machine | `aws_instance` | `google_compute_instance` | `web1` |
+| firewall rule | `aws_security_group` | `google_compute_firewall` | allow port 80 |
+| network | `aws_vpc`, `aws_subnet` | `google_compute_network`, `google_compute_subnetwork` | `10.0.0.0/16` |
+| container service | `aws_ecs_service` (Fargate) | `google_cloud_run_v2_service` | the Lemonade image |
+| object storage | `aws_s3_bucket` | `google_storage_bucket` | the menu, the Terraform state |
+| permission | `aws_iam_role_policy` and friends | `google_cloud_run_v2_service_iam_member` and friends | who may call or change it |
+| look up an image | `data "aws_ami"` | `data "google_compute_image"` | newest operating system |
+
+### The AWS version: one web server and its firewall
+
+From [`examples/aws/main.tf`](examples/aws/main.tf), the firewall and the server:
+
+```hcl
+resource "aws_security_group" "web" {
+  name = "lemonade-web"
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_instance" "web" {
+  ami                    = data.aws_ami.al2023.id
+  instance_type          = "t3.micro"
+  vpc_security_group_ids = [aws_security_group.web.id]
+
+  user_data = <<-EOF
+    #!/bin/bash
+    dnf install -y nginx
+    echo '<h1>Lemonade: $2.50</h1>' > /usr/share/nginx/html/index.html
+    systemctl enable --now nginx
+  EOF
+
+  tags = { Name = "lemonade-web1" }
+}
+```
+
+The image comes from the `data "aws_ami"` lookup in [lesson 4](04-providers-resources-and-data-sources.qmd). `user_data` is a script the server runs at its first boot. In a real project, Ansible (Part 1) or a pre-built image would replace it.
+
+### The Google Cloud version: a public Cloud Run service
+
+From [`examples/gcp/main.tf`](examples/gcp/main.tf):
+
+```hcl
+resource "google_cloud_run_v2_service" "web" {
+  name                = "lemonade-web"
+  location            = var.region
+  deletion_protection = false
+
+  template {
+    containers {
+      image = var.image
+    }
+  }
+}
+
+resource "google_cloud_run_v2_service_iam_member" "public" {
+  name     = google_cloud_run_v2_service.web.name
+  location = google_cloud_run_v2_service.web.location
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+```
+
+There is no server, firewall or operating system to describe. Cloud Run runs the container and gives it an HTTPS URL. The second resource lets anyone on the internet call it. Replace the default sample image with the Lemonade image that the CI/CD part builds.
+
+### The arguments that matter
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `region` (AWS provider) | which AWS region to build in | a variable, never hard-coded in many places | `region = var.region` |
+| `project` (Google provider) | which Google Cloud project to build in | the Part 5 project | `project = "lemonade-stand-dev"` |
+| `ingress` / `egress` | inbound / outbound firewall rules | open only the ports you serve | `from_port = 80`, `to_port = 80` |
+| `cidr_blocks` | which source addresses a rule allows | `0.0.0.0/0` means "everyone" | `["0.0.0.0/0"]` |
+| `instance_type` | the size of the VM, and therefore its price | start small | `"t3.micro"` |
+| `user_data` | first-boot script | keep it short; prefer images or Ansible | `<<-EOF ... EOF` |
+| `deletion_protection` | Cloud Run refuses to be destroyed while `true` (the provider default) | set `false` for labs, keep `true` in production | `deletion_protection = false` |
+| `member = "allUsers"` | grants a role to the whole internet | only for public websites | `role = "roles/run.invoker"` |
+| `uri` | the Cloud Run service's HTTPS address | expose it as an output | `google_cloud_run_v2_service.web.uri` |
+
+### Credentials come from outside the code
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `aws sso login` / `AWS_PROFILE` | gives Terraform AWS credentials | the AWS provider reads the same settings as the `aws` CLI | `AWS_PROFILE=lemonade terraform plan` |
+| `gcloud auth application-default login` | gives Terraform Google credentials | never download service-account key files for a laptop | `gcloud auth application-default login` |
+| OIDC in CI | short-lived credentials for pipelines | [lesson 10](10-terraform-in-ci-cd.qmd) | `aws-actions/configure-aws-credentials` |
+
+## Worked example
+
+These two folders are checked with `init -backend=false` and `validate`. That proves the code is correct for the current providers, without an account and without spending money. Real output:
+
+```text
+$ cd examples/aws && terraform init -backend=false
+- Installed hashicorp/aws v6.74.0 (signed by HashiCorp)
+$ terraform validate
+Success! The configuration is valid.
+
+$ cd ../gcp && terraform init -backend=false
+- Installed hashicorp/google v8.12.0 (signed by HashiCorp)
+$ terraform validate
+Success! The configuration is valid.
+```
+
+With your own account from Part 4 or Part 5, the full cycle is:
+
+```bash
+terraform init
+terraform apply                         # read the plan: AWS shows 2 to add, Google Cloud 2 to add
+curl "$(terraform output -raw url)"     # the Lemonade page (AWS: wait a minute for the first boot)
+terraform destroy                       # stop paying
+```
+
+The AWS provider is large. If `validate` fails inside a small Docker VM with `Plugin did not respond`, give Docker more memory or add `-e GOMEMLIMIT=450MiB -e GOGC=20` to the `docker run` command. That is how this book's check was run.
+
+## Rules and conventions
+
+- One folder (and one state) per cloud and per environment. Do not mix AWS and Google resources in one configuration unless they truly depend on each other.
+- Credentials never appear in `.tf` files or in variables with defaults.
+- Look up images and zones with data sources instead of copying IDs from a console.
+- Open firewalls only as wide as needed: port 80 to the world for a public site, never port 22.
+- Keep `deletion_protection` and `prevent_destroy` on anything holding data in production.
+- Always `destroy` lab resources when you finish. The cost formula below shows why.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| No credentials configured | AWS: `No valid credential sources found`; Google: `could not find default credentials` | `aws sso login` / `gcloud auth application-default login` |
+| Cloud Run API not enabled in the project | `Cloud Run Admin API has not been used in project ... or it is disabled` | `gcloud services enable run.googleapis.com` (or a `google_project_service` resource) |
+| `destroy` fails on Cloud Run | `cannot destroy service without setting deletion_protection=false` | set it to `false`, apply, then destroy |
+| Website unreachable on AWS | the security group has no `egress` rule or the wrong port | allow inbound 80; Terraform removes AWS's default egress rule, so declare it |
+| Expecting the AWS file to run on Google Cloud | resource types are unknown to the other provider | write one configuration per cloud; share only ideas and variables |
+
+## Mathematical Abstraction
+
+A security-group rule is a membership test. A packet is allowed in exactly when its port is inside the rule's range and its source is inside the rule's address block:
+
+$$
+\operatorname{allow}(q, s) \iff \big(\ell \le q \le h\big) \land \big(s \in N\big)
+$$
+
+where:
+
+- $q$ is the destination port of the incoming packet;
+- $s$ is the source IP address;
+- $\ell$ and $h$ are the rule's `from_port` and `to_port`;
+- $N$ is the set of addresses in `cidr_blocks`; `0.0.0.0/0` is every IPv4 address;
+- $\land$ means "and", and $\iff$ "exactly when".
+
+Example: a customer at $s = 203.0.113.7$ opens the menu on port $q = 80$. The rule has $\ell = h = 80$, so $80 \le 80 \le 80$ is true, and $203.0.113.7 \in N$ because $N$ is everything. The visit is allowed. The same customer trying SSH on $q = 22$ fails the first test ($80 \le 22$ is false), so the packet is dropped. That is exactly what you want for a lemonade menu.
+
+Cost is where the two designs differ most. A VM is paid for every hour it is switched on. Cloud Run with request-based billing is paid only while it handles requests:
+
+$$
+C_{\text{VM}} = r \cdot H, \qquad
+C_{\text{run}} = n \, t \, (c \, p_{c} + m \, p_{m}) + \frac{n}{10^{6}} \, p_{r}
+$$
+
+where:
+
+- $C_{\text{VM}}$ and $C_{\text{run}}$ are the monthly costs in US dollars;
+- $r$ is the VM's hourly price and $H$ the hours per month it runs (about $730$ for always-on);
+- $n$ is the number of requests per month, and $t$ the seconds each request keeps the container busy;
+- $c$ is vCPUs and $m$ is GiB of memory per container;
+- $p_{c}$, $p_{m}$, $p_{r}$ are the prices per vCPU-second, per GiB-second and per million requests.
+
+Example, with the London `t3.micro` price from [Part 4](../aws/01-what-the-cloud-is.qmd) and the Cloud Run Tier 1 list prices from [Part 5](../gcp/06-cloud-run.qmd), both at the time of writing (check the live pricing pages, because prices and free tiers change): $r = 0.0118$, so $C_{\text{VM}} = 0.0118 \times 730 \approx 8.61$ dollars, even if nobody buys lemonade. For Cloud Run take $n = 300{,}000$ requests (10,000 a day), $t = 0.2$ s, $c = 1$, $m = 0.5$, $p_{c} = 0.000024$, $p_{m} = 0.0000025$ and $p_{r} = 0.40$:
+
+- busy seconds: $n \, t = 300{,}000 \times 0.2 = 60{,}000$;
+- CPU: $60{,}000 \times 1 \times 0.000024 = 1.44$;
+- memory: $60{,}000 \times 0.5 \times 0.0000025 = 0.075$;
+- requests: $0.3 \times 0.40 = 0.12$;
+- total: $C_{\text{run}} \approx 1.44 + 0.075 + 0.12 \approx 1.64$ dollars, before the monthly free tier, which at this traffic would cover it entirely.
+
+This is a simplified upper-bound model. It assumes each request is handled alone; when one container serves several requests at once, the busy time is shared and the real bill is lower. It also ignores data transfer and the first-boot time of the VM.
+
+## References
+
+- AWS provider documentation: <https://registry.terraform.io/providers/hashicorp/aws/latest/docs>
+- Google provider documentation: <https://registry.terraform.io/providers/hashicorp/google/latest/docs>
+- `google_cloud_run_v2_service`: <https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/cloud_run_v2_service>
+- HashiCorp tutorial, "Get started with AWS": <https://developer.hashicorp.com/terraform/tutorials/aws-get-started>
+- HashiCorp tutorial, "Get started with Google Cloud": <https://developer.hashicorp.com/terraform/tutorials/gcp-get-started>
+- Amazon EC2 on-demand pricing: <https://aws.amazon.com/ec2/pricing/on-demand/>
+- Cloud Run pricing: <https://cloud.google.com/run/pricing>
+- Yevgeniy Brikman, "Why we use Terraform and not Chef, Puppet, Ansible, Pulumi, or CloudFormation" (Gruntwork, 2016, updated 2019): <https://www.gruntwork.io/blog/why-we-use-terraform-and-not-chef-puppet-ansible-saltstack-or-cloudformation>
+
+[← Modules](08-modules.qmd) · [Terraform index](index.qmd) · [Next: Terraform in CI/CD →](10-terraform-in-ci-cd.qmd)

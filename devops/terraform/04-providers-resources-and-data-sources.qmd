@@ -1,0 +1,230 @@
+---
+title: "Providers, Resources and Data Sources"
+description: "How Terraform talks to Docker, AWS and Google Cloud through providers, how version constraints and the lock file keep everyone on the same plugin, and how references build the dependency graph that orders every apply."
+---
+
+## The problem
+
+The Lemonade Stand now needs things from three places: a container image from Docker, a web server from AWS, and a Cloud Run service from Google Cloud. Terraform itself knows nothing about any of them. Something has to translate `resource "aws_instance" "web"` into real AWS API calls.
+
+There is a second problem. The containers need the image to exist **before** they start, and the web server needs its firewall rule first. Who decides the order?
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Translators and a chain of friends"}
+Terraform speaks only one language: HCL. The cloud companies all speak different languages. So Terraform hires a **translator** for each one: a Docker translator, an AWS translator, a Google translator. Each translator is a **provider**. You tell Terraform which translators to bring, and exactly which version, so that your friends' computers bring the same ones.
+
+The order works like a chain of friends passing a ball. Lily cannot pass the ball to Sam until Max has passed it to her. You never write "Max first, then Lily". You only write "Lily gets the ball from Max", and the order follows by itself. In Terraform, whenever one resource *mentions* another (`image = docker_image.nginx.image_id`), that mention is the "gets the ball from" link.
+:::
+
+## The concept, precisely
+
+- A **provider** is a plugin, downloaded by `terraform init`, that knows one API: Docker, AWS, Google Cloud, GitHub, even "write a local file".
+- A **resource** is an object the provider creates, updates and deletes for you. Terraform **owns** it.
+- A **data source** is an object the provider only **reads**. Somebody else owns it: an Amazon machine image, an existing network, today's date.
+- A **reference** such as `docker_image.nginx.image_id` reads an attribute of another object. Every reference adds an edge to the **dependency graph**. Terraform walks that graph to decide the order.
+
+### Choosing providers: `required_providers`
+
+```hcl
+terraform {
+  required_version = ">= 1.10"
+  required_providers {
+    docker = { source = "kreuzwerker/docker", version = "~> 4.7" }
+  }
+}
+```
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `required_version` | the Terraform versions allowed to run this code | a lower bound is usually enough | `required_version = ">= 1.10"` |
+| `required_providers` | which providers to install | one entry per provider, in `versions.tf` | see above |
+| `source` | registry address `[host/]namespace/type` | host defaults to `registry.terraform.io` | `"hashicorp/aws"`, `"kreuzwerker/docker"` |
+| `version` | a constraint on provider versions | always set one | `"~> 6.0"` |
+| local name | the key, such as `docker` | must match the resource prefix (`docker_container`) | `docker = { ... }` |
+
+### Version constraints
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `=` (or no operator) | exactly this version | too strict for providers; fine for modules | `"= 4.7.0"` |
+| `!=` | anything except this version | to skip one known-bad release | `"!= 6.12.0"` |
+| `>`, `>=` | newer than / at least | lower bounds | `">= 1.10"` |
+| `<`, `<=` | older than / at most | upper bounds | `"< 7.0"` |
+| `~>` | "pessimistic": only the **rightmost** number may grow | the usual choice for providers | `"~> 6.0"` |
+| `,` | combines constraints (all must hold) | | `">= 6.10, < 7.0"` |
+
+### The lock file
+
+`terraform init` records the exact versions it chose, plus checksums, in `.terraform.lock.hcl`. This is the real file from [`examples/01-local/`](examples/01-local/main.tf):
+
+```hcl
+provider "registry.terraform.io/hashicorp/local" {
+  version     = "2.9.1"
+  constraints = "~> 2.9"
+  hashes = [
+    "h1:bek0XHcE8X713/1PR+sMKZFwLnamznJdYbORghbFRn0=",
+    "zh:25606c7a5e308144fb627f6e31611bb52ff72bb9ae2d27af39673ab1a6b3c1bf",
+    ...
+```
+
+Commit it. Your teammates and CI then install the **same** 2.9.1, and the checksums prove the plugin was not tampered with. `terraform init -upgrade` moves to newer versions inside the constraint and rewrites the file.
+
+### Configuring a provider, and `alias`
+
+```hcl
+provider "aws" { region = "eu-west-2" }
+
+provider "aws" {
+  alias  = "ireland"
+  region = "eu-west-1"
+}
+
+resource "aws_s3_bucket" "menu_backup" {
+  provider = aws.ireland
+  bucket   = "lemonade-menu-backup"
+}
+```
+
+The first block is the default `aws` provider, in London like the rest of the book. The second is a copy in Ireland, so the menu backup survives a London outage. It is picked per resource with `provider = aws.ireland`. Never put access keys in a provider block. Credentials come from the environment ([lesson 10](10-terraform-in-ci-cd.qmd)).
+
+### Resources and their addresses
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `resource "TYPE" "NAME"` | declares an object Terraform owns | `TYPE` comes from the provider; `NAME` is yours | `resource "docker_image" "nginx"` |
+| address `TYPE.NAME` | how state, plans and references name it | unique in a module | `docker_image.nginx` |
+| attribute `TYPE.NAME.ATTR` | reads a value of the object | many are `(known after apply)` | `docker_image.nginx.image_id` |
+| instance key | one copy when using `for_each` / `count` | `["key"]` or `[0]` | `docker_container.stand["web1"]` |
+| `depends_on` | an extra edge Terraform cannot see from references | rare; explain it in a comment | `depends_on = [aws_iam_role_policy.read_menu]` |
+| `provider` | choose a non-default provider copy | used with `alias` | `provider = aws.ireland` |
+
+### Data sources
+
+```hcl
+data "aws_ami" "al2023" {
+  most_recent = true
+  owners      = ["amazon"]
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023.*-x86_64"]
+  }
+}
+```
+
+From [`examples/aws/main.tf`](examples/aws/main.tf). It finds the newest Amazon Linux image, so the server uses `ami = data.aws_ami.al2023.id` instead of a hard-coded ID that differs per region and goes stale. The address starts with `data.`, and Terraform never creates or deletes it.
+
+## Worked example: the graph decides the order
+
+[`examples/02-docker/main.tf`](examples/02-docker/main.tf) has one image and two containers, and each container references the image. Real output:
+
+```text
+$ terraform graph | grep -- "->"
+  "docker_container.stand" -> "docker_image.nginx";
+
+$ terraform apply -auto-approve
+docker_image.nginx: Creating...
+docker_image.nginx: Creation complete after 6s
+docker_container.stand["web2"]: Creating...
+docker_container.stand["web1"]: Creating...
+docker_container.stand["web1"]: Creation complete after 0s
+docker_container.stand["web2"]: Creation complete after 0s
+
+$ terraform destroy -auto-approve
+docker_container.stand["web2"]: Destroying...
+docker_container.stand["web1"]: Destroying...
+docker_image.nginx: Destroying...
+```
+
+Three things to notice:
+
+1. The arrow means "depends on": containers depend on the image.
+2. The image was created **first**, then **both** containers started at the same time. They do not depend on each other, so Terraform runs them in parallel.
+3. Destroy runs in the **reverse** order: containers first, image last. An image still used by a running container cannot be removed.
+
+`init` showed the version constraint at work:
+
+```text
+- Finding hashicorp/local versions matching "~> 2.9"...
+- Installed hashicorp/local v2.9.1 (signed by HashiCorp)
+```
+
+## Rules and conventions
+
+- Every provider gets a `source` and a `version` constraint, and the lock file is committed.
+- Use `~>` on the **minor** version for providers (`~> 6.0`) to get bug fixes and features but never a breaking major release.
+- Let references create the order. Add `depends_on` only for a dependency Terraform cannot see, such as "the server reads this permission at boot", and say why in a comment.
+- Prefer data sources over hard-coded IDs (AMI IDs, project numbers, network IDs).
+- No credentials in `.tf` files, ever.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| No `version` constraint | a new major provider release breaks a plan months later | add `version = "~> X.Y"` and commit the lock file |
+| Not committing `.terraform.lock.hcl` | teammates get different provider versions | commit it; update it with `init -upgrade` on purpose |
+| Two `provider "aws"` blocks, neither with `alias` | `Error: Duplicate provider configuration` | give every extra copy an `alias` and pick it with `provider = aws.<alias>` |
+| `depends_on` everywhere "to be safe" | slower plans and needless replacements | remove it; use references |
+| Hard-coded AMI ID | `InvalidAMIID.NotFound` in another region | use `data "aws_ami"` |
+| Wrong source for a third-party provider | `Failed to query available provider packages ... hashicorp/docker` | set `source = "kreuzwerker/docker"`; it is not a HashiCorp provider |
+
+## Mathematical Abstraction
+
+A `~>` constraint is an interval. Write $\operatorname{allow}(x)$ for the set of versions that the constraint `~> x` accepts:
+
+$$
+\operatorname{allow}(a.b) = \lbrace v : a.b \le v < (a+1).0 \rbrace, \qquad
+\operatorname{allow}(a.b.c) = \lbrace v : a.b.c \le v < a.(b+1).0 \rbrace
+$$
+
+where:
+
+- $v$ is a candidate provider version;
+- $a$, $b$, $c$ are the major, minor and patch numbers you wrote after `~>`;
+- $\le$ and $<$ compare versions number by number from the left (so $2.10 > 2.9$);
+- $\lbrace v : \dots \rbrace$ is "the set of all versions $v$ for which the condition holds".
+
+Example: `~> 2.9` has $a = 2$, $b = 9$, so it allows $2.9 \le v < 3.0$. The installed local provider $v = 2.9.1$ satisfies it, and 3.0.0 would not. For AWS, `~> 6.0` allows $6.0 \le v < 7.0$, which is why `init` installed 6.74.0. With three numbers, `~> 2.9.1` gives $a.(b+1).0 = 2.10.0$, so it allows only $2.9.1 \le v < 2.10.0$: patch releases only.
+
+References turn the configuration into a **directed acyclic graph** (DAG). Apply visits it in a topological order, and destroy in the reverse order:
+
+$$
+u \to v \;\Rightarrow\; \operatorname{pos}_{\text{apply}}(v) < \operatorname{pos}_{\text{apply}}(u)
+\quad\text{and}\quad
+\operatorname{pos}_{\text{destroy}}(u) < \operatorname{pos}_{\text{destroy}}(v)
+$$
+
+where:
+
+- $u \to v$ is an edge: resource $u$ references (depends on) resource $v$;
+- $\operatorname{pos}(x)$ is the moment resource $x$ is handled, so smaller means earlier;
+- "acyclic" means no chain of arrows leads back to its start; a cycle is an error (`Error: Cycle`).
+
+Example: let $c$ be `docker_container.stand` and $i$ be `docker_image.nginx`. The real graph has $c \to i$, so apply must handle $i$ before $c$ (the image completed after 6 s, then the containers started), and destroy must handle $c$ before $i$ (containers destroyed first). Both match the real output.
+
+How long can an apply take, at the very least? Count rounds in which each operation takes one step:
+
+$$
+T \ge \max\left(L, \left\lceil \frac{n}{p} \right\rceil\right)
+$$
+
+where:
+
+- $T$ is the number of rounds;
+- $L$ is the number of resources on the longest dependency chain (a chain cannot be parallelised);
+- $n$ is the total number of resource instances to change;
+- $p$ is `-parallelism`, the maximum number of operations at once (default 10);
+- $\lceil \cdot \rceil$ rounds up.
+
+Example: the Docker example has $n = 3$ (one image, two containers) and its longest chain is image → container, so $L = 2$. With $p = 10$: $T \ge \max(2, \lceil 3/10 \rceil) = \max(2, 1) = 2$ rounds, which is what happened: image, then both containers together. With `-parallelism=1`: $T \ge \max(2, \lceil 3/1 \rceil) = 3$ rounds, one resource at a time. This is a simplified model. Real operations take different times, and Terraform starts each one as soon as its dependencies finish rather than in fixed rounds.
+
+## References
+
+- HashiCorp, "Providers": <https://developer.hashicorp.com/terraform/language/providers>
+- HashiCorp, "Version Constraints": <https://developer.hashicorp.com/terraform/language/expressions/version-constraints>
+- HashiCorp, "Dependency Lock File": <https://developer.hashicorp.com/terraform/language/files/dependency-lock>
+- HashiCorp, "Data Sources": <https://developer.hashicorp.com/terraform/language/data-sources>
+- HashiCorp, "Resource Graph": <https://developer.hashicorp.com/terraform/internals/graph>
+- kreuzwerker Docker provider: <https://registry.terraform.io/providers/kreuzwerker/docker/latest/docs>
+
+[← The Core Workflow](03-the-core-workflow.qmd) · [Terraform index](index.qmd) · [Next: Variables, Outputs and Locals →](05-variables-outputs-and-locals.qmd)

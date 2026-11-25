@@ -1,0 +1,223 @@
+---
+title: "HCL Syntax"
+description: "Read and write Terraform's language: blocks, labels, arguments, attributes, comments, the seven value types, the standard file layout and the formatting rules that terraform fmt enforces."
+---
+
+## The problem
+
+You open the Lemonade Stand's [`examples/02-docker/`](examples/02-docker/main.tf) folder and see `resource "docker_container" "stand" { ... }`. Which word is a keyword, which is a name you chose, and which is a value? Where do curly braces go, and why are some values in quotes and some in square brackets?
+
+Terraform files are written in **HCL**, the HashiCorp Configuration Language. HCL is small: a few shapes, repeated everywhere. Learn the shapes once and you can read any Terraform file.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Labelled boxes with stickers"}
+Think of a storage shelf full of **boxes**. Each box has a **label** on the front, "Toy cars: red ones". Inside the box, every toy has a **sticker** saying what it is: `colour = "red"`, `wheels = 4`.
+
+In HCL a **block** is a box, its **labels** are the words written on the front, and its **arguments** are the stickers inside, always `name = value`. A box can hold a smaller box, a **nested block**. That is the whole language. The rest is just which boxes exist and which stickers they accept.
+:::
+
+## The concept, precisely
+
+### Anatomy of a block
+
+```hcl
+resource "docker_container" "stand" {   # block type, then two labels
+  name  = "lemonade-web1"               # argument: name = expression
+  image = docker_image.nginx.image_id   # expression that references another resource
+
+  ports {                               # nested block (no "=")
+    internal = 80
+    external = 8088
+  }
+}
+```
+
+- **Block type** (`resource`): a keyword that Terraform knows.
+- **Labels** (`"docker_container"`, `"stand"`): for a `resource`, the first label is the resource **type** (defined by the provider) and the second is the **local name** you choose. Together they form the **address** `docker_container.stand`.
+- **Argument** (`name = "lemonade-web1"`): an input you set. One argument per line.
+- **Nested block** (`ports { ... }`): no equals sign. It can usually be repeated.
+- **Attribute**: a value you can *read* from a resource, often only known after creation, such as `docker_image.nginx.image_id`.
+
+### Every top-level block type
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `terraform` | settings for Terraform itself: versions, providers, backend | one per root module, usually in `versions.tf` | `terraform { required_version = ">= 1.10" }` |
+| `provider` | configures a plugin that talks to an API | one per provider (plus aliases) | `provider "docker" {}` |
+| `resource` | something Terraform **creates and owns** | two labels: type and local name | `resource "local_file" "menu" { ... }` |
+| `data` | something Terraform only **reads** | address starts with `data.` | `data "aws_ami" "al2023" { ... }` |
+| `variable` | an input to the configuration | in `variables.tf` | `variable "price" { type = number }` |
+| `output` | a value printed after apply and readable by others | in `outputs.tf` | `output "urls" { value = ... }` |
+| `locals` | named helper values | referenced as `local.<name>` (singular!) | `locals { cup = 2.5 }` |
+| `module` | uses another folder of Terraform code | [lesson 8](08-modules.qmd) | `module "web1" { source = "./modules/stand" }` |
+| `moved` | records a rename so nothing is destroyed | [lesson 7](07-state-and-backends.qmd) | arguments `from` and `to`, two addresses |
+| `import` | adopts an existing real object | [lesson 7](07-state-and-backends.qmd) | arguments `to` (an address) and `id` (the cloud's ID) |
+| `removed` | stops managing a resource; with `lifecycle { destroy = false }` the real object is kept | [lesson 7](07-state-and-backends.qmd) | `from` (an address) plus a `lifecycle` block |
+| `check` | a health assertion reported on each plan and apply | warnings, not errors | `check "menu_up" { assert { ... } }` |
+
+### Values and types
+
+| Keyword | What it is | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `string` | text | double quotes only | `"lemonade-web1"` |
+| `number` | whole or decimal number | no quotes | `2.5`, `8088` |
+| `bool` | true or false | lowercase, no quotes | `true` |
+| `list(T)` | ordered values of one type, may repeat | square brackets, index from 0 | `["web1", "web2"]` |
+| `set(T)` | unordered values, no duplicates | made with `toset(...)` | `toset(["web1", "web2"])` |
+| `map(T)` | `key => value` pairs, keys are strings | curly braces | `{ web1 = 8088, web2 = 8089 }` |
+| `object({...})` | a fixed shape with named fields of different types | describe the shape in a `type` | `object({ name = string, port = number })` |
+| `tuple([...])` | a fixed-length list with a type per position | rare in hand-written code | `tuple([string, number])` |
+| `null` | "not set": the argument falls back to its default | no quotes | `default = null` |
+| `any` | "accept whatever type is given" | use sparingly; prefer real types | `type = any` |
+
+### Strings, in detail
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `"${...}"` | interpolation: put a value inside text | the only use of `$` that HCL treats specially | `"lemonade-${each.key}"` |
+| doubled dollar before `{` | a literal dollar-brace in the text | needed for shell variables inside strings | see the block below the table |
+| `%{ if }` / `%{ for }` | template directives inside strings | keep them short; use `templatefile` for big ones | `"%{ if var.open }Open%{ else }Closed%{ endif }"` |
+| `<<-EOT ... EOT` | heredoc: multi-line text, indentation stripped | the `-` lets you indent the body | see `user_data` in [`examples/aws/main.tf`](examples/aws/main.tf) |
+| `\n`, `\"`, `\\` | escapes inside double quotes | | `"Lemonade: $2.50\n"` |
+
+```hcl
+command = "echo $${HOME}"   # Terraform passes on: echo ${HOME}
+```
+
+A `$` followed by anything other than `{` is plain text, which is why `"Lemonade: $2.50"` needs no escape.
+
+### Comments
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `#` | comment to end of line | **the convention**; `fmt` leaves it alone | `# one stand per laptop port` |
+| `//` | same as `#` | allowed, less common | `// old style` |
+| `/* ... */` | multi-line comment | for temporarily disabling a block while testing | `/* resource ... */` |
+
+### The file layout convention
+
+Terraform reads **every `.tf` file in the folder** as one configuration. File names and order do not matter to Terraform, but they matter to people, so everyone uses the same names. The Lemonade Docker example follows the convention exactly:
+
+```text
+examples/02-docker/
+├── versions.tf    # terraform { required_version, required_providers }
+├── main.tf        # provider, resources, data sources
+├── variables.tf   # variable blocks
+└── outputs.tf     # output blocks
+```
+
+Bigger projects add `providers.tf`, `locals.tf` or one file per area (`network.tf`, `web.tf`). Small projects can keep everything in `main.tf`, as [`examples/01-local/`](examples/01-local/main.tf) does.
+
+## Worked example: let `fmt` fix the style
+
+A messy file:
+
+```hcl
+resource "local_file" "menu" {
+filename="menu.txt"
+    content = "Lemonade: $2.50"
+  file_permission="0644"
+}
+```
+
+`terraform fmt -check -diff` reports the problem without changing the file (real output):
+
+```text
+$ terraform fmt -check -diff
+main.tf
+--- old/main.tf
++++ new/main.tf
+-filename="menu.txt"
+-    content = "Lemonade: $2.50"
+-  file_permission="0644"
++  filename        = "menu.txt"
++  content         = "Lemonade: $2.50"
++  file_permission = "0644"
+$ echo $?
+3
+```
+
+The non-zero exit code is what lets a CI pipeline fail on unformatted code. Plain `terraform fmt` rewrites the file in place. The rules it applies:
+
+- two spaces of indentation per level;
+- the `=` signs of consecutive arguments are lined up;
+- one argument per line;
+- a blank line separates groups (`fmt` keeps your blank lines and aligns within each group).
+
+## Rules and conventions
+
+- **Names are `snake_case`**: `resource "docker_container" "stand"`, never `"Stand"` or `"stand-web"`.
+- **Do not repeat the type in the name**: `aws_instance.web`, not `aws_instance.web_instance`.
+- **Singular names**: `stand`, not `stands`. With `for_each` the keys (`["web1"]`, `["web2"]`) make the instances plural.
+- **Meta-arguments first**: put `count`, `for_each` and `provider` at the top of a block, then a blank line, then normal arguments, then nested blocks, then `lifecycle` last.
+- **Quote strings, not numbers or booleans**: `port = 8088`, `enabled = true`.
+- **Give every variable a `type` and a `description`.** The type catches mistakes early ([lesson 5](05-variables-outputs-and-locals.qmd)).
+- Run `terraform fmt -recursive` before every commit.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Single quotes: `name = 'web1'` | `Error: Invalid character` | HCL strings use double quotes only |
+| `=` before a nested block: `ports = { ... }` | `Unsupported argument; An argument named "ports" is not expected here. Did you mean to define a block of type "ports"?` | write `ports { ... }` |
+| Two arguments on one line in a multi-line block | `Error: Missing newline after argument` | one argument per line (single-line blocks may hold only one argument) |
+| `locals.cup` | `Error: Reference to undeclared resource` | the block is `locals`, the reference is `local.cup` |
+| Indexing a set: `toset(x)[0]` | `Error: Invalid index` | sets have no order; convert with `tolist()` or use a list |
+| Putting the same resource address in two files | `Error: Duplicate resource configuration` | all files in a folder are one configuration; rename one |
+
+## Mathematical Abstraction
+
+Three of the types are best understood as small pieces of maths. First, a **set** keeps each distinct value once:
+
+$$
+\operatorname{toset}(L) = \lbrace x : x \in L \rbrace, \qquad \lvert \operatorname{toset}(L) \rvert \le \lvert L \rvert
+$$
+
+where:
+
+- $L$ is a list, such as `["web1", "web2", "web1"]`;
+- $\operatorname{toset}(L)$ is the set of values that appear in $L$, without order and without repeats;
+- $x \in L$ means "$x$ appears somewhere in $L$";
+- $\lvert \cdot \rvert$ means "how many elements".
+
+Example: $L = [\texttt{web1}, \texttt{web2}, \texttt{web1}]$ has $\lvert L \rvert = 3$. Real `terraform console` output for `toset(["web1", "web2", "web1"])` is `toset(["web1", "web2"])`, so $\lvert \operatorname{toset}(L) \rvert = 2 \le 3$. The duplicate disappeared, which is exactly why `for_each` accepts sets but not lists.
+
+Second, a **list** is indexed from zero, and an index is only valid inside the list:
+
+$$
+L[i] \text{ is defined} \iff 0 \le i < \lvert L \rvert
+$$
+
+where:
+
+- $i$ is a whole number, the position you ask for;
+- $L[i]$ is the element at that position, counting from $0$;
+- $\iff$ means "exactly when".
+
+Example: for `stands = ["web1", "web2", "web3"]`, $\lvert L \rvert = 3$, so the valid indices are $0, 1, 2$. `var.stands[0]` is `"web1"` (real console output). `var.stands[3]` fails, because $3 < 3$ is false.
+
+Third, a **map** is a function from keys to values:
+
+$$
+m : K \to V, \qquad m(k) = v
+$$
+
+where:
+
+- $K$ is the set of keys (always strings in HCL);
+- $V$ is the set of possible values (all of one type, such as numbers);
+- $m(k) = v$ means "looking up key $k$ gives value $v$"; each key has exactly one value.
+
+Example: the Docker example's `stands = { web1 = 8088, web2 = 8089 }` has $K = \lbrace \texttt{web1}, \texttt{web2} \rbrace$, $V$ = numbers, $m(\texttt{web1}) = 8088$ and $m(\texttt{web2}) = 8089$. Because each key maps to one value, two stands can never accidentally share a key, but two stands *could* share a port. That is a rule Terraform does not check for you.
+
+## References
+
+- HashiCorp, "Configuration Syntax": <https://developer.hashicorp.com/terraform/language/syntax/configuration>
+- HashiCorp, "Types and Values": <https://developer.hashicorp.com/terraform/language/expressions/types>
+- HashiCorp, "Strings and Templates": <https://developer.hashicorp.com/terraform/language/expressions/strings>
+- HashiCorp, "Style Guide": <https://developer.hashicorp.com/terraform/language/style>
+- HashiCorp, `terraform fmt`: <https://developer.hashicorp.com/terraform/cli/commands/fmt>
+- HCL specification: <https://github.com/hashicorp/hcl/blob/main/hclsyntax/spec.md>
+
+[← Infrastructure as Code](01-infrastructure-as-code.qmd) · [Terraform index](index.qmd) · [Next: The Core Workflow →](03-the-core-workflow.qmd)

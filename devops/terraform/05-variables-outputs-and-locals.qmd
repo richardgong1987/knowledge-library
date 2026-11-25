@@ -1,0 +1,236 @@
+---
+title: "Variables, Outputs and Locals"
+description: "Give the Lemonade configuration inputs (variables), results (outputs) and named helper values (locals); validate inputs; and know exactly which of the six ways of setting a variable wins."
+---
+
+## The problem
+
+The price is written inside the menu text, and the ports are written inside each container. To open a staging stand with a different price, you would have to copy the files and edit them by hand, and the copies would drift apart.
+
+What you want is **one** configuration with a few knobs on the outside: price, which stands, which ports. You also want the configuration to tell you useful things when it finishes, such as "your stands are at these URLs".
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="A vending machine"}
+A vending machine has **buttons** on the outside, a **window** where your snack drops out, and **gears** inside that you never touch.
+
+- The buttons are **variables**: inputs you choose each time ("price = 3").
+- The drop window is an **output**: what the machine gives back ("your stand is at http://localhost:8088").
+- The gears are **locals**: helper values the machine works out for itself ("40 cups × price = today's sales").
+
+A good vending machine also refuses silly buttons. Press "price = 0" and a sign lights up: *"A cup of lemonade cannot be free."* That sign is a **validation** rule.
+:::
+
+## The concept, precisely
+
+### Variables
+
+[`examples/02-docker/variables.tf`](examples/02-docker/variables.tf):
+
+```hcl
+variable "price" {
+  description = "Price of one cup, in dollars"
+  type        = number
+  default     = 2.5
+
+  validation {
+    condition     = var.price > 0
+    error_message = "A cup of lemonade cannot be free or cost less than nothing."
+  }
+}
+```
+
+You read it anywhere as `var.price`.
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `type` | the allowed type; values are converted or rejected | always set it | `type = map(number)` |
+| `default` | value used when nobody sets one | omit it to make the variable **required** | `default = 2.5` |
+| `description` | text shown in docs and prompts | always write one | `description = "Price of one cup"` |
+| `validation` | a rule checked before planning | `condition` must mention the variable | `condition = var.price > 0` |
+| `error_message` | text shown when validation fails | a full sentence ending with a full stop | see above |
+| `sensitive` | hides the value in plan and apply output | still stored in plain text in state | `sensitive = true` |
+| `nullable` | whether `null` is an allowed value | `false` makes `null` fall back to the default | `nullable = false` |
+| `ephemeral` | value available during the run but never saved in state or plan files | for short-lived secrets such as tokens | `ephemeral = true` |
+
+### Every way to set a variable
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `default` in the block | the fallback | lowest priority | `default = 2.5` |
+| `TF_VAR_<name>` | environment variable | handy in CI and for secrets | `export TF_VAR_price=2.75` |
+| `terraform.tfvars` | loaded automatically | the project's normal values | `price = 3` |
+| `terraform.tfvars.json` | same, JSON format | for generated values | `{"price": 3}` |
+| `*.auto.tfvars` | loaded automatically, in alphabetical order | per-topic files | `lemonade.auto.tfvars` |
+| `-var-file=FILE` | loads a file you name | one per environment | `-var-file=staging.tfvars` |
+| `-var 'name=value'` | one value on the command line | quick overrides | `-var 'price=4'` |
+| interactive prompt | asks if a required variable is still unset | disable with `-input=false` in CI | `var.price  Enter a value:` |
+
+### Outputs
+
+[`examples/02-docker/outputs.tf`](examples/02-docker/outputs.tf):
+
+```hcl
+output "urls" {
+  description = "Open these in a browser"
+  value       = { for name, port in var.stands : name => "http://localhost:${port}" }
+}
+```
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `value` | what to print and store | any expression | `value = aws_instance.web.public_ip` |
+| `description` | documentation | always write one in modules | `description = "Open these in a browser"` |
+| `sensitive` | shows `<sensitive>` in the output list | required when the value comes from a sensitive variable | `sensitive = true` |
+| `terraform output` | prints every output | `-json` for scripts | `terraform output -json urls` |
+| `terraform output -raw NAME` | prints one string with no quotes | strings, numbers and booleans only | `terraform output -raw url` |
+
+Outputs are also how a **module** hands values back to its caller ([lesson 8](08-modules.qmd)).
+
+### Locals
+
+```hcl
+locals {
+  cups_per_day = 40
+  daily_sales  = local.cups_per_day * var.price
+}
+```
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `locals { }` | defines named values; several blocks allowed | for values used more than once, or long expressions | `locals { cups_per_day = 40 }` |
+| `local.<name>` | reads one | note: `local`, singular | `local.daily_sales` |
+
+A local is not an input: nobody can override it from outside. If people need to change it, make it a variable.
+
+## Worked example
+
+**Validation stops bad input before anything is planned** (real output):
+
+```text
+$ terraform plan -var price=0
+Error: Invalid value for variable
+
+  on variables.tf line 7:
+   7: variable "price" {
+    │ var.price is 0
+
+A cup of lemonade cannot be free or cost less than nothing.
+```
+
+**Outputs after apply** (real):
+
+```text
+$ terraform apply -auto-approve
+Outputs:
+urls = {
+  "web1" = "http://localhost:8088"
+  "web2" = "http://localhost:8089"
+}
+
+$ terraform output -json urls
+{"web1":"http://localhost:8088","web2":"http://localhost:8089"}
+
+$ terraform output -raw urls
+Error: Unsupported value for raw output
+```
+
+`-raw` refused because `urls` is a map, not a string.
+
+**Locals and a sensitive output** (real, from a scratch folder):
+
+```text
+Outputs:
+daily_sales = 100
+till_pin = <sensitive>
+
+$ terraform output till_pin
+"4321"
+$ grep -c '"4321"' terraform.tfstate
+1
+```
+
+`sensitive` only hides the value in the summary. Anyone who can run `terraform output` or read the state can see it. That is why state must be protected ([lesson 7](07-state-and-backends.qmd)).
+
+**Who wins?** The same `price` variable, set in more and more places, each time read back with `terraform console`:
+
+```text
+default only:                     2.5
++ TF_VAR_price=2.75:              2.75
++ terraform.tfvars (3):           3
++ lemonade.auto.tfvars (3.5):     3.5
++ -var-file=summer.tfvars (3.75): 3.75
++ -var price=4 after it:          4
+  -var price=4 BEFORE -var-file:  3.75
+```
+
+## Rules and conventions
+
+- Every variable has a `type` and a `description`; add `validation` for anything a person types.
+- Required inputs have no `default`. Then Terraform stops if they are missing instead of guessing.
+- Use one `*.tfvars` file per environment (`staging.tfvars`, `prod.tfvars`) and pass it with `-var-file`.
+- Keep secrets out of `.tfvars` files in Git. Pass them as `TF_VAR_*` from a secret store, and mark them `sensitive` (or `ephemeral` when the provider supports it).
+- Name variables after what they mean (`price`, `stands`), not where they are used (`container_content_price`).
+- Output what a human or another tool needs next: URLs, IP addresses, IDs.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| No `type`, then `-var 'stands=["web2"]'` | Terraform treats the value as one string; `Invalid index` errors | declare `type = list(string)` |
+| Writing `var.local_name` for a local | `Reference to undeclared input variable` | locals are `local.<name>` |
+| Expecting `sensitive` to encrypt | the secret is readable in `terraform.tfstate` | encrypt and restrict the state backend; prefer `ephemeral` for secrets |
+| An output built from a sensitive variable without `sensitive = true` | `Error: Output refers to sensitive values` | add `sensitive = true` to the output |
+| A CI job hangs | Terraform is waiting at an interactive prompt for a missing variable | add `-input=false` so it fails fast |
+
+## Mathematical Abstraction
+
+Terraform collects every value that was set for a variable and keeps the one from the **highest-precedence** source:
+
+$$
+\operatorname{value}(x) = s_k(x), \qquad k = \max \lbrace\, i : \text{source } s_i \text{ sets } x \,\rbrace
+$$
+
+where:
+
+- $x$ is one variable, such as `price`;
+- the sources are numbered from lowest to highest precedence: $s_0$ = `default`, $s_1$ = `TF_VAR_*` environment variable, $s_2$ = `terraform.tfvars`, $s_3$ = `terraform.tfvars.json`, $s_4$ = `*.auto.tfvars` files, $s_5$ = `-var` and `-var-file` on the command line;
+- $s_i(x)$ is the value that source $s_i$ gives to $x$;
+- $\max$ picks the largest index $i$ among the sources that set $x$, the most important one;
+- inside $s_4$, files are read alphabetically, and inside $s_5$, flags are read left to right; in both cases the later one wins.
+
+Example: in the run above the price was set by $s_0 = 2.5$, $s_1 = 2.75$, $s_2 = 3$, $s_4 = 3.5$, and in $s_5$ by `-var-file` (3.75) followed by `-var` (4). The set of sources that set it is $\lbrace 0, 1, 2, 4, 5 \rbrace$, so $k = 5$. Inside $s_5$ the last flag was `-var price=4`, so $\operatorname{value}(\texttt{price}) = 4$. Swap the two flags and the last one is the file, giving 3.75, exactly as the real output shows.
+
+A validation rule is a test that must hold before Terraform plans anything:
+
+$$
+\operatorname{accept}(x) \iff c(x) = \text{true}
+$$
+
+where:
+
+- $c$ is the `condition` expression;
+- $\operatorname{accept}(x)$ means planning continues with value $x$;
+- $\iff$ means "exactly when".
+
+Example: $c(\texttt{price}) = (\texttt{price} > 0)$. For $\texttt{price} = 2.5$: $2.5 > 0$ is true, so it is accepted. For $\texttt{price} = 0$: $0 > 0$ is false, so it is rejected with the error message, as in the real run.
+
+The local `daily_sales` is an ordinary formula:
+
+$$
+\text{sales} = n \times p
+$$
+
+where $n$ is `cups_per_day` (cups) and $p$ is `price` (dollars per cup), so sales are in dollars per day.
+
+Example: $n = 40$ and $p = 2.5$ give sales $= 40 \times 2.5 = 100$, the real output `daily_sales = 100`. With `-var price=3` the same local becomes $40 \times 3 = 120$, without editing any file.
+
+## References
+
+- HashiCorp, "Input Variables" (including precedence): <https://developer.hashicorp.com/terraform/language/values/variables>
+- HashiCorp, "Output Values": <https://developer.hashicorp.com/terraform/language/values/outputs>
+- HashiCorp, "Local Values": <https://developer.hashicorp.com/terraform/language/values/locals>
+- HashiCorp, "Custom Conditions" (validation): <https://developer.hashicorp.com/terraform/language/expressions/custom-conditions>
+- HashiCorp, "Use ephemeral values to keep secrets out of state": <https://developer.hashicorp.com/terraform/language/manage-sensitive-data/ephemeral>
+
+[← Providers, Resources and Data Sources](04-providers-resources-and-data-sources.qmd) · [Terraform index](index.qmd) · [Next: Expressions, Loops and Functions →](06-expressions-loops-and-functions.qmd)

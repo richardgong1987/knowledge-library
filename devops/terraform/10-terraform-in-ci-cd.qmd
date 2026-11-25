@@ -1,0 +1,223 @@
+---
+title: "Terraform in CI/CD"
+description: "Run Terraform from a pipeline: format and validate on every pull request, post a saved plan for review, apply exactly that plan after an approval, authenticate with short-lived OIDC tokens instead of keys, and keep staging and production apart."
+---
+
+## The problem
+
+So far `terraform apply` runs on someone's laptop. That raises the questions from Part 3 again. Which version of the code was applied? Did anyone review the plan? Whose cloud keys sit on that laptop, and for how long?
+
+The Lemonade team wants the same rules for infrastructure as for the app. Every change arrives as a pull request. A robot shows the plan. A person approves it. The robot applies **exactly** what was approved, using credentials that expire within the hour.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="The signed permission slip"}
+For a school trip, the teacher writes a slip: "We will visit the zoo, the lemonade stand and the park." Your parent reads it and signs it. On the day, the class visits exactly those three places. If the teacher wants to add the toy shop, a **new** slip must be signed.
+
+In a pipeline the saved plan is the slip, the reviewer's approval is the signature, and `terraform apply tfplan` is the trip. If anything changed after the slip was signed, Terraform refuses to go. It says the plan is **stale** and asks for a new one.
+
+The bus driver gets a **day pass** instead of a key to the whole bus depot. That is OIDC: the pipeline gets a pass that works for about an hour and then stops working.
+:::
+
+## The concept, precisely
+
+The shape of a Terraform pipeline, building on the deployment-pipeline idea from [Part 3](../ci-cd/index.qmd):
+
+```text
+pull request ──▶ fmt -check ─▶ init ─▶ validate ─▶ plan -out=tfplan ─▶ show plan to reviewers
+merge to main ─▶ (wait for approval on the "production" environment) ─▶ apply tfplan
+every night  ──▶ plan -detailed-exitcode ─▶ exit 2? alert: someone changed things by hand
+```
+
+### The plan job
+
+```yaml
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.17.2
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/lemonade-terraform
+          aws-region: eu-west-2
+      - run: terraform fmt -check
+      - run: terraform init -input=false
+      - run: terraform validate
+      - run: terraform plan -input=false -out=tfplan
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tfplan
+          path: tfplan
+          retention-days: 1
+```
+
+### The apply job
+
+```yaml
+  apply:
+    needs: plan
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.17.2
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/lemonade-terraform
+          aws-region: eu-west-2
+      - uses: actions/download-artifact@v8
+        with:
+          name: tfplan
+      - run: terraform init -input=false
+      - run: terraform apply -input=false tfplan
+```
+
+`environment: production` is where the approval happens. In the repository settings, the `production` environment gets **required reviewers**, so the job waits until one of them clicks *Approve*.
+
+### Every piece, explained
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `hashicorp/setup-terraform@v4` | installs Terraform on the runner | pin `terraform_version` to the same version as `required_version` | `terraform_version: 1.17.2` |
+| `terraform fmt -check` | fails if any file is unformatted | first, because it is fastest | exit code 3 on a messy file ([lesson 2](02-hcl-syntax.qmd)) |
+| `-input=false` | never wait for typed input | on every command in CI | `terraform plan -input=false` |
+| `plan -out=tfplan` | saves the exact plan | the artifact that gets approved | `terraform plan -out=tfplan` |
+| `upload-artifact` / `download-artifact` | carries the plan file from job to job | short `retention-days`: plans can contain secrets | `retention-days: 1` |
+| `apply tfplan` | applies the saved plan, no questions | refuses if the state changed since | `terraform apply -input=false tfplan` |
+| `environment:` | ties the job to a GitHub environment | add required reviewers to `production` | `environment: production` |
+| `concurrency:` | only one run per group at a time | one group per state, so runs queue | `concurrency: terraform-prod` |
+| `permissions: id-token: write` | lets the job request an OIDC token | without it, cloud login fails | see above |
+| `aws-actions/configure-aws-credentials@v6` | exchanges the OIDC token for temporary AWS credentials | trust only this repository and branch in the IAM role | `role-to-assume: arn:aws:iam::...` |
+| `google-github-actions/auth@v3` | the same for Google Cloud (Workload Identity Federation) | no service-account key files | `workload_identity_provider: projects/.../providers/github` |
+| `schedule:` + `-detailed-exitcode` | nightly drift check | exit code 2 means drift ([lesson 3](03-the-core-workflow.qmd)) | `cron: "0 3 * * *"` |
+
+### Staging and production: folders, not tricks
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| one folder per environment | `envs/staging/` and `envs/prod/`, each with its own backend `key` and `tfvars` | **recommended**: separate state, separate credentials, obvious in reviews | `envs/prod/main.tf` calls `module "stand"` |
+| `terraform workspace new NAME` | creates another state for the **same** folder | fine for short-lived copies (a test per pull request) | `terraform workspace new pr-42` |
+| `terraform workspace select NAME` | switches which state the folder uses | easy to forget which one is selected | `terraform workspace select staging` |
+| `terraform.workspace` | the current workspace's name inside the code | for naming, such as `"lemonade-${terraform.workspace}"` | `"lemonade-pr-42"` |
+
+HashiCorp's own documentation says CLI workspaces are not a good fit when environments need separate credentials and access controls. Production almost always does, so give it its own folder.
+
+## Worked example: the stale plan protection
+
+This is the guarantee the whole pipeline rests on, run for real on a laptop. A plan is saved for review, then someone else applies a different change first:
+
+```text
+$ terraform plan -var price=3.00 -out=reviewed.tfplan
+Saved the plan to: reviewed.tfplan
+$ grep serial terraform.tfstate
+  "serial": 1,
+
+# meanwhile, another run applies price=2.75
+Apply complete! Resources: 1 added, 0 changed, 1 destroyed.
+$ grep serial terraform.tfstate
+  "serial": 4,
+
+$ terraform apply reviewed.tfplan
+Error: Saved plan is stale
+The given plan file can no longer be applied because the state was changed by
+another operation after the plan was created.
+```
+
+The reviewer approved "change the price to 3.00 starting from state 1". The world is no longer state 1, so applying that plan could do something nobody reviewed. Terraform refuses, and the pipeline must plan again.
+
+## Rules and conventions
+
+- Every change goes through a pull request. Nobody runs `apply` from a laptop against shared environments.
+- The plan that was reviewed is the plan that is applied: `plan -out`, then `apply <file>`.
+- Production applies wait for a human approval in a protected environment.
+- Use OIDC (AWS IAM roles, Google Workload Identity Federation). Never store long-lived cloud keys as repository secrets.
+- Give the pipeline's role only the permissions this configuration needs. Use a read-only role for `plan` on pull requests from forks.
+- Add `concurrency` per state, as well as the backend lock, so runs queue instead of failing.
+- Run a scheduled drift check and treat exit code 2 as an alert.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Running `apply` without a saved plan in CI | the applied changes differ from what reviewers saw | `plan -out=tfplan` in one job, `apply tfplan` in the next |
+| Missing `id-token: write` | `Could not load credentials from any providers` or "unable to get ACTIONS_ID_TOKEN_REQUEST_URL" | add the permission to the workflow or job |
+| Long-lived `AWS_ACCESS_KEY_ID` secret | a leaked key works until someone notices | switch to OIDC; delete the key |
+| Plan artifact kept for 90 days | secrets from the plan sit in old artifacts | `retention-days: 1` |
+| One workspace-switched folder for staging and prod | someone applies the staging change to prod | separate folders, states and roles |
+| Different Terraform versions locally and in CI | `fmt -check` or the state format disagree | pin the same version in `setup-terraform` and `required_version` |
+
+## Mathematical Abstraction
+
+The pipeline applies only when every gate before it has passed:
+
+$$
+\text{apply} \Rightarrow f \land v \land p \land a
+$$
+
+where:
+
+- $f$ is "`terraform fmt -check` exited 0";
+- $v$ is "`terraform validate` succeeded";
+- $p$ is "`terraform plan -out` succeeded";
+- $a$ is "a required reviewer approved the `production` environment";
+- $\land$ is "and", and $P \Rightarrow Q$ reads "if $P$ happens, then $Q$ was true".
+
+Example: a pull request with a messy file has $f$ = false, so $f \land v \land p \land a$ is false and apply can never run. A clean change that is merged but not yet approved has $f = v = p$ = true and $a$ = false, so the job waits. Only $f = v = p = a$ = true lets it continue.
+
+A saved plan carries the **serial** number of the state it was made from, and applies only against that state:
+
+$$
+\operatorname{apply}(P) \text{ is allowed} \iff \operatorname{serial}(S_{\text{now}}) = \operatorname{serial}(S_{P})
+$$
+
+where:
+
+- $P$ is the saved plan file;
+- $S_{P}$ is the state the plan was computed from, and $S_{\text{now}}$ is the state at apply time;
+- $\operatorname{serial}(S)$ is the counter Terraform increases every time it writes the state;
+- $\iff$ means "exactly when".
+
+Example: the real run above had $\operatorname{serial}(S_{P}) = 1$. The other apply replaced the file and raised the serial to $\operatorname{serial}(S_{\text{now}}) = 4$. Since $4 \ne 1$, apply was refused with `Saved plan is stale`, exactly as the rule predicts.
+
+Why OIDC beats stored keys, in one ratio (a simplified model of exposure time):
+
+$$
+\rho = \frac{T_{\text{OIDC}}}{T_{\text{key}}}
+$$
+
+where:
+
+- $T_{\text{OIDC}}$ is how long a leaked OIDC credential keeps working: the session lifetime, by default 1 hour for `configure-aws-credentials`;
+- $T_{\text{key}}$ is how long a leaked static key keeps working: until it is rotated;
+- $\rho$ is the fraction of the risk window that remains with OIDC.
+
+Example: a team rotates keys every 90 days, so $T_{\text{key}} = 90 \times 24 = 2160$ hours. With $T_{\text{OIDC}} = 1$ hour, $\rho = 1 / 2160 \approx 0.00046$: a leaked credential is useful to an attacker for less than one two-thousandth of the time. This ignores how fast a leak is noticed, but the direction is clear.
+
+## References
+
+- HashiCorp, "Automate Terraform with GitHub Actions": <https://developer.hashicorp.com/terraform/tutorials/automation/github-actions>
+- HashiCorp, "Running Terraform in automation": <https://developer.hashicorp.com/terraform/tutorials/automation/automate-terraform>
+- `hashicorp/setup-terraform`: <https://github.com/hashicorp/setup-terraform>
+- GitHub Docs, "Configuring OpenID Connect in Amazon Web Services": <https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services>
+- `google-github-actions/auth` (Workload Identity Federation): <https://github.com/google-github-actions/auth>
+- GitHub Docs, "Managing environments for deployment" (required reviewers): <https://docs.github.com/en/actions/managing-workflow-runs-and-deployments/managing-deployments/managing-environments-for-deployment>
+- HashiCorp, "Workspaces" (when not to use them): <https://developer.hashicorp.com/terraform/language/state/workspaces>
+- Jez Humble and David Farley, *Continuous Delivery* (Addison-Wesley, 2010), on the deployment pipeline: <https://continuousdelivery.com/>
+
+[← The Lemonade Stand on AWS and Google Cloud](09-lemonade-on-aws-and-google-cloud.qmd) · [Terraform index](index.qmd)

@@ -16,7 +16,7 @@ variable "project" {
 
 variable "region" {
   type    = string
-  default = "us-central1"
+  default = "europe-west2"
 }
 
 variable "image" {

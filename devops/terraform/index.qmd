@@ -1,0 +1,106 @@
+---
+title: "Terraform"
+description: "Describe the Lemonade Stand's infrastructure in a few text files, preview every change, and let Terraform build, update and delete it for you, first on your laptop with Docker and then on AWS and Google Cloud."
+---
+
+## What Terraform is for
+
+In Parts 4 and 5 you built the Lemonade Stand on AWS and Google Cloud by hand. You clicked through consoles and typed `aws` and `gcloud` commands. It worked, but three questions stay hard:
+
+- **Can you do it again?** A new region, a staging copy, a rebuild after an accident means doing every step again, in the right order, without forgetting one.
+- **What exactly is running?** After a month of small fixes, nobody remembers which settings were changed, or why.
+- **What will this change break?** A click takes effect at once. There is no preview.
+
+**Terraform** answers all three. You write down *what you want*, such as "one web server, one firewall rule, one menu bucket", in small text files. Terraform compares that wish list with what really exists, shows you the difference as a **plan**, and then makes reality match. The files live in Git, so every change can be reviewed, repeated and undone.
+
+## The Lemonade Stand as code
+
+```text
+   you write                    Terraform                      real world
+ ┌─────────────┐   plan    ┌──────────────────┐   apply   ┌──────────────────────┐
+ │ main.tf     │ ───────▶  │ wish list  vs    │ ───────▶  │ Docker containers    │
+ │ variables.tf│           │ state notebook   │           │ AWS EC2 + firewall   │
+ │ outputs.tf  │ ◀──────── │ = list of changes│ ◀──────── │ Google Cloud Run     │
+ └─────────────┘  outputs  └──────────────────┘  records  └──────────────────────┘
+                                   │
+                           terraform.tfstate (what Terraform built last time)
+```
+
+The same three steps repeat in every lesson: **write → plan → apply**.
+
+## Run the lab with nothing but Docker
+
+You do not need to install Terraform or create a cloud account. The official `hashicorp/terraform` image contains the whole tool. Define this helper once in your shell:
+
+```bash
+tf() {
+  docker run --rm -it -e CHECKPOINT_DISABLE=1 \
+    -v "$PWD":/work -w /work \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    hashicorp/terraform:1.17.2 "$@"
+}
+```
+
+- `-v "$PWD":/work -w /work` shares the current folder with Terraform.
+- `-v /var/run/docker.sock:...` lets Terraform start containers on your laptop. Only the Docker example needs it.
+- `CHECKPOINT_DISABLE=1` turns off Terraform's "is there a newer version?" check, which can make commands hang inside a container.
+
+Then `cd devops/terraform/examples/01-local` and run `tf init`, `tf plan` and `tf apply`. The [lab README](examples/README.md) lists every example.
+
+| Folder | What it shows | Needs |
+| --- | --- | --- |
+| `examples/01-local/` | the first plan and apply: a menu file and a random stand name | Docker |
+| `examples/02-docker/` | two real Lemonade web servers on `localhost:8088` and `:8089` | Docker |
+| `examples/03-module/` | one module used twice | Docker |
+| `examples/aws/` | an EC2 web server and a firewall rule on AWS | AWS account to apply; validate-only here |
+| `examples/gcp/` | a public Cloud Run service | Google Cloud project to apply; validate-only here |
+
+## Lessons
+
+1. [Infrastructure as Code](01-infrastructure-as-code.qmd): why write infrastructure down, desired state, your first apply.
+2. [HCL Syntax](02-hcl-syntax.qmd): blocks, arguments, types and the file layout convention.
+3. [The Core Workflow](03-the-core-workflow.qmd): `init`, `plan`, `apply`, `destroy` and every flag you need.
+4. [Providers, Resources and Data Sources](04-providers-resources-and-data-sources.qmd): who talks to the cloud, version pins, the dependency graph.
+5. [Variables, Outputs and Locals](05-variables-outputs-and-locals.qmd): inputs, results and named values.
+6. [Expressions, Loops and Functions](06-expressions-loops-and-functions.qmd): `count`, `for_each`, `for`, and the functions you will use daily.
+7. [State and Backends](07-state-and-backends.qmd): Terraform's notebook, drift, locking and refactoring safely.
+8. [Modules](08-modules.qmd): reusable building blocks, and when not to make one.
+9. [The Lemonade Stand on AWS and Google Cloud](09-lemonade-on-aws-and-google-cloud.qmd): the same idea for two clouds.
+10. [Terraform in CI/CD](10-terraform-in-ci-cd.qmd): plan on pull requests, apply after approval, no long-lived keys.
+
+## Command cheat sheet
+
+| Command | What it does |
+| --- | --- |
+| `terraform init` | download providers and modules, set up the backend |
+| `terraform fmt` | rewrite files in the standard style |
+| `terraform validate` | check the files make sense, without touching anything real |
+| `terraform plan` | show what would change |
+| `terraform plan -out=tfplan` | save the plan so `apply` does exactly that |
+| `terraform apply` | make the changes (asks for `yes`) |
+| `terraform apply tfplan` | apply a saved plan, with no question asked |
+| `terraform destroy` | delete everything this configuration created |
+| `terraform output` | print the outputs, such as URLs |
+| `terraform state list` | list everything Terraform is tracking |
+| `terraform console` | try expressions and functions interactively |
+
+## Clicking, Ansible or Terraform?
+
+| Question | Clicking in a console | Ansible (Part 1) | Terraform |
+| --- | --- | --- | --- |
+| Main job | anything, once | configure software **inside** existing machines | create and delete the machines, networks and services **themselves** |
+| Style | manual steps | a list of tasks, run in order (procedural, made idempotent by modules) | a description of the end result (declarative) |
+| Preview before change | no | `--check --diff` (best effort) | `plan`, always |
+| Remembers what it made | no | no (asks the hosts each time) | yes, in the **state** file |
+| Deletes what you removed from the file | no | no, you write a task for it | yes |
+| Typical Lemonade use | exploring | install nginx and the menu on `web1`, `web2` | create `web1`, `web2`, the firewall rule and the DNS name |
+
+The tools work together. A common pattern, described by Yevgeniy Brikman in [*Terraform: Up & Running*](https://www.terraformupandrunning.com/), is to let Terraform build the servers and let Ansible, a container image or a startup script configure what runs on them.
+
+## Where this part fits
+
+- [Part 1: Ansible](../ansible/index.qmd) configures machines; Terraform creates them.
+- [Part 3: CI/CD](../ci-cd/index.qmd) runs `terraform plan` and `apply` automatically ([lesson 10](10-terraform-in-ci-cd.qmd)).
+- [Part 4: AWS](../aws/index.qmd) and [Part 5: Google Cloud](../gcp/index.qmd) explain the services that the Terraform files describe.
+
+[← DevOps book](../index.qmd) · [Start: Infrastructure as Code →](01-infrastructure-as-code.qmd)

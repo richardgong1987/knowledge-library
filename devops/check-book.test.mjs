@@ -13,6 +13,7 @@ const PARTS = {
   'ci-cd': { minimum: 9, lab: ['examples/lemonade-stand/server.mjs', 'examples/lemonade-stand/server.test.mjs', 'examples/lemonade-stand/workflows/ci.yml'] },
   aws: { minimum: 10, lab: ['examples/README.md', 'examples/localstack-demo.sh'] },
   gcp: { minimum: 9, lab: ['examples/README.md', 'examples/deploy-cloud-run.sh'] },
+  terraform: { minimum: 10, lab: ['examples/README.md', 'examples/01-local/main.tf', 'examples/02-docker/main.tf'] },
 };
 
 const LESSON_HEADINGS = [

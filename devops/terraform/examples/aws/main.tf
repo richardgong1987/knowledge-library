@@ -10,7 +10,7 @@ provider "aws" {
 
 variable "region" {
   type    = string
-  default = "us-east-1"
+  default = "eu-west-2"
 }
 
 # Look up the newest Amazon Linux 2023 image instead of hard-coding an ID.

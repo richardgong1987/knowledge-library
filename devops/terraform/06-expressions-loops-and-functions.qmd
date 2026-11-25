@@ -1,0 +1,224 @@
+---
+title: "Expressions, Loops and Functions"
+description: "Make one block create many Lemonade stands with count or for_each, reshape data with for expressions, and use the handful of built-in functions you will reach for every day, including the subnet arithmetic of cidrsubnet."
+---
+
+## The problem
+
+The Lemonade Stand grows from one web server to two, then three. Copying the `docker_container` block three times works, but every fix must then be made three times. You want to say "one container **for each** stand in this list".
+
+You also need small calculations: build a URL from a port, give each stand its own network range, write the menu from a list of drinks. Terraform has a little expression language for exactly this.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Name tags versus seat numbers"}
+Your class lines up for a photo. The teacher can label each child in two ways.
+
+- **Seat numbers** (`count`): "child 0, child 1, child 2". If the child in seat 0 goes home, everybody shuffles along. Now the child who *was* number 1 is number 0, and the photographer thinks every child changed.
+- **Name tags** (`for_each`): "Ana, Ben, Cleo". If Ana goes home, Ben is still Ben and Cleo is still Cleo. Only Ana's spot is empty.
+
+Terraform remembers each copy by its number or its name. Use name tags whenever the copies are different things, like different stands.
+:::
+
+## The concept, precisely
+
+### Expressions
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| reference | reads a value | `var.`, `local.`, `data.`, `module.`, or `TYPE.NAME` | `docker_image.nginx.image_id` |
+| `"${ }"` | puts a value into a string | the only special use of `$` | `"lemonade-${each.key}"` |
+| `cond ? a : b` | conditional: `a` when true, else `b` | both sides should have the same type | `var.env == "prod" ? 3 : 1` |
+| arithmetic | `+ - * / %` | numbers only | `40 * var.price` |
+| comparison and logic | `== != < <= > >=`, `&& \|\| !` | result is `bool` | `var.price > 0 && var.price < 10` |
+| index | `list[i]`, `map["key"]` | lists count from 0 | `var.stands[0]` |
+| splat `[*]` | takes one attribute from every element of a list | short for a `for` expression | `local.boxes[*].port` |
+| `for` (list) | `[for x in coll : f(x)]` builds a list | add `if` to filter | `[for s in var.stands : upper(s)]` |
+| `for` (map) | `{for k, v in coll : key => value}` builds a map | keys must be unique | `{for n, p in var.stands : n => "http://localhost:${p}"}` |
+
+### Repetition: `count` and `for_each`
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `count = N` | makes N copies, addressed `[0]` … `[N-1]` | for identical copies, or `0`/`1` to switch a resource off and on | `count = var.enabled ? 1 : 0` |
+| `count.index` | the current copy's number | only inside a `count` block | `"menu-${count.index}.txt"` |
+| `for_each = MAP or SET` | one copy per key, addressed `["key"]` | the default choice for distinct things | `for_each = var.stands` |
+| `each.key` | the current key | with a set, key and value are equal | `"lemonade-${each.key}"` |
+| `each.value` | the current value | the map's value | `external = each.value` |
+| `dynamic "NAME"` | repeats a **nested block** | use sparingly; it hurts readability | see below |
+
+`for_each` accepts a map or a set of strings, never a plain list, because a list may contain duplicates and has no stable names. Convert with `toset(...)`.
+
+```hcl
+resource "aws_security_group" "web" {
+  name = "lemonade-web"
+
+  dynamic "ingress" {
+    for_each = [80, 443]
+    content {
+      from_port   = ingress.value
+      to_port     = ingress.value
+      protocol    = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
+  }
+}
+```
+
+Inside a `dynamic` block, the loop variable is named after the block: `ingress.value`.
+
+### The functions you will use every day
+
+Real `terraform console` results:
+
+| Command | What it does | Rule / convention | Example → real result |
+| --- | --- | --- | --- |
+| `length(x)` | number of elements or characters | works on lists, maps, strings | `length(var.stands)` → `3` |
+| `merge(a, b)` | combines maps; later keys win | for default tags | `merge({ a = 1 }, { b = 2, a = 3 })` → `{ a = 3, b = 2 }` |
+| `lookup(m, k, d)` | `m[k]`, or `d` if `k` is missing | the default is required | `lookup({ web1 = 8088 }, "web2", 8080)` → `8080` |
+| `toset(list)` | removes duplicates and order | to feed `for_each` | `toset(["web1", "web2", "web1"])` → `toset(["web1", "web2"])` |
+| `format(spec, ...)` | printf-style text | `%s` text, `%d` integer, `%.2f` two decimals | `format("Lemonade: $%.2f", 2.5)` → `"Lemonade: $2.50"` |
+| `join(sep, list)` | glues a list into one string | | `join(", ", ["web1", "web2"])` → `"web1, web2"` |
+| `upper(s)`, `lower(s)` | changes letter case | | `upper("web1")` → `"WEB1"` |
+| `file(path)` | reads a file as a string | path relative to `path.module` | `file("${path.module}/menu.html")` |
+| `templatefile(path, vars)` | reads a file and fills in `${...}` and `%{...}` | name templates `*.tftpl` | see below |
+| `cidrsubnet(prefix, newbits, netnum)` | carves a smaller network out of a bigger one | see the maths below | `cidrsubnet("10.0.0.0/16", 8, 1)` → `"10.0.1.0/24"` |
+
+A template file `menu.html.tftpl`:
+
+```text
+<h1>Lemonade Stand ${stand}</h1>
+%{ for drink, price in drinks ~}
+<p>${drink}: ${format("$%.2f", price)}</p>
+%{ endfor ~}
+```
+
+called as `templatefile("${path.module}/menu.html.tftpl", { stand = "web1", drinks = { lemonade = 2.5, iced_tea = 3 } })` gives
+
+```text
+<h1>Lemonade Stand web1</h1>
+<p>iced_tea: $3.00</p>
+<p>lemonade: $2.50</p>
+```
+
+Map keys are visited in alphabetical order, so `iced_tea` comes first. The `~` trims the newline after each directive.
+
+## Worked example: `count` reshuffles, `for_each` does not
+
+A scratch configuration makes one menu file per stand with `count`:
+
+```hcl
+variable "stands" {
+  type    = list(string)
+  default = ["web1", "web2", "web3"]
+}
+
+resource "local_file" "menu" {
+  count    = length(var.stands)
+  filename = "${path.module}/menu-${var.stands[count.index]}.txt"
+  content  = "Stand ${var.stands[count.index]}\n"
+}
+```
+
+After applying it, remove `web1` from the list (real output, trimmed):
+
+```text
+$ terraform plan -var 'stands=["web2","web3"]'
+  # local_file.menu[0] must be replaced
+      ~ filename = "./menu-web1.txt" -> "./menu-web2.txt" # forces replacement
+  # local_file.menu[1] must be replaced
+      ~ filename = "./menu-web2.txt" -> "./menu-web3.txt" # forces replacement
+  # local_file.menu[2] will be destroyed
+  # (because index [2] is out of range for count)
+Plan: 2 to add, 0 to change, 3 to destroy.
+```
+
+You removed **one** stand, and Terraform wants to touch **three** files. Everyone shuffled seats.
+
+The Lemonade Docker example uses `for_each` over a map instead. Removing `web2` (real output):
+
+```text
+$ terraform plan -var 'stands={web1=8088}'
+  # docker_container.stand["web2"] will be destroyed
+  # (because key ["web2"] is not in for_each map)
+Plan: 0 to add, 0 to change, 1 to destroy.
+```
+
+One stand removed, one container destroyed, and `web1` is untouched.
+
+## Rules and conventions
+
+- Use `for_each` for things with an identity (stands, users, buckets). Use `count` only for identical copies or a `0`/`1` on/off switch.
+- Keys of `for_each` must be known at plan time. Use names from variables, not IDs that the cloud invents.
+- Put long expressions in a `local` with a good name instead of repeating them inline.
+- Try every new function in `terraform console` before using it in a resource.
+- Keep `dynamic` blocks for truly variable nested blocks. A short repeated block is often clearer.
+- Keep templates in `*.tftpl` files next to the code, and pass every value they use explicitly.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Removing an item from a `count` list | plan replaces every item after it | switch to `for_each`; move existing state with `moved` blocks ([lesson 7](07-state-and-backends.qmd)) |
+| `for_each = ["web1", "web2"]` | `The given "for_each" argument value is unsuitable` (a list) | `for_each = toset([...])` or a map |
+| `for_each` over values known only after apply | `Invalid for_each argument ... cannot be determined until apply` | use names from variables as keys |
+| Using `count` and `for_each` together | `Invalid combination of "count" and "for_each"` | choose one |
+| `cidrsubnet` with too large a `netnum` | `prefix extension of 8 does not accommodate a subnet numbered 256` | `netnum` must be below $2^{k}$, where $k$ is `newbits` |
+
+## Mathematical Abstraction
+
+Why does `count` reshuffle? Each copy's address is its **position**:
+
+$$
+\operatorname{addr}_{C}(x_i) = i, \qquad \operatorname{addr}_{F}(x) = \operatorname{key}(x)
+$$
+
+where:
+
+- $\operatorname{addr}_{C}$ is the address under `count`, and $\operatorname{addr}_{F}$ the address under `for_each`;
+- $x_0, x_1, \dots, x_{n-1}$ are the items of the list, $n$ of them;
+- $i$ is an item's position, counting from 0;
+- $\operatorname{key}(x)$ is the item's name in the `for_each` map or set;
+- an "address" is how the state remembers the copy, such as `local_file.menu[0]` or `docker_container.stand["web2"]`.
+
+If you remove the item at position $j$ with `count`, every later item moves down one position. Its address now points at different arguments, so it must change:
+
+$$
+\text{changed} = n - 1 - j, \qquad \text{destroyed} = 1
+$$
+
+where:
+
+- $n$ is the length of the list before the removal;
+- $j$ is the position of the removed item;
+- "changed" counts copies whose address now carries a different item (for a menu file, a replacement);
+- "destroyed" is the last address, which no longer exists.
+
+Example: $n = 3$ and we removed `web1` at $j = 0$, so changed $= 3 - 1 - 0 = 2$ (`[0]` and `[1]` replaced) and destroyed $= 1$ (`[2]`). Replacements count once in "add" and once in "destroy" ([lesson 3](03-the-core-workflow.qmd)): add $= 2$, destroy $= 2 + 1 = 3$. That is the real line `Plan: 2 to add, 0 to change, 3 to destroy`. Removing the **last** item instead ($j = 2$) gives changed $= 3 - 1 - 2 = 0$, so only one destroy. With `for_each` the keys do not move, so removing any one stand always gives changed $= 0$ and destroyed $= 1$, as the real Docker plan shows.
+
+`cidrsubnet` is integer arithmetic on IP addresses:
+
+$$
+\operatorname{cidrsubnet}(B/b,\ k,\ j) = \big(B + j \cdot 2^{\,32 - (b + k)}\big) / (b + k), \qquad 0 \le j < 2^{k}
+$$
+
+where:
+
+- $B/b$ is the big network: base address $B$ with prefix length $b$ (the first $b$ bits are fixed);
+- $k$ is `newbits`, how many extra bits the subnet fixes, so the new prefix is $b + k$;
+- $j$ is `netnum`, which subnet you want, counting from 0;
+- $2^{\,32 - (b + k)}$ is the number of addresses in each subnet (an IPv4 address has 32 bits);
+- $2^{k}$ is how many such subnets fit inside $B/b$.
+
+Example: the Lemonade VPC from Part 4 is $10.0.0.0/16$, so $b = 16$. With $k = 8$ the new prefix is $16 + 8 = 24$, and each subnet holds $2^{32 - 24} = 2^{8} = 256$ addresses. For $j = 1$ the start is $10.0.0.0 + 1 \cdot 256 = 10.0.1.0$, giving `10.0.1.0/24`, the real console result. $j = 2$ gives $10.0.0.0 + 512 = 10.0.2.0$, so `10.0.2.0/24` (also real). There are $2^{8} = 256$ subnets, so $j$ can go up to $255$ (real result: `10.0.255.0/24`), and $j = 256$ fails with the real error `prefix extension of 8 does not accommodate a subnet numbered 256`.
+
+## References
+
+- HashiCorp, "Expressions": <https://developer.hashicorp.com/terraform/language/expressions>
+- HashiCorp, "The `for_each` Meta-Argument": <https://developer.hashicorp.com/terraform/language/meta-arguments/for_each>
+- HashiCorp, "The `count` Meta-Argument": <https://developer.hashicorp.com/terraform/language/meta-arguments/count>
+- HashiCorp, "Built-in Functions" (`cidrsubnet`, `templatefile`, ...): <https://developer.hashicorp.com/terraform/language/functions>
+- HashiCorp, "Dynamic Blocks": <https://developer.hashicorp.com/terraform/language/expressions/dynamic-blocks>
+- Yevgeniy Brikman, "Terraform tips & tricks: loops, if-statements, and gotchas" (Gruntwork): <https://www.gruntwork.io/blog/terraform-tips-tricks-loops-if-statements-and-gotchas>
+
+[← Variables, Outputs and Locals](05-variables-outputs-and-locals.qmd) · [Terraform index](index.qmd) · [Next: State and Backends →](07-state-and-backends.qmd)

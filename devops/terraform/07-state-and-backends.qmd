@@ -1,0 +1,277 @@
+---
+title: "State and Backends"
+description: "Terraform's notebook of what it built: why state exists, how drift happens, how a remote backend with locking lets a team share it, and how to rename, adopt or release resources safely with moved, import and removed blocks."
+---
+
+## The problem
+
+Two people look after the Lemonade Stand. Ana runs `terraform apply` on her laptop and creates the web server. The next day Ben runs `terraform apply` on **his** laptop, and Terraform tries to create a second web server.
+
+Terraform did not forget the server. Ben's laptop simply never had the file in which Ana's Terraform wrote down what it built. That file is the **state**. Where it lives, who may write it, and what is inside it decide whether a team can use Terraform safely.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="The notebook and the bathroom key"}
+Terraform keeps a **notebook**. Every time it builds something, it writes a line: "I built the red tower, and its secret number is 7Q3". Next time, it reads the notebook to know which towers are *its* towers. If the notebook is lost, Terraform thinks it never built anything and builds everything again.
+
+So the class keeps **one** notebook in a shared cupboard, not one per child. That cupboard is the **backend**. The cupboard also has a rule, like the single key for a petrol-station bathroom: only the child holding the key may write in the notebook. Everyone else waits. That key is the **lock**.
+
+And because the notebook lists *everything*, including the secret number of the till, the cupboard must be locked against strangers too.
+:::
+
+## The concept, precisely
+
+**State** is a JSON file (`terraform.tfstate`) that maps every resource address in your code to the real object it manages, plus the attributes Terraform last saw. It is how Terraform knows that `docker_container.stand["web1"]` *is* container `68d3dc46...`.
+
+State is needed because:
+
+- the cloud has no idea which objects "belong" to your configuration;
+- many attributes, such as IDs and IP addresses, exist only after creation;
+- deleting a block from the code must mean "destroy that object", which requires remembering it.
+
+**Drift** is any difference between the state and reality caused outside Terraform: a file deleted by hand, a firewall rule clicked in the console. `plan` refreshes the state first, so drift shows up as planned changes ([lesson 3](03-the-core-workflow.qmd)).
+
+State can contain **secrets in plain text**. Lesson 5 showed a `sensitive` value sitting readable in `terraform.tfstate`. Treat the state like a password file.
+
+### Backends: where state lives
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `local` (default) | `terraform.tfstate` in the current folder | fine for one person and labs; never commit it | no `backend` block |
+| `s3` | state in an S3 bucket | `use_lockfile = true` for locking; `encrypt = true` | see below |
+| `gcs` | state in a Google Cloud Storage bucket | locks automatically | see below |
+| `cloud` block | HCP Terraform (HashiCorp's service) | state, locking and runs in one place | `cloud { organization = "lemonade" }` |
+| `key` / `prefix` | the path of this state inside the bucket | one per environment and component | `key = "prod/web/terraform.tfstate"` |
+| `terraform init -migrate-state` | copies state to a new backend | run after changing the `backend` block | `terraform init -migrate-state` |
+| `terraform init -reconfigure` | uses the new backend **without** copying | when the old state should be left behind | `terraform init -reconfigure` |
+
+The AWS version, for the bucket from Part 4:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "lemonade-tf-state"
+    key          = "prod/terraform.tfstate"
+    region       = "eu-west-2"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
+```
+
+The S3 backend can lock with a small lock file next to the state (`use_lockfile`). Terraform 1.10 introduced it, and 1.11 made it generally available. 1.11 also deprecated the older DynamoDB table lock (`dynamodb_table`), which will be removed in a future version. The Google Cloud version, for Part 5:
+
+```hcl
+terraform {
+  backend "gcs" {
+    bucket = "lemonade-tf-state"
+    prefix = "prod"
+  }
+}
+```
+
+Turn on **versioning** for the state bucket, so a bad write can be rolled back. Allow only the people and pipelines that run Terraform to read it.
+
+### State commands
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `state list` | lists every tracked address | the first command when debugging | `terraform state list` |
+| `state show ADDR` | prints one resource's recorded attributes | | `terraform state show random_pet.stand` |
+| `state mv A B` | renames an address in the state | prefer a `moved` block (reviewable) | `terraform state mv random_integer.price_cents random_integer.cents` |
+| `state rm ADDR` | forgets a resource, leaves the real object | prefer a `removed` block | `terraform state rm random_integer.cents` |
+| `state pull` | prints the raw state JSON | read-only inspection | `terraform state pull \| jq .serial` |
+| `state push` | overwrites remote state | **dangerous**; only for disaster recovery | avoid |
+| `force-unlock ID` | removes a stuck lock | only when you are sure no run is active | `terraform force-unlock 21876308-...` |
+| `-lock-timeout=60s` | waits for the lock instead of failing | useful in CI | `terraform plan -lock-timeout=60s` |
+
+### Refactoring blocks: `moved`, `import`, `removed`
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `moved` | "the object at address A is now at address B" | keep it in the code until every environment has applied it | `from = local_file.menu`, `to = local_file.price_list` |
+| `import` | adopt an existing real object into the state | `to` is an address, `id` is the provider's ID format | `to = random_integer.price_cents`, `id = "250,100,500"` |
+| `-generate-config-out=FILE` | with `import` blocks, writes the matching resource code for you | review and tidy the generated file | `terraform plan -generate-config-out=generated.tf` |
+| `removed` | stop managing a resource | add `lifecycle { destroy = false }` to keep the real object; without it, the object is destroyed | see below |
+
+### `lifecycle`: changing how a resource is replaced or protected
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `create_before_destroy` | builds the replacement first, then deletes the old one (`+/-`) | for things customers use, such as web servers | `create_before_destroy = true` |
+| `prevent_destroy` | any plan that would destroy it fails | for databases and state buckets | `prevent_destroy = true` |
+| `ignore_changes` | ignores drift in the listed arguments | when another system legitimately changes them | `ignore_changes = [tags]` |
+| `replace_triggered_by` | replaces this resource when another one changes | e.g. restart containers when the image changes | `replace_triggered_by = [docker_image.nginx]` |
+| `precondition` / `postcondition` | assertions checked before or after the change | fail early with a clear message | `condition = self.public_ip != ""` |
+
+## Worked example
+
+All output below is real, from scratch folders, and trimmed.
+
+**Rename without `moved`.** Change `resource "local_file" "menu"` to `"price_list"`:
+
+```text
+  # local_file.menu will be destroyed
+  # (because local_file.menu is not in configuration)
+  # local_file.price_list will be created
+Plan: 1 to add, 0 to change, 1 to destroy.
+```
+
+Terraform does not know it is the same file. For a database, this plan would delete your data.
+
+**Rename with `moved`:**
+
+```hcl
+moved {
+  from = local_file.menu
+  to   = local_file.price_list
+}
+```
+
+```text
+  # local_file.menu has moved to local_file.price_list
+Plan: 0 to add, 0 to change, 0 to destroy.
+```
+
+**Protect it.** With `lifecycle { prevent_destroy = true }`, a destroy plan stops:
+
+```text
+Error: Instance cannot be destroyed
+Resource local_file.price_list has lifecycle.prevent_destroy set, ...
+```
+
+**Release it without deleting it:**
+
+```hcl
+removed {
+  from = local_file.price_list
+
+  lifecycle {
+    destroy = false
+  }
+}
+```
+
+```text
+ # local_file.price_list will no longer be managed by Terraform, but will not be destroyed
+Plan: 0 to add, 0 to change, 0 to destroy.
+$ ls menu.txt
+menu.txt
+```
+
+**Adopt an existing object** with an `import` block. The random provider's ID format for an integer is `result,min,max`:
+
+```hcl
+resource "random_integer" "price_cents" {
+  min = 100
+  max = 500
+}
+
+import {
+  to = random_integer.price_cents
+  id = "250,100,500"
+}
+```
+
+```text
+  # random_integer.price_cents will be imported
+Plan: 1 to import, 0 to add, 0 to change, 0 to destroy.
+Apply complete! Resources: 1 imported, 0 added, 0 changed, 0 destroyed.
+```
+
+This is how you turn a hand-made snowflake server (lesson 1) into code: write or generate the resource block, import it, then let Terraform manage it.
+
+**Two runs at once.** One terminal applies a slow change. Five seconds later a second terminal runs `plan`:
+
+```text
+Error: Error acquiring the state lock
+Lock Info:
+  ID:        21876308-45f5-cf2e-01f3-ac1110af3861
+  Operation: OperationTypeApply
+  Who:       root@8e030cbc3912
+```
+
+The same `plan` with `-lock-timeout=60s` waited instead:
+
+```text
+Acquiring state lock. This may take a few moments...
+No changes. Your infrastructure matches the configuration.
+```
+
+## Rules and conventions
+
+- One state per environment and component (`prod/web`, `staging/web`). Small states mean faster plans and smaller blast radius.
+- Shared state always lives in a remote backend with locking, encryption, versioning and tight access.
+- Never edit `terraform.tfstate` by hand, and never commit it. The `.gitignore` in [`examples/`](examples/README.md) excludes it.
+- Refactor with `moved`, `import` and `removed` blocks rather than `state mv`, `import` or `state rm` commands. Blocks appear in the plan and in code review.
+- Use `prevent_destroy` on anything that holds data.
+- If you see a lock error, find out who holds it before you even think about `force-unlock`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| State on a laptop, team of two | duplicate servers, or "already exists" errors | move to an `s3` or `gcs` backend with `init -migrate-state` |
+| Committing `terraform.tfstate` to Git | secrets in the repository; merge conflicts in JSON | add it to `.gitignore`, rotate exposed secrets, use a backend |
+| Renaming a resource or module call | plan destroys and recreates it | add a `moved` block |
+| `removed` without `destroy = false` | the real object is destroyed | add `lifecycle { destroy = false }` |
+| `force-unlock` while a run is active | two writers corrupt the state | only unlock a lock whose run you know has died |
+| `ignore_changes = all` to silence drift | Terraform silently stops managing the resource | list only the specific arguments another system owns |
+
+## Mathematical Abstraction
+
+The state is a function from addresses to real objects:
+
+$$
+\sigma : A \to I
+$$
+
+where:
+
+- $A$ is the set of resource addresses Terraform manages, such as `random_integer.price_cents`;
+- $I$ is the set of real object IDs at the provider;
+- $\sigma(a)$ is the ID recorded for address $a$.
+
+Example: let $q$ stand for `random_integer.price_cents`. After the import, `terraform state show` printed `id = "250"`, so $\sigma(q) = 250$, and $A = \lbrace q \rbrace$ gives $\lvert A \rvert = 1$. After `state rm`, $A = \emptyset$, and `terraform state list | wc -l` printed `0`.
+
+A `moved` block relabels an address without touching the object:
+
+$$
+\sigma'(b) = \sigma(a), \qquad a \notin \operatorname{dom}(\sigma'), \qquad \Delta = \emptyset
+$$
+
+where:
+
+- $a$ is the `from` address and $b$ the `to` address;
+- $\sigma'$ is the state after the move;
+- $\operatorname{dom}(\sigma')$, the domain, is the set of addresses the new state knows;
+- $\Delta$ is the plan's list of real changes.
+
+Example: with $a$ = `local_file.menu` and $b$ = `local_file.price_list`, the real plan printed `has moved to` and `Plan: 0 to add, 0 to change, 0 to destroy`, so $\Delta = \emptyset$. Without the block, Terraform instead sees $a \in S \setminus D$ (destroy) and $b \in D \setminus S$ (create), so $\lvert \Delta \rvert = 2$: the real `1 to add, 1 to destroy`.
+
+Locking guarantees that at most one run writes the state at any moment:
+
+$$
+\forall t: \ \lvert W(t) \rvert \le 1
+$$
+
+where:
+
+- $t$ is a moment in time;
+- $W(t)$ is the set of Terraform runs holding the state lock at time $t$;
+- $\forall t$ reads "for every moment $t$".
+
+Example: the slow apply took the lock at $t = 0$ s and held it for about 20 s. The second run at $t = 5$ s would have made $\lvert W(5) \rvert = 2$, so it was refused (`Error acquiring the state lock`). With `-lock-timeout=60s` it waited until about $t = 20$ s, when $\lvert W \rvert$ dropped back to 0, and then took the lock: $\lvert W \rvert = 1$ again, never 2.
+
+## References
+
+- HashiCorp, "State": <https://developer.hashicorp.com/terraform/language/state>
+- HashiCorp, "Backend configuration" and the `s3` backend (`use_lockfile`): <https://developer.hashicorp.com/terraform/language/backend/s3>
+- HashiCorp, `gcs` backend: <https://developer.hashicorp.com/terraform/language/backend/gcs>
+- HashiCorp, "Refactoring" (`moved` blocks): <https://developer.hashicorp.com/terraform/language/modules/develop/refactoring>
+- HashiCorp, "Import" (`import` blocks and `-generate-config-out`): <https://developer.hashicorp.com/terraform/language/import>
+- HashiCorp, `removed` block reference: <https://developer.hashicorp.com/terraform/language/block/removed>
+- HashiCorp, "The lifecycle Meta-Argument": <https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle>
+- Yevgeniy Brikman, "How to manage Terraform state" (Gruntwork), the article that became chapter 3 of *Terraform: Up & Running*: <https://www.gruntwork.io/blog/how-to-manage-terraform-state>
+
+[← Expressions, Loops and Functions](06-expressions-loops-and-functions.qmd) · [Terraform index](index.qmd) · [Next: Modules →](08-modules.qmd)

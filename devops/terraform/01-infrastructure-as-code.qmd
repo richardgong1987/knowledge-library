@@ -1,0 +1,195 @@
+---
+title: "Infrastructure as Code"
+description: "Why the Lemonade Stand's servers should be written down as code, what 'desired state' means, how Terraform and OpenTofu relate, and your first init → plan → apply → destroy."
+---
+
+## The problem
+
+In Part 4 you set up the Lemonade Stand on AWS by hand: a network, a firewall rule, a web server and a menu bucket, about fifteen steps in the console. Now the owner asks for a **staging copy** to test new drinks before customers see them.
+
+You open your notes and find that step 9 says "change the security group (forgot which rule)". Nobody knows exactly what production looks like any more. Doing it again will take an afternoon and will not come out quite the same.
+
+Infrastructure as Code fixes this. You write the setup down once, in files, and a tool builds it from the files, identically, every time.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="The LEGO instruction booklet"}
+A LEGO booklet does not say "pick up a brick, now pick up another brick". It shows **pictures of the finished castle**. You look at the picture, look at your table, and add whatever is missing.
+
+Terraform files are that picture. You draw the finished Lemonade Stand: two web servers, one firewall rule, one menu. Terraform looks at the picture, looks at what is really there, and adds only what is missing. If a tower falls off, you look at the picture again and rebuild just the tower.
+
+Martin Fowler tells the same story with weather. A server set up by hand is a [**snowflake server**](https://martinfowler.com/bliki/SnowflakeServer.html) (2012): beautiful, unique, and impossible to make again. Better is a [**phoenix server**](https://martinfowler.com/bliki/PhoenixServer.html), named after the bird that burns up and is reborn from its ashes. Because the booklet exists, you can throw the server away and rebuild it any time, and it comes back exactly the same.
+:::
+
+## The concept, precisely
+
+**Infrastructure as Code (IaC)** means defining servers, networks and cloud services in text files, keeping those files in version control, and letting a tool create the real thing from them. Fowler's [definition](https://martinfowler.com/bliki/InfrastructureAsCode.html) (2016) stresses that the files are the lasting source of truth. A change made by hand on a server is temporary and should be copied back into the code. Kief Morris's book [*Infrastructure as Code*](https://www.oreilly.com/library/view/infrastructure-as-code/9781098150341/) (O'Reilly, 3rd edition 2025) is the standard long read on the topic.
+
+Three words carry the whole idea:
+
+- **Declarative.** You describe the result ("there is one menu file with this text"), not the steps. Compare:
+
+  ```bash
+  # imperative: steps, and running it twice does something twice
+  echo "Lemonade: \$2.50" >> menu.txt
+  ```
+
+  ```hcl
+  # declarative: the result; running it twice changes nothing the second time
+  resource "local_file" "menu" {
+    filename = "menu.txt"
+    content  = "Lemonade: $2.50\n"
+  }
+  ```
+
+- **Desired state.** The files describe how the world *should* look. Terraform's job is to close the gap between "should" and "is".
+- **Plan before apply.** Terraform always shows the gap as a list of changes before it touches anything.
+
+### Terraform and OpenTofu
+
+Mitchell Hashimoto described the idea behind Terraform in a 2011 blog post. As he tells it in ["The Story of HashiCorp Terraform"](https://www.hashicorp.com/resources/the-story-of-hashicorp-terraform-with-mitchell-hashimoto), the 2014 release was exactly that idea. Version 0.1 came out in July 2014 and supported only AWS and DigitalOcean. Today thousands of providers exist.
+
+On 10 August 2023 HashiCorp [changed the licence](https://www.hashicorp.com/license-faq) of future Terraform releases from the open-source MPL 2.0 to the Business Source License (BSL 1.1). The community forked the last open version. The fork was renamed **OpenTofu** and [joined the Linux Foundation](https://www.linuxfoundation.org/press/announcing-opentofu) on 20 September 2023, reached general availability in January 2024, and became a [CNCF](https://www.cncf.io/projects/opentofu/) sandbox project in April 2025. IBM [completed its acquisition of HashiCorp](https://newsroom.ibm.com/2025-02-27-ibm-completes-acquisition-of-hashicorp,-creates-comprehensive,-end-to-end-hybrid-cloud-platform) on 27 February 2025.
+
+For everything in this book the two tools behave the same: replace `terraform` with `tofu`. This part uses Terraform 1.17.
+
+## Every install and first-run command
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `brew install hashicorp/tap/terraform` | installs Terraform on macOS | use HashiCorp's tap; Homebrew's own `terraform` formula is frozen at 1.5.7, the last MPL release | `brew tap hashicorp/tap && brew install hashicorp/tap/terraform` |
+| `docker run hashicorp/terraform:<ver>` | runs Terraform without installing it | pin an exact version tag | `docker run --rm hashicorp/terraform:1.17.2 version` |
+| `brew install opentofu` | installs OpenTofu | the command is `tofu` | `tofu version` |
+| `terraform version` | prints the version and provider versions | check it first when something behaves oddly | `terraform version` |
+| `terraform -help` | lists every subcommand | `terraform <cmd> -help` for one command | `terraform plan -help` |
+| `terraform init` | prepares a folder: downloads providers | run it first, and again after adding providers or modules | `terraform init` |
+| `terraform plan` | shows what would change | read it every time | `terraform plan` |
+| `terraform apply` | makes the changes after you type `yes` | never skip reading the plan it prints | `terraform apply` |
+| `terraform destroy` | deletes everything this folder created | the plan shows `-` for every resource | `terraform destroy` |
+| `CHECKPOINT_DISABLE=1` | environment variable: no online version check | useful in containers and CI | `CHECKPOINT_DISABLE=1 terraform plan` |
+
+## Worked example: your first apply
+
+The file [`examples/01-local/main.tf`](examples/01-local/main.tf) needs no cloud at all. It creates a random stand name and writes a menu file:
+
+```hcl
+terraform {
+  required_providers {
+    local  = { source = "hashicorp/local", version = "~> 2.9" }
+    random = { source = "hashicorp/random", version = "~> 3.9" }
+  }
+}
+
+resource "random_pet" "stand" {}
+
+resource "local_file" "menu" {
+  filename = "${path.module}/menu.txt"
+  content  = "Welcome to the ${random_pet.stand.id} lemonade stand!\nLemonade: $2.50\n"
+}
+```
+
+Two **resources**: a random two-word name, and a file whose text uses that name. Run the four steps (real output, trimmed):
+
+```text
+$ terraform init
+- Installed hashicorp/random v3.9.1 (signed by HashiCorp)
+- Installed hashicorp/local v2.9.1 (signed by HashiCorp)
+Terraform has been successfully initialized!
+
+$ terraform plan
+  # local_file.menu will be created
+  # random_pet.stand will be created
+Plan: 2 to add, 0 to change, 0 to destroy.
+
+$ terraform apply -auto-approve
+random_pet.stand: Creation complete after 0s [id=perfect-moccasin]
+local_file.menu: Creation complete after 0s [id=83faada0...]
+Apply complete! Resources: 2 added, 0 changed, 0 destroyed.
+
+$ cat menu.txt
+Welcome to the perfect-moccasin lemonade stand!
+Lemonade: $2.50
+
+$ terraform plan
+No changes. Your infrastructure matches the configuration.
+```
+
+The last line is the point of the whole lesson. Running Terraform a second time does **nothing**, because reality already matches the picture.
+
+Now break something on purpose. Delete `menu.txt` and plan again:
+
+```text
+$ rm menu.txt
+$ terraform plan
+  # local_file.menu will be created
+Plan: 1 to add, 0 to change, 0 to destroy.
+```
+
+Terraform noticed that one tower fell off and plans to rebuild only that tower. The random name stays. Finally, clean up:
+
+```text
+$ terraform destroy -auto-approve
+local_file.menu: Destroying...
+random_pet.stand: Destroying...
+Destroy complete! Resources: 2 destroyed.
+```
+
+Destroy removed the file **before** the name, the reverse of creation order, because the file depends on the name. [Lesson 4](04-providers-resources-and-data-sources.qmd) explains this ordering.
+
+## Rules and conventions
+
+- The files are the truth. If you fix something by hand in a console, copy the fix into the code the same day, or the next `apply` will undo it.
+- Keep every Terraform folder in Git, but never commit `terraform.tfstate` or the `.terraform/` folder ([lesson 7](07-state-and-backends.qmd)).
+- Do commit `.terraform.lock.hcl`. Terraform's own `init` message says so: it pins exact provider versions for everyone.
+- Always read the plan. The summary line `Plan: X to add, Y to change, Z to destroy` is the first thing to check.
+- Use `-auto-approve` only in examples like this one or in a pipeline that already reviewed a saved plan ([lesson 10](10-terraform-in-ci-cd.qmd)).
+- Prefer rebuilding (phoenix) over patching by hand (snowflake).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Running `plan` before `init` | `Error: Inconsistent dependency lock file` or "provider not installed" | run `terraform init` in that folder |
+| Changing the real resource by hand | the next plan wants to "change" or "create" it back | put the change in the code, or accept the plan that restores it |
+| Treating Terraform like a script ("run it to add one more server") | confusion about why a second run does nothing | edit the files to describe two servers; then apply |
+| Deleting `terraform.tfstate` | Terraform tries to create everything again, and duplicates or name clashes appear | never delete state; store it remotely ([lesson 7](07-state-and-backends.qmd)) |
+| Mixing `terraform` and `tofu` on one folder | state written by a newer tool version cannot be read by an older one | pick one tool and one version per project |
+
+## Mathematical Abstraction
+
+Treat the world as a set of resources. Terraform computes the gap between your picture and reality, then closes it:
+
+$$
+\Delta = \operatorname{plan}(D, R), \qquad \operatorname{plan}\big(D, \operatorname{apply}(D, R)\big) = \emptyset
+$$
+
+where:
+
+- $D$ is the **desired** set: every resource described in your `.tf` files;
+- $R$ is the **real** set: what actually exists right now (as Terraform last recorded and refreshed it);
+- $\operatorname{plan}(D, R)$ is the list of changes $\Delta$ that would turn $R$ into $D$;
+- $\operatorname{apply}(D, R)$ performs $\Delta$ and returns the new reality;
+- $\emptyset$ is the empty set: "no changes";
+- the right-hand equation says that after one apply, a second plan is empty. This property is called **idempotency**: doing it twice is the same as doing it once.
+
+Example, with the run above. Let $p$ stand for `random_pet.stand` and $m$ for `local_file.menu`.
+
+1. Before the first apply: $D = \lbrace p, m \rbrace$ and $R = \emptyset$. So $\Delta$ creates both: $\lvert \Delta \rvert = 2$, which is the real line `Plan: 2 to add`.
+2. After apply: $R = D$, so $\operatorname{plan}(D, R) = \emptyset$, the real line `No changes`.
+3. After `rm menu.txt`: $R = \lbrace p \rbrace$. The gap is $D \setminus R = \lbrace m \rbrace$, so $\lvert \Delta \rvert = 1$: `Plan: 1 to add`.
+4. For `destroy`, the desired set becomes $D = \emptyset$, so every member of $R$ is removed: $\lvert \Delta \rvert = \lvert R \rvert = 2$, matching `2 destroyed`.
+
+This is a model, not the full algorithm. Terraform also compares the **attributes** of resources that exist in both sets ([lesson 3](03-the-core-workflow.qmd)), but the set picture is enough to predict most plans.
+
+## References
+
+- HashiCorp, "What is Infrastructure as Code with Terraform?": <https://developer.hashicorp.com/terraform/tutorials/aws-get-started/infrastructure-as-code>
+- HashiCorp, "Install Terraform": <https://developer.hashicorp.com/terraform/install>
+- Martin Fowler, "InfrastructureAsCode" (2016): <https://martinfowler.com/bliki/InfrastructureAsCode.html>
+- Martin Fowler, "SnowflakeServer" and "PhoenixServer" (2012): <https://martinfowler.com/bliki/SnowflakeServer.html>, <https://martinfowler.com/bliki/PhoenixServer.html>
+- Kief Morris, *Infrastructure as Code*, 3rd edition (O'Reilly, 2025): <https://www.oreilly.com/library/view/infrastructure-as-code/9781098150341/>
+- Yevgeniy Brikman, *Terraform: Up & Running*, 3rd edition (O'Reilly, 2022): <https://www.oreilly.com/library/view/terraform-up-and/9781098116736/>
+- "The Story of HashiCorp Terraform with Mitchell Hashimoto": <https://www.hashicorp.com/resources/the-story-of-hashicorp-terraform-with-mitchell-hashimoto>
+- OpenTofu: <https://opentofu.org/> and the Linux Foundation announcement: <https://www.linuxfoundation.org/press/announcing-opentofu>
+
+[← Terraform index](index.qmd) · [Next: HCL Syntax →](02-hcl-syntax.qmd)

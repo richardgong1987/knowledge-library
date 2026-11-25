@@ -1,0 +1,237 @@
+---
+title: "Modules"
+description: "Package a piece of the Lemonade Stand once and use it many times with different inputs, read values back through outputs, use well-known registry modules, and recognise when a module would only add confusion."
+---
+
+## The problem
+
+The Lemonade Stand now has a staging copy and a production copy, and each has two stands. Every stand needs the same few resources: a container, a menu, a port. Copying those blocks four times means four places to fix every bug.
+
+You want to write "how to build one stand" **once**, then say "build one called `web1` at \$2.50 and one called `web2` at \$3.00". That reusable piece is a **module**.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="'Build this wheel four times'"}
+Big LEGO booklets have a small boxed page that says **"build this wheel, ×4"**. You learn to build one wheel, build it four times, and clip the four wheels onto the car. The wheel page is a **module**. The car's booklet *calls* it four times.
+
+Each call can be a little different, a red wheel or a blue wheel. Those differences are the module's **inputs**. Once a wheel is built, the car needs to know where it is, "the wheel's axle is here". That is the module's **output**.
+
+But nobody prints a boxed page for a single brick. "Put one brick here, ×1" would only make the booklet longer. A module must be worth the page it takes.
+:::
+
+## The concept, precisely
+
+- Every Terraform folder is a module. The folder where you run `terraform` is the **root module**.
+- A **child module** is a folder that another module calls with a `module` block.
+- The child's `variable` blocks are its **inputs**, and its `output` blocks are its **outputs**. Everything else inside is private.
+- The caller reads an output as `module.<NAME>.<OUTPUT>`.
+
+[`examples/03-module/`](examples/03-module/main.tf) calls one tiny module twice:
+
+```hcl
+module "web1" {
+  source = "./modules/stand"
+  name   = "web1"
+  price  = 2.5
+}
+
+module "web2" {
+  source = "./modules/stand"
+  name   = "web2"
+  price  = 3
+}
+
+output "menus" {
+  value = [module.web1.menu_file, module.web2.menu_file]
+}
+```
+
+The module itself, [`modules/stand/main.tf`](examples/03-module/modules/stand/main.tf), has two inputs, one resource and one output:
+
+```hcl
+variable "name" { type = string }
+variable "price" { type = number }
+
+resource "local_file" "menu" {
+  filename = "${path.root}/menu-${var.name}.txt"
+  content  = "Stand ${var.name}: lemonade ${format("$%.2f", var.price)}\n"
+}
+
+output "menu_file" {
+  value = local_file.menu.filename
+}
+```
+
+### The `module` block
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `source` | where the module's code lives | required; a literal string, no variables | `"./modules/stand"` |
+| `version` | which release, for registry modules | always pin registry modules | `version = "~> 6.8"` |
+| inputs | every other argument sets one of the child's variables | names must match the child's `variable` blocks | `price = 2.5` |
+| `count` / `for_each` | many copies of the whole module | addresses become `module.stand["web1"]` | `for_each = var.stands` |
+| `providers` | passes a specific provider copy (alias) in | needed for multi-region | `providers = { aws = aws.london }` |
+| `depends_on` | an extra dependency on the whole module | rare | `depends_on = [module.network]` |
+| `module.NAME.OUTPUT` | reads an output of the child | only outputs are visible | `module.web1.menu_file` |
+
+### Kinds of `source`
+
+| Keyword | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| local path | a folder in the same repository | must start with `./` or `../` | `"./modules/stand"` |
+| registry | `NAMESPACE/NAME/PROVIDER` on the Terraform Registry | use with `version` | `"terraform-aws-modules/vpc/aws"` |
+| Git | a Git repository, pinned to a tag | `?ref=` a tag, not a branch | `"git::https://github.com/acme/tf-stand.git?ref=v1.2.0"` |
+
+After adding or changing a `source`, run `terraform init` again: it downloads modules as well as providers.
+
+### The standard module structure
+
+```text
+modules/stand/
+├── README.md       # what it does, an example call
+├── main.tf         # resources
+├── variables.tf    # inputs, each with type and description
+├── outputs.tf      # outputs, each with description
+└── versions.tf     # required_providers (no provider blocks!)
+```
+
+A reusable module declares *which* providers it needs, but it never configures them (no region, no credentials). The caller does that. Our teaching module keeps everything in one `main.tf` because it is only 15 lines long.
+
+### Using a famous registry module
+
+The community module [`terraform-aws-modules/vpc/aws`](https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/latest) builds a whole AWS network, the one from Part 4, in one block:
+
+```hcl
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 6.8"
+
+  name           = "lemonade"
+  cidr           = "10.0.0.0/16"
+  azs            = ["eu-west-2a", "eu-west-2b"]
+  public_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+}
+```
+
+Read a registry module's inputs and outputs on its registry page, and read its code before trusting it in production.
+
+## Worked example
+
+Real output from `examples/03-module/`:
+
+```text
+$ terraform init
+Initializing modules...
+- web1 in modules/stand
+- web2 in modules/stand
+- Installed hashicorp/local v2.9.1 (signed by HashiCorp)
+
+$ terraform apply -auto-approve
+  # module.web1.local_file.menu will be created
+  # module.web2.local_file.menu will be created
+Plan: 2 to add, 0 to change, 0 to destroy.
+Apply complete! Resources: 2 added, 0 changed, 0 destroyed.
+Outputs:
+menus = [
+  "./menu-web1.txt",
+  "./menu-web2.txt",
+]
+
+$ cat menu-web1.txt menu-web2.txt
+Stand web1: lemonade $2.50
+Stand web2: lemonade $3.00
+
+$ terraform state list
+module.web1.local_file.menu
+module.web2.local_file.menu
+```
+
+The addresses show the nesting: `module.web1.local_file.menu` is "the `local_file.menu` inside the module call named `web1`".
+
+## When not to make a module
+
+HashiCorp's own guide warns against modules that are only thin wrappers around one resource. A module is worth it when it:
+
+- groups **several** resources that always go together (a stand = container + menu + firewall rule);
+- hides a decision the caller should not need to make (which image, which ports);
+- is used in more than one place, or by more than one team.
+
+It is **not** worth it when it wraps a single resource with the same arguments, when it is used exactly once, or when callers must pass twenty inputs to use it. Then it is just an extra file to open. Martin Fowler's [*Refactoring*](https://martinfowler.com/books/refactoring.html) passes on Don Roberts's **rule of three**: copy once if you must, and extract the shared piece the third time you need it. Modules follow the same rule.
+
+## Rules and conventions
+
+- One module, one purpose, named after what it builds (`stand`, `network`), not after the tool (`terraform-module-1`).
+- Every input has a `type` and `description`. Every output has a `description`.
+- Pin registry modules with `version` and Git modules with `?ref=<tag>`.
+- Child modules never contain `provider` blocks, only `required_providers`.
+- Keep the root module thin: it calls modules and passes values between them.
+- Use `path.module` for files that ship with the module and `path.root` for files that belong to the caller. The teaching module writes the menus at `path.root` so they appear next to `main.tf`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Forgetting `terraform init` after adding a module | `Module not installed` | run `terraform init` |
+| Passing an input the module does not declare | `Unsupported argument; An argument named "colour" is not expected here` | add a `variable "colour"` to the module, or remove the argument |
+| Reading a module's resource directly: `module.web1.local_file.menu.filename` | `Unsupported attribute` | expose it with an `output` and read `module.web1.menu_file` |
+| A variable in `source` | `Variables not allowed` | `source` must be a literal string |
+| An unpinned registry module | a new major version changes resources on the next `init -upgrade` | add `version = "~> X.Y"` |
+| Renaming a module call | everything inside is destroyed and recreated | add a `moved { from = module.old  to = module.new }` block ([lesson 7](07-state-and-backends.qmd)) |
+
+## Mathematical Abstraction
+
+A module call behaves like a function. It takes inputs, creates resources and returns outputs:
+
+$$
+M : (x_1, \dots, x_k) \mapsto (o_1, \dots, o_m)
+$$
+
+where:
+
+- $M$ is the module, here `modules/stand`;
+- $x_1, \dots, x_k$ are its $k$ input variables, here $k = 2$: `name` and `price`;
+- $o_1, \dots, o_m$ are its $m$ outputs, here $m = 1$: `menu_file`;
+- $\mapsto$ reads "maps to": given these inputs, the module produces these outputs (and, unlike a pure function, it also creates real resources).
+
+Example: $M(\texttt{web1}, 2.5) = \texttt{./menu-web1.txt}$ and $M(\texttt{web2}, 3) = \texttt{./menu-web2.txt}$, exactly the two values in the real `menus` output. The text inside the files, "lemonade \$2.50" and "lemonade \$3.00", is the side effect.
+
+The number of resources a configuration manages is the sum over all module calls:
+
+$$
+R = r_0 + \sum_{c=1}^{N} r_c
+$$
+
+where:
+
+- $R$ is the total number of resource instances in the state;
+- $r_0$ is the number of resources written directly in the root module;
+- $N$ is the number of module calls (each `for_each` key counts as one call);
+- $r_c$ is the number of resources created by call $c$.
+
+Example: `examples/03-module/` has $r_0 = 0$ (the root only calls modules), $N = 2$ calls, and each creates $r_c = 1$ file. So $R = 0 + (1 + 1) = 2$, matching `Plan: 2 to add` and the two lines of `terraform state list`. With a production copy that adds two more calls, $R = 0 + 4 \times 1 = 4$, still without writing a new resource block.
+
+When is a module worth it? As a **heuristic**, not a law, extract when the same group of blocks is needed at least three times:
+
+$$
+\text{make a module} \iff n_{\text{uses}} \ge 3 \ \land\ n_{\text{resources}} \ge 2
+$$
+
+where:
+
+- $n_{\text{uses}}$ is how many places need the same group of resources;
+- $n_{\text{resources}}$ is how many resources the group contains (one would be a thin wrapper);
+- $\land$ means "and", and $\iff$ "exactly when".
+
+Example: a Lemonade stand (container + menu + firewall rule) is needed for `web1` and `web2` in staging and production, so $n_{\text{uses}} = 4 \ge 3$ and $n_{\text{resources}} = 3 \ge 2$: make a module. A single S3 bucket used once has $n_{\text{uses}} = 1$: write the resource directly. Our teaching module breaks the rule on purpose ($n_{\text{resources}} = 1$) so the mechanics stay visible.
+
+## References
+
+- HashiCorp, "Modules overview": <https://developer.hashicorp.com/terraform/language/modules>
+- HashiCorp, "Build and use a local module" and "When to write a module": <https://developer.hashicorp.com/terraform/language/modules/develop>
+- HashiCorp, "Standard Module Structure": <https://developer.hashicorp.com/terraform/language/modules/develop/structure>
+- HashiCorp, "Module Sources": <https://developer.hashicorp.com/terraform/language/modules/sources>
+- Terraform Registry, `terraform-aws-modules/vpc/aws`: <https://registry.terraform.io/modules/terraform-aws-modules/vpc/aws/latest>
+- Yevgeniy Brikman, *Terraform: Up & Running*, 3rd edition, chapters 4 and 8 on modules (O'Reilly, 2022): <https://www.oreilly.com/library/view/terraform-up-and/9781098116736/>
+- Martin Fowler, *Refactoring*, 2nd edition (Addison-Wesley, 2018), "The Rule of Three": <https://martinfowler.com/books/refactoring.html>
+
+[← State and Backends](07-state-and-backends.qmd) · [Terraform index](index.qmd) · [Next: The Lemonade Stand on AWS and Google Cloud →](09-lemonade-on-aws-and-google-cloud.qmd)

@@ -1,0 +1,221 @@
+---
+title: "The Core Workflow"
+description: "Every Terraform command you use day to day, the flags that matter, how to read the plan symbols, and how Terraform sorts each change into create, update, replace or destroy."
+---
+
+## The problem
+
+You change the Lemonade price from \$2.50 to \$3.00 and run `terraform apply`. The plan says `2 to add, 0 to change, 2 to destroy`. Destroy? You only changed a price!
+
+To use Terraform safely you need to read a plan the way a pilot reads a checklist: every symbol, every count. This lesson walks through the commands in the order you run them and teaches you to predict a plan before Terraform prints it.
+
+## Explain it like I'm ten
+
+::: {.callout-tip title="Write the shopping list before you shop"}
+Before going to the shop, you look in the fridge and write a list: "buy lemons (we have none), buy one more bag of sugar, throw away the old milk". Your parent reads the list and says "yes" or "no". Only then do you go shopping.
+
+`terraform plan` is writing the list. The fridge is the real world, and the recipe is your `.tf` files. `terraform apply` is going shopping after someone said "yes". A saved plan (`-out`) is a list your parent signed: at the shop you buy **exactly** what is on it, nothing more.
+
+Some things cannot be fixed in place. If the recipe now needs a *blue* lunchbox and you own a red one, you cannot repaint it. You throw away the red one and buy a blue one. That is a **replacement**.
+:::
+
+## The concept, precisely
+
+The everyday loop is:
+
+```text
+init  →  fmt  →  validate  →  plan  →  apply  →  (later) destroy
+```
+
+| Step | Touches the real world? | Needs credentials? |
+| --- | --- | --- |
+| `init` | no (downloads plugins, sets up the backend) | only for a remote backend |
+| `fmt`, `validate` | no | no |
+| `plan` | **reads** real resources to compare | yes |
+| `apply`, `destroy` | **changes** real resources | yes |
+
+### Every core command
+
+| Command | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `init` | installs providers and modules, configures the backend, writes `.terraform.lock.hcl` | safe to run any time; rerun after adding providers or modules | `terraform init` |
+| `init -upgrade` | picks the newest provider versions the constraints allow | commit the updated lock file afterwards | `terraform init -upgrade` |
+| `fmt` | rewrites files in the standard style | `-check` for CI, `-recursive` for subfolders | `terraform fmt -recursive` |
+| `validate` | checks syntax, references and types offline | run after `init`; no credentials needed | `terraform validate` |
+| `plan` | compares files with reality and prints the changes | read every line before applying | `terraform plan` |
+| `apply` | plans, asks for `yes`, then makes the changes | with a saved plan it applies without asking | `terraform apply` |
+| `destroy` | deletes everything in the state | same as `apply -destroy` | `terraform destroy` |
+| `show` | prints the state, or a saved plan, in readable form | `-json` for scripts | `terraform show` |
+| `output` | prints output values | `-raw` for one string, `-json` for maps | `terraform output -json urls` |
+| `console` | interactive calculator for expressions | try functions here first | `echo 'cidrsubnet("10.0.0.0/16", 8, 1)' \| terraform console` |
+| `graph` | prints the dependency graph in DOT format | pipe to Graphviz to draw it | `terraform graph \| dot -Tsvg > graph.svg` |
+| `providers` | lists the providers the configuration and state need | debugging "which version?" | `terraform providers` |
+| `version` | Terraform and provider versions | paste it into bug reports | `terraform version` |
+
+### The flags that matter
+
+| Flag | What it does | Rule / convention | Example |
+| --- | --- | --- | --- |
+| `-out=FILE` | saves the plan to a file | apply that file later for "exactly this, nothing else" | `terraform plan -out=tfplan` |
+| `-var 'k=v'` | sets one variable | overrides every other source ([lesson 5](05-variables-outputs-and-locals.qmd)) | `-var 'price=3'` |
+| `-var-file=FILE` | loads variables from a file | one file per environment | `-var-file=staging.tfvars` |
+| `-target=ADDR` | plans only one resource and its dependencies | **emergency use only**: it prints a warning for a reason | `-target=random_pet.stand` |
+| `-replace=ADDR` | forces one resource to be destroyed and recreated | replaces the old `terraform taint` | `-replace=random_pet.stand` |
+| `-auto-approve` | skips the `yes` question | only in pipelines or throwaway labs | `terraform apply -auto-approve` |
+| `-refresh-only` | updates the state to match reality, changes nothing real | use to *accept* drift | `terraform apply -refresh-only` |
+| `-destroy` | plans the deletion of everything | preview before `destroy` | `terraform plan -destroy` |
+| `-parallelism=N` | at most N operations at once (default 10) | lower it if an API rate-limits you | `-parallelism=2` |
+| `-lock=false` | does not take the state lock | **dangerous**: two people could write at once | avoid |
+| `-input=false` | never prompts; fails if a variable is missing | always set it in CI | `terraform plan -input=false` |
+| `-detailed-exitcode` | exit code 2 when the plan has changes | lets scripts detect drift | `terraform plan -detailed-exitcode` |
+| `-no-color` | plain text output | for logs and CI | `terraform plan -no-color` |
+
+### Plan symbols
+
+| Symbol | What it means | Lemonade example |
+| --- | --- | --- |
+| `+` | create | first `apply` of `local_file.menu` |
+| `-` | destroy | `destroy`, or a stand removed from the map |
+| `~` | update in place, the object survives | changing a tag on an EC2 instance |
+| `-/+` | destroy, then create a replacement | changing the menu text of `local_file.menu` |
+| `+/-` | create the replacement first, then destroy | the same, with `create_before_destroy` ([lesson 7](07-state-and-backends.qmd)) |
+| `<=` | read a data source | looking up the newest Amazon Linux image |
+
+Inside a resource, `# forces replacement` marks the argument that made Terraform choose `-/+`, and `(known after apply)` marks values the cloud will invent, such as IDs.
+
+## Worked example: plan, save, apply, drift
+
+All output below is real, from [`examples/01-local/`](examples/01-local/main.tf), trimmed.
+
+**1. Save a plan, then apply exactly that plan.**
+
+```text
+$ terraform plan -out=lemonade.tfplan
+Saved the plan to: lemonade.tfplan
+
+$ terraform apply lemonade.tfplan
+Apply complete! Resources: 2 added, 0 changed, 0 destroyed.
+```
+
+No `yes` question: the saved plan is the approval.
+
+**2. Change the price and read the plan.** Edit `$2.50` to `$3.00` in `main.tf`:
+
+```text
+$ terraform plan
+  # local_file.menu must be replaced
+-/+ resource "local_file" "menu" {
+      ~ content              = <<-EOT # forces replacement
+Plan: 1 to add, 0 to change, 1 to destroy.
+```
+
+A local file cannot be edited in place by this provider, so a new file replaces the old one. "1 to add, 1 to destroy" is **one** replacement, not two separate actions. The Docker example in [lesson 5](05-variables-outputs-and-locals.qmd) gives `2 to add, 2 to destroy` for the same reason: two containers, each replaced.
+
+**3. Detect drift with an exit code.** Delete `menu.txt` by hand, then:
+
+```text
+$ terraform plan -detailed-exitcode
+  # local_file.menu will be created
+Plan: 1 to add, 0 to change, 0 to destroy.
+$ echo $?
+2
+```
+
+**4. Accept drift instead of fixing it.** Sometimes the hand-made change is the one you want to keep:
+
+```text
+$ terraform apply -refresh-only -auto-approve
+Note: Objects have changed outside of Terraform
+  # local_file.menu has been deleted
+```
+
+This only updated the state. The file is still missing, so the next plan still says `1 to add`. Refresh-only changes what Terraform *believes*, never what *exists*. To really keep a deletion, remove the resource from the code too.
+
+**5. Preview a destroy.**
+
+```text
+$ terraform plan -destroy
+  # random_pet.stand will be destroyed
+Plan: 0 to add, 0 to change, 1 to destroy.
+```
+
+Only one resource, because the state no longer contains the deleted file.
+
+## Rules and conventions
+
+- Run `fmt` and `validate` before every commit. They are free and need no credentials.
+- In shared environments, use `plan -out` and then `apply <planfile>`. The thing you reviewed is then the thing that runs.
+- Read the summary line first, then search the plan for `-/+` and `-`. Those are the lines that can lose data.
+- Use `-target` and `-replace` only to recover from problems, and write down why in the commit or ticket.
+- In CI always add `-input=false -no-color`, and use `-detailed-exitcode` for scheduled drift checks.
+- Never use `-lock=false` on shared state.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Skimming the plan | a database is replaced (`-/+`) and its data is gone | search for `-/+` and `# forces replacement`; protect it with `prevent_destroy` |
+| Treating `-target` as normal workflow | the state slowly stops matching the code | plan without `-target` afterwards and fix the differences |
+| Applying a saved plan after the state changed | `Error: Saved plan is stale` | plan again; this protection is the reason to save plans |
+| Expecting `-refresh-only` to repair drift | the next plan still shows changes | refresh-only updates belief, not reality; run a normal apply |
+| `terraform fmt -check` passing locally, failing in CI | different Terraform versions | pin the version in CI and in `required_version` |
+
+## Mathematical Abstraction
+
+Lesson 1 described a plan as the gap between the desired set $D$ and the recorded state $S$. Terraform sorts every resource address into exactly one kind of action:
+
+$$
+\begin{aligned}
+C &= D \setminus S && \text{create} \\
+X &= S \setminus D && \text{destroy} \\
+U &= \lbrace r \in D \cap S : d(r) \ne s(r),\ \text{the change can be made in place} \rbrace && \text{update} \\
+P &= \lbrace r \in D \cap S : d(r) \ne s(r),\ \text{some changed argument forces replacement} \rbrace && \text{replace}
+\end{aligned}
+$$
+
+where:
+
+- $D$ is the set of resource addresses in the `.tf` files, and $S$ is the set of addresses in the state (after refreshing it against reality);
+- $\setminus$ is set difference ("in the first set but not the second"), and $\cap$ is intersection ("in both");
+- $r$ is one resource address, such as `local_file.menu`;
+- $d(r)$ is the resource's arguments as written in the files, and $s(r)$ is the arguments recorded in the state;
+- "forces replacement" is decided by the provider, per argument; a file's `content` forces replacement, a tag on an EC2 instance does not.
+
+The summary line then counts:
+
+$$
+\text{add} = \lvert C \rvert + \lvert P \rvert, \qquad \text{change} = \lvert U \rvert, \qquad \text{destroy} = \lvert X \rvert + \lvert P \rvert
+$$
+
+where each replacement in $P$ counts once in "add" and once in "destroy", because it is a destroy followed by a create.
+
+Example, the price change in step 2. Let $p$ stand for `random_pet.stand` and $m$ for `local_file.menu`. Then $D = S = \lbrace p, m \rbrace$, so $C = X = \emptyset$. Only $m$ changed ($d(m) \ne s(m)$), and its `content` forces replacement, so $P = \lbrace m \rbrace$ and $U = \emptyset$. Substituting: add $= 0 + 1 = 1$, change $= 0$, destroy $= 0 + 1 = 1$, exactly the real line `Plan: 1 to add, 0 to change, 1 to destroy`. For two Docker containers whose content changes, $\lvert P \rvert = 2$ gives add $= 2$, destroy $= 2$.
+
+Scripts read the result through the exit code of `plan -detailed-exitcode`:
+
+$$
+e =
+\begin{cases}
+0 & \text{the plan succeeded and } C \cup X \cup U \cup P = \emptyset \\
+1 & \text{an error occurred} \\
+2 & \text{the plan succeeded and } C \cup X \cup U \cup P \ne \emptyset
+\end{cases}
+$$
+
+where:
+
+- $e$ is the number the shell sees in `$?`;
+- $C \cup X \cup U \cup P$ is the set of all planned actions;
+- $\emptyset$ is "no actions at all".
+
+Example: right after an apply, the plan is empty, so $e = 0$ (real run: `exit=0`). After deleting `menu.txt`, $C = \lbrace m \rbrace \ne \emptyset$, so $e = 2$ (real run: `exit=2`). A nightly CI job can therefore alert whenever $e = 2$: somebody changed the Lemonade Stand by hand.
+
+## References
+
+- HashiCorp, "Terraform CLI commands": <https://developer.hashicorp.com/terraform/cli/commands>
+- HashiCorp, `terraform plan` (including `-detailed-exitcode`, `-refresh-only`, `-replace`, `-target`): <https://developer.hashicorp.com/terraform/cli/commands/plan>
+- HashiCorp, `terraform apply`: <https://developer.hashicorp.com/terraform/cli/commands/apply>
+- HashiCorp, "Use refresh-only mode to sync Terraform state": <https://developer.hashicorp.com/terraform/tutorials/state/refresh>
+- Yevgeniy Brikman, *Terraform: Up & Running*, 3rd edition, chapter 2 (O'Reilly, 2022): <https://www.oreilly.com/library/view/terraform-up-and/9781098116736/>
+
+[← HCL Syntax](02-hcl-syntax.qmd) · [Terraform index](index.qmd) · [Next: Providers, Resources and Data Sources →](04-providers-resources-and-data-sources.qmd)
