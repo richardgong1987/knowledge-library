@@ -1,38 +1,67 @@
 ---
 title: "Union-Find"
-description: "Maintain disjoint equivalence classes as edges or unions arrive."
+description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
 ---
 
-## Core idea
+## Begin with an actual graph
 
-Maintain disjoint equivalence classes as edges or unions arrive.
+**LeetCode 547 — Number of Provinces.** Imagine cities 0,1,2,3. Roads connect 0–1 and 1–2, so the first three cities belong to one province while city 3 remains separate.
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
 
-## Worked-problem starting point
+## Why a tempting approach is wrong or wasteful
 
-Count connected components after adding undirected links.
+Re-run DFS over all previous roads after each new road to discover components. If there are many online connection queries, this repeats the same traversals.
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+## The idea that simplifies the problem
 
-## Mathematical Abstraction
+Use a forest of parent pointers. Every city points, directly or indirectly, to one representative. Union merges two representative sets; find determines membership.
+
+## Formalise it — explain symbols immediately
 
 $$
 connected(u,v)\iff find(u)=find(v)
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Union-Find** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Every symbol explained:** u and v are cities; find(x) returns the representative/root for the component containing x. The double arrow means 'if and only if'.
 
-## Learning and verification workflow
+**Numbers substituted into the relation:** Start representatives [0,1,2,3]. Union(0,1) makes find(0)=find(1). Union(1,2) makes find(2) equal too. Thus connected(0,2) is true; connected(0,3) is false; there are two components.
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
 
-## LeetCode practice
+## Algorithm progression
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Union-Find**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
+2. Start from the concrete example above and perform one legal edge decision.
+3. Record the changed state and check whether the invariant still holds.
+4. Continue until all required edges, vertices, or candidate states have been processed.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+**Proof sketch:** Each union merges exactly two previously distinct equivalence classes. Path compression only changes parent pointers, not which root any node reaches; union-by-size bounds tree growth.
+
+## Run a small implementation
+
+~~~js
+import { DSU } from '../examples/patterns.mjs';
+
+const d=new DSU(4); d.union(0,1); d.union(1,2); console.log(d.find(0)===d.find(2));
+~~~
+
+The implementation is in the [small, tested Node.js algorithms lab](../examples/patterns.mjs). Save the snippet beside this `.qmd` as a `.mjs` file and run it with Node.
+
+The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+
+## Work and limitations
+
+**Complexity:** O((n+m) α(n)) for n elements and m union/find operations with path compression and union by rank; α(n) is inverse Ackermann, extremely slow growing.
+
+**Where this reasoning fails:** This data structure is for connectivity under additions. It does not directly support arbitrary edge deletions while preserving fast queries.
+
+As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+
+## Connections
+
+- **Textbook:** CLRS Chapter 19 (disjoint-set forests).. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **Practice:** LeetCode 547 — Number of Provinces. Treat any online solution as a second explanation to compare, not a script to copy.
+- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+
+[← Algorithms](../index.qmd)

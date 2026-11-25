@@ -1,38 +1,66 @@
 ---
 title: "Counting Sort"
-description: "Count discrete keys in a bounded domain to construct sorted output."
+description: "CLRS-inspired worked lesson on Counting Sort: numerical substitution, invariants, original code and complexity."
 ---
 
-## The problem and underlying idea
+## Understand the actual problem
 
-Count discrete keys in a bounded domain to construct sorted output.
+**LeetCode 75 — Sort Colors.**
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+Count occurrences of each key, then rebuild the output in key order. In the stable version, cumulative counts identify output positions for equal keys.
 
-## A concrete problem
+## First try the obvious approach
 
-Sort exam grades between zero and one hundred.
+Generic comparison sorting ignores the fact that values come from a tiny fixed alphabet, such as 0, 1 and 2.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
 
-## Mathematical Abstraction
+## Mathematical relationship, explained immediately
 
 $$
-c[v]=\sum_{i=0}^{n-1}\mathbf1[a_i=v]
+c[v]=\sum_{i=0}^{n-1}[a_i=v]
 $$
 
-The formula captures a central structural relationship or illustrative model for **Counting Sort**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Symbol by symbol:** c[v] is the frequency of value v; n is input length; [condition] is 1 when the condition is true and 0 otherwise.
 
-## How to study this topic
+**Calculate with real numbers:** For [2,0,2,1,0], c[0]=2, c[1]=1, c[2]=2. Repeating 0 twice, 1 once, 2 twice produces [0,0,1,2,2].
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
 
-## Practice and connections
+## How the algorithm emerges
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Counting Sort** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify what answer you would compute by hand for the smallest instance.
+2. Store exactly that piece of information when moving to the next step.
+3. Update the stored information after one input event or query.
+4. Check the invariant before returning a result; consider boundary values and ties.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument:** Each input increments exactly one counter. Reconstructing value v exactly c[v] times preserves the multiset, and processing v in ascending order ensures ordering.
+
+## Code, but only after the reasoning
+
+Here is a standalone, original JavaScript demonstration:
+
+~~~js
+const input=[2,0,2,1,0], counts=[0,0,0];
+for(const x of input) counts[x]++;
+const output=counts.flatMap((count,value)=>Array(count).fill(value));
+console.log(output); // [0,0,1,2,2]
+~~~
+
+This shows a deliberately minimal case; the chapter explains the invariant needed to extend it into a full implementation.
+
+## Count the work rigorously
+
+**Time and memory:** O(n+k) time and O(k) extra counters, with n input length and k key range size.
+
+**The misleading shortcut:** Counting sort needs a bounded integer key range. When keys span billions of possibilities but only five values occur, a dense count array may waste memory; a map or comparison sort may be better.
+
+A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+
+## Practice and source
+
+- **Textbook relationship:** CLRS Chapter 8 §8.2 (counting sort)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode practice:** LeetCode 75 — Sort Colors. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
+- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+
+[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

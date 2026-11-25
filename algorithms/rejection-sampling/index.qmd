@@ -1,38 +1,65 @@
 ---
 title: "Rejection Sampling"
-description: "Accept proposed random samples according to a target-to-proposal ratio."
+description: "An original, understandable lesson on the Rejection Sampling LeetCode topic with fully explained mathematics."
 ---
 
-## Core idea
+## What is the real challenge?
 
-Accept proposed random samples according to a target-to-proposal ratio.
+**A probability sampling technique (LeetCode Randomized topic).** Accept proposed random samples according to a target-to-proposal ratio.
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
 
-## Worked-problem starting point
+## The tempting solution
 
-Sample from a target distribution using a known envelope Mq.
+Call a uniform random generator and assume its output already follows the requested target distribution.
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+## The idea worth remembering
 
-## Mathematical Abstraction
+Generate a proposal x and accept it with a probability proportional to the ratio between target density and a simple envelope. Rejected proposals are retried.
+
+## One mathematical expression — with every symbol explained
 
 $$
-P(accept\mid X=x)=\frac{f(x)}{M q(x)}
+P(\text{accept}\mid X=x)=\frac{f(x)}{Mq(x)}
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Rejection Sampling** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Every symbol means:** X is a candidate drawn from proposal density q; f is the target density; M is an envelope constant chosen so f(x)≤M q(x) everywhere; the ratio is between zero and one.
 
-## Learning and verification workflow
+**Numerical substitution:** To sample density f(x)=2x on [0,1], use uniform proposal q(x)=1 and M=2. Acceptance probability is (2x)/(2×1)=x. Candidate x=.8 is accepted with probability .8; candidate x=.2 with probability .2. This biases accepted candidates toward larger x.
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
 
-## LeetCode practice
+## Why the method is justified
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Rejection Sampling**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+The probability of proposing a value in a small interval around x AND accepting it is proportional to q(x) f(x)/(M q(x))=f(x)/M. Conditioning on acceptance therefore yields the target density.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+**Complexity or resource cost:** Expected proposal count M for normalised f and q when envelope constant is valid; each proposal requires one density-ratio check.
+
+## Executable example
+
+The following small example can be run directly in its own environment:
+
+~~~js
+function sample() {
+  while(true) { const x=Math.random();
+    if(Math.random() < x) return x; // target density is 2x on [0,1]
+  }
+}
+console.log(sample());
+~~~
+
+Run the JavaScript with Node.js; it illustrates the precise toy case from the formula.
+
+## Which assumption makes it fail?
+
+If M is too small, acceptance 'probabilities' can exceed one and the method is invalid. High M makes acceptance very inefficient.
+
+For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+
+## Source and interview practice
+
+- **Textbook relationship:** CLRS Chapter 5 (randomised analysis); continuous rejection sampling goes beyond its discrete examples.. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode/practice:** A probability sampling technique (LeetCode Randomized topic) — [problem or problem set](https://leetcode.com/problemset/).
+- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+
+[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)

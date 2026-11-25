@@ -1,13 +1,29 @@
 ---
 title: "Dynamic Programming and Decision Making"
-description: "Use reuse, optimal substructure, local decisions, and competitive strategies."
+description: "A connected learning path through 6 worked algorithms topics."
 ---
 
-Use reuse, optimal substructure, local decisions, and competitive strategies.
+## What you are really learning
 
-This family contains **6 independently navigable LeetCode topics**. Each topic has its own directory and a starting mathematical abstraction. The grouping is a learning aid, not part of LeetCode's official hierarchy.
+Find the best answer without enumerating every complete solution. Differentiate reuse of subproblems from safe local decisions.
 
-## Topics
+The goal is not to learn 6 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+
+## Begin with a small example
+
+Consider non-adjacent house values [2,7,9].
+
+$$
+DP[i]=\max(DP[i-1],DP[i-2]+a_i)
+$$
+
+**What the symbols mean:** DP[i] is the best result among the first i houses; a_i is current house value; the two branches skip or take the current house.
+
+**Substitute actual numbers:** Start DP[0]=0, DP[−1]=0. With house values 2,7,9: DP[1]=2, DP[2]=7, DP[3]=max(7,2+9)=11.
+
+This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+
+## The chapters in this family
 
 1. **[Dynamic Programming](../dynamic-programming/index.qmd)** — Reuse results of overlapping subproblems according to a recurrence.
 2. **[Memoization](../memoization/index.qmd)** — Cache the outcome of repeated function calls on the same state.
@@ -16,14 +32,10 @@ This family contains **6 independently navigable LeetCode topics**. Each topic h
 5. **[Minimax](../minimax/index.qmd)** — Optimise against an opponent's most damaging response.
 6. **[Bitmask](../bitmask/index.qmd)** — Encode subsets compactly in the bits of an integer.
 
-## Mathematical connection
+## Practice method
 
-A problem can carry several topic labels. Let $\mathcal Q$ be the **set of problems** and $\mathcal T$ the set of topic tags. The assignment of tags to problems is a set-valued mapping:
+Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
 
-$$
-L:\mathcal Q\longrightarrow\mathcal P(\mathcal T).
-$$
+The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
 
-Here $L(p)$ is the set of tags assigned to problem $p$. Tags describe relevant structures and techniques; they do **not** uniquely determine an algorithm or a proof of correctness.
-
-[Browse the full Algorithms catalogue](../index.qmd) · [Original LeetCode topic list](https://leetcode.com/problemset/)
+[← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

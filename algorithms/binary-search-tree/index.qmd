@@ -1,42 +1,69 @@
 ---
 title: "Binary Search Tree"
-description: "A binary tree governed by an ordered-key invariant."
+description: "Understand Binary Search Tree from a real problem, a worked numerical example, a proof invariant and original code."
 ---
 
-::: {.callout-note}
-**Classification:** This is principally a data structure or representation. The topic studies its invariants and algorithms that operate on it.
-:::
+## Start with one concrete problem
 
-## The problem and underlying idea
+**LeetCode 98 — Validate Binary Search Tree.** A binary tree governed by an ordered-key invariant.
 
-A binary tree governed by an ordered-key invariant.
+Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+### The obvious method — and why it falls short
 
-## A concrete problem
+Compare a node only with its immediate children; this can accept an invalid descendant in the wrong subtree.
 
-Validate a BST with a strict no-duplicates policy.
+### The one insight to remember
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+A valid BST node must satisfy bounds inherited from ALL ancestors. Propagate an allowed interval down the tree.
 
-## Mathematical Abstraction
+## Build the mathematical meaning from a small example
 
 $$
-x\in L(v)\Rightarrow key(x)<key(v)
+low<key(v)<high
 $$
 
-The formula captures a central structural relationship or illustrative model for **Binary Search Tree**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What each symbol means:** v is the current node, key(v) its stored value, and low/high are constraints inherited from ancestors. Here duplicates are disallowed.
 
-## How to study this topic
+**Substitute actual values:** For root 5 and left child 3, the left subtree has high=5. If node 6 occurs under node 3, it is greater than 3 but violates high=5, so the tree is invalid.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Do not move to implementation until you can explain this example without reading the formula.
 
-## Practice and connections
+## Design the algorithm in ordinary English
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Binary Search Tree** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. State what the stored representation means before the first operation.
+2. Perform exactly the operation suggested by the example, updating only the necessary state.
+3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
+4. Stop when the requested result is known; do not perform work unrelated to the output.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument (the invariant):** At every recursive step the value lies inside all ancestor-imposed bounds; new child bounds add the current key. Thus all subtree keys obey the global BST property.
+
+## Code you can run
+
+The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `lowerBound`. Its use can be reduced to:
+
+~~~js
+import { lowerBound } from '../examples/patterns.mjs';
+
+console.log(lowerBound([2,3,5,7],5));
+~~~
+
+Save the snippet inside the `algorithms/binary-search-tree/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+
+## Why it works, and how expensive it is
+
+At every recursive step the value lies inside all ancestor-imposed bounds; new child bounds add the current key. Thus all subtree keys obey the global BST property.
+
+**Time and space:** O(n) time; O(h) call stack, where n is nodes and h height. A balanced tree gives h≈log₂n but an unbalanced one can have h=n.
+
+**Common mistake or limitation:** Only checking parent versus child misses cross-generation violations. Also decide a duplicate policy explicitly.
+
+## Try to explain it in an interview
+
+Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+
+## Reading and practice
+
+- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 12 (BSTs) and Chapter 13 (balanced red-black trees). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode:** LeetCode 98 — Validate Binary Search Tree. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
+- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).

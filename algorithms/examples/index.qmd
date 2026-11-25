@@ -1,0 +1,43 @@
+---
+title: "Runnable Algorithm Examples"
+description: "Practice twenty-six tiny, original algorithms and verify them with Node's test runner."
+---
+
+## One reusable source file
+
+The [JavaScript module](patterns.mjs) provides independent implementations of classical techniques: binary search, two pointers, sliding windows, recursion, backtracking, dynamic programming, greedy scheduling, graph traversal, shortest paths, monotonic structures, disjoint sets, string matching and more.
+
+You do not need a framework, a package manager or external libraries. Run these commands from the **repository root**:
+
+~~~bash
+node algorithms/examples/patterns.mjs
+node --test algorithms/examples/patterns.test.mjs
+~~~
+
+The first command prints five tiny demonstrations. The second runs the [original unit tests](patterns.test.mjs), covering empty input, duplicates, negative values, ordering, dynamic-programming counterexamples and graph cases.
+
+### Start with a short example
+
+~~~js
+import { longestUniqueSubstring } from '../examples/patterns.mjs';
+
+console.log(longestUniqueSubstring('abba')); // 2
+~~~
+
+Place this example in a file inside any `algorithms/<topic>/` folder and run it with Node. The path resolves to the shared examples module.
+
+**Why it returns 2:** the valid substring 'ab' has length 2. Reading a second 'b' moves the left boundary to index 2; it cannot move back when 'a' appears again. This is exactly the [Sliding Window invariant](../sliding-window/index.qmd).
+
+## Core functions
+
+The source provides 26 exported functions plus one small disjoint-set class, with automated tests for the core patterns. Each topic chapter links to its relevant example when applicable.
+
+The [example README](README.md) contains a function-to-LeetCode reference table, including LC 3, 35, 167, 46, 78, 198, 322, 560, 743, 912, 239 and 300.
+
+## A limitation worth understanding
+
+These are teaching implementations. For instance, [Dijkstra's algorithm](../shortest-path/index.qmd) chooses its next vertex with a linear scan instead of a heap, so the code is easier to understand but does not have the fastest implementation's asymptotic complexity. The mathematical guarantee still depends on **nonnegative edge weights**.
+
+Always explain which optimisation an implementation does and does not include.
+
+[← Algorithms](../index.qmd) · [Read each mathematical symbol](../guides/read-the-math.qmd)

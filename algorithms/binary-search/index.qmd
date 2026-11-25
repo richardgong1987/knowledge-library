@@ -1,38 +1,75 @@
 ---
 title: "Binary Search"
-description: "Locate a boundary using a monotone predicate on an ordered domain."
+description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
 ---
 
-## The problem and underlying idea
+## Start with the problem, not a formula
 
-Locate a boundary using a monotone predicate on an ordered domain.
+**LeetCode 35 — Search Insert Position**. Locate a boundary using a monotone predicate on an ordered domain.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
 
-## A concrete problem
+## Why the obvious approach is expensive
 
-Find the first day when cumulative revenue meets a target.
+Scanning 100,000 sorted entries from left to right ignores the fact that the values are already ordered.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+## Discover the key idea
 
-## Mathematical Abstraction
+Search for the FIRST position where a monotone predicate becomes true, rather than vaguely 'searching for a number'. Keep [left,right) as the only possible location.
+
+This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+
+## Mathematical model — then immediately translate it
 
 $$
-P(i)\Rightarrow P(j)\quad\forall j\geq i
+P(i)=[a_i\geq x],\qquad m=l+\lfloor(r-l)/2\rfloor
 $$
 
-The formula captures a central structural relationship or illustrative model for **Binary Search**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Explanation of every symbol:** P(i) is true when array entry a_i is at least target x. l is the current inclusive left boundary, r is exclusive right, m is its middle index, and floor means round down.
 
-## How to study this topic
+**Substitute actual values:** In a=[1,3,3,6] with target x=3, start [l,r)=[0,4) and m=2. Since a₂=3 qualifies, set r=2. Now m=1 and a₁=3 qualifies, so r=1. Now m=0 and a₀=1 does not qualify, so l=1. Answer is index 1.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
 
-## Practice and connections
+## Work through the algorithm
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Binary Search** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify the initial state using the small example above.
+2. Make one legal decision and update only state affected by that decision.
+3. Verify the invariant again. If it fails, correct the state before making another decision.
+4. Repeat until the search space is exhausted or the answer has been justified.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Why this is correct:** Everything strictly left of l is known too small; everything at/after r is already known to qualify. A middle comparison discards half without discarding the true boundary.
+
+## Actual code — keep it small
+
+The original [Node.js example library](../examples/patterns.mjs) implements this technique as `lowerBound` and tests it against boundary cases:
+
+~~~js
+import { lowerBound } from '../examples/patterns.mjs';
+
+console.log(lowerBound([1,3,3,6],3));
+~~~
+
+Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
+
+## Analyse the work; do not guess big-O
+
+**Cost:** O(log n) comparisons, where n is sorted array length; with n=16 there are at most around 5 halving decisions.
+
+The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+
+## Break the technique deliberately
+
+Using <= rather than < changes lower_bound into upper_bound. Off-by-one mistakes usually come from changing between inclusive and half-open intervals mid-loop.
+
+If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+
+## Source connections and practice
+
+**Textbook:** CLRS 4e, Chapter 2 (elementary algorithm design) and Chapter 3 (running times).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**LeetCode problem:** LeetCode 35 — Search Insert Position. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/discuss/post/2371234/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+
+**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+
+[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)

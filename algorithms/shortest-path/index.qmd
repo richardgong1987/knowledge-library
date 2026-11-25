@@ -1,38 +1,67 @@
 ---
 title: "Shortest Path"
-description: "Minimise a path's total edge weight between vertices."
+description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
 ---
 
-## Core idea
+## Begin with an actual graph
 
-Minimise a path's total edge weight between vertices.
+**LeetCode 743 — Network Delay Time.** A message starts at A. Edges carry positive travel times: A→B costs 2, A→C costs 5, and B→C costs 1. We want the earliest arrival time at every node.
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
 
-## Worked-problem starting point
+## Why a tempting approach is wrong or wasteful
 
-Find the cheapest route in a weighted directed network.
+A plain BFS counts edge hops, not weighted travel time. It might favour the direct A→C edge (one hop, cost 5) over A→B→C (two hops, cost 3).
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+## The idea that simplifies the problem
 
-## Mathematical Abstraction
+Dijkstra repeatedly settles the nearest not-yet-settled node. Relaxation tests whether going through an already-reached node improves a neighbouring distance.
+
+## Formalise it — explain symbols immediately
 
 $$
-d(s,v)=\min_{p:s\leadsto v}\sum_{e\in p}w(e)
+d(v)\leftarrow\min(d(v),d(u)+w(u,v))
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Shortest Path** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Every symbol explained:** d(x) is the best known source-to-x cost; u is the current node, v an outgoing neighbour, and w(u,v) is the edge weight. The minimum keeps the cheaper known route.
 
-## Learning and verification workflow
+**Numbers substituted into the relation:** Initially d(A)=0, d(B)=∞ and d(C)=∞. Relax A→B and A→C: d(B)=2 and d(C)=5. Settle B (cost 2); relax B→C (cost 1): d(C)=min(5,2+1)=3. The indirect route wins.
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
 
-## LeetCode practice
+## Algorithm progression
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Shortest Path**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
+2. Start from the concrete example above and perform one legal edge decision.
+3. Record the changed state and check whether the invariant still holds.
+4. Continue until all required edges, vertices, or candidate states have been processed.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+**Proof sketch:** For nonnegative edge weights, the currently smallest tentative distance cannot be improved by travelling first through any unsettled node. Therefore marking it final is safe.
+
+## Run a small implementation
+
+~~~js
+import { dijkstraSimple } from '../examples/patterns.mjs';
+
+console.log(dijkstraSimple([[[1,2],[2,5]],[[2,1]],[]],0));
+~~~
+
+The implementation is in the [small, tested Node.js algorithms lab](../examples/patterns.mjs). Save the snippet beside this `.qmd` as a `.mjs` file and run it with Node.
+
+The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+
+## Work and limitations
+
+**Complexity:** The simple readable lab uses O(V²+E) time with linear minimum selection. A binary-heap implementation is typically O((V+E) log V). V is vertices, E edges.
+
+**Where this reasoning fails:** A negative edge weight breaks the greedy finalisation argument. Bellman–Ford handles negative weights and detects reachable negative cycles; Dijkstra does not.
+
+As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+
+## Connections
+
+- **Textbook:** CLRS Chapter 22 §22.3 (Dijkstra) and §22.1 (Bellman–Ford).. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **Practice:** LeetCode 743 — Network Delay Time. Treat any online solution as a second explanation to compare, not a script to copy.
+- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+
+[← Algorithms](../index.qmd)

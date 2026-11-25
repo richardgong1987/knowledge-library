@@ -1,149 +1,123 @@
 ---
 title: "Algorithms"
-subtitle: "LeetCode topics, algorithms, data structures, and mathematical reasoning"
-description: "73 independently navigable LeetCode topics organised into seven learning families."
+subtitle: "Understand first. Prove second. Code third."
+description: "73 individually worked, mathematically explained LeetCode topics taught with original CLRS-inspired explanations and tested code."
 ---
 
-Welcome to **Algorithms**, a structured, English-language knowledge map covering **all 73 topic labels visible in the LeetCode Problemset on 25 November 2026**.
+# Algorithms should make sense before they become code
 
-::: {.callout-note}
-## What exactly is covered?
+An algorithm is useful when you can explain three things:
 
-The source is the [official LeetCode Problems topic list](https://leetcode.com/problemset/). Its tags mix **algorithm paradigms** (such as dynamic programming), **data structures** (such as heaps and tries), and **problem domains** (such as database, shell and concurrency). This library preserves all of those names rather than incorrectly calling every tag an algorithm.
+1. **Why is the obvious solution doing unnecessary work?**
+2. **What fact allows the better solution to skip that work without missing an answer?**
+3. **How do the formula, a small numerical example, and the program express the SAME decision?**
 
-These are the visible tags at the stated snapshot date, not an exhaustive list of every named algorithm used in computer science. LeetCode may change its catalogue later.
+This library has **73 reworked topic chapters**, but it is **not meant to be read as 73 isolated definitions**. Follow the learning path below first; return to the complete topic catalogue when a problem needs a particular structure.
+
+::: {.callout-important}
+## Every equation must be immediately understandable
+
+The writing standard is **plain-English meaning → one equation → explanation of every symbol → substitution with actual numbers → correctness argument → code**. A bare formula with no numeric example is not an acceptable finished lesson. Start with [Read Every Mathematical Symbol](guides/read-the-math.qmd).
 :::
 
-## A mathematical approach to algorithms
+## Four foundations to read first
 
-An algorithm can be treated as a state transformation that preserves an invariant and, when it terminates, returns a valid result:
+1. [**Read Every Mathematical Symbol**](guides/read-the-math.qmd) — learn $sum$, $in$, $orall$, indexing, recurrences, asymptotic notation and graphs from tiny arithmetic examples.
+2. [**How to Choose the Right Algorithm**](guides/choose-a-pattern.qmd) — discover why Sliding Window works on some sums but fails for negative values; compare DP, greedy, graph and search methods.
+3. [**How to Prove Correctness and Count Work**](guides/prove-and-count.qmd) — CLRS-style loop invariants, induction, greedy exchange proofs, recurrence trees and amortised analysis.
+4. [**CLRS Fourth-Edition Reading Roadmap**](guides/clrs-roadmap.qmd) — follow the MIT Press textbook structure while keeping useful LeetCode topics clearly labelled.
+
+## Begin with eight connected topics
+
+1. [**Sliding Window**](sliding-window/index.qmd) — A changing substring shares nearly all its content with the previous substring. Preserve the valid interval.
+2. [**Prefix Sum**](prefix-sum/index.qmd) — Repeated subarray sums share earlier additions. Store cumulative sums and subtract.
+3. [**Binary Search**](binary-search/index.qmd) — Sorted input lets one comparison reject half the search interval. Preserve the boundary invariant.
+4. [**Backtracking**](backtracking/index.qmd) — All solutions form a decision tree: choose, explore, undo. Learn why undo restores sibling branches.
+5. [**Dynamic Programming**](dynamic-programming/index.qmd) — The same subproblem reappears. Define a state and a recurrence instead of re-solving it.
+6. [**Greedy**](greedy/index.qmd) — An attractive local choice is safe only if an exchange argument establishes optimality.
+7. [**Breadth-First Search**](breadth-first-search/index.qmd) — FIFO exploration finds minimum-hop routes in an unweighted graph.
+8. [**Shortest Path**](shortest-path/index.qmd) — Weighted travel times need distance relaxation; minimum-hop paths need not be cheapest.
+
+Study one topic completely before moving to the next. After reading, close the page and explain the example aloud with your own numbers.
+
+## A small demonstration: why input assumptions choose the technique
+
+Suppose the array is **[1,−1,0]**. How many nonempty contiguous subarrays add to zero? The answer is **three**, but a simple shrinking window based on nonnegative sums is not trustworthy here.
+
+We can write every prefix sum, and recognise that a zero-sum interval starts and ends at two **equal** prefix values.
 
 $$
-S_{t+1}=F(S_t,x_t),qquad
-orall t; I(S_t),qquad
-T(n)in Oigl(f(n)igr).
+operatorname{sum}(l,r)=P_r-P_l
 $$
 
-Here $S_t$ denotes algorithm state, $x_t$ the input or decision at step $t$, $F$ the transition rule, $I$ a correctness invariant, and $T(n)$ the runtime as a function of input size $n$. **This is a general study framework**, not a claim that every topic has the same complexity or an online state transition.
+**Symbols explained:** $P_j$ is the sum of the first j elements, $l$ is the inclusive start index and $r$ the exclusive end index.
 
-For every topic, begin with a concrete problem, define the state and constraints, derive a formal relationship, explain correctness, analyse time/space costs, then implement and test. Different topics need different proof techniques.
+**Actual values substituted:** Prefixes for [1,−1,0] are [0,1,0,0]. Equal prefix pairs give [1,−1] (prefix 0 to 2), [1,−1,0] (0 to 3), and [0] (2 to 3). Each difference is 0, so the answer is 3.
 
-## Complete topic map
+The formula tells us **what to remember**: counts of earlier prefix sums. That leads directly to the [tested code](examples/patterns.mjs), not the other way around.
+
+## Run your own experiments
+
+All core examples are independently authored, small and testable; no package installation is required for the examples.
+
+~~~bash
+node algorithms/examples/patterns.mjs
+node --test algorithms/examples/patterns.test.mjs
+~~~
+
+[Source and explanation of the examples](examples/README.md).
+
+## All 73 LeetCode topics
+
+The current catalogue retains the **73 topic labels** recorded from the LeetCode Problemset snapshot of 25 November 2026. Labels include **algorithms**, **data structures**, and **problem domains** (Database, Shell, Concurrency); we do not incorrectly claim all of these are CLRS algorithm chapters.
 
 ### [1. Data Structures and Representations](groups/01-data-structures.qmd)
 
 Choose representations and invariants before selecting algorithms.
 
-- [Array](array/index.qmd)
-- [String](string/index.qmd)
-- [Hash Table](hash-table/index.qmd)
-- [Matrix](matrix/index.qmd)
-- [Linked List](linked-list/index.qmd)
-- [Doubly-Linked List](doubly-linked-list/index.qmd)
-- [Stack](stack/index.qmd)
-- [Queue](queue/index.qmd)
-- [Heap (Priority Queue)](heap-priority-queue/index.qmd)
-- [Ordered Set](ordered-set/index.qmd)
-- [Tree](tree/index.qmd)
-- [Binary Tree](binary-tree/index.qmd)
-- [Binary Search Tree](binary-search-tree/index.qmd)
-- [Trie](trie/index.qmd)
-- [Graph Theory](graph-theory/index.qmd)
-- [Data Stream](data-stream/index.qmd)
-- [Iterator](iterator/index.qmd)
+[Array](array/index.qmd) · [String](string/index.qmd) · [Hash Table](hash-table/index.qmd) · [Matrix](matrix/index.qmd) · [Linked List](linked-list/index.qmd) · [Doubly-Linked List](doubly-linked-list/index.qmd) · [Stack](stack/index.qmd) · [Queue](queue/index.qmd) · [Heap (Priority Queue)](heap-priority-queue/index.qmd) · [Ordered Set](ordered-set/index.qmd) · [Tree](tree/index.qmd) · [Binary Tree](binary-tree/index.qmd) · [Binary Search Tree](binary-search-tree/index.qmd) · [Trie](trie/index.qmd) · [Graph Theory](graph-theory/index.qmd) · [Data Stream](data-stream/index.qmd) · [Iterator](iterator/index.qmd)
 
 ### [2. Searching, Traversal, and Enumeration](groups/02-search-and-exploration.qmd)
 
 Explore candidate spaces systematically and prune work when possible.
 
-- [Binary Search](binary-search/index.qmd)
-- [Two Pointers](two-pointers/index.qmd)
-- [Sliding Window](sliding-window/index.qmd)
-- [Depth-First Search](depth-first-search/index.qmd)
-- [Breadth-First Search](breadth-first-search/index.qmd)
-- [Backtracking](backtracking/index.qmd)
-- [Recursion](recursion/index.qmd)
-- [Enumeration](enumeration/index.qmd)
-- [Divide and Conquer](divide-and-conquer/index.qmd)
-- [Meet in the Middle](meet-in-the-middle/index.qmd)
-- [Quickselect](quickselect/index.qmd)
-- [Simulation](simulation/index.qmd)
-- [Brainteaser](brainteaser/index.qmd)
+[Binary Search](binary-search/index.qmd) · [Two Pointers](two-pointers/index.qmd) · [Sliding Window](sliding-window/index.qmd) · [Depth-First Search](depth-first-search/index.qmd) · [Breadth-First Search](breadth-first-search/index.qmd) · [Backtracking](backtracking/index.qmd) · [Recursion](recursion/index.qmd) · [Enumeration](enumeration/index.qmd) · [Divide and Conquer](divide-and-conquer/index.qmd) · [Meet in the Middle](meet-in-the-middle/index.qmd) · [Quickselect](quickselect/index.qmd) · [Simulation](simulation/index.qmd) · [Brainteaser](brainteaser/index.qmd)
 
 ### [3. Dynamic Programming and Decision Making](groups/03-optimisation.qmd)
 
 Use reuse, optimal substructure, local decisions, and competitive strategies.
 
-- [Dynamic Programming](dynamic-programming/index.qmd)
-- [Memoization](memoization/index.qmd)
-- [Greedy](greedy/index.qmd)
-- [Game Theory](game-theory/index.qmd)
-- [Minimax](minimax/index.qmd)
-- [Bitmask](bitmask/index.qmd)
+[Dynamic Programming](dynamic-programming/index.qmd) · [Memoization](memoization/index.qmd) · [Greedy](greedy/index.qmd) · [Game Theory](game-theory/index.qmd) · [Minimax](minimax/index.qmd) · [Bitmask](bitmask/index.qmd)
 
 ### [4. Sorting, Range Queries, and Monotonic Structures](groups/04-sorting-range.qmd)
 
 Order data, aggregate intervals, and exploit monotonic structure.
 
-- [Sorting](sorting/index.qmd)
-- [Merge Sort](merge-sort/index.qmd)
-- [Counting Sort](counting-sort/index.qmd)
-- [Bucket Sort](bucket-sort/index.qmd)
-- [Radix Sort](radix-sort/index.qmd)
-- [Monotonic Stack](monotonic-stack/index.qmd)
-- [Monotonic Queue](monotonic-queue/index.qmd)
-- [Prefix Sum](prefix-sum/index.qmd)
-- [Segment Tree](segment-tree/index.qmd)
-- [Binary Indexed Tree](binary-indexed-tree/index.qmd)
-- [Sweep Line](sweep-line/index.qmd)
+[Sorting](sorting/index.qmd) · [Merge Sort](merge-sort/index.qmd) · [Counting Sort](counting-sort/index.qmd) · [Bucket Sort](bucket-sort/index.qmd) · [Radix Sort](radix-sort/index.qmd) · [Monotonic Stack](monotonic-stack/index.qmd) · [Monotonic Queue](monotonic-queue/index.qmd) · [Prefix Sum](prefix-sum/index.qmd) · [Segment Tree](segment-tree/index.qmd) · [Binary Indexed Tree](binary-indexed-tree/index.qmd) · [Sweep Line](sweep-line/index.qmd)
 
 ### [5. Graph Algorithms and Connectivity](groups/05-graph-algorithms.qmd)
 
 Study connectivity, dependency ordering, shortest paths, and network optimisation.
 
-- [Union-Find](union-find/index.qmd)
-- [Shortest Path](shortest-path/index.qmd)
-- [Topological Sort](topological-sort/index.qmd)
-- [Minimum Spanning Tree](minimum-spanning-tree/index.qmd)
-- [Strongly Connected Component](strongly-connected-component/index.qmd)
-- [Biconnected Component](biconnected-component/index.qmd)
-- [Eulerian Circuit](eulerian-circuit/index.qmd)
+[Union-Find](union-find/index.qmd) · [Shortest Path](shortest-path/index.qmd) · [Topological Sort](topological-sort/index.qmd) · [Minimum Spanning Tree](minimum-spanning-tree/index.qmd) · [Strongly Connected Component](strongly-connected-component/index.qmd) · [Biconnected Component](biconnected-component/index.qmd) · [Eulerian Circuit](eulerian-circuit/index.qmd)
 
 ### [6. Mathematics, Bits, and String Algorithms](groups/06-maths-strings.qmd)
 
 Formalise counts, numeric properties, geometry, hashing, and text processing.
 
-- [Math](math/index.qmd)
-- [Number Theory](number-theory/index.qmd)
-- [Combinatorics](combinatorics/index.qmd)
-- [Probability and Statistics](probability-and-statistics/index.qmd)
-- [Geometry](geometry/index.qmd)
-- [Bit Manipulation](bit-manipulation/index.qmd)
-- [Hash Function](hash-function/index.qmd)
-- [Rolling Hash](rolling-hash/index.qmd)
-- [String Matching](string-matching/index.qmd)
-- [Suffix Array](suffix-array/index.qmd)
-- [Counting](counting/index.qmd)
+[Math](math/index.qmd) · [Number Theory](number-theory/index.qmd) · [Combinatorics](combinatorics/index.qmd) · [Probability and Statistics](probability-and-statistics/index.qmd) · [Geometry](geometry/index.qmd) · [Bit Manipulation](bit-manipulation/index.qmd) · [Hash Function](hash-function/index.qmd) · [Rolling Hash](rolling-hash/index.qmd) · [String Matching](string-matching/index.qmd) · [Suffix Array](suffix-array/index.qmd) · [Counting](counting/index.qmd)
 
 ### [7. Randomisation, Design, and Special Domains](groups/07-specialised-domains.qmd)
 
 Capture specialised LeetCode topics outside classical algorithm paradigms.
 
-- [Randomized](randomized/index.qmd)
-- [Reservoir Sampling](reservoir-sampling/index.qmd)
-- [Rejection Sampling](rejection-sampling/index.qmd)
-- [Design](design/index.qmd)
-- [Interactive](interactive/index.qmd)
-- [Database](database/index.qmd)
-- [Shell](shell/index.qmd)
-- [Concurrency](concurrency/index.qmd)
+[Randomized](randomized/index.qmd) · [Reservoir Sampling](reservoir-sampling/index.qmd) · [Rejection Sampling](rejection-sampling/index.qmd) · [Design](design/index.qmd) · [Interactive](interactive/index.qmd) · [Database](database/index.qmd) · [Shell](shell/index.qmd) · [Concurrency](concurrency/index.qmd)
 
-## Suggested study order
 
-A practical route starts with arrays, strings and hashing; progresses to two pointers, sliding window, recursion, binary search and backtracking; then covers tree/graph traversals, greedy algorithms and dynamic programming. Finally, explore advanced range queries, graph algorithms, probabilistic techniques and specialised problem domains.
+## Source and originality
 
-**Choose a problem's strategy by its constraints and structure, not merely its LeetCode tags.** Several different algorithms can solve the same problem.
+The book structure and proof-oriented methodology were checked against [MIT Press, *Introduction to Algorithms*, 4e](https://mitpress.mit.edu/9780262046305/introduction-to-algorithms/) and its [official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf). Patterns and common counterexamples were cross-checked against publicly available [LeetCode community discussions about subarrays](https://leetcode.com/discuss/post/7077374/), [binary search](https://leetcode.com/discuss/post/2371234/) and [dynamic programming](https://leetcode.com/discuss/post/1747722/).
 
-## Source and maintenance
+These lessons **do not copy the textbook or community solutions**. Each explanation, numerical substitution and reusable code example is independently written.
 
-This taxonomy was checked against the [LeetCode Problemset](https://leetcode.com/problemset/) on **2026-11-25**. The [machine-readable tag catalogue](leetcode-topic-catalog.json) records the exact names, independent folder slugs, topic groupings and short mathematical starting points. The collection can be updated when LeetCode changes its topic list.
+[Original topic catalogue metadata](leetcode-topic-catalog.json).

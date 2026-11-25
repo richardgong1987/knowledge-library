@@ -1,38 +1,75 @@
 ---
 title: "Backtracking"
-description: "Build partial solutions and abandon branches violating constraints."
+description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
 ---
 
-## The problem and underlying idea
+## Start with the problem, not a formula
 
-Build partial solutions and abandon branches violating constraints.
+**LeetCode 78 — Subsets; LeetCode 46 — Permutations**. Build partial solutions and abandon branches violating constraints.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
 
-## A concrete problem
+## Why the obvious approach is expensive
 
-Generate all valid arrangements of three distinct objects.
+You need all valid configurations. A greedy choice discards alternatives; a brute-force generator may create many invalid finished solutions before noticing constraints.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+## Discover the key idea
 
-## Mathematical Abstraction
+Think in a decision tree: choose, recurse, undo. Each recursive call represents a partial answer, not a completed one. Undo is how sibling branches start from the same state.
+
+This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+
+## Mathematical model — then immediately translate it
 
 $$
-C_{k+1}=\{x\oplus a\mid x\in C_k,\ \operatorname{valid}(x\oplus a)\}
+\#\operatorname{Subsets}(n)=2^n
 $$
 
-The formula captures a central structural relationship or illustrative model for **Backtracking**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Explanation of every symbol:** n is the number of distinct input items; #Subsets(n) is the number of subsets, including the empty subset. Each item has two independent decisions: include or exclude.
 
-## How to study this topic
+**Substitute actual values:** For [1,2,3], decisions are (out/in) for 1,2,3: 2×2×2=8 subsets. If a partial path currently contains [1,2], removing 2 before exploring the next branch restores [1], preventing accidental cross-branch contamination.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
 
-## Practice and connections
+## Work through the algorithm
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Backtracking** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify the initial state using the small example above.
+2. Make one legal decision and update only state affected by that decision.
+3. Verify the invariant again. If it fails, correct the state before making another decision.
+4. Repeat until the search space is exhausted or the answer has been justified.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Why this is correct:** At depth i, the path represents exactly the decisions for the first i items. Choose or skip each item, recurse, then restore the path, so every decision sequence is visited exactly once.
+
+## Actual code — keep it small
+
+The original [Node.js example library](../examples/patterns.mjs) implements this technique as `subsets` and tests it against boundary cases:
+
+~~~js
+import { subsets } from '../examples/patterns.mjs';
+
+console.log(subsets([1,2,3]));
+~~~
+
+Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
+
+## Analyse the work; do not guess big-O
+
+**Cost:** At least Ω(2^n) outputs for listing all subsets; n=20 already means 1,048,576 subsets. Extra recursion depth O(n), excluding stored output.
+
+The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+
+## Break the technique deliberately
+
+If duplicates occur, 2^n counts subsets by element POSITIONS, not necessarily unique value combinations. For 'Subsets II', sort and skip equal sibling choices when the problem requires unique subsets.
+
+If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+
+## Source connections and practice
+
+**Textbook:** CLRS Chapter 4 (recursive design), Chapter 14 (subproblem structure), and Chapter 34 (search hardness).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**LeetCode problem:** LeetCode 78 — Subsets; LeetCode 46 — Permutations. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/discuss/post/1405817/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+
+**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+
+[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)

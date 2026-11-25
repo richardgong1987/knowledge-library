@@ -75,3 +75,22 @@ Use `## Mathematical Abstraction`, include a display formula or formal relation 
 - Link to public Meta/Google/Microsoft research and interview-practice resources as *inspiration*, without claiming a specific company asked a private or verbatim question.
 - Keep pure algorithms separately executable and test edge cases: duplicates, unknown outcomes, out-of-order events, version reversals, expired leases, and starvation.
 - Use stable current language/framework releases; verify with official documentation and CI before claiming a successful build.
+
+## Non-negotiable mathematical teaching requirement
+
+**For every mathematics or algorithm formula anywhere in a chapter:** immediately after the displayed formula, provide (1) a **symbol-by-symbol explanation** including domain, units and indexing conventions; and then (2) **a real numerical substitution** showing each step. The reader must be able to reproduce the calculation. Repeat this for every later formula, not only the first one. Avoid ornamental formulas that add no explanatory value.
+
+### Standard for Algorithms chapters
+
+1. Choose one tiny representative problem from the classic algorithm family or LeetCode. State input and output using actual values.
+2. Explain the naive method and the precise repeated work or incorrect assumption.
+3. Derive the useful fact or invariant before naming the trick. A pattern name is not a correctness argument.
+4. Introduce one equation at a time. **Define every symbol immediately and substitute numbers immediately.**
+5. Prove correctness using CLRS-style initialisation, maintenance and termination, induction, exchange arguments, or an exhaustive branch argument.
+6. Give original small runnable code where it clarifies the idea; put algorithms in a dependency-free module with tests where possible.
+7. Derive complexity from actual operation counts. Distinguish expected, worst-case, amortised and output-size bounds.
+8. Include a counterexample or changed assumption showing when the chosen technique does not apply.
+9. Cite CLRS 4th edition and the appropriate official chapter when the concept is covered; do not pretend that LeetCode tags such as SQL, Shell and Sliding Window are textbook chapters.
+10. Use LeetCode community discussions for **insight and pitfalls**, but write all explanations, code and examples independently; do not copy third-party solutions or copyrighted textbook passages.
+
+**A page consisting of generic definitions, one unexplained formula, a prompt to study, or no actual worked example is not a complete lesson.**

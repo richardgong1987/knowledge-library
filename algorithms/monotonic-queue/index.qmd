@@ -1,38 +1,65 @@
 ---
 title: "Monotonic Queue"
-description: "Maintain an ordered deque of undominated candidates in a sliding window."
+description: "CLRS-inspired worked lesson on Monotonic Queue: numerical substitution, invariants, original code and complexity."
 ---
 
-## Core idea
+## Understand the actual problem
 
-Maintain an ordered deque of undominated candidates in a sliding window.
+**LeetCode 239 — Sliding Window Maximum.**
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+Keep a deque of candidate indices, not all window elements. Remove expired indices from the front and remove smaller dominated values from the back.
 
-## Worked-problem starting point
+## First try the obvious approach
 
-Find each window maximum in linear time.
+Compute the maximum of each k-length window by scanning all k entries; this repeats most comparisons when neighbouring windows overlap.
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
 
-## Mathematical Abstraction
+## Mathematical relationship, explained immediately
 
 $$
-a_{q_0}\geq a_{q_1}\geq\cdots\geq a_{q_k}
+a_{q_0}\geq a_{q_1}\geq\cdots\geq a_{q_m}
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Monotonic Queue** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Symbol by symbol:** q₀ through q_m are indices kept in the deque from front to back; the corresponding values are nonincreasing, so the front index holds the current maximum.
 
-## Learning and verification workflow
+**Calculate with real numbers:** For values [1,3,−1] with window k=2, after processing 1 the deque contains [1]. Adding 3 removes 1 as dominated, leaving [3]; window [1,3] max is 3. Adding −1 leaves [3,−1], so window [3,−1] max remains 3.
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
 
-## LeetCode practice
+## How the algorithm emerges
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Monotonic Queue**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+1. Identify what answer you would compute by hand for the smallest instance.
+2. Store exactly that piece of information when moving to the next step.
+3. Update the stored information after one input event or query.
+4. Check the invariant before returning a result; consider boundary values and ties.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+**Correctness argument:** Any smaller value before a later larger value can never again be a maximum while the later larger value stays in the window. Removing it cannot change any future answer.
+
+## Code, but only after the reasoning
+
+Use the tested [algorithm lab](../examples/patterns.mjs), which exports `slidingWindowMax`:
+
+~~~js
+import { slidingWindowMax } from '../examples/patterns.mjs';
+
+console.log(slidingWindowMax([1,3,-1,-3,5],3));
+~~~
+
+Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
+
+## Count the work rigorously
+
+**Time and memory:** O(n) time and O(k) active deque space where n is input length and k window width.
+
+**The misleading shortcut:** The deque must store indices so expiry can be checked. Merely storing values cannot tell whether the front occurrence has left the window.
+
+A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+
+## Practice and source
+
+- **Textbook relationship:** CLRS Chapters 10 and 16 (queues and amortised analysis)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode practice:** LeetCode 239 — Sliding Window Maximum. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
+- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+
+[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

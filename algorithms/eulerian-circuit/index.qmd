@@ -1,38 +1,61 @@
 ---
 title: "Eulerian Circuit"
-description: "Traverse every edge exactly once and return to the starting vertex."
+description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
 ---
 
-## Core idea
+## Begin with an actual graph
 
-Traverse every edge exactly once and return to the starting vertex.
+**LeetCode 332 — Reconstruct Itinerary (Eulerian trail connection).** A postal worker must traverse every ROAD exactly once and finish where they started. Cities may be revisited; roads may not.
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
 
-## Worked-problem starting point
+## Why a tempting approach is wrong or wasteful
 
-Determine whether an undirected connected route network permits an Euler tour.
+Try to walk greedily along any unused road. A careless early choice can strand unused edges behind you.
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+## The idea that simplifies the problem
 
-## Mathematical Abstraction
+In an undirected connected graph, an Eulerian CIRCUIT exists when every vertex has even degree. Hierholzer's algorithm builds cycles and splices them when unused edges remain.
+
+## Formalise it — explain symbols immediately
 
 $$
-\deg(v)\equiv0\pmod2\quad\forall v\in V
+\forall v\in V_{\mathrm{nonisolated}},\quad\deg(v)\equiv0\pmod2
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Eulerian Circuit** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Every symbol explained:** V_nonisolated is the set of vertices incident to at least one edge; deg(v) is the number of incident undirected edge ends, counting loops twice; ≡0 mod 2 means the degree is even. The nonisolated part must also be connected.
 
-## Learning and verification workflow
+**Numbers substituted into the relation:** A triangle A–B–C–A has degree 2 at each vertex and admits A→B→C→A, using all three edges once. A simple chain A–B–C has degrees 1,2,1; no Eulerian CIRCUIT is possible, though an open trail exists.
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
 
-## LeetCode practice
+## Algorithm progression
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Eulerian Circuit**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
+2. Start from the concrete example above and perform one legal edge decision.
+3. Record the changed state and check whether the invariant still holds.
+4. Continue until all required edges, vertices, or candidate states have been processed.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+**Proof sketch:** Every arrival at a vertex along an unused edge requires a different unused edge to leave, so circuit vertices require paired edge incidences. Even degrees and connectivity let Hierholzer construct and splice closed trails until all edges are used.
+
+## Run a small implementation
+
+Trace a graph of at most four vertices by hand, then write a short DFS/stack routine that maintains the exact invariant below. The general-purpose [DFS/BFS implementations](../examples/patterns.mjs) give a tested starting point; note where the specialised operation requires additional state.
+
+The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+
+## Work and limitations
+
+**Complexity:** O(V+E) traversal using indexed adjacency and a used-edge record after preprocessing; sorted lexical choices add sorting overhead.
+
+**Where this reasoning fails:** A Hamiltonian path visits every VERTEX once; an Eulerian trail visits every EDGE once. LeetCode 332 uses a directed version and lexical ordering, which needs extra conditions beyond the undirected rule stated here.
+
+As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+
+## Connections
+
+- **Textbook:** CLRS Chapter 20 covers Euler tours as graph-traversal-related material; this is an additional application.. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **Practice:** LeetCode 332 — Reconstruct Itinerary (Eulerian trail connection). Treat any online solution as a second explanation to compare, not a script to copy.
+- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+
+[← Algorithms](../index.qmd)

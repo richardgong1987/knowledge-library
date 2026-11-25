@@ -1,38 +1,62 @@
 ---
 title: "Randomized"
-description: "Use random choices inside an algorithm to influence expected performance or output."
+description: "An original, understandable lesson on the Randomized LeetCode topic with fully explained mathematics."
 ---
 
-## Core idea
+## What is the real challenge?
 
-Use random choices inside an algorithm to influence expected performance or output.
+**LeetCode 215 — Kth Largest Element (randomised selection).** Use random choices inside an algorithm to influence expected performance or output.
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+This LeetCode label may describe a **problem domain, engineering interface or probabilistic method** rather than a universally named algorithm. The first step is to state which contract is required.
 
-## Worked-problem starting point
+## The tempting solution
 
-Choose a pivot uniformly when partitioning an array.
+A deterministic pivot such as the first value can trigger very unbalanced quickselect partitions on already sorted input.
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+## The idea worth remembering
 
-## Mathematical Abstraction
+Randomness is a way to change how expensive inputs interact with the algorithm. A uniformly chosen pivot makes systematically bad partitions unlikely under a suitable adversary model.
+
+## One mathematical expression — with every symbol explained
 
 $$
-A(x;\omega),\quad\omega\sim\mathcal D
+\mathbb E[T(n)]=O(n)
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Randomized** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Every symbol means:** T(n) is quickselect's running work on n elements; E is expectation over its random pivot choices; O(n) means expected work grows at most proportionally to n up to constants for the stated algorithm.
 
-## Learning and verification workflow
+**Numerical substitution:** For 8 items, pivot rank 4 leaves at most 4 candidates on the side we keep. Pivot rank 1 can leave 7. Randomisation does not prevent a bad step; it changes the distribution over many possible steps.
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+The substituted numbers are not decoration: if the example disagrees with the formula, the statement or its assumptions must be corrected before code is written.
 
-## LeetCode practice
+## Why the method is justified
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Randomized**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+After partitioning, the target order statistic belongs to at most one partition. Randomly distributed pivot ranks allow the standard expected-cost recurrence to remain linear even though worst-case remains quadratic for simple randomised quickselect.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+**Complexity or resource cost:** Expected O(n), worst-case O(n²) comparisons; n is input length.
+
+## Executable example
+
+A related operation exists in the [original, unit-tested JavaScript algorithms lab](../examples/patterns.mjs):
+
+~~~js
+import { quickselect } from '../examples/patterns.mjs';
+
+console.log(quickselect([8,2,7,1,9],2));
+~~~
+
+Run this from a `.mjs` file inside this topic directory. The mathematical relation above is the key concept, while the linked helper illustrates its prerequisite.
+
+## Which assumption makes it fail?
+
+Expected does not mean every run takes linear time. For reproducible tests, inject a seeded pseudo-random generator rather than hiding randomness in globally shared state.
+
+For this topic, distinguish an **exact probability or invariant** from a single random observation or a successful local test. A test samples executions; it is not a proof that all executions behave correctly.
+
+## Source and interview practice
+
+- **Textbook relationship:** CLRS Chapter 5 (randomised analysis), Chapter 9 (selection).. [MIT Press CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode/practice:** LeetCode 215 — Kth Largest Element (randomised selection) — [problem or problem set](https://leetcode.com/problems/kth-largest-element-in-an-array/).
+- **Self-test:** Restate the formula in plain English, reproduce the numeric example, and show a counterexample when one assumption is removed.
+
+[← Algorithms](../index.qmd) · [Formula explanations](../guides/read-the-math.qmd)

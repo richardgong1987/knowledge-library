@@ -1,38 +1,62 @@
 ---
 title: "Game Theory"
-description: "Model strategic choices made by competing agents."
+description: "Learn Game Theory with a complete numerical recurrence, proof, counterexample and small tested implementation."
 ---
 
-## The problem and underlying idea
+## One problem you can understand by hand
 
-Model strategic choices made by competing agents.
+**LeetCode 877 — Stone Game; strategic decisions.** Two rational players alternate choices, and one player's gain may reduce the other's. Ordinary single-agent maximisation is insufficient because the opponent also chooses.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
 
-## A concrete problem
+## The approach that looks convincing but fails
 
-Decide whether the first player wins a take-away game.
+Choose the larger end pile each turn; the opponent may exploit this decision by controlling the next remaining interval.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
 
-## Mathematical Abstraction
+## The key reasoning step
+
+Write each state as the remaining interval of piles and the player to move. Under a zero-sum model, the value is your immediate gain minus the best value the opponent can force afterwards.
+
+## From actual numbers to mathematics
 
 $$
-V(s)=\max_a\bigl(-V(T(s,a))\bigr)\quad\text{in a zero-sum turn game}
+V(l,r)=\max(a_l-V(l+1,r),\ a_r-V(l,r-1))
 $$
 
-The formula captures a central structural relationship or illustrative model for **Game Theory**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What every symbol means:** V(l,r) is the maximum achievable score DIFFERENCE (current player minus opponent) from piles l through r. a_l and a_r are the stones at the left and right ends. The minus signs subtract the opponent's subsequent best advantage.
 
-## How to study this topic
+**Now substitute numbers into that same relationship:** For two piles [2,5], choosing left 2 leaves 5 to the opponent: difference 2−5=−3. Choosing right 5 leaves 2: difference 5−2=3. Hence V(0,1)=max(−3,3)=3, so the first player should take 5.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
 
-## Practice and connections
+## Why the result is actually correct
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Game Theory** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+After choosing one end, the game swaps players. The opponent then plays optimally for their own score difference, which must be subtracted from the original player's score. Exhausting both legal moves yields the optimal current score difference.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
+
+## Actual implementation
+
+For this strategic/state-space problem, construct a memo table keyed by the state from the formula above. The table should return the exact score difference or feasibility result for that state; verify the two-pile numerical example before considering large inputs. The mathematics is the main result; a production framework would add no understanding here.
+
+## Complexity and failure conditions
+
+**Cost model:** O(n²) interval states and O(1) decisions per state; O(n²) table space, where n is number of piles.
+
+**A classic mistake:** The recurrence assumes perfect information, alternating turns, deterministic scores and zero-sum payoff. Cooperative, simultaneous or stochastic games require different models.
+
+In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+
+## Try teaching it back
+
+Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+
+## Reference and community insight
+
+**CLRS relationship:** CLRS dynamic programming provides the state-and-recurrence method, but full strategic game theory is beyond its main coverage.. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**Related classic LeetCode example:** LeetCode 877 — Stone Game; strategic decisions — [community/official practice link](https://leetcode.com/problems/stone-game/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+
+[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

@@ -1,38 +1,70 @@
 ---
 title: "Memoization"
-description: "Cache the outcome of repeated function calls on the same state."
+description: "Learn Memoization with a complete numerical recurrence, proof, counterexample and small tested implementation."
 ---
 
-## The problem and underlying idea
+## One problem you can understand by hand
 
-Cache the outcome of repeated function calls on the same state.
+**LeetCode 70 — Climbing Stairs; recursion with cached results.** Count ways to reach step 5 when each move is one or two stairs. Plain recursion feels simple but computes the same step counts again and again.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
 
-## A concrete problem
+## The approach that looks convincing but fails
 
-Compute Fibonacci values without revisiting solved calls.
+Recursive 'ways(n-1)+ways(n-2)' branches twice at most steps. The subproblem for step 3 appears repeatedly, wasting time.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
 
-## Mathematical Abstraction
+## The key reasoning step
+
+Memoisation stores the answer associated with a STATE. The state here is remaining steps, not the path used to reach them. The first computation fills a cache entry; later calls reuse it.
+
+## From actual numbers to mathematics
 
 $$
-M[s]\leftarrow f(s)\quad\text{on first evaluation}
+W(n)=W(n-1)+W(n-2),\quad W(0)=1,\ W(1)=1
 $$
 
-The formula captures a central structural relationship or illustrative model for **Memoization**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What every symbol means:** W(n) counts ways to climb n remaining steps. W(n−1) counts solutions starting with a one-step move, W(n−2) those starting with a two-step move; W(0)=1 counts the one way to finish from an already completed staircase.
 
-## How to study this topic
+**Now substitute numbers into that same relationship:** W(2)=W(1)+W(0)=1+1=2; W(3)=2+1=3; W(4)=3+2=5; W(5)=5+3=8. If recursion revisits W(3), return the cached value 3 rather than branching again.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
 
-## Practice and connections
+## Why the result is actually correct
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Memoization** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+The first move is either one or two steps, and these cases are disjoint. With correct base cases, induction proves the recurrence. Memoisation changes performance, not the underlying mathematical result.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
+
+## Actual implementation
+
+The [original, tested JavaScript implementation](../examples/patterns.mjs) exports `houseRobber`:
+
+~~~js
+import { houseRobber } from '../examples/patterns.mjs';
+
+console.log(houseRobber([2,1,1,2]));
+~~~
+
+Run this from a `.mjs` file inside this topic directory. The same function is exercised by [the unit tests](../examples/patterns.test.mjs). The implementation is intentionally tiny so the recurrence remains visible.
+
+## Complexity and failure conditions
+
+**Cost model:** O(n) time and O(n) memo/recursion space for n steps, versus exponential time for uncached recursion.
+
+**A classic mistake:** Caching based on an incomplete state is incorrect. For pathfinding with remaining steps AND current position, using only remaining steps as cache key can mix different subproblems.
+
+In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+
+## Try teaching it back
+
+Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+
+## Reference and community insight
+
+**CLRS relationship:** CLRS Chapter 14 (top-down memoisation and bottom-up dynamic programming).. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**Related classic LeetCode example:** LeetCode 70 — Climbing Stairs; recursion with cached results — [community/official practice link](https://leetcode.com/discuss/post/458695/dynamic-programming-patternsDP/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+
+[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

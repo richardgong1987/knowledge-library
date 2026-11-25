@@ -1,42 +1,69 @@
 ---
 title: "Tree"
-description: "A connected, acyclic graph supporting hierarchical reasoning."
+description: "Understand Tree from a real problem, a worked numerical example, a proof invariant and original code."
 ---
 
-::: {.callout-note}
-**Classification:** This is principally a data structure or representation. The topic studies its invariants and algorithms that operate on it.
-:::
+## Start with one concrete problem
 
-## The problem and underlying idea
+**LeetCode 104 — Maximum Depth of Binary Tree.** A connected, acyclic graph supporting hierarchical reasoning.
 
-A connected, acyclic graph supporting hierarchical reasoning.
+Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+### The obvious method — and why it falls short
 
-## A concrete problem
+Try to enumerate every path to a leaf and recount shared prefixes separately.
 
-Find the height of an organisation hierarchy.
+### The one insight to remember
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+A rooted tree decomposes naturally into subtrees. Its height depends only on the children's heights.
 
-## Mathematical Abstraction
+## Build the mathematical meaning from a small example
 
 $$
-|E|=|V|-1\quad\text{for a finite tree}
+h(v)=1+\max_{u\in children(v)} h(u)
 $$
 
-The formula captures a central structural relationship or illustrative model for **Tree**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What each symbol means:** h(v) is the number of nodes on a longest downward path starting at node v; children(v) is the set of immediate children; an empty child's height is zero.
 
-## How to study this topic
+**Substitute actual values:** If a node has child subtree heights 2 and 4, then h(v)=1+max(2,4)=5. A leaf has no children, so its height is 1.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Do not move to implementation until you can explain this example without reading the formula.
 
-## Practice and connections
+## Design the algorithm in ordinary English
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Tree** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. State what the stored representation means before the first operation.
+2. Perform exactly the operation suggested by the example, updating only the necessary state.
+3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
+4. Stop when the requested result is known; do not perform work unrelated to the output.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument (the invariant):** Every downward path from v begins at v and then enters exactly one child subtree, so the longest is obtained by choosing the maximum child height.
+
+## Code you can run
+
+The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `componentsDFS`. Its use can be reduced to:
+
+~~~js
+import { componentsDFS } from '../examples/patterns.mjs';
+
+console.log(componentsDFS([[1],[0],[]]));
+~~~
+
+Save the snippet inside the `algorithms/tree/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+
+## Why it works, and how expensive it is
+
+Every downward path from v begins at v and then enters exactly one child subtree, so the longest is obtained by choosing the maximum child height.
+
+**Time and space:** O(n) time because each node is visited once; O(h) recursion stack where h is tree depth.
+
+**Common mistake or limitation:** Height measured in edges differs by one from height measured in nodes. State your convention before comparing solutions.
+
+## Try to explain it in an interview
+
+Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+
+## Reading and practice
+
+- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 (rooted-tree representation) and Appendix B (trees). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode:** LeetCode 104 — Maximum Depth of Binary Tree. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
+- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).

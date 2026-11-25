@@ -1,0 +1,120 @@
+---
+title: "How to Prove an Algorithm Correct and Count Its Work"
+description: "Use CLRS-style invariants, induction, exchange arguments, amortised analysis and recurrences with concrete examples."
+---
+
+# A correct-looking answer is not a correctness proof
+
+The most useful habit from *Introduction to Algorithms* is to separate two questions:
+
+1. **Correctness:** Does the algorithm always return the requested result for every valid input?
+2. **Complexity:** How much work and memory does it need as input size grows?
+
+Code can pass hundreds of LeetCode examples and still be incorrect. A small counterexample can disprove a claim; a proof explains why no counterexample exists under its assumptions.
+
+## 1. Loop invariants: initialise, maintain, terminate
+
+In binary search, choose the first position whose value is at least target x. A useful invariant is that every index to the left of the search interval is too small.
+
+$$
+\forall i<l,\quad a_i<x
+$$
+
+**Symbols:** $\forall$ means for every; $i$ is an index; $l$ is the current lower boundary, $a_i$ the stored value at index i, and x the target.
+
+**Substitute numbers:** With sorted array [1,3,3,6], target x=3 and current l=1, the only excluded index is 0. Its value is 1, and 1<3, so the invariant holds.
+
+**Initialisation:** With l=0, no index is excluded; the claim is vacuously true.
+
+**Maintenance:** If the midpoint value is less than 3, all values at or before that midpoint are also less than 3. Advancing l excludes only impossible answers. Otherwise keep the left half.
+
+**Termination:** When l=r, no candidates remain undecided, so l is the first qualifying position (or array length if none qualify).
+
+This is exactly the same logic as the tested lower-bound code, explained without leaning on syntax.
+
+## 2. Induction: why dynamic programming works
+
+For House Robber, define the best total among the first i houses.
+
+$$
+DP[i]=\max(DP[i-1],DP[i-2]+a_i)
+$$
+
+**Symbols:** $DP[i]$ is the best achievable value among first i houses; $a_i$ is house i's value; the two branches are skipping or taking house i.
+
+**Substitute numbers:** Houses [2,7,9] give DP[1]=2, DP[2]=7, DP[3]=max(7,2+9)=11.
+
+**Base cases:** No houses give zero; one house gives its value when values are nonnegative.
+
+**Inductive step:** Assume all shorter prefixes were solved optimally. Every feasible plan either includes current house or excludes it. Each case depends on one smaller optimal solution. Taking the better result proves the new prefix optimal.
+
+## 3. Exchange arguments: why a greedy choice is safe
+
+Suppose the goal is to schedule as many non-overlapping meetings as possible. Pick the meeting that finishes earliest.
+
+Let e be the earliest-finishing meeting. Consider any optimal schedule that starts with another meeting x. Since e finishes no later than x, replacing x with e does not make later meetings invalid. The resulting schedule is just as large and now begins with e.
+
+The key is **replacement without making the rest worse**. No exchange proof, no general greedy guarantee.
+
+**Numbers:** A=[1,4], B=[2,3], C=[3,5]. Choosing A by earliest start gives only one meeting. Choosing B by earliest finish allows C, giving two. The example disproves the wrong greedy rule.
+
+## 4. Recurrences: derive growth rather than memorise it
+
+Merge sort splits n items into two halves, sorts both, then merges them in linear work.
+
+$$
+T(n)=2T(n/2)+cn
+$$
+
+**Symbols:** $T(n)$ is total work for n items; the coefficient 2 counts two subcalls on n/2 items; c is a constant cost per item for merging.
+
+**Substitute numbers:** For n=8 and c=1, the top merge costs 8. Two merges of four-element halves together cost 8, and four merges of two-element halves together cost 8. Total merging is 8+8+8=24 units across three levels.
+
+Therefore the growth is proportional to n times the number of halving levels, hence **Θ(n log₂ n)**. Here Θ means a tight asymptotic growth class, n is element count, and log₂ n counts the levels.
+
+## 5. Amortised analysis: the inner while loop is not always quadratic
+
+Consider a monotonic stack processing [2,1,3]. Each index is pushed once. An index may also be popped, but **it cannot be popped twice**.
+
+$$
+\operatorname{totalPushes}+\operatorname{totalPops}\leq 2n
+$$
+
+**Symbols:** n is input length; totalPushes is the number of indices inserted; totalPops counts removals.
+
+**Substitute numbers:** For [2,1,3], push 2, push 1, pop 1, pop 2, push 3: three pushes and two pops, five operations. Bound 2n=6, so five is within six.
+
+Even though a pop loop lives inside a for loop, total pops across the ENTIRE algorithm are bounded by n. This is why the total stack operations are O(n), where O means an asymptotic upper bound.
+
+This is closely related to CLRS Chapter 16's aggregate and potential-function analyses.
+
+## 6. Counterexamples: the fastest way to reject a wrong idea
+
+Take the claim: 'Moving left in a sum window always makes the sum smaller.'
+
+For [2,−3,4], a window covering all three values sums to 3. If we remove −3 by advancing left from index 1 in the window [−3,4], the remaining sum changes from 1 to 4: it becomes **larger**, not smaller.
+
+That single negative example invalidates the monotonic premise needed by some nonnegative sliding-window proofs.
+
+Other useful counterexample categories are: empty input, all identical values, duplicate keys, negative weights, disconnected graphs, a single element and an extremely unbalanced tree.
+
+## 7. Count every operation only as many times as it can really occur
+
+For two pointers in a length-10 array, left can move right at most nine times and right can move left at most nine times; their total progression is linear in n. For backtracking that emits all subsets, there are 2^n actual outputs, so no method can write them all in sub-output-sized work.
+
+Keep distinct:
+
+- **Worst-case complexity:** maximum cost for given input size.
+- **Expected complexity:** average over a specified random process.
+- **Amortised complexity:** total cost per operation across a sequence.
+- **Space complexity:** additional live memory, not just output length.
+
+A nested loop, a recursive function, or a hash map is not a complexity proof by itself.
+
+## Study like a mathematician, implement like an engineer
+
+Explain one concrete input, define the invariant, show initialisation/maintenance/termination, calculate the work, and only then produce the code.
+
+**Reference:** [*Introduction to Algorithms*, 4e official contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf), especially Chapters 2–4, 14–16 and 20–22.
+
+[← Algorithms](../index.qmd) · [Choose a pattern](choose-a-pattern.qmd)

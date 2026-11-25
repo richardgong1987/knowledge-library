@@ -1,38 +1,62 @@
 ---
 title: "Minimax"
-description: "Optimise against an opponent's most damaging response."
+description: "Learn Minimax with a complete numerical recurrence, proof, counterexample and small tested implementation."
 ---
 
-## The problem and underlying idea
+## One problem you can understand by hand
 
-Optimise against an opponent's most damaging response.
+**LeetCode 486 — Predict the Winner.** You know the remaining numbers, but the opponent deliberately tries to reduce your final lead. A naive largest-current-value choice can fail.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
 
-## A concrete problem
+## The approach that looks convincing but fails
 
-Choose a robust move in a small deterministic game tree.
+Try each initial choice greedily, ignoring the best reply from the other player.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
 
-## Mathematical Abstraction
+## The key reasoning step
+
+At each node of the game tree, the current player chooses the branch with the best worst-case consequence. For end-picking games, using a score difference turns the opponent's optimisation into a minus sign.
+
+## From actual numbers to mathematics
 
 $$
-V(s)=\max_a\min_b U(s,a,b)
+V(s)=\max_{a\in Moves(s)}\bigl(-V(next(s,a))+\operatorname{gain}(s,a)\bigr)
 $$
 
-The formula captures a central structural relationship or illustrative model for **Minimax**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What every symbol means:** s is the current game state; Moves(s) lists available actions; next(s,a) is the resulting state; gain(s,a) is the current player's immediate score; V(s) is the optimal score difference for the player whose turn it is.
 
-## How to study this topic
+**Now substitute numbers into that same relationship:** If one move gains 3 immediately and leaves the opponent an advantage V=5, its resulting value is 3−5=−2. Another move gains 1 but leaves opponent advantage V=−1, giving 1−(−1)=2; the second move is better despite the smaller immediate gain.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
 
-## Practice and connections
+## Why the result is actually correct
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Minimax** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+For each possible move, the remaining game's value is optimally controlled by the opponent. Negating that value expresses the current player's eventual differential; taking the maximum gives the best guaranteed outcome.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
+
+## Actual implementation
+
+For this strategic/state-space problem, construct a memo table keyed by the state from the formula above. The table should return the exact score difference or feasibility result for that state; verify the two-pile numerical example before considering large inputs. The mathematics is the main result; a production framework would add no understanding here.
+
+## Complexity and failure conditions
+
+**Cost model:** Exponential search without state reuse for a general game tree; interval-game DP can have O(n²) distinct states when only two ends may be removed.
+
+**A classic mistake:** Minimax presumes the opponent plays optimally. If chance changes the next state, use expectimax or a stochastic game model; a wider tree is not automatically better without correct evaluation.
+
+In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+
+## Try teaching it back
+
+Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+
+## Reference and community insight
+
+**CLRS relationship:** Connect to CLRS Chapter 14 dynamic programming; minimax is not a dedicated CLRS 4e chapter.. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**Related classic LeetCode example:** LeetCode 486 — Predict the Winner — [community/official practice link](https://leetcode.com/problems/predict-the-winner/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+
+[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

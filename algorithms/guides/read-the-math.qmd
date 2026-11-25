@@ -1,0 +1,128 @@
+---
+title: "Read Every Mathematical Symbol"
+description: "Translate algorithm notation into everyday English, then substitute actual numbers."
+---
+
+# Every formula must earn its place
+
+Mathematics is a shorter way of expressing a clear idea. The aim is **not to memorise symbols**, but to understand the same operation in five forms:
+
+**An ordinary sentence → the mathematical formula → every symbol explained → actual numbers substituted → code → correctness assumption.**
+
+Do not introduce several unexplained equations in a row. If the reader cannot check the formula with a few numbers, the lesson needs more explanation.
+
+## 1. Reading a sum: the capital sigma Σ
+
+Suppose our array is **[3,1,4,2]** and we want the total.
+
+$$
+S=\sum_{i=0}^{n-1}a_i
+$$
+
+**What each symbol means:** $S$ is the total. The symbol $\sum$ means add together. The letter $i$ is the index, $n$ is the array length, and $a_i$ means the value stored at index $i$.
+
+**Substitute numbers:** There are 4 elements, so the index runs 0,1,2,3. Calculate **3+1+4+2=10**. That calculation, not the appearance of Σ, is the real algorithm.
+
+~~~js
+const a = [3,1,4,2];
+console.log(a.reduce((sum, x) => sum + x, 0)); // 10
+~~~
+
+## 2. Sets and membership: ∈, ∉
+
+$$
+A=\{1,2,3\},\qquad 2\in A,\qquad4\notin A
+$$
+
+**What each symbol means:** $A$ is a set containing distinct values. Curly braces list its elements. The symbol $\in$ means belongs to. The symbol $\notin$ means does not belong to.
+
+**Substitute values:** In the original array [3,1,3,2], the value 3 occurs twice, but the set is still {1,2,3}. Value 2 belongs to it; value 4 does not. This is why a set can detect duplicates.
+
+## 3. Half-open intervals and off-by-one mistakes
+
+$$
+\operatorname{length}([l,r))=r-l
+$$
+
+**What each symbol means:** $l$ is the first included index; $r$ is the first EXCLUDED index. The interval [l,r) contains all integers starting with l and stopping before r.
+
+**Substitute numbers:** [1,4) includes indices 1,2,3, exactly three positions. Calculate 4−1=3. This convention matches many array slices and prefix-sum formulas.
+
+## 4. Read a dynamic-programming recurrence
+
+Suppose non-adjacent houses contain money values [2,7,9].
+
+$$
+DP[i]=\max\bigl(DP[i-1],DP[i-2]+a_i\bigr)
+$$
+
+**What each symbol means:** $DP[i]$ is the largest obtainable amount among the first $i$ houses in a 1-based description; $a_i$ is the money in current house $i$. The first branch SKIPS the current house; the second TAKES it, meaning the previous house must be skipped.
+
+**Substitute numbers:** Start with DP[0]=0 and DP[−1]=0. DP[1]=max(0,0+2)=2. DP[2]=max(2,0+7)=7. DP[3]=max(7,2+9)=11. The optimum is 11, by taking the first and third houses.
+
+Ask what the state means before worrying about the code.
+
+## 5. Quantifiers: ∀ and ∃
+
+$$
+\forall i<l:\ a_i<x
+$$
+
+**What each symbol means:** $\forall$ means for EVERY. The letter $i$ is an index. $l$ is the left boundary, $a_i$ is the value at index $i$, and $x$ is the search target.
+
+**Substitute numbers:** For sorted values [1,3,3,6] and target x=3, suppose l=1. Every index before 1 (only index 0) has value 1, which is less than 3. This is a binary-search invariant.
+
+The symbol $\exists$ means there exists AT LEAST ONE. A single example supports an existence claim, but not a universal claim.
+
+## 6. Big-O, not a stopwatch reading
+
+$$
+T(n)\in O(n^2)
+$$
+
+**What each symbol means:** $n$ is the input size, $T(n)$ is the algorithm's total work at that size, and $O(n^2)$ describes an asymptotic upper-bound growth class up to fixed constants beyond a sufficiently large input size.
+
+**Substitute numbers:** Two loops that compare all ordered pairs of 4 values make 4×4=16 comparisons. With 10 values they make 10×10=100. This illustrates quadratic growth; a finite pair of measurements alone does NOT prove the asymptotic bound.
+
+### Theta: both upper and lower growth
+
+$$
+T(n)\in\Theta(n\log_2 n)
+$$
+
+**What each symbol means:** $\Theta$ means asymptotically tight upper and lower growth bounds. $n$ is the number of entries; $\log_2 n$ is the number of times n can be halved until 1 in the power-of-two case.
+
+**Substitute numbers:** Merge sort on n=8 has log₂8=3 merge levels. Each level processes about 8 values, giving roughly 8×3=24 units of merging work. With n=16, there are 4 levels and 16×4=64 units. These are illustrative work counts, not exact hardware timings.
+
+## 7. Graph notation
+
+$$
+G=(V,E)
+$$
+
+**What each symbol means:** $G$ is a graph, $V$ the set of its vertices, and $E$ the set of edges connecting them. Directed edges are ordered source–destination pairs.
+
+**Substitute numbers:** Cities A,B,C with directed roads A→B and B→C have V={A,B,C} (3 vertices) and E={(A,B),(B,C)} (2 edges). A can reach C by two hops; that does not imply C can return to A.
+
+## 8. Conditional probability
+
+$$
+P(A\mid B)=\frac{P(A\cap B)}{P(B)},\qquad P(B)>0
+$$
+
+**What each symbol means:** $P$ is probability. A and B are events. The vertical bar means GIVEN B; the symbol $\cap$ means both events happen. The denominator must be nonzero.
+
+**Substitute numbers:** In six equally likely events, suppose four are mobile requests (B), and two are mobile AND successful (A∩B). Calculate (2/6)/(4/6)=2/4=0.5. Thus half of the mobile requests succeeded in this six-record example; no causal claim follows.
+
+## How to read every later chapter
+
+1. State the question using an array, string or graph small enough to hold in your head.
+2. Explain the formula in a sentence before using it.
+3. Define each symbol, including indexing, units and prerequisites.
+4. **Substitute actual numeric values immediately after the equation.**
+5. Write the corresponding line or loop in code.
+6. State an invariant and one input that breaks a tempting shortcut.
+
+**Editorial rule:** a symbol-only chapter is incomplete, even when its equations are mathematically correct.
+
+[← Algorithms](../index.qmd) · [Choose the technique](choose-a-pattern.qmd) · [Prove correctness](prove-and-count.qmd)

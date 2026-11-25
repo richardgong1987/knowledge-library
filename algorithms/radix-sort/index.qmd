@@ -1,38 +1,66 @@
 ---
 title: "Radix Sort"
-description: "Sort positional digits with a stable subroutine."
+description: "CLRS-inspired worked lesson on Radix Sort: numerical substitution, invariants, original code and complexity."
 ---
 
-## Core idea
+## Understand the actual problem
 
-Sort positional digits with a stable subroutine.
+**LeetCode 164 — Maximum Gap (integer sorting strategies).**
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+Sort keys one digit at a time using a STABLE digit sort. Least-significant-digit order works because later higher-digit passes preserve previous lower-digit ordering for ties.
 
-## Worked-problem starting point
+## First try the obvious approach
 
-Sort fixed-width nonnegative identifiers digit by digit.
+If keys have fixed-width digits, a comparison tree does more general work than required.
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
 
-## Mathematical Abstraction
+## Mathematical relationship, explained immediately
 
 $$
-x=\sum_{j=0}^{d-1}d_j B^j
+x=\sum_{j=0}^{d-1} x_j B^j
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Radix Sort** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Symbol by symbol:** x is a nonnegative integer, B is numeric base (10 for decimal), d number of digits, x_j digit at position j counted from the right.
 
-## Learning and verification workflow
+**Calculate with real numbers:** For 237 in base 10, digits are x₀=7, x₁=3, x₂=2. Therefore 237=7×10⁰+3×10¹+2×10²=7+30+200.
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
 
-## LeetCode practice
+## How the algorithm emerges
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Radix Sort**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+1. Identify what answer you would compute by hand for the smallest instance.
+2. Store exactly that piece of information when moving to the next step.
+3. Update the stored information after one input event or query.
+4. Check the invariant before returning a result; consider boundary values and ties.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+**Correctness argument:** After sorting by the first j digits, the array is ordered by those positions. A stable sort of digit j preserves lower-position order among keys that share this higher digit.
+
+## Code, but only after the reasoning
+
+Here is a standalone, original JavaScript demonstration:
+
+~~~js
+const a=[21,13,12,22];
+const byOnes=[...a].sort((x,y)=>(x%10)-(y%10));
+const result=byOnes.sort((x,y)=>(Math.floor(x/10)%10)-(Math.floor(y/10)%10));
+console.log(result); // [12,13,21,22] (modern JS sort is stable)
+~~~
+
+This shows a deliberately minimal case; the chapter explains the invariant needed to extend it into a full implementation.
+
+## Count the work rigorously
+
+**Time and memory:** O(d(n+B)) time with counting sort per digit; n numbers, d digits, B possible digit values.
+
+**The misleading shortcut:** If the per-digit sort is unstable, lower-digit results can be destroyed; negative integers and variable-width strings need an explicit representation policy.
+
+A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+
+## Practice and source
+
+- **Textbook relationship:** CLRS Chapter 8 §8.3 (radix sort)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode practice:** LeetCode 164 — Maximum Gap (integer sorting strategies). Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
+- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+
+[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

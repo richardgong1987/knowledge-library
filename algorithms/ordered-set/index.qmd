@@ -1,42 +1,69 @@
 ---
 title: "Ordered Set"
-description: "A unique-key set maintaining a comparison order."
+description: "Understand Ordered Set from a real problem, a worked numerical example, a proof invariant and original code."
 ---
 
-::: {.callout-note}
-**Classification:** This is principally a data structure or representation. The topic studies its invariants and algorithms that operate on it.
-:::
+## Start with one concrete problem
 
-## The problem and underlying idea
+**LeetCode 220 — Contains Duplicate III.** A unique-key set maintaining a comparison order.
 
-A unique-key set maintaining a comparison order.
+Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+### The obvious method — and why it falls short
 
-## A concrete problem
+Check every pair of values within k index positions and a value-difference bound.
 
-Find the closest stored value not less than a query.
+### The one insight to remember
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+Maintain only recent values in an ordered structure so you can ask for the smallest value at least x−t and compare it with x+t.
 
-## Mathematical Abstraction
+## Build the mathematical meaning from a small example
 
 $$
-S=\{x_1<x_2<\cdots<x_k\}
+x-t\leq y\leq x+t
 $$
 
-The formula captures a central structural relationship or illustrative model for **Ordered Set**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What each symbol means:** x is the current integer; y is an earlier value in the active window; t is the maximum allowed absolute value difference.
 
-## How to study this topic
+**Substitute actual values:** If x=9 and t=2, only y in [7,11] qualify by value; y=10 qualifies, while y=12 does not. Index distance imposes a second independent condition.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Do not move to implementation until you can explain this example without reading the formula.
 
-## Practice and connections
+## Design the algorithm in ordinary English
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Ordered Set** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. State what the stored representation means before the first operation.
+2. Perform exactly the operation suggested by the example, updating only the necessary state.
+3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
+4. Stop when the requested result is known; do not perform work unrelated to the output.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument (the invariant):** Before processing index i, the set contains exactly the allowed earlier indices. A lower-bound search finds the only first candidate needing comparison.
+
+## Code you can run
+
+The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `lowerBound`. Its use can be reduced to:
+
+~~~js
+import { lowerBound } from '../examples/patterns.mjs';
+
+console.log(lowerBound([1,3,6,10],7));
+~~~
+
+Save the snippet inside the `algorithms/ordered-set/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+
+## Why it works, and how expensive it is
+
+Before processing index i, the set contains exactly the allowed earlier indices. A lower-bound search finds the only first candidate needing comparison.
+
+**Time and space:** O(n log k) with a balanced tree of at most k active values, where n is input length.
+
+**Common mistake or limitation:** JavaScript Set preserves insertion order, not sorted key order. You need a balanced tree or sorted substitute for true logarithmic predecessor/successor search.
+
+## Try to explain it in an interview
+
+Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+
+## Reading and practice
+
+- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapters 12–13 (search trees and balancing). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode:** LeetCode 220 — Contains Duplicate III. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
+- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).

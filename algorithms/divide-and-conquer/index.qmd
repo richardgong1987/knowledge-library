@@ -1,38 +1,75 @@
 ---
 title: "Divide and Conquer"
-description: "Split the problem into subproblems, solve them, then combine results."
+description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
 ---
 
-## The problem and underlying idea
+## Start with the problem, not a formula
 
-Split the problem into subproblems, solve them, then combine results.
+**LeetCode 912 — Sort an Array; merge sort**. Split the problem into subproblems, solve them, then combine results.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
 
-## A concrete problem
+## Why the obvious approach is expensive
 
-Find a majority element by merging subproblem results.
+Sorting a huge array by comparing every element with every other element gives quadratic work.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+## Discover the key idea
 
-## Mathematical Abstraction
+Split into smaller halves, solve each half once, and merge two already-sorted sequences in one linear pass.
+
+This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+
+## Mathematical model — then immediately translate it
 
 $$
-T(n)=aT(n/b)+g(n)
+T(n)=2T(n/2)+cn
 $$
 
-The formula captures a central structural relationship or illustrative model for **Divide and Conquer**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Explanation of every symbol:** T(n) is the work for n entries, 2 means two half-size recursive sorts, and cn is linear merging cost with constant c. Assume n is a power of two for the simple recurrence.
 
-## How to study this topic
+**Substitute actual values:** For n=8 and c=1, the merge work at each level is 8: eight length-one objects merge into length-two objects (8 total work), then length-four (8), then length-eight (8). There are log₂8=3 merge levels, hence about 24 merge units.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
 
-## Practice and connections
+## Work through the algorithm
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Divide and Conquer** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify the initial state using the small example above.
+2. Make one legal decision and update only state affected by that decision.
+3. Verify the invariant again. If it fails, correct the state before making another decision.
+4. Repeat until the search space is exhausted or the answer has been justified.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Why this is correct:** A merge picks the smaller current head from two sorted halves, so the emitted prefix stays sorted. Recursion bottoms out at a single sorted element.
+
+## Actual code — keep it small
+
+The original [Node.js example library](../examples/patterns.mjs) implements this technique as `mergeSort` and tests it against boundary cases:
+
+~~~js
+import { mergeSort } from '../examples/patterns.mjs';
+
+console.log(mergeSort([5,1,4,1,3]));
+~~~
+
+Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
+
+## Analyse the work; do not guess big-O
+
+**Cost:** Θ(n log n) time and O(n) auxiliary merging memory; n is number of elements.
+
+The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+
+## Break the technique deliberately
+
+Not every problem can divide independently: if combining partial results is expensive or subproblems overlap heavily, this recurrence and complexity may fail.
+
+If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+
+## Source connections and practice
+
+**Textbook:** CLRS Chapter 4 (divide and conquer), Chapter 2 (insertion/merge sort).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**LeetCode problem:** LeetCode 912 — Sort an Array; merge sort. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/sort-an-array/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+
+**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+
+[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)

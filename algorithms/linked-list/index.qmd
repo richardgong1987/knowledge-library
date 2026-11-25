@@ -1,42 +1,61 @@
 ---
 title: "Linked List"
-description: "A sequence represented by nodes with successor references."
+description: "Understand Linked List from a real problem, a worked numerical example, a proof invariant and original code."
 ---
 
-::: {.callout-note}
-**Classification:** This is principally a data structure or representation. The topic studies its invariants and algorithms that operate on it.
-:::
+## Start with one concrete problem
 
-## The problem and underlying idea
+**LeetCode 206 — Reverse Linked List.** A sequence represented by nodes with successor references.
 
-A sequence represented by nodes with successor references.
+Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+### The obvious method — and why it falls short
 
-## A concrete problem
+Copy every node's values to an array, reverse the array, then build new nodes. That works but hides the pointer property of a list.
 
-Reverse a singly linked list without allocating new nodes.
+### The one insight to remember
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+A singly linked list is a path of references. Reversal needs only three moving references: previous, current and next.
 
-## Mathematical Abstraction
+## Build the mathematical meaning from a small example
 
 $$
-next:V\rightarrow V\cup\{\bot\}
+next_{\mathrm{new}}(v_i)=v_{i-1}
 $$
 
-The formula captures a central structural relationship or illustrative model for **Linked List**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What each symbol means:** v_i is the i-th node in the original order; next_new is its pointer after reversal; v_(i-1) is the previous original node.
 
-## How to study this topic
+**Substitute actual values:** Original 1→2→3→null: after reversing the 1 pointer it becomes 1→null; then 2→1; then 3→2→1→null. The original head becomes the tail.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Do not move to implementation until you can explain this example without reading the formula.
 
-## Practice and connections
+## Design the algorithm in ordinary English
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Linked List** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. State what the stored representation means before the first operation.
+2. Perform exactly the operation suggested by the example, updating only the necessary state.
+3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
+4. Stop when the requested result is known; do not perform work unrelated to the output.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument (the invariant):** Before each step, previous is the head of the already-reversed prefix; current starts the untouched suffix. Redirecting one pointer and advancing preserves both parts.
+
+## Code you can run
+
+This example is best understood as a tiny state transformation. Implement the operation described above in JavaScript or Java, and check each reference or invariant after every step; the exact code is deliberately not replaced by a large framework.
+
+## Why it works, and how expensive it is
+
+Before each step, previous is the head of the already-reversed prefix; current starts the untouched suffix. Redirecting one pointer and advancing preserves both parts.
+
+**Time and space:** O(n) time and O(1) extra pointers, where n is number of nodes; this does not allocate new list nodes.
+
+**Common mistake or limitation:** Save current.next before changing current.next, or the unprocessed suffix becomes unreachable.
+
+## Try to explain it in an interview
+
+Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+
+## Reading and practice
+
+- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 §10.2 (linked lists). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode:** LeetCode 206 — Reverse Linked List. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
+- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).

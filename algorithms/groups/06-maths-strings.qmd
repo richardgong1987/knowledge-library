@@ -1,13 +1,29 @@
 ---
 title: "Mathematics, Bits, and String Algorithms"
-description: "Formalise counts, numeric properties, geometry, hashing, and text processing."
+description: "A connected learning path through 11 worked algorithms topics."
 ---
 
-Formalise counts, numeric properties, geometry, hashing, and text processing.
+## What you are really learning
 
-This family contains **11 independently navigable LeetCode topics**. Each topic has its own directory and a starting mathematical abstraction. The grouping is a learning aid, not part of LeetCode's official hierarchy.
+Use exact arithmetic, counting and string structure instead of fragile ad-hoc tricks.
 
-## Topics
+The goal is not to learn 11 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+
+## Begin with a small example
+
+Choosing two people from five is not a permutation.
+
+$$
+\binom{n}{k}=\frac{n!}{k!(n-k)!}
+$$
+
+**What the symbols mean:** n is the number of distinct choices, k selected size, and factorial multiplies positive integers down to one.
+
+**Substitute actual numbers:** With n=5 and k=2, compute 5!/(2!3!)=120/(2×6)=10 unordered pairs. Ordering those same pairs would overcount them.
+
+This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+
+## The chapters in this family
 
 1. **[Math](../math/index.qmd)** — Turn a computational task into equations, inequalities or discrete structures.
 2. **[Number Theory](../number-theory/index.qmd)** — Reason about divisibility, modular arithmetic, primes, and gcd.
@@ -21,14 +37,10 @@ This family contains **11 independently navigable LeetCode topics**. Each topic 
 10. **[Suffix Array](../suffix-array/index.qmd)** — Sort all suffix starting positions lexicographically for text queries.
 11. **[Counting](../counting/index.qmd)** — Turn logical predicates into occurrence counts or frequency aggregates.
 
-## Mathematical connection
+## Practice method
 
-A problem can carry several topic labels. Let $\mathcal Q$ be the **set of problems** and $\mathcal T$ the set of topic tags. The assignment of tags to problems is a set-valued mapping:
+Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
 
-$$
-L:\mathcal Q\longrightarrow\mathcal P(\mathcal T).
-$$
+The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
 
-Here $L(p)$ is the set of tags assigned to problem $p$. Tags describe relevant structures and techniques; they do **not** uniquely determine an algorithm or a proof of correctness.
-
-[Browse the full Algorithms catalogue](../index.qmd) · [Original LeetCode topic list](https://leetcode.com/problemset/)
+[← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

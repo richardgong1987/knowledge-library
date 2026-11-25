@@ -1,38 +1,65 @@
 ---
 title: "Merge Sort"
-description: "Recursively sort halves and merge their ordered outputs."
+description: "CLRS-inspired worked lesson on Merge Sort: numerical substitution, invariants, original code and complexity."
 ---
 
-## The problem and underlying idea
+## Understand the actual problem
 
-Recursively sort halves and merge their ordered outputs.
+**LeetCode 912 — Sort an Array.**
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+Merge is the essential operation: at every step take the smaller head of two already sorted sequences. Induction connects local choices to the globally sorted output.
 
-## A concrete problem
+## First try the obvious approach
 
-Count inversions while merging sorted halves.
+Splitting an array into halves is easy, but naïvely concatenating two individually sorted halves does not sort their union.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
 
-## Mathematical Abstraction
+## Mathematical relationship, explained immediately
 
 $$
-T(n)=2T(n/2)+\Theta(n)=\Theta(n\log n)
+T(n)=2T(n/2)+\Theta(n)
 $$
 
-The formula captures a central structural relationship or illustrative model for **Merge Sort**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Symbol by symbol:** T(n) is total running time on n entries; 2T(n/2) represents sorting two halves; Θ(n) is the linear work to merge them.
 
-## How to study this topic
+**Calculate with real numbers:** For n=8, merging all values costs about 8 comparisons/steps per level. There are log₂8=3 levels, so roughly 8×3=24 units of merge work plus small base cases. This leads to n log n growth.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
 
-## Practice and connections
+## How the algorithm emerges
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Merge Sort** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify what answer you would compute by hand for the smallest instance.
+2. Store exactly that piece of information when moving to the next step.
+3. Update the stored information after one input event or query.
+4. Check the invariant before returning a result; consider boundary values and ties.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument:** Assume both halves sorted by recursion. Their smallest remaining elements are at the heads; choosing the smaller cannot put a larger element before a smaller one.
+
+## Code, but only after the reasoning
+
+Use the tested [algorithm lab](../examples/patterns.mjs), which exports `mergeSort`:
+
+~~~js
+import { mergeSort } from '../examples/patterns.mjs';
+
+console.log(mergeSort([5,1,4,1,3]));
+~~~
+
+Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
+
+## Count the work rigorously
+
+**Time and memory:** O(n log n) time and O(n) auxiliary memory, where n is number of elements.
+
+**The misleading shortcut:** The <= comparison favours the left equal-key element, preserving stability. Replacing with < can reverse equal-key order across halves.
+
+A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+
+## Practice and source
+
+- **Textbook relationship:** CLRS Chapter 2 (merge sort) and Chapter 4 (recurrences)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode practice:** LeetCode 912 — Sort an Array. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
+- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+
+[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

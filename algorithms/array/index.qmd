@@ -1,42 +1,69 @@
 ---
 title: "Array"
-description: "An indexed sequence with constant-time positional access."
+description: "Understand Array from a real problem, a worked numerical example, a proof invariant and original code."
 ---
 
-::: {.callout-note}
-**Classification:** This is principally a data structure or representation. The topic studies its invariants and algorithms that operate on it.
-:::
+## Start with one concrete problem
 
-## The problem and underlying idea
+**LeetCode 217 — Contains Duplicate.** An indexed sequence with constant-time positional access.
 
-An indexed sequence with constant-time positional access.
+Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+### The obvious method — and why it falls short
 
-## A concrete problem
+Compare every pair: with five entries this can perform ten pair checks.
 
-Find the smallest element and explain the cost of scanning n entries.
+### The one insight to remember
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+The important feature of an array is positional indexing. A set turns duplicate detection into a membership question, so we inspect each element once.
 
-## Mathematical Abstraction
+## Build the mathematical meaning from a small example
 
 $$
-A=(a_0,a_1,\ldots,a_{n-1})
+D(A)=\bigl(|A|\ne |\operatorname{set}(A)|\bigr)
 $$
 
-The formula captures a central structural relationship or illustrative model for **Array**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What each symbol means:** A is the input array; |A| counts entries; set(A) keeps one copy of each distinct value; D(A) tells whether a duplicate exists.
 
-## How to study this topic
+**Substitute actual values:** For A=[4,2,4,7], |A|=4 but the distinct set {2,4,7} has size 3, so D(A) is true. For [4,2,7], both sizes equal 3, so D(A) is false.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Do not move to implementation until you can explain this example without reading the formula.
 
-## Practice and connections
+## Design the algorithm in ordinary English
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Array** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. State what the stored representation means before the first operation.
+2. Perform exactly the operation suggested by the example, updating only the necessary state.
+3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
+4. Stop when the requested result is known; do not perform work unrelated to the output.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument (the invariant):** After processing the first k values, the set contains exactly the distinct values among those k values. The next value is a duplicate precisely when it is already present.
+
+## Code you can run
+
+The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `containsDuplicate`. Its use can be reduced to:
+
+~~~js
+import { containsDuplicate } from '../examples/patterns.mjs';
+
+console.log(containsDuplicate([4,2,4,7]));
+~~~
+
+Save the snippet inside the `algorithms/array/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+
+## Why it works, and how expensive it is
+
+After processing the first k values, the set contains exactly the distinct values among those k values. The next value is a duplicate precisely when it is already present.
+
+**Time and space:** Expected O(n) time and O(n) extra space for hash-based membership, where n is array length; a worst-case guarantee depends on hash-table behaviour.
+
+**Common mistake or limitation:** Hash-set storage trades additional memory for faster expected detection. It is not the right answer if memory must remain constant and modifying the array is allowed; sorting can be an alternative.
+
+## Try to explain it in an interview
+
+Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+
+## Reading and practice
+
+- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 10 (arrays) and Chapter 11 (hash tables). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode:** LeetCode 217 — Contains Duplicate. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
+- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).

@@ -1,13 +1,29 @@
 ---
 title: "Data Structures and Representations"
-description: "Choose representations and invariants before selecting algorithms."
+description: "A connected learning path through 17 worked algorithms topics."
 ---
 
-Choose representations and invariants before selecting algorithms.
+## What you are really learning
 
-This family contains **17 independently navigable LeetCode topics**. Each topic has its own directory and a starting mathematical abstraction. The grouping is a learning aid, not part of LeetCode's official hierarchy.
+Represent information so the operation you need becomes cheap.
 
-## Topics
+The goal is not to learn 17 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+
+## Begin with a small example
+
+In a map, we can ask which bucket key 12 belongs to.
+
+$$
+h(k)=k\bmod m
+$$
+
+**What the symbols mean:** h(k) is the bucket index for key k; m is the positive bucket count; mod means remainder.
+
+**Substitute actual numbers:** With m=5, key 12 maps to 12 mod 5 = 2. Key 17 also maps to bucket 2, so the structure needs collision handling. This matters more than memorising the word hash.
+
+This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+
+## The chapters in this family
 
 1. **[Array](../array/index.qmd)** — An indexed sequence with constant-time positional access.
 2. **[String](../string/index.qmd)** — An ordered sequence of characters used in parsing and matching.
@@ -27,14 +43,10 @@ This family contains **17 independently navigable LeetCode topics**. Each topic 
 16. **[Data Stream](../data-stream/index.qmd)** — An online sequence whose state is updated as new items arrive.
 17. **[Iterator](../iterator/index.qmd)** — A stateful abstraction for visiting elements in sequence.
 
-## Mathematical connection
+## Practice method
 
-A problem can carry several topic labels. Let $\mathcal Q$ be the **set of problems** and $\mathcal T$ the set of topic tags. The assignment of tags to problems is a set-valued mapping:
+Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
 
-$$
-L:\mathcal Q\longrightarrow\mathcal P(\mathcal T).
-$$
+The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
 
-Here $L(p)$ is the set of tags assigned to problem $p$. Tags describe relevant structures and techniques; they do **not** uniquely determine an algorithm or a proof of correctness.
-
-[Browse the full Algorithms catalogue](../index.qmd) · [Original LeetCode topic list](https://leetcode.com/problemset/)
+[← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

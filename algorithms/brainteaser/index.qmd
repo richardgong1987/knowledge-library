@@ -1,42 +1,67 @@
 ---
 title: "Brainteaser"
-description: "Use logical constraints and deductions rather than a fixed algorithmic template."
+description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
 ---
 
-::: {.callout-note}
-**Classification:** LeetCode also labels problem domains and engineering topics. **Brainteaser** is such a topic, not a single universally defined algorithm.
-:::
+## Start with the problem, not a formula
 
-## The problem and underlying idea
+**LeetCode 319 — Bulb Switcher**. Use logical constraints and deductions rather than a fixed algorithmic template.
 
-Use logical constraints and deductions rather than a fixed algorithmic template.
+Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+## Why the obvious approach is expensive
 
-## A concrete problem
+A story about toggling bulbs on every round looks like a simulation of n rounds times n bulbs.
 
-Deduce the correct switch configuration from a set of clues.
+## Discover the key idea
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+Rephrase the repeated actions as a counting property. Bulb i is toggled once for each positive divisor of i; it ends ON exactly when toggled an odd number of times.
 
-## Mathematical Abstraction
+This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+
+## Mathematical model — then immediately translate it
 
 $$
-\text{find }x\in\Omega:\ \bigwedge_{j=1}^{k}P_j(x)
+\operatorname{on}(i)\iff i=j^2\text{ for some integer }j
 $$
 
-The formula captures a central structural relationship or illustrative model for **Brainteaser**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Explanation of every symbol:** i is the 1-based bulb index; j is an integer whose square equals i; on(i) is the final ON/OFF property.
 
-## How to study this topic
+**Substitute actual values:** Bulb 9 is toggled on rounds 1,3,9: three times, so it ends ON. Bulb 12 is toggled at 1,2,3,4,6,12: six times, so it ends OFF. Divisors pair up except for perfect squares.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
 
-## Practice and connections
+## Work through the algorithm
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Brainteaser** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify the initial state using the small example above.
+2. Make one legal decision and update only state affected by that decision.
+3. Verify the invariant again. If it fails, correct the state before making another decision.
+4. Repeat until the search space is exhausted or the answer has been justified.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Why this is correct:** Divisors d and i/d form pairs. Only a perfect square contains an unpaired divisor at sqrt(i), so it has an odd count.
+
+## Actual code — keep it small
+
+The key here is the mathematical state and the progression of decisions. Implement the described transition in a short function before choosing a full production implementation; test the explicit numbers above as your first assertion.
+
+## Analyse the work; do not guess big-O
+
+**Cost:** O(1) answer for count of ON bulbs via floor(sqrt(n)); n is number of bulbs, although one may simulate O(n²) actions for verification.
+
+The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+
+## Break the technique deliberately
+
+The insight depends on the exact toggling rule. Change the rounds and the perfect-square conclusion may no longer hold.
+
+If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+
+## Source connections and practice
+
+**Textbook:** CLRS Appendix C (counting) and Chapter 31 (number theory).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**LeetCode problem:** LeetCode 319 — Bulb Switcher. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/bulb-switcher/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+
+**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+
+[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)

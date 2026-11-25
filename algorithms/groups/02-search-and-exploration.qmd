@@ -1,13 +1,29 @@
 ---
 title: "Searching, Traversal, and Enumeration"
-description: "Explore candidate spaces systematically and prune work when possible."
+description: "A connected learning path through 13 worked algorithms topics."
 ---
 
-Explore candidate spaces systematically and prune work when possible.
+## What you are really learning
 
-This family contains **13 independently navigable LeetCode topics**. Each topic has its own directory and a starting mathematical abstraction. The grouping is a learning aid, not part of LeetCode's official hierarchy.
+Explore a search space while preserving the reason that discarded candidates cannot be answers.
 
-## Topics
+The goal is not to learn 13 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+
+## Begin with a small example
+
+Half-open intervals reduce off-by-one mistakes.
+
+$$
+|[l,r)|=r-l
+$$
+
+**What the symbols mean:** l is the included first index and r the excluded final boundary; the vertical bars count positions.
+
+**Substitute actual numbers:** For [l,r)=[1,4), the positions are 1,2,3, exactly 4−1=3 indices. Binary Search and Sliding Window use this same convention but preserve different invariants.
+
+This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+
+## The chapters in this family
 
 1. **[Binary Search](../binary-search/index.qmd)** — Locate a boundary using a monotone predicate on an ordered domain.
 2. **[Two Pointers](../two-pointers/index.qmd)** — Maintain two moving indices with a shared invariant.
@@ -23,14 +39,10 @@ This family contains **13 independently navigable LeetCode topics**. Each topic 
 12. **[Simulation](../simulation/index.qmd)** — Evolve an explicit state according to a rule and input sequence.
 13. **[Brainteaser](../brainteaser/index.qmd)** — Use logical constraints and deductions rather than a fixed algorithmic template.
 
-## Mathematical connection
+## Practice method
 
-A problem can carry several topic labels. Let $\mathcal Q$ be the **set of problems** and $\mathcal T$ the set of topic tags. The assignment of tags to problems is a set-valued mapping:
+Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
 
-$$
-L:\mathcal Q\longrightarrow\mathcal P(\mathcal T).
-$$
+The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
 
-Here $L(p)$ is the set of tags assigned to problem $p$. Tags describe relevant structures and techniques; they do **not** uniquely determine an algorithm or a proof of correctness.
-
-[Browse the full Algorithms catalogue](../index.qmd) · [Original LeetCode topic list](https://leetcode.com/problemset/)
+[← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

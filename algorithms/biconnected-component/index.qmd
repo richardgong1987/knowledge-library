@@ -1,38 +1,61 @@
 ---
 title: "Biconnected Component"
-description: "Identify undirected graph blocks that cannot be disconnected by one internal articulation vertex."
+description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
 ---
 
-## Core idea
+## Begin with an actual graph
 
-Identify undirected graph blocks that cannot be disconnected by one internal articulation vertex.
+**LeetCode 1192 — Critical Connections in a Network.** In an undirected network, three nodes A,B,C form a triangle and node D is attached only to C. If link C–D fails, D is disconnected.
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
 
-## Worked-problem starting point
+## Why a tempting approach is wrong or wasteful
 
-Find vulnerable junctions in a communication network.
+Remove every edge one by one and run a full reachability search to test whether it was a bridge. This repeats lots of traversal.
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+## The idea that simplifies the problem
 
-## Mathematical Abstraction
+One DFS can compute discovery times and low-link values. A subtree that cannot reach an ancestor without using its parent edge is attached by a bridge.
+
+## Formalise it — explain symbols immediately
 
 $$
-v\text{ is an articulation vertex}\iff c(G-v)>c(G)
+low(v)=\min\bigl(tin(v),\ tin(w)\text{ for back edges},\ low(c)\text{ for DFS children}\bigr)
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Biconnected Component** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Every symbol explained:** tin(v) is the discovery time of vertex v; low(v) is the smallest discovery time reachable from v's DFS subtree using tree edges then at most one back edge; c is a DFS child and w a back-edge ancestor.
 
-## Learning and verification workflow
+**Numbers substituted into the relation:** Suppose DFS discovers A at time 0, B at 1, C at 2 and D at 3, with triangle back edge C→A. Then low(C)=0 due to A; low(D)=3 since D has no back edge. Because low(D)=3>tin(C)=2, edge C–D is a bridge.
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
 
-## LeetCode practice
+## Algorithm progression
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Biconnected Component**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
+2. Start from the concrete example above and perform one legal edge decision.
+3. Record the changed state and check whether the invariant still holds.
+4. Continue until all required edges, vertices, or candidate states have been processed.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+**Proof sketch:** If low(child)>tin(parent), no route from the child's subtree reaches the parent or an ancestor except the tree edge: removing that edge separates the graph. Otherwise a back edge provides an alternate route.
+
+## Run a small implementation
+
+Trace a graph of at most four vertices by hand, then write a short DFS/stack routine that maintains the exact invariant below. The general-purpose [DFS/BFS implementations](../examples/patterns.mjs) give a tested starting point; note where the specialised operation requires additional state.
+
+The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+
+## Work and limitations
+
+**Complexity:** O(V+E) time and O(V) DFS state. Edge IDs or parent-edge handling matter when parallel edges exist.
+
+**Where this reasoning fails:** A bridge is an EDGE, an articulation point is a VERTEX, and biconnected components have more specific vertex/edge connectivity definitions. Distinguish these before answering.
+
+As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+
+## Connections
+
+- **Textbook:** Connects to CLRS Chapter 20 (DFS and graph structure); bridge and biconnected algorithms extend these foundations.. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **Practice:** LeetCode 1192 — Critical Connections in a Network. Treat any online solution as a second explanation to compare, not a script to copy.
+- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+
+[← Algorithms](../index.qmd)

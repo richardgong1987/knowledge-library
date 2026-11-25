@@ -1,38 +1,70 @@
 ---
 title: "Greedy"
-description: "Commit to locally attractive choices when an exchange proof supports global optimality."
+description: "Learn Greedy with a complete numerical recurrence, proof, counterexample and small tested implementation."
 ---
 
-## The problem and underlying idea
+## One problem you can understand by hand
 
-Commit to locally attractive choices when an exchange proof supports global optimality.
+**LeetCode 435 — Non-overlapping Intervals.** Choose the maximum number of non-overlapping meetings. A locally plausible rule such as selecting the earliest STARTING meeting can block many shorter ones.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
 
-## A concrete problem
+## The approach that looks convincing but fails
 
-Schedule the most nonoverlapping intervals.
+Consider every subset of meetings and test overlaps. This is correct but expensive; choosing the wrong local rule is faster but wrong.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
 
-## Mathematical Abstraction
+## The key reasoning step
+
+Sort meetings by FINISH time. Take the first compatible meeting that finishes earliest. It leaves at least as much remaining time for future meetings as any other choice.
+
+## From actual numbers to mathematics
 
 $$
-a_t\in\arg\max_{a\in A_t}g(a)
+a^*=\arg\min_{a\in\mathcal A_{\mathrm{compatible}}}end(a)
 $$
 
-The formula captures a central structural relationship or illustrative model for **Greedy**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What every symbol means:** A_compatible is the set of meetings that start after or at the previously chosen end; end(a) is the finish time of meeting a; a* is the compatible meeting with minimum finish time.
 
-## How to study this topic
+**Now substitute numbers into that same relationship:** Meetings A=[1,4], B=[2,3], C=[3,5]. Choosing earliest start A blocks B and C, giving 1 meeting. Choosing earliest FINISH B (end 3) allows C (start 3), giving 2. This small case exposes the important rule.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
 
-## Practice and connections
+## Why the result is actually correct
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Greedy** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+Exchange argument: take an optimal schedule and replace its first activity with the activity that finishes earliest. The replacement does not finish later, so it leaves all later chosen activities feasible and does not reduce the schedule's size. Repeat on the remaining interval.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
+
+## Actual implementation
+
+The [original, tested JavaScript implementation](../examples/patterns.mjs) exports `maxNonOverlapping`:
+
+~~~js
+import { maxNonOverlapping } from '../examples/patterns.mjs';
+
+console.log(maxNonOverlapping([[1,4],[2,3],[3,5]]));
+~~~
+
+Run this from a `.mjs` file inside this topic directory. The same function is exercised by [the unit tests](../examples/patterns.test.mjs). The implementation is intentionally tiny so the recurrence remains visible.
+
+## Complexity and failure conditions
+
+**Cost model:** O(n log n) sorting followed by O(n) scanning, where n is meeting count; additional space depends on sorting implementation.
+
+**A classic mistake:** Greedy is not 'always choose the biggest/best-looking thing'. The choice needs a proof. Coin values [1,3,4] and amount 6 defeat largest-coin greedy (4+1+1=3 coins, while 3+3=2); dynamic programming is required in the general coin-change problem.
+
+In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+
+## Try teaching it back
+
+Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+
+## Reference and community insight
+
+**CLRS relationship:** CLRS Chapter 15 (activity-selection problem and greedy-choice proof).. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**Related classic LeetCode example:** LeetCode 435 — Non-overlapping Intervals — [community/official practice link](https://leetcode.com/discuss/post/7137681/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+
+[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

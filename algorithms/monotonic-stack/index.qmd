@@ -1,38 +1,65 @@
 ---
 title: "Monotonic Stack"
-description: "Maintain candidate indices whose values follow a monotonic invariant."
+description: "CLRS-inspired worked lesson on Monotonic Stack: numerical substitution, invariants, original code and complexity."
 ---
 
-## Core idea
+## Understand the actual problem
 
-Maintain candidate indices whose values follow a monotonic invariant.
+**LeetCode 496 — Next Greater Element I.**
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+A stack contains indices whose next greater value has not yet been found, arranged so their values decrease from bottom to top. A larger newcomer resolves several waiting indices at once.
 
-## Worked-problem starting point
+## First try the obvious approach
 
-Find the next greater element for each index.
+For every index, scan all values to its right until you find a greater one. Many comparisons are repeated.
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
 
-## Mathematical Abstraction
+## Mathematical relationship, explained immediately
 
 $$
-a_{s_0}\leq a_{s_1}\leq\cdots\leq a_{s_k}
+a_{s_0}\geq a_{s_1}\geq\cdots\geq a_{s_k}
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Monotonic Stack** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Symbol by symbol:** s₀ through s_k are the indices currently on the stack from bottom to top; a_s is the array value at that stored index.
 
-## Learning and verification workflow
+**Calculate with real numbers:** For [2,1,3], push indices of 2 then 1 (values 2≥1). When 3 arrives, it exceeds 1 and 2, so pop both; their next greater value is 3. The last 3 has none to its right, so result is [3,3,−1].
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
 
-## LeetCode practice
+## How the algorithm emerges
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Monotonic Stack**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+1. Identify what answer you would compute by hand for the smallest instance.
+2. Store exactly that piece of information when moving to the next step.
+3. Update the stored information after one input event or query.
+4. Check the invariant before returning a result; consider boundary values and ties.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+**Correctness argument:** An index remains on the stack only until the first strictly greater element arrives; any previously smaller pending element can be settled at once. Each index is pushed and popped at most once.
+
+## Code, but only after the reasoning
+
+Use the tested [algorithm lab](../examples/patterns.mjs), which exports `nextGreater`:
+
+~~~js
+import { nextGreater } from '../examples/patterns.mjs';
+
+console.log(nextGreater([2,1,3]));
+~~~
+
+Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
+
+## Count the work rigorously
+
+**Time and memory:** O(n) total time despite the nested while: every index enters and leaves the stack at most once. O(n) stack space.
+
+**The misleading shortcut:** Strict versus non-strict comparisons change how equal values are handled. For 'next strictly greater', 3 must NOT pop an earlier 3.
+
+A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+
+## Practice and source
+
+- **Textbook relationship:** CLRS Chapter 10 (stacks), combined with an amortised-analysis argument from Chapter 16., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode practice:** LeetCode 496 — Next Greater Element I. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
+- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+
+[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

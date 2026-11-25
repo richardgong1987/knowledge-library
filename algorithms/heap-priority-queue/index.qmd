@@ -1,42 +1,69 @@
 ---
 title: "Heap (Priority Queue)"
-description: "A priority-based structure supporting efficient minimum or maximum extraction."
+description: "Understand Heap (Priority Queue) from a real problem, a worked numerical example, a proof invariant and original code."
 ---
 
-::: {.callout-note}
-**Classification:** This is principally a data structure or representation. The topic studies its invariants and algorithms that operate on it.
-:::
+## Start with one concrete problem
 
-## The problem and underlying idea
+**LeetCode 215 — Kth Largest Element in an Array.** A priority-based structure supporting efficient minimum or maximum extraction.
 
-A priority-based structure supporting efficient minimum or maximum extraction.
+Before naming a data structure, imagine solving the problem by hand with four or five values. This topic is primarily a **representation**, not a single algorithm; the choice of representation changes which operations are cheap.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+### The obvious method — and why it falls short
 
-## A concrete problem
+Sort every element even though only the k-th rank is needed, or rescan the full array for each extracted maximum.
 
-Return the next highest-priority pending order.
+### The one insight to remember
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+A heap stores a partial order: the root is extreme, although sibling subtrees are not globally sorted.
 
-## Mathematical Abstraction
+## Build the mathematical meaning from a small example
 
 $$
-key(parent(v))\leq key(v)\quad\text{for a min-heap}
+key(parent(v))\leq key(v)
 $$
 
-The formula captures a central structural relationship or illustrative model for **Heap (Priority Queue)**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What each symbol means:** For a min-heap, key(v) is a node's priority and parent(v) its direct parent; each parent key is at most its child key.
 
-## How to study this topic
+**Substitute actual values:** Values [2,7,3] form a valid min-heap with root 2 and children 7 and 3, because 2≤7 and 2≤3; children need not be ordered relative to each other.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Do not move to implementation until you can explain this example without reading the formula.
 
-## Practice and connections
+## Design the algorithm in ordinary English
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Heap (Priority Queue)** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. State what the stored representation means before the first operation.
+2. Perform exactly the operation suggested by the example, updating only the necessary state.
+3. Check the invariant after the operation, especially on duplicates, boundaries and empty input.
+4. Stop when the requested result is known; do not perform work unrelated to the output.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument (the invariant):** After insertion or root removal, sift up/down fixes each violated parent-child relation along one tree path, restoring the heap invariant.
+
+## Code you can run
+
+The [original JavaScript lab](../examples/patterns.mjs) contains the exported, unit-tested function `quickselect`. Its use can be reduced to:
+
+~~~js
+import { quickselect } from '../examples/patterns.mjs';
+
+console.log(quickselect([8,2,7,1,9],2));
+~~~
+
+Save the snippet inside the `algorithms/heap-priority-queue/` directory as a `.mjs` file, then run it with Node.js. The imported source is written independently and is tested in CI.
+
+## Why it works, and how expensive it is
+
+After insertion or root removal, sift up/down fixes each violated parent-child relation along one tree path, restoring the heap invariant.
+
+**Time and space:** O(log n) insertion and removal on a binary heap, O(1) peek, O(n) heap construction; n is heap size.
+
+**Common mistake or limitation:** The entire heap array is NOT sorted. Searching for an arbitrary item may still require O(n) scans.
+
+## Try to explain it in an interview
+
+Without looking at code, repeat the numerical example and answer: *What does the representation remember that the naive method repeatedly recomputes?* Then state one change in assumptions that would invalidate your chosen technique.
+
+## Reading and practice
+
+- **Textbook connection:** Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition, Chapter 6 (heaps and priority queues) and Chapter 9 (selection). [Official table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode:** LeetCode 215 — Kth Largest Element in an Array. Use its examples and community explanations to compare alternative techniques, but the explanation here is independently written.
+- [Algorithms learning map](../index.qmd) · [How to read mathematical formulas](../guides/read-the-math.qmd).

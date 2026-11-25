@@ -1,38 +1,75 @@
 ---
 title: "Depth-First Search"
-description: "Explore one branch as deeply as possible before backtracking."
+description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
 ---
 
-## The problem and underlying idea
+## Start with the problem, not a formula
 
-Explore one branch as deeply as possible before backtracking.
+**LeetCode 200 — Number of Islands**. Explore one branch as deeply as possible before backtracking.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
 
-## A concrete problem
+## Why the obvious approach is expensive
 
-Count connected islands in a grid.
+Trying to count an island by looking at one land cell misses other land cells connected to it. Recounting visited cells counts the same island twice.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+## Discover the key idea
 
-## Mathematical Abstraction
+From each unseen land cell, keep following neighbours until the entire connected component has been marked. Only then start the next component.
+
+This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+
+## Mathematical model — then immediately translate it
 
 $$
-DFS(v):\ \operatorname{visit}(v);\ DFS(u)\ \forall u\in N(v)\text{ unseen}
+\operatorname{DFS}(v):\ \operatorname{mark}(v);\ \forall u\in N(v)\setminus Seen,\ \operatorname{DFS}(u)
 $$
 
-The formula captures a central structural relationship or illustrative model for **Depth-First Search**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Explanation of every symbol:** v is the current vertex or grid cell; N(v) is its set of permitted neighbours; Seen is the set of already discovered vertices. The notation means visit each not-yet-seen neighbour recursively.
 
-## How to study this topic
+**Substitute actual values:** For graph with edges A−B and B−C, starting at A marks A, then B, then C. A second start at B adds no component because B is already seen. A separate vertex D starts component number two.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
 
-## Practice and connections
+## Work through the algorithm
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Depth-First Search** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify the initial state using the small example above.
+2. Make one legal decision and update only state affected by that decision.
+3. Verify the invariant again. If it fails, correct the state before making another decision.
+4. Repeat until the search space is exhausted or the answer has been justified.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Why this is correct:** Each explored edge leads either to a newly marked vertex or to an already marked one. No vertex is counted twice, and all reachable vertices eventually receive a mark.
+
+## Actual code — keep it small
+
+The original [Node.js example library](../examples/patterns.mjs) implements this technique as `componentsDFS` and tests it against boundary cases:
+
+~~~js
+import { componentsDFS } from '../examples/patterns.mjs';
+
+console.log(componentsDFS([[1],[0,2],[1],[]]));
+~~~
+
+Save this snippet in the current topic folder as a `.mjs` file, then run it with Node. The function is tested with `node --test algorithms/examples/patterns.test.mjs` from repository root.
+
+## Analyse the work; do not guess big-O
+
+**Cost:** O(V+E) time with adjacency lists and O(V) visited/stack memory; V is vertices, E is listed edges.
+
+The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+
+## Break the technique deliberately
+
+DFS does NOT in general find the shortest path. For a very deep graph, recursive JavaScript DFS can overflow the call stack; use an explicit stack when necessary.
+
+If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+
+## Source connections and practice
+
+**Textbook:** CLRS 4e, Chapter 20 §20.3 (depth-first search).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**LeetCode problem:** LeetCode 200 — Number of Islands. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/number-of-islands/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+
+**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+
+[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)

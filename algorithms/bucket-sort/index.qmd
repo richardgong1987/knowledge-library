@@ -1,38 +1,66 @@
 ---
 title: "Bucket Sort"
-description: "Distribute keys into buckets, sort locally, and concatenate."
+description: "CLRS-inspired worked lesson on Bucket Sort: numerical substitution, invariants, original code and complexity."
 ---
 
-## The problem and underlying idea
+## Understand the actual problem
 
-Distribute keys into buckets, sort locally, and concatenate.
+**LeetCode 164 — Maximum Gap (sorting ideas).**
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+Map each key to a bucket, sort the content of each bucket, then concatenate in bucket order. The mapping must preserve ordering between buckets.
 
-## A concrete problem
+## First try the obvious approach
 
-Sort uniformly distributed values in the unit interval.
+Sorting by repeated pairwise comparisons ignores the possibility that the numeric domain is small or input distribution is reasonably spread out.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
 
-## Mathematical Abstraction
+## Mathematical relationship, explained immediately
 
 $$
-b:A\rightarrow\{0,1,\ldots,k-1\}
+b(x)=\min(k-1,\lfloor kx\rfloor)
 $$
 
-The formula captures a central structural relationship or illustrative model for **Bucket Sort**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Symbol by symbol:** x is an input number in the interval [0,1]; k is the positive number of equally sized buckets; b(x) is the bucket index from 0 through k−1.
 
-## How to study this topic
+**Calculate with real numbers:** For k=4 and x=0.63, kx=2.52 and floor gives 2, so x enters bucket 2. For x=1, the min caps 4 to bucket 3, avoiding an out-of-range index.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
 
-## Practice and connections
+## How the algorithm emerges
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Bucket Sort** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify what answer you would compute by hand for the smallest instance.
+2. Store exactly that piece of information when moving to the next step.
+3. Update the stored information after one input event or query.
+4. Check the invariant before returning a result; consider boundary values and ties.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument:** If x lies in a smaller bucket than y, x≤y. Sorting within each bucket fixes local ordering; concatenation then fixes global ordering.
+
+## Code, but only after the reasoning
+
+Here is a standalone, original JavaScript demonstration:
+
+~~~js
+const a=[.63,.12,.75,.28];
+const buckets=Array.from({length:4},()=>[]);
+for(const x of a) buckets[Math.min(3,Math.floor(4*x))].push(x);
+console.log(buckets.flatMap(b=>b.sort((x,y)=>x-y)));
+~~~
+
+This shows a deliberately minimal case; the chapter explains the invariant needed to extend it into a full implementation.
+
+## Count the work rigorously
+
+**Time and memory:** Under roughly uniform independent inputs and simple bucket sorts, expected O(n+k) plus local sorting overhead; worst-case can be much larger.
+
+**The misleading shortcut:** Expected linear behaviour relies on assumptions about distribution and bucket size. If all entries fall in one bucket, its internal sort dominates.
+
+A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+
+## Practice and source
+
+- **Textbook relationship:** CLRS Chapter 8 §8.4 (bucket sort)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode practice:** LeetCode 164 — Maximum Gap (sorting ideas). Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
+- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+
+[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

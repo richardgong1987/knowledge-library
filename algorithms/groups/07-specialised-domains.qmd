@@ -1,13 +1,29 @@
 ---
 title: "Randomisation, Design, and Special Domains"
-description: "Capture specialised LeetCode topics outside classical algorithm paradigms."
+description: "A connected learning path through 8 worked algorithms topics."
 ---
 
-Capture specialised LeetCode topics outside classical algorithm paradigms.
+## What you are really learning
 
-This family contains **8 independently navigable LeetCode topics**. Each topic has its own directory and a starting mathematical abstraction. The grouping is a learning aid, not part of LeetCode's official hierarchy.
+Respect the domain's actual contract: randomness, database joins, shell transformations and synchronisation are not one algorithm family.
 
-## Topics
+The goal is not to learn 8 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+
+## Begin with a small example
+
+A stream sample can remain unbiased without storing every element.
+
+$$
+P(\text{chosen item after }n)=\frac1n
+$$
+
+**What the symbols mean:** P is probability over random replacement decisions and n is the total number of items processed by the one-item reservoir sampler.
+
+**Substitute actual numbers:** For n=3, the first item survives insertion 2 with probability 1/2 and insertion 3 with probability 2/3; multiply to get 1/3. Every item has the same final selection probability.
+
+This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+
+## The chapters in this family
 
 1. **[Randomized](../randomized/index.qmd)** — Use random choices inside an algorithm to influence expected performance or output.
 2. **[Reservoir Sampling](../reservoir-sampling/index.qmd)** — Maintain a uniform sample from a stream without knowing its final size.
@@ -18,14 +34,10 @@ This family contains **8 independently navigable LeetCode topics**. Each topic h
 7. **[Shell](../shell/index.qmd)** — Compose command-line utilities and streams as processing pipelines.
 8. **[Concurrency](../concurrency/index.qmd)** — Reason about overlapping operations, coordination, and shared-state correctness.
 
-## Mathematical connection
+## Practice method
 
-A problem can carry several topic labels. Let $\mathcal Q$ be the **set of problems** and $\mathcal T$ the set of topic tags. The assignment of tags to problems is a set-valued mapping:
+Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
 
-$$
-L:\mathcal Q\longrightarrow\mathcal P(\mathcal T).
-$$
+The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
 
-Here $L(p)$ is the set of tags assigned to problem $p$. Tags describe relevant structures and techniques; they do **not** uniquely determine an algorithm or a proof of correctness.
-
-[Browse the full Algorithms catalogue](../index.qmd) · [Original LeetCode topic list](https://leetcode.com/problemset/)
+[← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

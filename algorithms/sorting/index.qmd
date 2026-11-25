@@ -1,38 +1,65 @@
 ---
 title: "Sorting"
-description: "Reorder a collection according to a comparison rule."
+description: "CLRS-inspired worked lesson on Sorting: numerical substitution, invariants, original code and complexity."
 ---
 
-## The problem and underlying idea
+## Understand the actual problem
 
-Reorder a collection according to a comparison rule.
+**LeetCode 912 — Sort an Array.**
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+Sorting is a contract: output is ordered AND contains exactly the same multiset as input. A comparator must define a consistent order.
 
-## A concrete problem
+## First try the obvious approach
 
-Sort transactions by amount while preserving stable ties.
+Comparing every pair gives a simple but unnecessary quadratic process. Before choosing a sort, ask whether you need stability, can mutate input, and what keys look like.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+The goal is not to memorise a data structure. It is to identify which partial result the next operation can reuse.
 
-## Mathematical Abstraction
+## Mathematical relationship, explained immediately
 
 $$
 a_{\pi(0)}\leq a_{\pi(1)}\leq\cdots\leq a_{\pi(n-1)}
 $$
 
-The formula captures a central structural relationship or illustrative model for **Sorting**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Symbol by symbol:** a is the original array; n is the number of entries; π is a permutation of the original indices. The reordered values must be nondecreasing.
 
-## How to study this topic
+**Calculate with real numbers:** For [4,1,4,2], an appropriate permutation produces [1,2,4,4]. Both 4s remain: correctness is order plus preservation, not merely returning any increasing list.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Read the equation and the calculation as one explanation. If the numbers do not make sense, do not skip ahead to code.
 
-## Practice and connections
+## How the algorithm emerges
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Sorting** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify what answer you would compute by hand for the smallest instance.
+2. Store exactly that piece of information when moving to the next step.
+3. Update the stored information after one input event or query.
+4. Check the invariant before returning a result; consider boundary values and ties.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Correctness argument:** A correct sort never loses or invents entries, and every adjacent output pair is in order. Stability additionally keeps the original order of equal-key objects.
+
+## Code, but only after the reasoning
+
+Use the tested [algorithm lab](../examples/patterns.mjs), which exports `mergeSort`:
+
+~~~js
+import { mergeSort } from '../examples/patterns.mjs';
+
+console.log(mergeSort([4,1,4,2]));
+~~~
+
+Run this code from a `.mjs` file in the current topic folder. The [automated tests](../examples/patterns.test.mjs) include small examples and boundary cases.
+
+## Count the work rigorously
+
+**Time and memory:** Merge sort O(n log n) time, O(n) space; built-in library sort performance depends on runtime and comparator.
+
+**The misleading shortcut:** A comparison sort has a worst-case lower bound of Ω(n log n) comparisons for arbitrary distinct inputs, but counting/radix sorts can beat this if keys have additional structure.
+
+A common interview error is to mistake a nested loop for quadratic complexity. For a monotonic stack/queue, one item is removed at most once, so total work is linear. Conversely, a sorted data structure is not automatically fast for every possible operation.
+
+## Practice and source
+
+- **Textbook relationship:** CLRS Chapters 2, 6–8 (insertion, heap, quick, linear-time sorting)., in *Introduction to Algorithms*, 4th edition. [Official chapter list](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode practice:** LeetCode 912 — Sort an Array. Start with the numeric example here, then compare another user's solution and explain **which invariant their code preserves**.
+- **One follow-up:** Change the input by adding a duplicate, a negative value or an equal-time endpoint; does the derivation still hold?
+
+[← Algorithms map](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

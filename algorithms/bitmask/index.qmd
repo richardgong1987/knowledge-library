@@ -1,38 +1,70 @@
 ---
 title: "Bitmask"
-description: "Encode subsets compactly in the bits of an integer."
+description: "Learn Bitmask with a complete numerical recurrence, proof, counterexample and small tested implementation."
 ---
 
-## The problem and underlying idea
+## One problem you can understand by hand
 
-Encode subsets compactly in the bits of an integer.
+**LeetCode 698 — Partition to K Equal Sum Subsets.** A subset of available items must be represented as part of a DP state. Storing the list of chosen elements in every key is cumbersome.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+A good algorithm explanation begins with the decision you need to make, not the method's name. Write down the smallest example and the exact choice available at each step.
 
-## A concrete problem
+## The approach that looks convincing but fails
 
-Enumerate subsets of six features with bit operations.
+Use long strings or sorted copies to identify the same subset repeatedly. A set of n choices has exactly 2^n possibilities, but representations should be compact.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+Do not improve the code yet. Ask whether the information you need is already present in a smaller version of the same problem.
 
-## Mathematical Abstraction
+## The key reasoning step
+
+Use one bit per item index: a 1 means 'already chosen' and 0 means 'available'. Repeated values at different indices still receive different bits.
+
+## From actual numbers to mathematics
 
 $$
 mask(S)=\sum_{i\in S}2^i
 $$
 
-The formula captures a central structural relationship or illustrative model for **Bitmask**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**What every symbol means:** S is a set of chosen ZERO-BASED indices, i is an item index, 2^i is the binary place value for that index, and mask(S) is the integer encoding the subset.
 
-## How to study this topic
+**Now substitute numbers into that same relationship:** For items at positions {0,2,3}, mask=2⁰+2²+2³=1+4+8=13, whose binary representation is 1101. It marks items 0,2,3 as chosen and item 1 as absent. Testing bit 2 uses (13 & 4) ≠ 0.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+If a recurrence contains two alternatives, identify which real-world decision each alternative represents. If the formula uses a maximum, say what is being maximised and why the alternatives cover all legal choices.
 
-## Practice and connections
+## Why the result is actually correct
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Bitmask** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+Binary positional representation is unique. Each bit carries one independent yes/no choice, so no two distinct subsets of fixed indices share the same mask.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+A complete proof needs an initial state/base case, preservation of the hypothesis and an explanation that no valid possibility has been missed.
+
+## Actual implementation
+
+The [original, tested JavaScript implementation](../examples/patterns.mjs) exports `subsets`:
+
+~~~js
+import { subsets } from '../examples/patterns.mjs';
+
+console.log(subsets([1,2,3]));
+~~~
+
+Run this from a `.mjs` file inside this topic directory. The same function is exercised by [the unit tests](../examples/patterns.test.mjs). The implementation is intentionally tiny so the recurrence remains visible.
+
+## Complexity and failure conditions
+
+**Cost model:** O(1) bit operations for fixed-width masks; a full subset DP has up to O(2^n) states, n being item count.
+
+**A classic mistake:** Bitmask tricks rely on finite integer width. JavaScript bitwise operations convert to signed 32-bit integers, so a plain (1 << i) is unsafe for arbitrary i≥31; use BigInt for wider masks.
+
+In interviews, identifying **why a tempting shortcut fails** is more valuable than memorising one template. For example, a greedy choice needs an exchange proof; if no such proof exists, dynamic programming may be necessary.
+
+## Try teaching it back
+
+Use only the numbers in the worked example and explain the state, choices, update, stopping condition, and why no better answer is excluded. Then change one assumption and explain what changes.
+
+## Reference and community insight
+
+**CLRS relationship:** CLRS Chapter 14 DP and Appendix B sets; bitmask encoding is a common implementation technique.. [Official publisher contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**Related classic LeetCode example:** LeetCode 698 — Partition to K Equal Sum Subsets — [community/official practice link](https://leetcode.com/problems/partition-to-k-equal-sum-subsets/). The chapter is original and focuses on the reasoning pattern, not a copied solution.
+
+[← Algorithms overview](../index.qmd) · [Read the maths](../guides/read-the-math.qmd) · [Proof and complexity](../guides/prove-and-count.qmd)

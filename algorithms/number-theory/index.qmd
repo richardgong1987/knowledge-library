@@ -1,38 +1,56 @@
 ---
 title: "Number Theory"
-description: "Reason about divisibility, modular arithmetic, primes, and gcd."
+description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
 ---
 
-## Core idea
+## Start with a specific question
 
-Reason about divisibility, modular arithmetic, primes, and gcd.
+**LeetCode 1979 — Find Greatest Common Divisor of Array.** We will reason from a very small example rather than introduce a complicated notation first.
 
-The first question is which input features make this technique appropriate and which repeated work it can eliminate.
+## What the obvious approach overlooks
 
-## Worked-problem starting point
+Listing every divisor of two large numbers is slow and obscures the invariant.
 
-Test divisibility or compute the greatest common divisor.
+## One simple idea
 
-Formulate input and output precisely, trace a miniature example, and state the invariant before writing an implementation. If the mathematical abstraction below is only a model, identify its assumptions.
+Euclid's algorithm uses the fact that replacing the larger number by its remainder preserves the set of common divisors.
 
-## Mathematical Abstraction
+Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+
+## Formula and immediate translation
 
 $$
-a\equiv b\pmod m\iff m\mid(a-b)
+\gcd(a,b)=\gcd(b,a\bmod b)
 $$
 
-This relation is an entry point to formal reasoning, not a universal complexity guarantee for all problems carrying the **Number Theory** label. Define the symbols, domains and any assumptions in the context of the problem being solved.
+**Symbols and notation:** gcd(a,b) is the greatest common divisor of integers a,b; a mod b is the remainder after dividing a by nonzero b.
 
-## Learning and verification workflow
+**Insert actual numbers:** For a=48,b=18, remainder is 48 mod 18=12. So gcd(48,18)=gcd(18,12)=gcd(12,6)=gcd(6,0)=6.
 
-1. Choose the smallest representative input and record the intended output.
-2. Derive an operation or algorithm maintaining a clearly stated invariant.
-3. Give a correctness argument, such as induction, an exchange argument, graph properties, or a state-machine invariant.
-4. Analyse worst-case or expected time and memory, specifying the data structure and input assumptions.
-5. Test boundaries, repeated values, invalid conditions, and a counterexample to a naive implementation.
+This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
 
-## LeetCode practice
+## Why the mathematics leads to an algorithm
 
-Use [LeetCode Problems](https://leetcode.com/problemset/) and filter for **Number Theory**. Topic labels overlap: a single problem may require multiple patterns, and an algorithm's name need not match its label exactly.
+Any number dividing both a and b also divides a−qb, which equals the remainder; the reverse direction holds too. Therefore the set of common divisors is unchanged.
 
-Return to the [Algorithms index](../index.qmd) for connections and a suggested learning order.
+This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+
+## Make the idea executable
+
+Start with the numerical example above and write a tiny function or test that reproduces it. For comparison, examine the [original executable patterns library](../examples/patterns.mjs). This topic's main challenge is its mathematical invariant rather than framework setup.
+
+## Complexity and correctness boundaries
+
+**Work bound:** O(log min(|a|,|b|)) remainder steps in the Euclidean algorithm for positive integers.
+
+**Counterexample or limitation:** Stop when second argument becomes zero; gcd(a,0)=|a|. For negative inputs define gcd nonnegative and normalise signs.
+
+Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+
+## Reference and practice
+
+- **CLRS (4th edition):** CLRS Chapter 31 §31.2 (greatest common divisor).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- **LeetCode:** LeetCode 1979 — Find Greatest Common Divisor of Array. [Original problem page or practice resource](https://leetcode.com/problems/find-greatest-common-divisor-of-array/).
+- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+
+[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)

@@ -1,38 +1,67 @@
 ---
 title: "Recursion"
-description: "Define a computation in terms of smaller instances with a base case."
+description: "A detailed, example-first algorithm lesson connecting CLRS-style reasoning with LeetCode interview patterns."
 ---
 
-## The problem and underlying idea
+## Start with the problem, not a formula
 
-Define a computation in terms of smaller instances with a base case.
+**LeetCode 104 — Maximum Depth of Binary Tree**. Define a computation in terms of smaller instances with a base case.
 
-A useful starting question is: **What property of the input makes this representation or technique suitable, and what work can it avoid compared with the direct approach?**
+Imagine solving a tiny case by hand before writing any code. Ask what information you are recalculating unnecessarily and what information you could carry to the next decision.
 
-## A concrete problem
+## Why the obvious approach is expensive
 
-Compute factorial and explain the termination measure.
+A giant while loop with nested special cases obscures a problem whose subtrees already have the same form as the whole problem.
 
-Before implementing a solution, describe the input, desired output, constraints, and the invariant or decision rule needed for a correct result. Work through a very small case by hand first.
+## Discover the key idea
 
-## Mathematical Abstraction
+Define a base case and a strictly smaller recursive instance; use returned solutions to combine into the answer.
+
+This is the moment to explain the technique aloud, without using its name as a substitute for understanding.
+
+## Mathematical model — then immediately translate it
 
 $$
-f(0)=1,\quad f(n)=n\,f(n-1)
+h(v)=1+\max(h(left(v)),h(right(v)))
 $$
 
-The formula captures a central structural relationship or illustrative model for **Recursion**. It does not, by itself, prove a solution correct or determine complexity for every problem carrying this tag. Name the domain of each variable and check the assumptions when applying it to a concrete exercise.
+**Explanation of every symbol:** h(v) is height in number of nodes rooted at v; left(v) and right(v) are child nodes; height of an absent child is defined as zero.
 
-## How to study this topic
+**Substitute actual values:** If a node has left height 2 and right height 4, its height is 1+max(2,4)=5. If both children are absent, height is 1+max(0,0)=1.
 
-1. Express the problem formally and identify what must remain true during each step.
-2. Derive an algorithm or data-structure operation from that invariant.
-3. Prove correctness using an appropriate tool: induction, loop invariants, exchange arguments, graph reachability, or exhaustive reasoning.
-4. Derive **time and space complexity** from the actual implementation and input constraints.
-5. Test the smallest instance, a boundary case, a duplicate/repeated-value case when relevant, and a counterexample to a tempting incorrect approach.
+Notice that the numbers come **immediately after the formula**. Reading the equation should lead to the same decision you would make with paper and pencil.
 
-## Practice and connections
+## Work through the algorithm
 
-Open the [LeetCode problemset](https://leetcode.com/problemset/) and filter the **Recursion** topic. A problem can carry several overlapping tags, so the label describes one relevant feature and not necessarily the only solution technique.
+1. Identify the initial state using the small example above.
+2. Make one legal decision and update only state affected by that decision.
+3. Verify the invariant again. If it fails, correct the state before making another decision.
+4. Repeat until the search space is exhausted or the answer has been justified.
 
-Return to the [Algorithms knowledge map](../index.qmd) to connect this topic with other methods. The example and formal relation above are original educational material, not copied problem statements or submissions.
+**Why this is correct:** The recursion is correct by induction on subtree size: assume child heights correct; every path from the parent chooses one of those children, so the maximum is correct.
+
+## Actual code — keep it small
+
+The key here is the mathematical state and the progression of decisions. Implement the described transition in a short function before choosing a full production implementation; test the explicit numbers above as your first assertion.
+
+## Analyse the work; do not guess big-O
+
+**Cost:** For tree height, O(n) work for n nodes; recursion stack O(h), where h is maximum tree depth.
+
+The important complexity question is which operation may repeat and how many times it can repeat. In a recursion, count the decision-tree branches; with pointers, count total forward movements; with graph searches, count visits to vertices and edges.
+
+## Break the technique deliberately
+
+Recursion alone is not memoization: when identical subproblems recur, plain recursion may be exponentially expensive (e.g. naive Fibonacci). Also identify a decreasing termination measure.
+
+If the problem's assumptions change, return to the invariant and check whether it still holds. An algorithmic pattern is a consequence of assumptions, not a keyword to memorise.
+
+## Source connections and practice
+
+**Textbook:** CLRS Chapter 2 (recursive algorithm design) and Chapter 4 (divide and conquer).. [Official 4th-edition table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+
+**LeetCode problem:** LeetCode 104 — Maximum Depth of Binary Tree. **Discussion or editorial to compare after solving:** [public community explanation](https://leetcode.com/problems/maximum-depth-of-binary-tree/). The lesson above uses original wording, examples, and code rather than reproducing third-party solutions.
+
+**Interview self-test:** Explain the concrete example, state the invariant, name the first invalid assumption, and derive the work bound.
+
+[← Algorithms](../index.qmd) · [Mathematical notation guide](../guides/read-the-math.qmd) · [Choosing the right pattern](../guides/choose-a-pattern.qmd)

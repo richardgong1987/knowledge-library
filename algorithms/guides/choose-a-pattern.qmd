@@ -1,0 +1,131 @@
+---
+title: "How to Choose the Right Algorithm"
+description: "A decision guide grounded in input properties, with counterexamples to common shortcuts."
+---
+
+# Stop memorising keywords; inspect the structure
+
+There is no algorithm that you should apply merely because a problem mentions an array. Ask what the problem asks you to return, whether the input is sorted, whether values can be negative, and which property allows you to **discard work safely**.
+
+The LeetCode community has useful discussions separating Sliding Window, Prefix Sum + Hash Map and Kadane's algorithm. We build those distinctions from arithmetic rather than relying on a memorised table.
+
+## 1. Is the answer about a contiguous subarray?
+
+Suppose the array is [2,1,3,2] and we want a minimum-length contiguous subarray with sum at least 5.
+
+Because **all values are nonnegative**, expanding the right boundary cannot decrease the sum, and moving the left boundary inward cannot increase it. That monotonicity is why a Sliding Window works.
+
+$$
+W(l,r)=\sum_{i=l}^{r-1}a_i
+$$
+
+**Symbols:** $W(l,r)$ is the sum of the half-open interval from index $l$ to (but excluding) index $r$; $a_i$ is the element at position $i$.
+
+**Numbers:** For l=1 and r=3, the window is [1,3] and its sum is 1+3=4. Extending to r=4 adds value 2, making 6. Removing the leftmost 1 leaves sum 5, giving length 2. You can update rather than resumming.
+
+### Why negative numbers change the answer
+
+For [2,−3,4], removing the first value 2 decreases the sum, but removing the negative −3 **increases** it. The simple monotone-window argument no longer holds.
+
+For arbitrary integers and an exact target sum, use prefix sums and a frequency map instead.
+
+$$
+P_r-P_l=k
+$$
+
+**Symbols:** $P_j$ is the sum before position j; $l$ and $r$ are the start/end indices of a half-open subarray; $k$ is the target.
+
+**Numbers:** For [1,−1,0], prefixes are [0,1,0,0]. With target k=0, equal prefixes yield zero-sum subarrays: [1,−1], [1,−1,0] and [0]. There are **three**; a single sliding window cannot reliably count them all.
+
+**Read:** [Sliding Window](../sliding-window/index.qmd) and [Prefix Sum](../prefix-sum/index.qmd). [Community pattern distinction](https://leetcode.com/discuss/post/7077374/).
+
+## 2. Does a comparison let you discard half the candidates?
+
+For sorted values [1,3,3,6] and target 3, the first position with value at least 3 is index 1. Binary search works because once a value is large enough, all later entries are at least as large.
+
+$$
+P(i)=\bigl[a_i\geq x\bigr]
+$$
+
+**Symbols:** $P(i)$ is a Boolean predicate, $a_i$ is the sorted element at index i, and $x$ is the target; square brackets represent the truth of the condition.
+
+**Numbers:** Evaluating P on [1,3,3,6] with x=3 yields [false,true,true,true]. The first true position is 1. If the sequence alternated false/true/false, binary search could discard the wrong region.
+
+**Read:** [Binary Search](../binary-search/index.qmd).
+
+## 3. Is the problem asking for all answers, or for the best answer?
+
+For [1,2,3], listing every subset produces eight outputs. Backtracking is natural because you must visit every choose/skip branch. It cannot magically return eight answers without enough work to generate them.
+
+But suppose you want only the **largest amount from non-adjacent houses** [2,7,9,3,1]. Storing the best value for each prefix is enough; no need to list every subset.
+
+$$
+DP[i]=\max(DP[i-1],DP[i-2]+a_i)
+$$
+
+**Symbols:** $DP[i]$ is the optimal value among first i houses, $a_i$ is current house value, and the two choices are skip i or take i.
+
+**Numbers:** Starting with DP[0]=0 and DP[−1]=0, the results for five houses are 2,7,11,11,12. The answer is 12. This is a dynamic-programming optimisation, not an enumeration output problem.
+
+**Read:** [Backtracking](../backtracking/index.qmd), [Dynamic Programming](../dynamic-programming/index.qmd).
+
+## 4. Can one local choice be proved globally safe?
+
+Greedy scheduling can work beautifully if you always choose the compatible meeting that **finishes earliest**. But the local rule must have an exchange proof.
+
+Coins [1,3,4] with target amount 6 show why arbitrary greedy choices are unsafe. Taking largest coin 4 first forces 4+1+1 (three coins), while 3+3 uses just two.
+
+$$
+OPT(6)=2<3=GREEDY(6)
+$$
+
+**Symbols:** OPT(6) is the minimum number of coins required to make value 6; GREEDY(6) is the count chosen by the 'largest-first' heuristic with denominations [1,3,4].
+
+**Numbers:** OPT uses 3+3=6 and 2 coins. GREEDY uses 4+1+1=6 and 3 coins. This one example disproves the universal correctness of the greedy shortcut.
+
+**Read:** [Greedy](../greedy/index.qmd), [Coin Change via DP](../dynamic-programming/index.qmd).
+
+## 5. Is it a graph, and are its edges weighted?
+
+For roads A→B cost 2, A→C cost 5 and B→C cost 1:
+
+- BFS finds the path with the FEWEST EDGES: direct A→C has one edge.
+- Dijkstra (nonnegative weights) finds the path with the LOWEST TOTAL COST: A→B→C costs 2+1=3, less than 5.
+
+$$
+d(C)=\min(5,2+1)=3
+$$
+
+**Symbols:** $d(C)$ is the best cost from source A to node C; 5 is direct cost; 2 and 1 are costs of two consecutive roads.
+
+**Numbers:** The indirect route gives 3; the direct route gives 5. A one-hop path can therefore be more expensive than a two-hop path.
+
+If edges can be negative, the usual Dijkstra proof does not apply. Check Bellman–Ford or another appropriate method.
+
+**Read:** [BFS](../breadth-first-search/index.qmd), [Shortest Paths](../shortest-path/index.qmd).
+
+## 6. Do we need fast repeated updates or only one static query?
+
+- One static interval-sum query: a simple loop may be enough.
+- Many queries on a fixed array: prefix sums reduce interval sums to one subtraction.
+- Many point updates AND interval queries: a Fenwick or segment tree stores reusable interval aggregates.
+
+$$
+\operatorname{sum}(l,r)=P_r-P_l
+$$
+
+**Symbols:** $P_j$ is the cumulative sum before index j; l and r are half-open interval bounds.
+
+**Numbers:** In [2,1,4,3], prefixes are [0,2,3,7,10]. Sum from index 1 up to index 3 is P₃−P₁=7−2=5, matching 1+4.
+
+A prefix array cannot remain correct after a mutable update unless the necessary prefixes are updated too.
+
+## The interview decision habit
+
+Do not say, 'This is a Sliding Window problem.' Say:
+
+'The values are nonnegative, so expanding this interval cannot decrease its sum; therefore I can move both boundaries forward without missing a valid optimal candidate.'
+
+That single sentence demonstrates **the property that justifies the algorithm**.
+
+[← Algorithms](../index.qmd) · [Math notation](read-the-math.qmd) · [Proof techniques](prove-and-count.qmd)
