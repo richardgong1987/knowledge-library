@@ -1,46 +1,147 @@
 ---
 title: "Mathematics, Bits, and String Algorithms"
-description: "A connected learning path through 11 worked algorithms topics."
+description: "A learning path through 11 topics: computer arithmetic, number theory, combinatorics, probability, geometry, bits, hashing, string matching, suffix arrays and counting, with a tool-choosing table and a formula cheat sheet."
 ---
 
-## What you are really learning
+## What this group is about
 
-Use exact arithmetic, counting and string structure instead of fragile ad-hoc tricks.
+::: {.callout-tip}
+Imagine a toolbox for problems about **numbers** and **words**. Some problems ask "how many ways?", like counting the outfits you can make from 3 T-shirts and 2 pairs of trousers ($3 \times 2 = 6$). Some ask "is it fair?", like whether a die lands on six once every 6 rolls on average. Some ask "where?", like whether a house is inside a fence. And some ask "have I seen this before?", like spotting the same word twice in a long story.
 
-The goal is not to learn 11 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+Every topic in this group swaps slow **listing** for a short piece of **mathematics**. Instead of trying all $10^{18}$ cases, you write one formula and compute it in a few steps. Each lesson starts with a child-sized example, builds the formula from it with real numbers, and ends with hard interview problems solved math-first.
+:::
 
-## Begin with a small example
+## Reading order, from simple to advanced
 
-Choosing two people from five is not a permutation.
+The topics are listed in the order of the lessons' *previous* and *next* links. Each one adds a single new kind of tool.
+
+1. **[Math](../math/index.qmd)**: how computer integers differ from school integers. Overflow, clock (modular) arithmetic, fast powers by the bits of the exponent, integer square roots and floor division.
+2. **[Number Theory](../number-theory/index.qmd)**: divisors and primes. The sieve of Eratosthenes, Euclid's gcd, Bézout's identity and modular inverses, which let you divide "modulo $10^9 + 7$".
+3. **[Combinatorics](../combinatorics/index.qmd)**: counting without listing. The product rule, permutations, combinations and Pascal's triangle, stars and bars, and the Catalan numbers.
+4. **[Probability and Statistics](../probability-and-statistics/index.qmd)**: putting numbers on chance. Conditional probability and Bayes, expectation and its linearity, variance, waiting times and probability DP.
+5. **[Geometry](../geometry/index.qmd)**: points and shapes with exact integers. The dot and cross products, segment intersection, polygon area, point in polygon and the convex hull.
+6. **[Bit Manipulation](../bit-manipulation/index.qmd)**: a number as a row of light switches. Two's complement, the bitwise operators, tricks such as `x & (x - 1)`, and XOR.
+7. **[Hash Function](../hash-function/index.qmd)**: turning any object into a number that spreads evenly. What makes a hash good, universal hashing, and Java's `equals`/`hashCode` contract.
+8. **[Rolling Hash](../rolling-hash/index.qmd)**: a fingerprint for every window of a string, updated in $O(1)$ as the window slides. Rabin–Karp, prefix hashes and collision odds.
+9. **[String Matching](../string-matching/index.qmd)**: finding a pattern in a text without restarting after a mismatch. Borders, the KMP prefix function, the Z-function and Boyer–Moore.
+10. **[Suffix Array](../suffix-array/index.qmd)**: every suffix of a text, sorted, so that many questions about repeated substrings become a search in one array.
+11. **[Counting](../counting/index.qmd)**: totals over everything at once. Frequency arrays, the complement, inclusion–exclusion, the pigeonhole principle, and each element's contribution to a total. It needs only the first three lessons, so it can also be read straight after Combinatorics.
+
+## Which tool when
+
+| If the problem says… | Reach for… | Because… |
+| --- | --- | --- |
+| "return the answer modulo $10^9 + 7$" | modular arithmetic, fast power, modular inverse | the true answer is far too big, but remainders of sums and products can be taken at every step |
+| "the result may not fit", or values near $2^{31}$ | `long`, `Math.addExact`, `low + (high - low) / 2` | Java `int` silently wraps around at 2,147,483,647 |
+| gcd, lcm, "share a common factor", "coprime" | Euclid's algorithm, prime factors, union-find on primes | $\gcd(a, b) = \gcd(b, a \bmod b)$ takes a handful of steps |
+| "count the primes below $n$" | the sieve of Eratosthenes | crossing out multiples costs $O(n \log \log n)$ for all numbers at once |
+| "how many ways", "how many paths", "how many arrangements" | product rule, $\binom{n}{k}$, Pascal's triangle, stars and bars | a formula replaces listing, which grows exponentially |
+| "the $k$-th permutation" or "number of trees / bracketings" | the factorial number system; Catalan numbers | blocks of $(n-1)!$ permutations, and $C_n = \binom{2n}{n} / (n + 1)$ |
+| "probability", "expected number", "on average" | linearity of expectation, indicator variables, probability DP | an expected total is the sum of each part's probability, even for dependent parts |
+| "pick at random with weights" | prefix sums plus binary search | index $i$ owns $w_i$ of the $W$ equally likely tickets |
+| points, lines, polygons, "fence", "inside" | the cross product, shoelace formula, monotone-chain hull | one integer formula tells left from right exactly, with no rounding |
+| "appears once", "XOR", "subsets of at most 20 items", "powers of two" | bit manipulation, bitmasks | $x \oplus x = 0$, and an `int` holds a whole subset |
+| group or deduplicate objects by content | a hash function with a good `hashCode` | equal objects must land in the same bucket, different ones should spread out |
+| "repeated substring", compare many windows of one length | rolling hash, binary search on the length | each window's fingerprint updates in $O(1)$ |
+| "find the pattern", "border", "period", "shortest palindrome" | KMP prefix function or Z-function | the text pointer never moves backwards, so $O(n + m)$ |
+| many questions about the substrings of one fixed text | suffix array with LCP | all suffixes are sorted once, then each query is a binary search |
+| "sum over all substrings / subarrays" | the contribution technique | swap the two sums: count, for each position, the substrings where it counts |
+| "at least one", "none of", "divisible by 2, 3 or 5" | complement counting, inclusion–exclusion | count the easy opposite, and correct overlaps with alternating signs |
+
+## Cheat sheet of key formulas
+
+Each formula comes from one of the lessons above, which derives it and checks the numbers in its Java lab.
+
+**Integer range and overflow** (Math).
 
 $$
-\binom{n}{k}=\frac{n!}{k!(n-k)!}
+-2^{31} \le x \le 2^{31} - 1, \qquad \text{stored} = \text{true} - 2^{32} \text{ when the true sum passes } 2^{31} - 1
 $$
 
-**What the symbols mean:** n is the number of distinct choices, k selected size, and factorial multiplies positive integers down to one.
+where $x$ is any Java `int` and "true" is the mathematical result. Example: $2{,}000{,}000{,}000 + 2{,}000{,}000{,}000 = 4 \times 10^{9}$, stored as $4{,}000{,}000{,}000 - 4{,}294{,}967{,}296 = -294{,}967{,}296$.
 
-**Substitute actual numbers:** With n=5 and k=2, compute 5!/(2!3!)=120/(2×6)=10 unordered pairs. Ordering those same pairs would overcount them.
+**Fast exponentiation** (Math).
 
-This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+$$
+a^{n} = \prod_{i \,:\, b_i = 1} a^{2^{i}}
+$$
 
-## The chapters in this family
+where $b_i$ is bit $i$ of the exponent $n$. Example: $13 = 1101_2$, so $3^{13} = 3^8 \cdot 3^4 \cdot 3^1 = 6{,}561 \cdot 81 \cdot 3 = 1{,}594{,}323$, with 3 squarings instead of 12 multiplications.
 
-1. **[Math](../math/index.qmd)** — Turn a computational task into equations, inequalities or discrete structures.
-2. **[Number Theory](../number-theory/index.qmd)** — Reason about divisibility, modular arithmetic, primes, and gcd.
-3. **[Combinatorics](../combinatorics/index.qmd)** — Count discrete arrangements, selections, and structures.
-4. **[Probability and Statistics](../probability-and-statistics/index.qmd)** — Analyse uncertainty and infer quantities from samples.
-5. **[Geometry](../geometry/index.qmd)** — Use coordinates, distances, orientation, and spatial relationships.
-6. **[Bit Manipulation](../bit-manipulation/index.qmd)** — Use bitwise operators to encode and transform integer state.
-7. **[Hash Function](../hash-function/index.qmd)** — Map objects into compact signatures or storage buckets.
-8. **[Rolling Hash](../rolling-hash/index.qmd)** — Update a substring fingerprint using a fixed base and modulus.
-9. **[String Matching](../string-matching/index.qmd)** — Find occurrences of a pattern inside a longer text.
-10. **[Suffix Array](../suffix-array/index.qmd)** — Sort all suffix starting positions lexicographically for text queries.
-11. **[Counting](../counting/index.qmd)** — Turn logical predicates into occurrence counts or frequency aggregates.
+**Euclid and the modular inverse** (Number Theory).
 
-## Practice method
+$$
+\gcd(a, b) = \gcd(b, a \bmod b), \qquad a^{-1} \equiv a^{p-2} \pmod p \text{ for a prime } p \nmid a
+$$
 
-Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
+where $a \bmod b$ is the remainder and $a^{-1}$ is the number whose product with $a$ leaves remainder 1. Example: $\gcd(252, 105) = \gcd(105, 42) = \gcd(42, 21) = 21$; and modulo 7, $3^{-1} \equiv 3^{5} = 243 \equiv 5$, since $3 \times 5 = 15 \equiv 1$.
 
-The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
+**Combinations and Catalan numbers** (Combinatorics).
+
+$$
+\binom{n}{k} = \frac{n!}{k!\,(n-k)!} = \binom{n-1}{k-1} + \binom{n-1}{k}, \qquad C_n = \frac{1}{n+1}\binom{2n}{n}
+$$
+
+where $\binom{n}{k}$ counts the $k$-element subsets of $n$ things and $C_n$ counts, for example, balanced strings of $n$ bracket pairs. Example: $\binom{5}{2} = 10 = \binom{4}{1} + \binom{4}{2} = 4 + 6$, and $C_3 = \frac{20}{4} = 5$.
+
+**Bayes' rule and linearity of expectation** (Probability and Statistics).
+
+$$
+P(A \mid B) = \frac{P(B \mid A)\, P(A)}{P(B)}, \qquad E\Big[\sum_i X_i\Big] = \sum_i E[X_i]
+$$
+
+where $P(A \mid B)$ is the probability of $A$ once $B$ is known and the $X_i$ are any random variables. Example: a 1% illness, a test catching 90% with 5% false alarms gives $\frac{0.009}{0.0585} \approx 15\%$ after a positive test; and 30 shuffled name cards give $30 \times \frac{1}{30} = 1$ expected match.
+
+**Cross product and shoelace area** (Geometry).
+
+$$
+\operatorname{cross}(O, A, B) = (a_x - o_x)(b_y - o_y) - (a_y - o_y)(b_x - o_x), \qquad \text{Area} = \frac{1}{2} \Big\lvert \sum_i (x_i y_{i+1} - x_{i+1} y_i) \Big\rvert
+$$
+
+where a positive cross product means $O \to A \to B$ turns left, and $(x_i, y_i)$ are a polygon's corners in order. Example: $\operatorname{cross}((0,0), (4,0), (4,3)) = 12$, a left turn, and that triangle's area is $12 / 2 = 6$.
+
+**Clearing the lowest set bit** (Bit Manipulation).
+
+$$
+x \mathbin{\&} (x - 1) = x \text{ with its lowest 1-bit turned off}
+$$
+
+where $\&$ is bitwise AND. Example: $12 = 1100_2$ and $11 = 1011_2$, so $12 \mathbin{\&} 11 = 1000_2 = 8$. Repeating it until 0 counts the 1-bits.
+
+**The rolling-hash update** (Rolling Hash).
+
+$$
+H_{i+1} = \big(B\,(H_i - c_i B^{m-1}) + c_{i+m}\big) \bmod M
+$$
+
+where $H_i$ is the hash of the window of length $m$ starting at $i$, $c_i$ is the character code at position $i$, $B$ is the base and $M$ the modulus. Example: with digits, $B = 10$ and a huge $M$, the window `123` slides to `234` as $10 \times (123 - 1 \times 100) + 4 = 234$.
+
+**The prefix function** (String Matching).
+
+$$
+\pi(i) = \max \lbrace k < i + 1 : s[0..k-1] = s[i-k+1..i] \rbrace
+$$
+
+where $\pi(i)$ is the length of the longest proper prefix of $s[0..i]$ that is also its suffix (its longest border). Example: for `abab`, $\pi = [0, 0, 1, 2]$: `aba` has border `a`, and `abab` has border `ab`.
+
+**The suffix array** (Suffix Array).
+
+$$
+s[\mathrm{SA}_0..] < s[\mathrm{SA}_1..] < \dots < s[\mathrm{SA}_{n-1}..]
+$$
+
+where $s[j..]$ is the suffix starting at position $j$, $<$ is dictionary order, and $\mathrm{SA}$ lists the starting positions in that order. Example: for `banana` the sorted suffixes are `a`, `ana`, `anana`, `banana`, `na`, `nana`, so $\mathrm{SA} = [5, 3, 1, 0, 4, 2]$.
+
+**The contribution technique** (Counting).
+
+$$
+\sum_{\text{subarrays } [l, r]} \; \sum_{i=l}^{r} a_i = \sum_{i=0}^{n-1} a_i \,(i + 1)(n - i)
+$$
+
+where $(i + 1)(n - i)$ is the number of subarrays that contain index $i$. Example: for `[1, 2, 3]`, $1 \cdot 3 + 2 \cdot 4 + 3 \cdot 3 = 20$, which matches the six subarray sums $1 + 2 + 3 + 3 + 5 + 6$.
+
+## How to study a lesson
+
+Pick one lesson. Redo its first example with pencil and paper, then run its lab (`java <Name>Lab.java` in the lesson's folder), which checks every number on the page and prints `OK`. Change one input in the lab, predict the new answer from the formula, and run it again. When the prediction is right without looking, move on to the next lesson.
 
 [← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

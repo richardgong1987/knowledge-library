@@ -1,56 +1,429 @@
 ---
 title: "Geometry"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "Computational geometry with exact integers: vectors and squared distances, the dot product and angles, the cross product and orientation, segment intersection, the shoelace area, point in polygon by ray casting, Andrew's monotone-chain convex hull, and hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+Computational geometry answers questions about points, lines and shapes: does this path turn left, do two roads cross, how big is this field, is this house inside the fence, and what is the shortest fence around all the trees? Almost every answer comes from **one tiny formula**, the cross product, computed with whole numbers so that it is never wrong by a rounding error.
 
-**LeetCode 149 — Max Points on a Line.** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`GeometryLab.java`](GeometryLab.java). Run it from this folder with `java GeometryLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-Computing a floating-point slope for each pair looks simple but vertical lines and rounding create dangerous cases.
+A gardener has six trees at $(1,1)$, $(2,2)$, $(2,0)$, $(2,4)$, $(3,3)$ and $(4,2)$. She wants the **shortest fence that encloses every tree**, and she needs to know which trees the fence touches.
 
-## One simple idea
+- Measuring angles with `Math.atan2` and comparing `double` values sounds natural, but floating point lies: `0.1 + 0.2 == 0.3` is `false` in Java, and three points that lie exactly on one line can look slightly bent.
+- Trying every pair of trees as a fence segment and checking that all other trees are on one side costs about $n^3$ steps: for LeetCode's 3,000 trees that is $2.7 \times 10^{10}$.
+- The answer is a **convex hull**. Andrew's monotone chain finds it in $O(n \log n)$ steps using only integer multiplications. Here the fence touches 5 trees; only $(2, 2)$ is inside.
 
-Use orientation or a normalised integer direction. The cross product tells whether three 2D points are collinear without dividing by x differences.
+## Explain it like I'm ten
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+::: {.callout-tip}
+**Left turn or right turn?** Walk from a lamppost to a tree, then on to a bench. At the tree you either turn left, turn right, or keep walking straight. Computers decide which with one multiplication sum, the **cross product**: positive means left, negative means right, zero means straight. Nearly every program in this lesson is built from that one question.
 
-## Formula and immediate translation
+**A rubber band around nails.** Hammer a nail into a board at every tree, stretch a rubber band around all of them, and let go. It snaps tight around the outside nails. The shape it makes is the **convex hull**, the shortest fence. The nails inside do not touch it.
+
+**Counting fence crossings.** You are standing in a field with a strangely shaped fence. Walk in a straight line towards the east and count how many times you climb over the fence. Odd: you started inside. Even: you started outside. Each crossing flips you between inside and outside. This is the **ray-casting** test, already published as an algorithm by M. Shimrat in *Communications of the ACM* in 1962.
+
+**Lacing a shoe.** To find the area of a field from the corners, multiply the numbers diagonally in a criss-cross pattern, like a shoelace, and add them up. That is the **shoelace formula**.
+:::
+
+## From simple to advanced
+
+### Level 1: points, vectors and exact distances
+
+A **point** is a pair of coordinates $(x, y)$. The **vector** from $P$ to $Q$ is the step you take to get there, $(q_x - p_x,\; q_y - p_y)$. Its length comes from Pythagoras:
 
 $$
-(b_x-a_x)(c_y-a_y)-(b_y-a_y)(c_x-a_x)=0
+\lvert PQ \rvert = \sqrt{(q_x - p_x)^2 + (q_y - p_y)^2}
 $$
 
-**Symbols and notation:** a,b,c are 2D points; the x/y subscripts select their coordinates. The left-hand side is the signed two-dimensional cross product of vectors b−a and c−a.
+where:
 
-**Insert actual numbers:** For a=(0,0), b=(2,2), c=(3,3), compute (2)(3)−(2)(3)=6−6=0: all three lie on one line. If c=(3,4), the result becomes 8−6=2, so they are not collinear.
+- $p_x, p_y$ and $q_x, q_y$ are the coordinates of $P$ and $Q$;
+- the differences are the horizontal and vertical parts of the step.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: from $O = (0, 0)$ to $B = (4, 3)$: $\sqrt{4^2 + 3^2} = \sqrt{16 + 9} = \sqrt{25} = 5$.
 
-## Why the mathematics leads to an algorithm
+**Stay with integers.** A square root is usually irrational, so it comes back rounded. To **compare** lengths you never need it: $\lvert PQ \rvert < \lvert RS \rvert$ exactly when $\lvert PQ \rvert^2 < \lvert RS \rvert^2$, and squared lengths of integer points are exact integers.
 
-A zero determinant means the displacement vectors are linearly dependent, hence they point along the same line (allowing appropriate degenerate handling).
+```java
+record Point(long x, long y) {}
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+static long squaredDistance(Point a, Point b) {
+    long dx = a.x() - b.x(), dy = a.y() - b.y();
+    return dx * dx + dy * dy;                           // no square root, so it stays an exact integer
+}
+```
 
-## Make the idea executable
+Why this matters: the points $(0, 0)$, $(0.1, 0.7)$ and $(0.3, 2.1)$ lie on one line (the third is 3 times the second), but the `double` calculation $0.1 \times 2.1 - 0.7 \times 0.3$ gives $2.8 \times 10^{-17}$, not 0. Scale by 10 to $(1, 7)$ and $(3, 21)$, and $1 \times 21 - 7 \times 3 = 0$ exactly. When the input is integers, keep it integers.
 
-Start with the numerical example above and write a tiny function or test that reproduces it. For comparison, examine the [original executable patterns library](../examples/patterns.mjs). This topic's main challenge is its mathematical invariant rather than framework setup.
+### Level 2: the dot product, which measures angles
 
-## Complexity and correctness boundaries
+The **dot product** of two vectors $\vec{u} = (u_x, u_y)$ and $\vec{v} = (v_x, v_y)$ multiplies matching parts and adds them. It also equals the two lengths times the cosine of the angle between them:
 
-**Work bound:** O(1) orientation test per triple, but the full max-points problem often needs O(n²) pair processing.
+$$
+\vec{u} \cdot \vec{v} = u_x v_x + u_y v_y = \lvert \vec{u} \rvert \, \lvert \vec{v} \rvert \cos \theta
+$$
 
-**Counterexample or limitation:** A cross product of zero also occurs for repeated points, so duplicates need separate treatment. In fixed-width integer languages the products can overflow.
+where:
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+- $\theta$ (theta) is the angle between the two vectors;
+- $\cos \theta$ is positive for angles below $90^\circ$, zero at exactly $90^\circ$, and negative above $90^\circ$.
 
-## Reference and practice
+Example: $\vec{u} = (4, 0)$ and $\vec{v} = (3, 3)$. The dot product is $4 \cdot 3 + 0 \cdot 3 = 12$. The lengths are $4$ and $\sqrt{18} \approx 4.243$, so $\cos \theta = \frac{12}{4 \times 4.243} \approx 0.7071$ and $\theta = 45^\circ$. For $(1, 2)$ and $(-2, 1)$ the dot product is $-2 + 2 = 0$: a right angle, found without any square root.
 
-- **CLRS (4th edition):** CLRS Appendix D (matrices) and selected geometry-related methods; full computational geometry is not a dedicated CLRS 4e chapter.. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 149 — Max Points on a Line. [Original problem page or practice resource](https://leetcode.com/problems/max-points-on-a-line/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+```java
+static long dot(Point o, Point a, Point b) {            // > 0: angle below 90 degrees; 0: right angle; < 0: above 90
+    return (a.x() - o.x()) * (b.x() - o.x()) + (a.y() - o.y()) * (b.y() - o.y());
+}
+```
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+The method takes three points and measures the angle at the corner `o`, between the arms $o \to a$ and $o \to b$. Only the **sign** is needed to classify an angle, and the sign is exact.
+
+### Level 3: the cross product, which tells left from right
+
+The **cross product** in two dimensions swaps the pairing: it multiplies crosswise and subtracts. It equals the lengths times the **sine** of the angle, so its sign tells which way $\vec{v}$ points compared with $\vec{u}$:
+
+$$
+\vec{u} \times \vec{v} = u_x v_y - u_y v_x = \lvert \vec{u} \rvert \, \lvert \vec{v} \rvert \sin \theta
+\qquad
+\begin{cases}
+> 0 & \vec{v} \text{ is counter-clockwise from } \vec{u} \text{ (a left turn)} \\
+= 0 & \text{the vectors are on one line} \\
+< 0 & \vec{v} \text{ is clockwise from } \vec{u} \text{ (a right turn)}
+\end{cases}
+$$
+
+where:
+
+- $\theta$ is measured from $\vec{u}$ round to $\vec{v}$, counter-clockwise counting as positive;
+- $\lvert \vec{u} \times \vec{v} \rvert$ is also the area of the parallelogram the two vectors span, which is twice the area of their triangle.
+
+Example: $O = (0, 0)$, $A = (4, 0)$, $B = (4, 3)$. With $\vec{u} = A - O = (4, 0)$ and $\vec{v} = B - O = (4, 3)$: $4 \cdot 3 - 0 \cdot 4 = 12 > 0$, so walking $O \to A \to B$ turns **left**, and triangle $OAB$ has area $12 / 2 = 6$. Swapping $A$ and $B$ gives $-12$: a right turn. For $(1,1), (2,2), (3,3)$: $(1)(2) - (1)(2) = 0$, a straight line.
+
+```java
+static long cross(Point o, Point a, Point b) {          // > 0: o -> a -> b turns left; < 0: right; 0: straight
+    return (a.x() - o.x()) * (b.y() - o.y()) - (a.y() - o.y()) * (b.x() - o.x());
+}
+```
+
+Does it overflow? With coordinates up to $10^9$, each difference is at most $2 \times 10^9$, each product at most $4 \times 10^{18}$, and the subtraction at most $8 \times 10^{18}$, which is still below `Long.MAX_VALUE` $\approx 9.22 \times 10^{18}$. So `long` is exact for every coordinate an interview will give you.
+
+### Level 4: do two segments cross?
+
+Segments $AB$ and $CD$ cross exactly when $C$ and $D$ are on **opposite sides** of line $AB$, and $A$ and $B$ are on opposite sides of line $CD$. "Opposite sides" means opposite signs of the cross product:
+
+$$
+d_1 = \operatorname{cross}(A, B, C), \;
+d_2 = \operatorname{cross}(A, B, D), \;
+d_3 = \operatorname{cross}(C, D, A), \;
+d_4 = \operatorname{cross}(C, D, B);
+\qquad
+\text{proper crossing} \iff d_1 d_2 < 0 \;\land\; d_3 d_4 < 0
+$$
+
+where:
+
+- $\operatorname{cross}(A, B, C)$ is the cross product of $A \to B$ and $A \to C$, the method above;
+- $d_1 d_2 < 0$ means the two signs differ (the code compares signs, so the product can never overflow);
+- when some $d_i = 0$, that endpoint lies on the other segment's **line**, and a bounding-box check decides whether it lies on the segment itself.
+
+Example: the two diagonals of a square, $A = (0, 0)$, $B = (4, 4)$, $C = (0, 4)$, $D = (4, 0)$. Then $d_1 = 4 \cdot 4 - 4 \cdot 0 = 16$ and $d_2 = 4 \cdot 0 - 4 \cdot 4 = -16$: opposite signs. Likewise $d_3 = -16$ and $d_4 = 16$. So they cross (at $(2, 2)$). Move $CD$ to $C = (5, 0)$, $D = (5, 4)$: $d_1 = -20$ and $d_2 = -4$ have the same sign, so both ends are on the same side, and the segments do not meet.
+
+```java
+static boolean segmentsIntersect(Point a, Point b, Point c, Point d) {
+    long d1 = cross(a, b, c), d2 = cross(a, b, d), d3 = cross(c, d, a), d4 = cross(c, d, b);
+    if (Long.signum(d1) * Long.signum(d2) < 0 && Long.signum(d3) * Long.signum(d4) < 0) return true; // a proper crossing
+    return (d1 == 0 && onSegment(a, b, c)) || (d2 == 0 && onSegment(a, b, d))
+        || (d3 == 0 && onSegment(c, d, a)) || (d4 == 0 && onSegment(c, d, b));     // an endpoint touches the other segment
+}
+
+static boolean onSegment(Point a, Point b, Point p) {   // p is on the line ab; is it between a and b?
+    return Math.min(a.x(), b.x()) <= p.x() && p.x() <= Math.max(a.x(), b.x())
+        && Math.min(a.y(), b.y()) <= p.y() && p.y() <= Math.max(a.y(), b.y());
+}
+```
+
+The special cases matter: segments that merely touch at an endpoint, such as $(0,0)$–$(4,4)$ and $(4,4)$–$(6,0)$, do intersect; segments on the same line, such as $(0,0)$–$(2,0)$ and $(1,0)$–$(3,0)$, overlap; but $(0,0)$–$(1,0)$ and $(2,0)$–$(3,0)$, also on one line, do not meet.
+
+### Level 5: the area of a polygon (the shoelace formula)
+
+Pick any point, say the origin, and add up the signed triangle areas from it to each edge. Parts outside the polygon are added once and subtracted once, so they cancel:
+
+$$
+A = \frac{1}{2} \left\lvert \sum_{i=0}^{n-1} \left( x_i \, y_{i+1} - x_{i+1} \, y_i \right) \right\rvert
+$$
+
+where:
+
+- $(x_0, y_0), \dots, (x_{n-1}, y_{n-1})$ are the corners in order around the polygon, and index $n$ wraps back to 0;
+- each term $x_i y_{i+1} - x_{i+1} y_i$ is the cross product of two neighbouring corners, twice a signed triangle area;
+- without the absolute value, the sum is positive for counter-clockwise corners and negative for clockwise ones.
+
+Example: the triangle $(0,0)$, $(4,0)$, $(4,3)$. The terms are $0 \cdot 0 - 4 \cdot 0 = 0$, then $4 \cdot 3 - 4 \cdot 0 = 12$, then $4 \cdot 0 - 0 \cdot 3 = 0$. The sum is 12, so $A = 6$, which matches $\frac{1}{2} \times 4 \times 3$.
+
+```java
+static long twiceArea(Point[] polygon) {                // positive when the corners go counter-clockwise
+    long sum = 0;
+    for (int i = 0; i < polygon.length; i++) {
+        Point p = polygon[i], q = polygon[(i + 1) % polygon.length];
+        sum += p.x() * q.y() - q.x() * p.y();
+    }
+    return sum;
+}
+```
+
+Returning **twice** the area keeps the answer an exact integer. The formula is often credited to Gauss; Albrecht Meister described it around 1770. A bonus for lattice polygons is **Pick's theorem**, $A = I + \frac{B}{2} - 1$, where $I$ counts lattice points strictly inside and $B$ those on the boundary. For our triangle $B = 4 + 3 + 1 = 8$ (an edge from $(x_1, y_1)$ to $(x_2, y_2)$ carries $\gcd(\lvert \Delta x \rvert, \lvert \Delta y \rvert)$ lattice steps), and the inside points are $(2, 1)$, $(3, 1)$, $(3, 2)$, so $I = 3$ and $3 + 4 - 1 = 6$.
+
+### Level 6: is a point inside a polygon? (ray casting)
+
+Send a ray from the point straight to the right and count how many edges it crosses. By the Jordan curve theorem, every crossing switches between inside and outside, so:
+
+$$
+\text{inside}(P) \iff \#\lbrace \text{edges crossed by the ray from } P \text{ to the right} \rbrace \text{ is odd}
+$$
+
+where:
+
+- an edge from $p$ to $q$ is crossed when it **straddles** the ray's height, $(p_y > P_y) \ne (q_y > P_y)$, and its crossing point lies to the right of $P$;
+- "to the right" is decided by a cross product instead of a division: for an edge going up, $P$ must be to its left ($\operatorname{cross}(p, q, P) > 0$), and for an edge going down, to its right;
+- the half-open test $p_y > P_y$ counts a ray passing exactly through a corner only once.
+
+Example: triangle $(0,0), (4,0), (4,3)$ and the point $P = (3, 1)$. The bottom edge does not straddle height 1. The right edge $(4,0) \to (4,3)$ goes up and $\operatorname{cross} = 0 \cdot 1 - 3 \cdot (3 - 4) = 3 > 0$, so it counts. The slanted edge $(4,3) \to (0,0)$ goes down and $\operatorname{cross} = (-4)(1 - 3) - (-3)(3 - 4) = 8 - 3 = 5 > 0$, so $P$ is on its left, which for a downward edge means the crossing is to the left of $P$: it does not count. One crossing, odd, so **inside**. For $P = (1, 2)$, above the slanted edge, both edges count: two crossings, **outside**.
+
+```java
+static boolean insidePolygon(Point[] polygon, Point point) {   // the point must not lie on the boundary
+    boolean inside = false;
+    for (int i = 0; i < polygon.length; i++) {
+        Point p = polygon[i], q = polygon[(i + 1) % polygon.length];
+        boolean straddles = (p.y() > point.y()) != (q.y() > point.y());          // the edge crosses the ray's height
+        if (straddles && (cross(p, q, point) > 0) == (q.y() > p.y())) inside = !inside; // ... to the right of the point
+    }
+    return inside;
+}
+```
+
+It works for non-convex shapes too: in the L-shaped polygon $(0,0), (4,0), (4,2), (2,2), (2,4), (0,4)$, the point $(1, 3)$ is inside and $(3, 3)$ is in the notch, outside. Points exactly on the boundary need a separate `onSegment` check first.
+
+### Level 7: the convex hull (Andrew's monotone chain)
+
+A polygon is **convex** when walking around it counter-clockwise you only ever turn left. The convex hull of a set of points is the smallest convex polygon containing them all. Andrew's algorithm (A. M. Andrew, 1979) builds it in two sweeps:
+
+1. Sort the points by $x$, breaking ties by $y$.
+2. **Lower hull:** walk left to right, keeping a chain. Before adding each point, remove the last chain point while the last two chain points and the new point make a **right turn**, because then the middle point is inside.
+3. **Upper hull:** do the same walking right to left.
+
+The test is one cross product, with the rule:
+
+$$
+\text{pop the chain's last point } b \iff \operatorname{cross}(a, b, p) < 0 \quad (\text{or} \le 0 \text{ to drop points lying on an edge})
+$$
+
+where:
+
+- $a$ and $b$ are the last two points of the chain and $p$ is the new point;
+- $\operatorname{cross}(a, b, p) < 0$ means $a \to b \to p$ turns right, so $b$ cannot be a corner of the hull;
+- $= 0$ means $b$ lies on the straight edge from $a$ to $p$: a fence that must **touch** every tree on its boundary keeps it, a hull of corners only drops it.
+
+Example: the six trees, sorted, are $(1,1), (2,0), (2,2), (2,4), (3,3), (4,2)$. The lower sweep, keeping points on edges:
+
+| New point | Test on the chain's last two points | Chain afterwards |
+| --- | --- | --- |
+| $(1,1)$, $(2,0)$ | fewer than two points to test | $(1,1), (2,0)$ |
+| $(2,2)$ | $\operatorname{cross}((1,1),(2,0),(2,2)) = 2$, left | $(1,1), (2,0), (2,2)$ |
+| $(2,4)$ | $\operatorname{cross}((2,0),(2,2),(2,4)) = 0$, straight, keep | $(1,1), (2,0), (2,2), (2,4)$ |
+| $(3,3)$ | $-2$: pop $(2,4)$; $-2$: pop $(2,2)$; then $4$, left | $(1,1), (2,0), (3,3)$ |
+| $(4,2)$ | $-4$: pop $(3,3)$; then $4$, left | $(1,1), (2,0), (4,2)$ |
+
+The upper sweep from $(4,2)$ leftwards ends with $(4,2), (3,3), (2,4), (1,1)$. Joined, the fence is $(1,1), (2,0), (4,2), (3,3), (2,4)$. Note that $(3,3)$ lies exactly on the line from $(4,2)$ to $(2,4)$ ($\operatorname{cross} = 0$), so a corners-only hull would have just 4 points.
+
+```java
+static List<Point> convexHull(Point[] points, boolean keepCollinear) {
+    if (points.length == 1) return List.of(points[0]);
+    Point[] sorted = points.clone();
+    Arrays.sort(sorted, Comparator.comparingLong(Point::x).thenComparingLong(Point::y));
+    List<Point> hull = new ArrayList<>();
+    for (Point p : sorted) addToChain(hull, p, 0, keepCollinear);                       // lower hull, left to right
+    int upperStart = hull.size() - 1;
+    for (int i = sorted.length - 2; i >= 0; i--) addToChain(hull, sorted[i], upperStart, keepCollinear); // upper hull, right to left
+    hull.remove(hull.size() - 1);                       // the first point has come round again
+    return hull;
+}
+
+static void addToChain(List<Point> chain, Point p, int chainStart, boolean keepCollinear) {
+    while (chain.size() >= chainStart + 2) {
+        long turn = cross(chain.get(chain.size() - 2), chain.get(chain.size() - 1), p);
+        if (turn > 0 || (turn == 0 && keepCollinear)) break;    // a left turn, or a straight line we keep
+        chain.remove(chain.size() - 1);                         // a right turn: the middle point is inside the fence
+    }
+    chain.add(p);
+}
+```
+
+Other hull algorithms are worth knowing by name: **Graham's scan** (1972) sorts by angle around the lowest point instead of by $x$ (Sedgewick and Wayne's `GrahamScan.java`); the **gift-wrapping** or Jarvis march costs $O(nh)$ for $h$ hull points; **Quickhull** works like quicksort. Andrew's version is the easiest to get right, because sorting by coordinates needs no angles at all.
+
+## Why it works and what it costs
+
+**Why the cross product decides orientation.** Rotate the picture so that $\vec{u}$ points along the positive $x$-axis: $\vec{u} = (\lvert \vec{u} \rvert, 0)$. Rotation does not change the cross product, and now $\vec{u} \times \vec{v} = \lvert \vec{u} \rvert \, v_y$. So the sign is the sign of $v_y$: positive when $\vec{v}$ points above the line of $\vec{u}$ (to its left), negative below. With $\vec{u} = (4, 0)$, already on the axis, and $\vec{v} = (4, 3)$: $4 \times 3 = 12 > 0$, and $B = (4, 3)$ is indeed above.
+
+**Why the monotone chain is correct.** Invariant: *after processing the points up to $p$ in sorted order, the lower chain is the lower hull of those points.* The leftmost point is certainly on it. When $p$ arrives, it is the rightmost point so far, so it is on the new lower hull. Any chain point $b$ with $a \to b \to p$ turning right lies above the segment $a p$, so it is not on the lower hull any more and is removed; once the turn is left, every earlier chain point is still a hull corner. The upper sweep is the mirror image. On the garden, $(2, 2)$ is removed when $(3, 3)$ arrives and is never added back, and it is the one tree inside the fence.
+
+**Why ray casting is correct.** Moving along the ray from far away (certainly outside) back to $P$, you change sides exactly when you cross the boundary (Jordan curve theorem). An odd number of switches means $P$ is on the other side from "far away", which is inside.
+
+**Costs:**
+
+| Task | Method | Example | Cost |
+| --- | --- | --- | --- |
+| Orientation of 3 points | cross product | $O, A, B$: 2 multiplications | $O(1)$, exact in `long` |
+| Do 2 segments intersect? | 4 cross products | the square's diagonals | $O(1)$ |
+| Polygon area | shoelace | triangle: 3 terms | $O(n)$ |
+| Point in polygon | ray casting | triangle: 3 edges | $O(n)$ |
+| Convex hull | brute force over all pairs | 6 trees: $15 \times 6 = 90$ side tests | $O(n^3)$ |
+| Convex hull | Andrew's monotone chain | 6 trees: sort, then each point pushed and popped at most twice | $O(n \log n)$ for the sort, $O(n)$ for the sweeps |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Comparing slopes `dy / dx` as `double` | Division by zero on vertical lines; nearly equal slopes compare wrongly | Compare with a cross product: $\Delta y_1 \Delta x_2 = \Delta y_2 \Delta x_1$ |
+| Comparing distances with `Math.sqrt` | Rounding makes equal lengths unequal | Compare squared distances |
+| `int` coordinates in a cross product | Overflow once coordinate differences pass 32,767, since $2 \times 32{,}768^2 = 2^{31}$ | Use `long` |
+| Multiplying `d1 * d2 < 0` to compare signs | The product of two cross products can overflow a `long` | Compare `Long.signum` values |
+| Ignoring the "touching" and "same line" cases of segment intersection | Touching segments reported as apart | Check `onSegment` when a cross product is 0 |
+| Shoelace without the absolute value | A negative area for clockwise corners | Take the absolute value, or use the sign as the orientation |
+| Ray casting with `>=` on both ends of an edge | A ray through a corner is counted twice | Use the half-open rule `(p.y > y) != (q.y > y)` |
+| Popping on `cross <= 0` when the fence must touch every boundary tree | Trees on a straight fence segment are missing | Pop only on `cross < 0`, then remove duplicates |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 1037: Valid Boomerang (Easy)
+
+**Problem.** Given three points, return `true` if they are all different and **not** on one straight line. `[[1,1],[2,3],[3,2]]` is a boomerang; `[[1,1],[2,2],[3,3]]` is not.
+
+**Math first.** Three points form a real triangle exactly when the triangle has non-zero area, and twice that area is a cross product:
+
+$$
+\text{boomerang}(P_0, P_1, P_2) \iff (x_1 - x_0)(y_2 - y_0) - (y_1 - y_0)(x_2 - x_0) \ne 0
+$$
+
+where:
+
+- $(x_i, y_i)$ are the coordinates of $P_i$;
+- the left side is $\operatorname{cross}(P_0, P_1, P_2)$, twice the signed area of the triangle;
+- a repeated point also makes the area 0, so one test covers both rules.
+
+Example: $P = (1,1), (2,3), (3,2)$: $(2 - 1)(2 - 1) - (3 - 1)(3 - 1) = 1 - 4 = -3 \ne 0$, a boomerang (and a right turn). For $(1,1), (2,2), (3,3)$: $(1)(2) - (1)(2) = 0$, a straight line.
+
+**Idea.** One cross product, compared with zero. No slopes, so no division by zero for vertical lines.
+
+```java
+static boolean isBoomerang(int[][] points) {
+    return cross(at(points[0]), at(points[1]), at(points[2])) != 0; // zero area: on one line, or a repeated point
+}
+```
+
+`at` turns an `int[]` pair into a `Point`:
+
+```java
+static Point at(int[] xy) {
+    return new Point(xy[0], xy[1]);
+}
+```
+
+**Answer.** `true` for the first example and `false` for the second, and `false` for `[[0,0],[0,0],[5,7]]`. $O(1)$ time and space: two multiplications and a subtraction.
+
+### 2. LeetCode 593: Valid Square (Medium)
+
+**Problem.** Given four points in any order, decide whether they are the corners of a square with positive area. `(0,0), (1,1), (1,0), (0,1)` is a square; `(0,0), (1,1), (1,0), (0,12)` is not.
+
+**Math first.** Four points have $\binom{4}{2} = 6$ pairwise distances. In a square with side $s$, four of them are sides and two are diagonals, and by Pythagoras each diagonal is $s\sqrt{2}$. In squared form, everything stays an integer:
+
+$$
+\text{square} \iff d_{(1)} = d_{(2)} = d_{(3)} = d_{(4)} > 0 \;\land\; d_{(5)} = d_{(6)} = 2\, d_{(1)}
+$$
+
+where:
+
+- $d_{(1)} \le d_{(2)} \le \dots \le d_{(6)}$ are the six **squared** distances, sorted;
+- the first four are the sides, $s^2$, and the last two the diagonals, $2s^2$;
+- $> 0$ rules out four copies of the same point.
+
+Example: $(0,0), (1,1), (1,0), (0,1)$. The squared distances are $2, 1, 1, 1, 1, 2$; sorted, $1, 1, 1, 1, 2, 2$. Four equal sides of $1$, two equal diagonals of $2 = 2 \times 1$: a square. With $(0, 12)$ instead of $(0, 1)$ the distances are $1, 1, 2, 144, 145, 145$, which fails at once. A rhombus such as $(0,0), (2,1), (3,3), (1,2)$ has four sides of $5$ but diagonals $18$ and $2$, so the diagonal test rejects it.
+
+**Idea.** Compute the six squared distances, sort them, and check the pattern. Sorting means the order of the input points does not matter.
+
+```java
+static boolean validSquare(int[] p1, int[] p2, int[] p3, int[] p4) {
+    Point[] p = {at(p1), at(p2), at(p3), at(p4)};
+    long[] d = new long[6];
+    int next = 0;
+    for (int i = 0; i < 4; i++)
+        for (int j = i + 1; j < 4; j++) d[next++] = squaredDistance(p[i], p[j]);
+    Arrays.sort(d);                                     // four sides first, then two diagonals
+    return d[0] > 0 && d[0] == d[3] && d[4] == d[5] && d[4] == 2 * d[0];
+}
+```
+
+**Answer.** `true` for $(0,0), (1,1), (1,0), (0,1)$ and for the tilted square $(1,0), (-1,0), (0,1), (0,-1)$; `false` for the $(0, 12)$ example, the rhombus, and four equal points. $O(1)$ time and space: 6 distances and a sort of 6 numbers.
+
+### 3. LeetCode 587: Erect the Fence (Hard)
+
+**Problem.** Given up to 3,000 trees with integer coordinates from 0 to 100, return every tree that lies **on** the shortest fence around all of them, including trees in the middle of a straight fence segment. For the garden in "The problem" the answer is $(1,1), (2,0), (4,2), (3,3), (2,4)$.
+
+**Math first.** The fence is the convex hull. A tree $t$ is on it exactly when some line through $t$ has no tree strictly on one side, and the monotone chain finds those trees by keeping every chain point that is not a strict right turn:
+
+$$
+\text{keep } b \text{ between } a \text{ and } p \iff \operatorname{cross}(a, b, p) \ge 0
+$$
+
+where:
+
+- $a, b$ are the last two points of the chain being built, and $p$ is the next tree in sorted order;
+- $\operatorname{cross} > 0$ is a left turn, so $b$ is a corner;
+- $\operatorname{cross} = 0$ means $b$ lies on the straight fence segment from $a$ to $p$, and this problem wants it kept.
+
+Example: in the sweep above, $(3, 3)$ survives in the upper chain because $\operatorname{cross}((4,2), (3,3), (2,4)) = (-1)(2) - (1)(-2) = 0$, while $(2, 2)$ is popped because $\operatorname{cross}((2,0), (2,2), (3,3)) = -2 < 0$. The fence is $(1,1), (2,0), (4,2), (3,3), (2,4)$: **5 trees**.
+
+**Idea.** Run Level 7's `convexHull` with `keepCollinear = true`. One subtle case remains: when every tree is on one straight line, the lower and upper sweeps walk the same line in opposite directions and list the middle trees twice, so remove duplicates at the end.
+
+```java
+static int[][] outerTrees(int[][] trees) {
+    Point[] points = Arrays.stream(trees).map(GeometryLab::at).toArray(Point[]::new);
+    return convexHull(points, true).stream()
+        .distinct()                                     // a straight-line garden visits its points twice
+        .map(p -> new int[] {(int) p.x(), (int) p.y()})
+        .toArray(int[][]::new);
+}
+```
+
+**Answer.** $[(1,1), (2,0), (4,2), (3,3), (2,4)]$ for example 1, and all three trees for the straight line $(1,2), (2,2), (4,2)$. The lab also checks 2,000 random gardens on a $5 \times 5$ grid, which are full of collinear trees, against the $O(n^3)$ brute force "some line through the tree has nothing strictly on one side". Sorting costs $O(n \log n)$, about $3{,}000 \times 12 = 36{,}000$ comparisons for the largest input, and the two sweeps are $O(n)$ because each tree is added and removed at most once per sweep. $O(n)$ extra space.
+
+## Mathematical Abstraction
+
+Two formulas carry the whole subject. The cross product orients three points, and summing cross products around a polygon gives its area:
+
+$$
+\operatorname{cross}(O, A, B) = (a_x - o_x)(b_y - o_y) - (a_y - o_y)(b_x - o_x),
+\qquad
+A = \frac{1}{2} \left\lvert \sum_{i=0}^{n-1} (x_i y_{i+1} - x_{i+1} y_i) \right\rvert
+$$
+
+where:
+
+- $O, A, B$ are points, and the sign of $\operatorname{cross}$ says whether $O \to A \to B$ turns left ($> 0$), right ($< 0$) or goes straight ($= 0$);
+- $(x_i, y_i)$ are the polygon's corners in order, with index $n$ wrapping to 0.
+
+Example: $\operatorname{cross}((0,0), (4,0), (4,3)) = 4 \cdot 3 - 0 \cdot 4 = 12$, a left turn, and the shoelace sum for the same triangle is $0 + 12 + 0 = 12$, area 6. Segment intersection is four orientation tests, ray casting is one orientation test per edge, and the convex hull is one orientation test per push and pop. With integer coordinates every one of them is exact.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*: the 4th edition (MIT Press, 2022) dropped the computational-geometry chapter. The 3rd edition (2009), Chapter 33, "Computational Geometry", covers cross products, segment intersection and the convex hull (Graham's scan and Jarvis's march).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, booksite §6.1 "Geometric Primitives" (counter-clockwise test, segment intersection, polygon area, point in polygon): <https://algs4.cs.princeton.edu/91primitives/>; and the convex-hull page with `GrahamScan.java`: <https://algs4.cs.princeton.edu/99hull/>.
+- Mark de Berg, Otfried Cheong, Marc van Kreveld and Mark Overmars, *Computational Geometry: Algorithms and Applications*, 3rd edition (Springer, 2008), Chapter 1, on convex hulls.
+- A. M. Andrew, "Another efficient algorithm for convex hulls in two dimensions", *Information Processing Letters* 9(5), 216–219 (1979).
+- M. Shimrat, "Algorithm 112: Position of point relative to polygon", *Communications of the ACM* 5(8), 434 (1962).
+- LeetCode: [1037. Valid Boomerang](https://leetcode.com/problems/valid-boomerang/), [593. Valid Square](https://leetcode.com/problems/valid-square/), [587. Erect the Fence](https://leetcode.com/problems/erect-the-fence/).
+
+[← Probability and Statistics](../probability-and-statistics/index.qmd) · [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd) · [Bit Manipulation →](../bit-manipulation/index.qmd)

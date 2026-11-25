@@ -1,56 +1,450 @@
 ---
 title: "Bit Manipulation"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "From light switches to two's complement: place values, the bitwise operators, x & (x − 1) and x & −x, XOR, Gray code, and hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+Every `int` in Java is a row of 32 tiny switches, each on or off. Bit manipulation means working with those switches directly instead of with the decimal number they spell. This lesson starts with counting in binary, explains how negative numbers are stored, builds up the classic tricks one at a time, and ends with interview problems that look impossible until you see the bits.
 
-**LeetCode 191 — Number of 1 Bits.** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`BitManipulationLab.java`](BitManipulationLab.java). Run it from this folder with `java BitManipulationLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-Converting an integer to a binary string is easy, but it hides useful properties of low bits and fixed width.
+How many 1-bits are in the number 11? And in the number −1?
 
-## One simple idea
+The schoolbook method divides by 2 and adds up the remainders:
 
-A bitmask selects individual bits. Repeatedly clearing the lowest set bit counts ones with exactly one iteration per set bit.
+```java
+// sketch: the schoolbook method, wrong for negative numbers
+static int countOnesByDividing(int x) {
+    int count = 0;
+    while (x > 0) { count += x % 2; x /= 2; }
+    return count;
+}
+```
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+- For 11 it works: the remainders are 1, 1, 0, 1, so the answer is 3.
+- For −1 it returns **0**, because the loop never starts. But Java stores −1 as 32 ones, so the true answer is **32**.
+- Even when it works, it spends one loop turn on every binary digit, including the zeros.
 
-## Formula and immediate translation
+We want a method that is correct for every `int` and that does one step per 1-bit. To get there we first need to know exactly how Java writes numbers in binary.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Imagine five cards lying in a row. The right-hand card has 1 dot, the next has 2, then 4, then 8, then 16. Each card has twice as many dots as the card to its right. Turn some cards face up and count the visible dots:
+
+- cards 8, 4 and 1 face up show $8 + 4 + 1 = 13$ dots;
+- writing *up* as 1 and *down* as 0, that row of cards reads `01101`.
+
+That row of ones and zeros **is** the number 13 in binary. A computer is just a long row of such cards, or light switches, and every trick in this lesson is a clever way of flipping several switches at once.
+
+This card game is the "Binary Numbers" activity from *Computer Science Unplugged*, by Tim Bell, Ian Witten and Mike Fellows, which teaches binary to primary-school children without a computer.
+
+One more surprise is coming: a computer also needs **negative** numbers, and it has no minus sign to write. Level 2 shows the clever answer, which is to make the leftmost card worth *minus* a lot.
+:::
+
+## From simple to advanced
+
+### Level 1: place values
+
+In base 10, the digits of 4,072 are worth thousands, hundreds, tens and ones. In base 2, each place is worth twice the place to its right:
 
 $$
-x_{\mathrm{next}}=x\ \&\ (x-1)
+x = \sum_{k=0}^{w-1} b_k \, 2^k = b_{w-1} 2^{w-1} + \dots + b_1 \cdot 2 + b_0
 $$
 
-**Symbols and notation:** x is the current NONNEGATIVE integer as a fixed-width bit pattern; & is bitwise AND. The operation clears the rightmost 1 bit and preserves all higher bits.
+where:
 
-**Insert actual numbers:** Take x=12 (binary 1100). x−1=11 (1011); 1100 & 1011=1000 (8). Repeat 1000 & 0111=0000: two iterations, matching the two 1 bits in 12.
+- $b_k$ is the bit in column $k$, either 0 or 1;
+- column 0 is the rightmost column, worth $2^0 = 1$;
+- $w$ is the number of columns, the *width*: 8 for a `byte`, 32 for an `int`, 64 for a `long`.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: the bits `1101` give $1 \cdot 8 + 1 \cdot 4 + 0 \cdot 2 + 1 \cdot 1 = 13$.
 
-## Why the mathematics leads to an algorithm
+To read one bit, slide the number right until that column is at the end, then keep only the last column:
 
-Subtracting 1 flips the lowest 1 bit to 0 and all lower 0 bits to 1; AND with the original erases the changed lower segment and clears exactly one 1.
+```java
+static int bit(int x, int k) {
+    return (x >> k) & 1;
+}
+```
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+For $x = 13$ and $k = 2$: $13 \gg 2 = 3$ (binary `11`), and `3 & 1` is 1. So column 2 of 13 is on. Java prints the bits with `Integer.toBinaryString(13)`, which gives `"1101"`, and reads them back with `Integer.parseInt("1101", 2)`.
 
-## Make the idea executable
+### Level 2: negative numbers and two's complement
 
-Start with the numerical example above and write a tiny function or test that reproduces it. For comparison, examine the [original executable patterns library](../examples/patterns.mjs). This topic's main challenge is its mathematical invariant rather than framework setup.
+Java stores negative numbers in **two's complement**: the leftmost column is worth *minus* its usual value.
 
-## Complexity and correctness boundaries
+$$
+x = -b_{w-1}\, 2^{w-1} + \sum_{k=0}^{w-2} b_k\, 2^k
+$$
 
-**Work bound:** O(number of set bits) iterations; at most word width w, so O(w) in bit-width model.
+where:
 
-**Counterexample or limitation:** JavaScript bitwise operations use signed 32-bit conversion, so choose explicit width for very large integers or use BigInt.
+- $b_{w-1}$ is the leftmost bit, the *sign bit*, worth $-2^{w-1}$ instead of $+2^{w-1}$;
+- all the other bits keep their ordinary positive place values;
+- in 8 bits ($w = 8$) the sign bit is worth $-128$, so a `byte` holds $-128$ to $127$.
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+Example: the 8-bit pattern `11111011` is worth $-128 + 64 + 32 + 16 + 8 + 0 + 2 + 1 = -128 + 123 = -5$.
 
-## Reference and practice
+The rule to negate a number is "flip every bit, then add one":
 
-- **CLRS (4th edition):** CLRS Chapter 31 (integer representation and arithmetic).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 191 — Number of 1 Bits. [Original problem page or practice resource](https://leetcode.com/problems/number-of-1-bits/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+$$
+-x = \lnot x + 1
+$$
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+where:
+
+- $\lnot x$ (Java's `~x`) flips every bit of $x$, so $x + \lnot x$ is all ones, which is worth $-1$;
+- rearranging $x + \lnot x = -1$ gives $\lnot x + 1 = -x$.
+
+Example: negate $x = 5$ in 8 bits.
+
+| Step | Bits | Value |
+| --- | --- | --- |
+| $x$ | `00000101` | 5 |
+| flip every bit, $\lnot x$ | `11111010` | $-128 + 122 = -6$ |
+| add one | `11111011` | $-5$ |
+
+```java
+static int negate(int x) {
+    return ~x + 1;
+}
+```
+
+Two consequences matter in practice. First, adding 1 to the largest value wraps around to the smallest: in a `byte`, $127 + 1 = -128$. Second, the most negative value has no positive partner: `-Integer.MIN_VALUE` is `Integer.MIN_VALUE` again, because $+2^{31}$ does not fit in 32 bits.
+
+### Level 3: the operators and masks
+
+Java has seven bitwise operators. Take $a = 12$ (`1100`) and $b = 10$ (`1010`):
+
+- `a & b` (AND) keeps a 1 where **both** have a 1: `1000` = 8.
+- `a | b` (OR) keeps a 1 where **either** has a 1: `1110` = 14.
+- `a ^ b` (XOR, exclusive or) keeps a 1 where they **differ**: `0110` = 6.
+- `~a` (NOT) flips every bit: $-12 - 1 = -13$.
+- `a << 1` shifts left and fills with 0: `11000` = 24.
+- `a >> 2` shifts right and copies the sign bit in from the left: `11` = 3. For a negative number, `-16 >> 2` is $-4$.
+- `a >>> k` shifts right and fills with **0**, treating the bits as unsigned: `-16 >>> 28` is 15, the top four bits `1111`.
+
+Shifts are multiplication and division by powers of two:
+
+$$
+x \ll k = x \cdot 2^k, \qquad x \gg k = \left\lfloor \frac{x}{2^k} \right\rfloor
+$$
+
+where:
+
+- $k$ is the shift distance, from 0 to 31 for an `int`;
+- $\lfloor \cdot \rfloor$ rounds *down*, toward minus infinity;
+- the left-shift identity holds as long as the result fits in the type.
+
+Example: $12 \ll 1 = 12 \cdot 2 = 24$ and $12 \gg 2 = \lfloor 12 / 4 \rfloor = 3$. For $-5$: $-5 \gg 1 = \lfloor -2.5 \rfloor = -3$, while Java's division `-5 / 2` rounds toward zero and gives $-2$. The two are not interchangeable for negative numbers.
+
+A **mask** is a number with a 1 in exactly the columns you care about. The mask for column $k$ is `1 << k`. With it, four jobs take one line each:
+
+```java
+static boolean isSet(int x, int k) { return ((x >> k) & 1) == 1; }
+static int set(int x, int k) { return x | (1 << k); }
+static int clear(int x, int k) { return x & ~(1 << k); }
+static int toggle(int x, int k) { return x ^ (1 << k); }
+```
+
+On $x = 13$ (`1101`): `set(13, 1)` turns column 1 on, giving `1111` = 15; `clear(13, 2)` turns column 2 off, giving `1001` = 9; `toggle(13, 0)` flips column 0, giving `1100` = 12.
+
+### Level 4: the lowest set bit
+
+Two expressions are the workhorses of bit tricks. Write $x$ as some prefix, then its lowest 1, then $t$ zeros:
+
+$$
+x = [\,P\,]\,1\,\underbrace{0 \cdots 0}_{t}, \qquad x - 1 = [\,P\,]\,0\,\underbrace{1 \cdots 1}_{t}, \qquad -x = [\,\lnot P\,]\,1\,\underbrace{0 \cdots 0}_{t}
+$$
+
+where:
+
+- $P$ is whatever bits lie above the lowest 1;
+- $t$ is the number of trailing zeros, the column of the lowest 1;
+- subtracting 1 borrows through the $t$ zeros, turning them into ones and the lowest 1 into a 0;
+- $-x = \lnot x + 1$: flipping gives $[\lnot P]\,0\,1 \cdots 1$, and adding 1 carries back up to the same column.
+
+Lining them up gives the two rules:
+
+- $x \,\&\, (x - 1) = [\,P\,]\,0\,0 \cdots 0$: the lowest 1 is **cleared**;
+- $x \,\&\, (-x) = 0 \cdots 0\,1\,0 \cdots 0$: the lowest 1 is **isolated**, because $P$ and $\lnot P$ share no ones.
+
+Example: $x = 12$ = `00001100`, so $t = 2$.
+
+- $x - 1 = 11$ = `00001011`, and $12 \,\&\, 11$ = `00001000` = **8**. The lowest 1 (worth 4) is gone.
+- $-12$ = `11110100` in 8 bits, and $12 \,\&\, (-12)$ = `00000100` = **4**. Only the lowest 1 is left.
+
+```java
+static int clearLowest(int x) {
+    return x & (x - 1);
+}
+
+static int lowestBit(int x) {
+    return x & -x;
+}
+
+static boolean isPowerOfTwo(int x) {
+    return x > 0 && (x & (x - 1)) == 0;   // exactly one 1-bit
+}
+```
+
+Clearing the lowest 1 repeatedly counts the ones with one loop turn per 1-bit. This loop is often called Kernighan's method, and it is a complete answer to LeetCode 191, *Number of 1 Bits*:
+
+```java
+static int countOnes(int x) {
+    int count = 0;
+    while (x != 0) {
+        x &= x - 1;   // remove the lowest 1-bit
+        count++;
+    }
+    return count;
+}
+```
+
+For 11 (`1011`) the loop sees `1011` → `1010` → `1000` → `0`: three turns, answer 3. For $-1$ it takes 32 turns and answers 32, which fixes the problem from the start of the lesson: the loop tests `x != 0`, not `x > 0`. In real code, call `Integer.bitCount(x)`. The HotSpot JVM compiles it to a single population-count instruction on processors that have one. The JDK also offers `Integer.lowestOneBit` ($= x \,\&\, -x$), `Integer.numberOfTrailingZeros` ($t$; it is 2 for 12) and `Integer.highestOneBit` (8 for 12).
+
+### Level 5: XOR, the cancelling operator
+
+XOR has four facts that make it special:
+
+$$
+a \oplus a = 0, \qquad a \oplus 0 = a, \qquad a \oplus b = b \oplus a, \qquad (a \oplus b) \oplus c = a \oplus (b \oplus c)
+$$
+
+where:
+
+- $\oplus$ is XOR, Java's `^`, applied column by column;
+- the first fact says that anything XORed with itself cancels;
+- the last two say that order and grouping do not matter, so a long XOR can be rearranged freely.
+
+Example: $4 \oplus 1 \oplus 2 \oplus 1 \oplus 2$. Regroup as $4 \oplus (1 \oplus 1) \oplus (2 \oplus 2) = 4 \oplus 0 \oplus 0 = 4$. Every number that appears twice disappears. That is the whole of Interview problem 1.
+
+XOR is also *addition without carrying*: in each column, $0 + 0 = 0$, $0 + 1 = 1$, and $1 + 1 = 0$ with the carry thrown away. Interview problem 3 builds real addition from that.
+
+### Level 6: Gray code, counting one switch at a time
+
+Counting from 3 (`011`) to 4 (`100`) flips three switches at once. Frank Gray's *reflected binary code* (Bell Labs, patented 1953) orders the numbers so that neighbours differ in exactly one bit:
+
+$$
+g(i) = i \oplus (i \gg 1), \qquad g^{-1}(c) = c \oplus (c \gg 1) \oplus (c \gg 2) \oplus \cdots
+$$
+
+where:
+
+- $i$ is an ordinary counter, $0, 1, 2, \dots$;
+- $g(i)$ is the $i$-th Gray code;
+- $g^{-1}$ undoes it: XORing every right shift of $c$ rebuilds $i$ from the top bit down.
+
+Example: the first eight codes.
+
+| $i$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| $i$ in binary | 000 | 001 | 010 | 011 | 100 | 101 | 110 | 111 |
+| $g(i)$ in binary | 000 | 001 | 011 | 010 | 110 | 111 | 101 | 100 |
+| $g(i)$ | 0 | 1 | 3 | 2 | 6 | 7 | 5 | 4 |
+
+For $i = 4$: $g(4) = 100 \oplus 010 = 110 = 6$. Going back, $g^{-1}(6) = 110 \oplus 011 \oplus 001 = 100 = 4$. Each step in the bottom row flips one switch: $0 \to 1$ flips column 0, $1 \to 3$ flips column 1, $3 \to 2$ flips column 0, $2 \to 6$ flips column 2.
+
+```java
+static int gray(int i) {
+    return i ^ (i >> 1);
+}
+```
+
+Gray codes are used in rotary encoders and in error-tolerant signalling, where a misread during a change should be off by one step, not by many. Interview problem 4 is a Gray code in disguise.
+
+## Why it works and what it costs
+
+**Why the tricks are correct.** Every trick above follows from the column picture in Level 4. Subtracting 1 changes exactly the lowest 1 and the zeros below it; negating changes exactly the bits above the lowest 1. So `x & (x - 1)` and `x & -x` touch only that one column, for every non-zero `int`, positive or negative. For `countOnes`, the invariant is *count + (ones left in x) = ones in the original x*. Each loop turn removes exactly one 1 and adds 1 to `count`, and the loop stops when no ones are left.
+
+**Why the operations are cheap.** A processor applies `&`, `|`, `^`, `~` and the shifts to all 32 or 64 columns at once, in one instruction. So each line in Level 3 is $O(1)$. `countOnes` costs one turn per 1-bit, at most 32; `Integer.bitCount` is $O(1)$.
+
+**Counting how many switches a counter flips.** CLRS uses a binary counter as a running example of amortised analysis. When you add 1, the trailing ones turn to zeros and one zero turns to a one. Column $k$ flips once every $2^k$ increments, so $n$ increments flip
+
+$$
+\sum_{k \ge 0} \left\lfloor \frac{n}{2^k} \right\rfloor < n \sum_{k \ge 0} \frac{1}{2^k} = 2n
+$$
+
+where:
+
+- $\lfloor n / 2^k \rfloor$ is how many times column $k$ flips in $n$ increments;
+- $\sum_k 1/2^k = 1 + \tfrac{1}{2} + \tfrac{1}{4} + \dots = 2$ is a geometric series.
+
+Example: counting from 0 to 8 flips $1, 2, 1, 3, 1, 2, 1, 4$ bits at each step, a total of $8 + 4 + 2 + 1 = 15 < 16$. Counting to 1,000 flips $1000 + 500 + 250 + 125 + 62 + 31 + 15 + 7 + 3 + 1 = 1{,}994 < 2{,}000$ bits. An increment can flip many bits at once, but on average it flips fewer than 2.
+
+| Operation | Cost on a $w$-bit word |
+| --- | --- |
+| `&`, `^`, `~`, shifts, masks | $O(1)$, one instruction |
+| `countOnes` (Kernighan) | one turn per 1-bit, at most $w$ |
+| `Integer.bitCount` | $O(1)$ |
+| inverse Gray code | one turn per bit position, at most $w$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `1 << 32` to mean $2^{32}$ | It gives 1: Java uses only the low 5 bits of an `int` shift distance | `1L << 32` |
+| `>>` when the bits are unsigned | `-16 >> 28` is $-1$, not 15 | `>>>` fills with zeros |
+| `x % 2 == 1` to test for odd | False for $-3$, because `-3 % 2 == -1` | `(x & 1) == 1` |
+| `x & 1 == 0` without brackets | Compile error: `==` binds tighter than `&` | `(x & 1) == 0` |
+| Replacing `x / 2` with `x >> 1` | Different for negatives: $-5 / 2 = -2$, $-5 \gg 1 = -3$ | Pick the rounding you actually want |
+| Counting bits with `while (x > 0)` | Every negative number reports 0 ones | `while (x != 0)` with `x &= x - 1` |
+| Negating `Integer.MIN_VALUE` | It stays negative; `Math.abs` is negative too | Widen to `long` first |
+| `1 << k` for $k = 31$ as a positive mask | It is `Integer.MIN_VALUE`, a negative number | Fine as a mask; compare with `!= 0`, not `> 0` |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is a few lines.
+
+### 1. LeetCode 136: Single Number (Easy)
+
+**Problem.** Every number in the array appears twice except one. Find it in $O(n)$ time and $O(1)$ extra space. For `[4, 1, 2, 1, 2]` the answer is 4.
+
+**Math first.** XOR everything together. Pairs cancel and the lone number survives:
+
+$$
+r = a_1 \oplus a_2 \oplus \dots \oplus a_n = x
+$$
+
+where:
+
+- $a_1, \dots, a_n$ are the array values;
+- $x$ is the value that appears once;
+- each pair $y \oplus y$ is 0, by the facts in Level 5, and $x \oplus 0 = x$.
+
+Example: $4 \oplus 1 \oplus 2 \oplus 1 \oplus 2 = 4 \oplus (1 \oplus 1) \oplus (2 \oplus 2) = 4$.
+
+**Idea.** Keep one running XOR. Order does not matter, so a single pass finds the answer without sorting or a hash set.
+
+```java
+static int singleNumber(int[] nums) {
+    int result = 0;
+    for (int x : nums) result ^= x;   // pairs cancel: a ^ a = 0
+    return result;
+}
+```
+
+**Answer.** `singleNumber([4, 1, 2, 1, 2]) = 4`. The running value is $0 \to 4 \to 5 \to 7 \to 6 \to 4$. One XOR per element: 5 operations here, $O(n)$ time and $O(1)$ space.
+
+### 2. LeetCode 338: Counting Bits (Easy)
+
+**Problem.** For every $i$ from 0 to $n$, return the number of 1-bits in $i$. For $n = 5$ the answer is `[0, 1, 1, 2, 1, 2]`.
+
+**Math first.** Shifting $i$ right by one drops its last bit and keeps all the others. So the count for $i$ is the count for $i \gg 1$, plus that last bit:
+
+$$
+c(i) = c(i \gg 1) + (i \,\&\, 1), \qquad c(0) = 0
+$$
+
+where:
+
+- $c(i)$ is the number of 1-bits in $i$;
+- $i \gg 1 = \lfloor i / 2 \rfloor$ is smaller than $i$, so its count is already known;
+- $i \,\&\, 1$ is the last bit of $i$: 1 for odd $i$, 0 for even $i$.
+
+Example: $i = 5$ = `101`. Then $5 \gg 1 = 2$ = `10` with $c(2) = 1$, and $5 \,\&\, 1 = 1$, so $c(5) = 1 + 1 = 2$.
+
+**Idea.** Fill the table from 1 up to $n$. Each entry reads one smaller entry that is already filled in. This is dynamic programming over the bits.
+
+```java
+static int[] countBits(int n) {
+    int[] ones = new int[n + 1];
+    for (int i = 1; i <= n; i++) ones[i] = ones[i >> 1] + (i & 1);
+    return ones;
+}
+```
+
+**Answer.** `countBits(5) = [0, 1, 1, 2, 1, 2]`: $c(1) = c(0) + 1 = 1$, $c(2) = c(1) + 0 = 1$, $c(3) = c(1) + 1 = 2$, $c(4) = c(2) + 0 = 1$, $c(5) = c(2) + 1 = 2$. One addition per entry, so $O(n)$ time, compared with $O(n \log n)$ for counting each number separately. The output array is the only space used.
+
+### 3. LeetCode 371: Sum of Two Integers (Medium)
+
+**Problem.** Return $a + b$ without using `+` or `-`. Inputs lie in $[-1000, 1000]$. For $a = 2$, $b = 3$ the answer is 5.
+
+**Math first.** Column addition has two parts: the digit that stays, and the carry that moves one column left. In binary, the stay-digit is XOR and the carry is AND shifted left:
+
+$$
+a + b = (a \oplus b) + 2\,(a \,\&\, b) = (a \oplus b) + \big((a \,\&\, b) \ll 1\big)
+$$
+
+where:
+
+- $a \oplus b$ is the sum in every column, ignoring carries;
+- $a \,\&\, b$ marks the columns where both bits are 1, which produce a carry;
+- the carry belongs one column to the left, hence the shift by 1.
+
+Example: $a = 2$ = `010`, $b = 3$ = `011`. Then $a \oplus b$ = `001` = 1 and $(a \,\&\, b) \ll 1$ = `100` = 4. The new problem is $1 + 4$: $1 \oplus 4 = 5$, and $1 \,\&\, 4 = 0$, so no carry is left. The answer is **5**.
+
+**Idea.** Repeat the identity until the carry is 0. Each round moves the lowest carry bit at least one column left, so it either settles or falls off the left end of the 32 columns, which is exactly two's complement wrap-around.
+
+```java
+static int getSum(int a, int b) {
+    while (b != 0) {
+        int carry = (a & b) << 1;   // columns where both bits are 1 carry into the next column
+        a ^= b;                     // add without carrying
+        b = carry;
+    }
+    return a;
+}
+```
+
+**Answer.** `getSum(2, 3) = 5` after two rounds: $(2, 3) \to (1, 4) \to (5, 0)$. Negative numbers work unchanged: `getSum(-1, 1)` passes the carry through all 32 columns, 32 rounds, and returns 0. At most 32 rounds for an `int`, so $O(1)$ time and space.
+
+### 4. LeetCode 1611: Minimum One Bit Operations to Make Integers Zero (Hard)
+
+**Problem.** Turn $n$ into 0 using two moves: (1) flip bit 0; (2) flip bit $i$ when bit $i - 1$ is 1 and all bits below $i - 1$ are 0. Return the fewest moves, for $0 \le n \le 10^9$. For $n = 6$ the answer is 4: `110` → `010` → `011` → `001` → `000`.
+
+**Math first.** Move 2 flips the bit just *above the lowest 1*. These are exactly the flips between neighbouring Gray codes in Level 6: the sequence $0, 1, 3, 2, 6, 7, 5, 4, \dots$ alternates move 1 and move 2. Each number other than 0 has exactly two possible moves, and 0 has one, so all numbers lie on **one path** in that Gray order. The only way from $n$ to 0 is to walk back along the path, and the number of steps is $n$'s position on it:
+
+$$
+f(n) = g^{-1}(n) = \bigoplus_{k \ge 0} (n \gg k) = n \oplus (n \gg 1) \oplus (n \gg 2) \oplus \cdots
+$$
+
+where:
+
+- $f(n)$ is the minimum number of moves;
+- $g^{-1}$ is the inverse Gray code from Level 6;
+- $\bigoplus_{k \ge 0}$ means "XOR together for $k = 0, 1, 2, \dots$", stopping once $n \gg k$ is 0.
+
+Example: $n = 6$ = `110`. Then $110 \oplus 011 \oplus 001 = 100 = 4$, matching the four moves above, and 6 is indeed at position 4 of $0, 1, 3, 2, 6$. For $n = 3$ = `11`: $11 \oplus 01 = 10 = 2$.
+
+**Idea.** XOR $n$ with each of its right shifts. A useful check: making $2^k$ zero takes $2^{k+1} - 1$ moves (for $4$, that is 7), because $2^k$ is the last of the $2^{k+1}$ Gray codes on $k + 1$ bits.
+
+```java
+static int minimumOneBitOperations(int n) {
+    int steps = 0;
+    for (; n != 0; n >>= 1) steps ^= n;   // inverse Gray code: n ^ (n >> 1) ^ (n >> 2) ^ ...
+    return steps;
+}
+```
+
+**Answer.** `minimumOneBitOperations(6) = 4` and `minimumOneBitOperations(3) = 2`. The lab confirms the formula against a breadth-first search over both moves for every $n < 512$. The loop runs once per bit of $n$: at most 30 turns for $n \le 10^9$, so $O(\log n)$ time and $O(1)$ space.
+
+## Mathematical Abstraction
+
+A $w$-bit integer is a row of bits read in two's complement, and the classic tricks are identities about its lowest 1-bit:
+
+$$
+x = -b_{w-1} 2^{w-1} + \sum_{k=0}^{w-2} b_k 2^k, \qquad -x = \lnot x + 1, \qquad x \,\&\, (x - 1) = x - 2^{t}, \qquad x \,\&\, (-x) = 2^{t}
+$$
+
+where:
+
+- $b_k \in \lbrace 0, 1 \rbrace$ is the bit in column $k$, and $w$ is the width (32 for `int`);
+- $\lnot x$ flips every bit;
+- $t$ is the column of the lowest 1-bit of a non-zero $x$, its number of trailing zeros.
+
+Example: $x = 12$ = `00001100` in 8 bits, so $t = 2$. Then $-12 = \lnot 12 + 1$ = `11110011` + 1 = `11110100` $= -128 + 64 + 32 + 16 + 4 = -12$. Also $12 \,\&\, 11 = 12 - 2^2 = 8$ and $12 \,\&\, (-12) = 2^2 = 4$. Add XOR's cancelling rule $a \oplus a = 0$ and the shift rules $x \ll k = x \cdot 2^k$, $x \gg k = \lfloor x / 2^k \rfloor$, and you have every tool used on this page.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022). CLRS has no chapter on bit tricks; Chapter 16, "Amortized Analysis", uses incrementing a binary counter as a running example. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Henry S. Warren, Jr., *Hacker's Delight*, 2nd edition (Addison-Wesley, 2012), Chapter 2, "Basics" (§2–1, "Manipulating Rightmost Bits"), and Chapter 5, "Counting Bits".
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 4A (Addison-Wesley, 2011), §7.1.3, "Bitwise tricks and techniques".
+- Tim Bell, Ian H. Witten and Mike Fellows, *Computer Science Unplugged*, "Binary Numbers" activity: <https://classic.csunplugged.org/activities/binary-numbers/>.
+- Frank Gray, "Pulse Code Communication", US Patent 2,632,058 (1953): <https://patents.google.com/patent/US2632058>.
+- *The Java Language Specification*, §15.19, "Shift Operators" (only the low 5 bits of an `int` shift distance are used): <https://docs.oracle.com/javase/specs/jls/se21/html/jls-15.html#jls-15.19>; and `java.lang.Integer` (`bitCount`, `lowestOneBit`, `numberOfTrailingZeros`): <https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Integer.html>.
+- LeetCode: [136. Single Number](https://leetcode.com/problems/single-number/), [191. Number of 1 Bits](https://leetcode.com/problems/number-of-1-bits/), [338. Counting Bits](https://leetcode.com/problems/counting-bits/), [371. Sum of Two Integers](https://leetcode.com/problems/sum-of-two-integers/), [1611. Minimum One Bit Operations to Make Integers Zero](https://leetcode.com/problems/minimum-one-bit-operations-to-make-integers-zero/).
+
+[← Geometry](../geometry/index.qmd) · [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd) · [Hash Function →](../hash-function/index.qmd)

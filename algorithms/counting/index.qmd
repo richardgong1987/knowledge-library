@@ -1,64 +1,384 @@
 ---
 title: "Counting"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "Counting techniques that replace brute force: frequency arrays such as int[26], counting the complement, inclusion–exclusion, the pigeonhole principle, and the contribution technique (each element's share of a total), with hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+Many problems ask "how many?" or "what is the total over all substrings?". Listing everything and counting is the obvious method and usually far too slow. This lesson collects the five tricks that replace listing: **tally** with a frequency array, count the **opposite** and subtract, correct overlaps with **inclusion–exclusion**, prove that something must exist with the **pigeonhole principle**, and, most powerful of all, ask each element for its **contribution** to the total.
 
-**LeetCode 315 — Count of Smaller Numbers After Self.** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`CountingLab.java`](CountingLab.java). Run it from this folder with `java CountingLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-Try every pair to count how many later numbers are smaller; this is quadratic for long arrays.
+The **appeal** of a string is the number of different letters in it: `"abbca"` has appeal 3 (a, b and c). Add up the appeals of **all substrings** of `"abbca"`. The answer is 28.
 
-## One simple idea
+- `"abbca"` has $\frac{5 \times 6}{2} = 15$ substrings. Listing each one and counting its letters is fine by hand.
+- LeetCode allows strings of $10^5$ letters. That is about $5 \times 10^9$ substrings, and reading each costs more on top: hopeless.
+- The contribution technique flips the question. Instead of asking every substring "how many letters do you have?", ask every **letter** "in how many substrings do you count?". That takes one pass over the string: 5 steps here, $10^5$ for the largest input.
 
-Mathematical counting turns a yes/no predicate into a 0/1 contribution. Then an appropriate data structure can aggregate those contributions without revisiting all later values.
+## Explain it like I'm ten
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+::: {.callout-tip}
+**Tally marks.** To find the most popular ice-cream flavour in class, you do not compare every child with every other child. You draw a column for each flavour and add a mark each time a child names it. That table of columns is a **frequency array**.
 
-## Formula and immediate translation
+**Count the opposite.** Thirty children are in class and 7 wear glasses. How many do not? You do not walk round counting them: $30 - 7 = 23$.
+
+**Cats or dogs.** 12 children like cats, 10 like dogs, and 4 like both. How many like at least one? Not $12 + 10 = 22$, because the 4 who like both were counted twice. Subtract them once: $12 + 10 - 4 = 18$. That correction is **inclusion–exclusion**.
+
+**Socks in the dark.** A drawer has red, blue and green socks, and the room is dark. How many socks must you grab to be sure of a matching pair? Four: three socks could all be different, but the fourth must match one of them. Four socks, three colours: some colour gets two. This is the **pigeonhole principle**, often called Dirichlet's drawer principle (*Schubfachprinzip*) after the mathematician who used it in the 1840s, though it was written down two centuries earlier.
+
+**Ask each child.** Children stand in a line, and a "team" is any group of neighbours standing together. How many places in all the teams put together? Do not list the teams. Ask each child: "how many teams are you in?" For the child in position $i$ (counting from 1) of $n$, a team's left end can be any of the $i$ children up to and including them, and its right end any of the $n - i + 1$ children from them onwards, so they are in $i \times (n - i + 1)$ teams. Add up the children's answers. This is the **contribution technique**.
+:::
+
+## From simple to advanced
+
+### Level 1: frequency arrays
+
+When the possible values are few and small, such as 26 lowercase letters, an array of counters indexed by the value counts everything in one pass:
 
 $$
-C_i=\sum_{j=i+1}^{n-1}[\,a_j<a_i\,]
+f_c(s) = \#\lbrace i : s_i = c \rbrace, \qquad s \text{ is an anagram of } t \iff f_c(s) = f_c(t) \text{ for all } c
 $$
 
-**Symbols and notation:** C_i is the number of entries after index i strictly smaller than a_i; n is total length; [condition] is 1 when true and 0 otherwise.
+where:
 
-**Insert actual numbers:** For [5,2,6,1], C₀ counts later values smaller than 5: 2 and 1 qualify but 6 does not, so C₀=1+0+1=2. C₁=1 (only 1 is smaller than 2), C₂=1, C₃=0.
+- $s_i$ is the $i$-th letter of the string $s$;
+- $f_c(s)$ is how often letter $c$ occurs in $s$;
+- an anagram uses exactly the same letters the same number of times.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: `"listen"` and `"silent"` each have one e, i, l, n, s and t, so they are anagrams. `"banana"` has $f_a = 3$, $f_n = 2$, $f_b = 1$.
 
-## Why the mathematics leads to an algorithm
+```java
+static int[] letterCounts(String word) {
+    int[] count = new int[26];
+    for (char c : word.toCharArray()) count[c - 'a']++;  // 'a' -> 0, 'b' -> 1, ..., 'z' -> 25
+    return count;
+}
 
-Every pair (i,j) with i<j contributes exactly once when the later value is smaller. Summation of indicators produces the desired count without ambiguity.
+static boolean isAnagram(String s, String t) {
+    return Arrays.equals(letterCounts(s), letterCounts(t));
+}
+```
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+Counts answer pair questions too. How many pairs of positions hold the **same** letter? Each letter with $f$ copies gives $\binom{f}{2} = \frac{f(f-1)}{2}$ pairs:
 
-## Make the idea executable
+$$
+\text{equal pairs}(s) = \sum_{c} \binom{f_c}{2}
+$$
 
-The [original algorithm examples](../examples/patterns.mjs) provide a small runnable related operation:
+where $\binom{f}{2}$ counts the ways to pick two of the $f$ copies of one letter.
 
-~~~js
-import { mergeSort } from '../examples/patterns.mjs';
+Example: `"banana"` gives $\binom{3}{2} + \binom{2}{2} + \binom{1}{2} = 3 + 1 + 0 = 4$ pairs: three pairs of a's and one pair of n's. The lab's `equalLetterPairs` adds these up; a double loop over positions would compare $\binom{6}{2} = 15$ pairs instead. For values that are not small integers, a `HashMap` plays the same role as the array.
 
-console.log(mergeSort([5,2,6,1]));
-~~~
+### Level 2: counting the complement
 
-Run from a saved `.mjs` file inside this topic directory. The exported operation is tested with Node's standard test runner. Some examples illustrate a prerequisite rather than the entire specialised algorithm; in that case, the mathematical model above remains the definition of the full task.
+When "good" things are hard to count but "bad" ones are easy, count everything and subtract:
 
-## Complexity and correctness boundaries
+$$
+\#\text{good} = \#\text{all} - \#\text{bad}
+$$
 
-**Work bound:** O(n²) direct counting, O(n log n) with divide-and-conquer or Fenwick tree; n is array length.
+where "all" is usually easy to count with a formula and "bad" has a simple structure.
 
-**Counterexample or limitation:** This counting definition is NOT itself a fast algorithm: using nested loops still costs O(n²). Merge sort or Fenwick trees can evaluate all counts in O(n log n).
+Example: how many substrings of `"abc"` contain at least one vowel? A string of length $n$ has $\frac{n(n+1)}{2}$ substrings, here $\frac{3 \times 4}{2} = 6$. The vowel-free substrings live inside the vowel-free run `"bc"`, which has $\frac{2 \times 3}{2} = 3$ of them (`b`, `c`, `bc`). So $6 - 3 = 3$ substrings have a vowel: `a`, `ab`, `abc`.
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+```java
+static long substringsWithVowel(String s) {
+    long n = s.length(), withoutVowel = 0, run = 0;
+    for (char c : s.toCharArray()) {
+        run = "aeiou".indexOf(c) >= 0 ? 0 : run + 1;   // length of the vowel-free run ending here
+        withoutVowel += run;                            // that many vowel-free substrings end here
+    }
+    return n * (n + 1) / 2 - withoutVowel;
+}
+```
 
-## Reference and practice
+The running count works because a vowel-free run of length $r$ ending at this position contains exactly $r$ vowel-free substrings ending here. For `"abc"` the runs are $0, 1, 2$, which add to 3. Note the `long`: for $n = 10^5$, $\frac{n(n+1)}{2} = 5{,}000{,}050{,}000$, more than an `int` holds.
 
-- **CLRS (4th edition):** CLRS Chapter 2 (inversion counting via merge sort), Chapters 16–17 (augmented structures).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 315 — Count of Smaller Numbers After Self. [Original problem page or practice resource](https://leetcode.com/problems/count-of-smaller-numbers-after-self/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+### Level 3: inclusion–exclusion
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+Adding the sizes of overlapping groups counts the overlaps more than once. Inclusion–exclusion adds single groups, subtracts pairs, adds triples back, and so on:
+
+$$
+\lvert A \cup B \rvert = \lvert A \rvert + \lvert B \rvert - \lvert A \cap B \rvert,
+\qquad
+\lvert A \cup B \cup C \rvert = \lvert A \rvert + \lvert B \rvert + \lvert C \rvert - \lvert A \cap B \rvert - \lvert A \cap C \rvert - \lvert B \cap C \rvert + \lvert A \cap B \cap C \rvert
+$$
+
+where:
+
+- $\cup$ means "in at least one" and $\cap$ means "in both" (or all three);
+- $\lvert X \rvert$ is the number of elements in $X$;
+- in general, an intersection of $j$ sets is added when $j$ is odd and subtracted when $j$ is even.
+
+Example: among $1, \dots, 100$, let $A$, $B$, $C$ be the multiples of 2, 3 and 5. Then $\lvert A \rvert = \lfloor 100/2 \rfloor = 50$, $\lvert B \rvert = 33$, $\lvert C \rvert = 20$; the pairs are multiples of 6, 10 and 15: $16$, $10$, $6$; the triple is multiples of 30: $3$. So
+
+$$
+\lvert A \cup B \cup C \rvert = 50 + 33 + 20 - 16 - 10 - 6 + 3 = 74,
+$$
+
+and $100 - 74 = 26$ numbers are divisible by none of 2, 3, 5 (complement counting again). With $k$ sets there are $2^k - 1$ non-empty groups, which a bitmask enumerates:
+
+```java
+static long countDivisibleByAny(long n, int[] divisors) {   // divisors pairwise coprime, so the lcm is the product
+    long total = 0;
+    for (int mask = 1; mask < (1 << divisors.length); mask++) {
+        long product = 1;
+        for (int i = 0; i < divisors.length; i++) if ((mask >> i & 1) == 1) product *= divisors[i];
+        total += (Integer.bitCount(mask) % 2 == 1 ? 1 : -1) * (n / product); // odd-sized groups add, even-sized subtract
+    }
+    return total;
+}
+```
+
+The product works only because 2, 3 and 5 share no factors. For 4 and 6 the common multiples are the multiples of $\operatorname{lcm}(4, 6) = 12$ (8 of them up to 100), not of 24 (4 of them).
+
+### Level 4: the pigeonhole principle
+
+Pigeonhole does not count; it proves that something **must exist**, and that often tells an algorithm where to look:
+
+$$
+N \text{ items in } k \text{ boxes} \implies \text{some box holds at least } \left\lceil \frac{N}{k} \right\rceil \text{ items}
+$$
+
+where:
+
+- $N$ is the number of items and $k$ the number of boxes;
+- $\lceil x \rceil$ rounds up to a whole number;
+- with $N = k + 1$ this says some box holds at least 2.
+
+Example: 4 socks in 3 colours give $\lceil 4/3 \rceil = 2$, a pair. 10 socks in 3 colours give $\lceil 10/3 \rceil = 4$ of one colour.
+
+A classic algorithmic use: **every array of $n$ integers has a non-empty contiguous block whose sum is a multiple of $n$**. The $n + 1$ prefix sums $P_0 = 0, P_1, \dots, P_n$ have only $n$ possible remainders modulo $n$, so two of them, $P_i$ and $P_j$ with $i < j$, share a remainder. Then $P_j - P_i = a_{i+1} + \dots + a_j$ is a multiple of $n$. For `[3, 1, 4, 2]` ($n = 4$) the remainders of $0, 3, 4, 8, 10$ are $0, 3, 0, 0, 2$; already $P_0 \equiv P_2$, so $3 + 1 = 4$ works.
+
+```java
+static int[] subarrayDivisibleByLength(int[] a) {       // returns {from, to}: a[from..to] sums to a multiple of n
+    int n = a.length;
+    int[] firstSeen = new int[n];                       // firstSeen[r] = first prefix length with remainder r
+    Arrays.fill(firstSeen, -1);
+    firstSeen[0] = 0;                                   // the empty prefix has sum 0
+    long prefix = 0;
+    for (int j = 1; j <= n; j++) {
+        prefix += a[j - 1];
+        int r = Math.floorMod(prefix, n);
+        if (firstSeen[r] >= 0) return new int[] {firstSeen[r], j - 1}; // n + 1 prefixes, only n remainders
+        firstSeen[r] = j;
+    }
+    throw new AssertionError("impossible by the pigeonhole principle");
+}
+```
+
+The final `throw` can never run, and the principle is the proof. `Math.floorMod` keeps the remainder in $[0, n)$ for negative numbers; the lab checks 1,000 random arrays with negative values.
+
+### Level 5: the contribution technique
+
+To total some quantity over **all** substrings, subarrays or pairs, swap the order of the two sums. Instead of "for each substring, add up its elements", write "for each element, multiply its value by the number of substrings it belongs to":
+
+$$
+\sum_{\text{subarrays } [l, r]} \; \sum_{i = l}^{r} a_i = \sum_{i=0}^{n-1} a_i \cdot (i + 1)(n - i)
+$$
+
+where:
+
+- $[l, r]$ is a subarray from index $l$ to $r$, with indices starting at 0;
+- $(i + 1)(n - i)$ counts the subarrays containing index $i$: the left end $l$ can be any of $0, \dots, i$ ($i + 1$ choices) and the right end $r$ any of $i, \dots, n - 1$ ($n - i$ choices);
+- the product rule combines the two independent choices.
+
+Example: `[1, 2, 3]`. The six subarrays have sums $1, 2, 3, 3, 5, 6$, total 20. By contribution: $1 \cdot (1 \cdot 3) + 2 \cdot (2 \cdot 2) + 3 \cdot (3 \cdot 1) = 3 + 8 + 9 = 20$. With all values 1, the same formula counts total substring length: $3 + 4 + 3 = 10 = 1 + 1 + 1 + 2 + 2 + 3$.
+
+```java
+static long sumOfAllSubarraySums(int[] a) {
+    long total = 0;
+    for (int i = 0; i < a.length; i++) total += (long) a[i] * (i + 1) * (a.length - i); // a[i] is in (i+1)(n-i) subarrays
+    return total;
+}
+```
+
+The interview problems below are all this one move, with a different rule for **which** substrings an element counts in. It is the counting version of linearity of expectation from [Probability and Statistics](../probability-and-statistics/index.qmd): a total over many objects is the sum of every element's share.
+
+## Why it works and what it costs
+
+**Why swapping sums is allowed (double counting).** Draw a table with one row per subarray and one column per index, and put $a_i$ in a cell when index $i$ is inside that subarray. Adding the rows first gives the left side of the Level 5 formula; adding the columns first gives the right side. Both add the same cells, so they are equal. For `[1, 2, 3]` the six rows sum to $1 + 2 + 3 + 3 + 5 + 6 = 20$ and the three columns to $3 + 8 + 9 = 20$.
+
+**Why inclusion–exclusion counts each element exactly once.** Take an element that lies in exactly $t \ge 1$ of the sets. It is added in $\binom{t}{1}$ single terms, subtracted in $\binom{t}{2}$ pair terms, added in $\binom{t}{3}$ triple terms, and so on. Its net count is $\binom{t}{1} - \binom{t}{2} + \binom{t}{3} - \dots = 1 - (1 - 1)^t = 1$ by the binomial theorem. The number 30 is in all three sets ($t = 3$): it is counted $3 - 3 + 1 = 1$ time.
+
+**Why pigeonhole holds.** If every box held fewer than $\lceil N/k \rceil$ items, it would hold at most $\lceil N/k \rceil - 1 < N/k$ items, so all $k$ boxes together would hold fewer than $k \cdot N/k = N$, a contradiction.
+
+**Costs:**
+
+| Task | Brute force | Counting technique | Example |
+| --- | --- | --- | --- |
+| Anagram test | sort both strings: $O(n \log n)$ | two frequency arrays: $O(n + 26)$ | `"listen"`: 12 increments |
+| Equal-letter pairs | all $\binom{n}{2}$ pairs | $\sum_c \binom{f_c}{2}$: $O(n + 26)$ | `"banana"`: 15 pairs vs 6 increments |
+| Substrings with a vowel | all $\frac{n(n+1)}{2}$ substrings | complement: $O(n)$ | `"abc"`: 3 steps |
+| Multiples of any of $k$ numbers up to $N$ | test all $N$ numbers | inclusion–exclusion: $O(2^k k)$ | $k = 3$: 7 groups instead of 100 tests |
+| Sum over all subarrays | $O(n^2)$ subarrays | contribution: $O(n)$ | `[1, 2, 3]`: 3 terms |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `count[c - 'a']` on uppercase letters, spaces or digits | `ArrayIndexOutOfBoundsException` | Use the right offset (`'A'` in LeetCode 828), an `int[128]`, or a `HashMap` |
+| `n * (n + 1) / 2` or `(i + 1) * (n - i)` in `int` | A negative total for $n$ around $10^5$ | Compute in `long` |
+| Adding the group sizes without subtracting overlaps | Elements in two groups counted twice | Inclusion–exclusion with alternating signs |
+| Using the product instead of the lcm for divisors that share factors | Multiples of 4 and 6 counted via 24 instead of 12 | `lcm(a, b) = a / gcd(a, b) * b` |
+| Expecting a repeat with $n$ items in $n$ boxes | No guarantee: each box can hold one | Pigeonhole needs $n + 1$ items |
+| In LeetCode 828, using only the previous occurrence | The answer of LeetCode 2262 instead: "first copy", not "only copy" | Use both the previous and the next occurrence |
+| Listing all substrings to sum a property | $O(n^2)$ or $O(n^3)$, too slow for $10^5$ | Contribution: count, for each position, the substrings where it counts |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 2063: Vowels of All Substrings (Medium)
+
+**Problem.** Return the total number of vowels in all substrings of `word`, counting each substring separately. For `"aba"` the answer is 6: the substrings `a`, `b`, `a`, `ab`, `ba`, `aba` contain $1 + 0 + 1 + 1 + 1 + 2 = 6$ vowels.
+
+**Math first.** Each vowel contributes 1 for every substring that contains it, and the position $i$ lies in $(i + 1)(n - i)$ substrings:
+
+$$
+\text{answer} = \sum_{i \,:\, s_i \text{ is a vowel}} (i + 1)(n - i)
+$$
+
+where:
+
+- $n$ is the length of the word and $i$ the index of a letter, starting at 0;
+- $i + 1$ is the number of possible start positions $0, \dots, i$, and $n - i$ the number of possible end positions $i, \dots, n - 1$.
+
+Example: `"aba"`, $n = 3$. The vowels are at $i = 0$, giving $1 \cdot 3 = 3$, and at $i = 2$, giving $3 \cdot 1 = 3$. Total $3 + 3 = 6$.
+
+**Idea.** One pass: whenever the letter is a vowel, add its number of substrings.
+
+```java
+static long countVowels(String word) {
+    long total = 0, n = word.length();
+    for (int i = 0; i < n; i++) {
+        if ("aeiou".indexOf(word.charAt(i)) >= 0) total += (i + 1) * (n - i); // this vowel is in (i+1)(n-i) substrings
+    }
+    return total;
+}
+```
+
+**Answer.** 6 for `"aba"`, 3 for `"abc"`, and 0 for `"ltcd"`. For $10^5$ copies of `a` the answer is $166{,}671{,}666{,}700{,}000$, so `long` is essential. $O(n)$ time and $O(1)$ space, versus $O(n^2)$ substrings for brute force.
+
+### 2. LeetCode 2262: Total Appeal of A String (Hard)
+
+**Problem.** The appeal of a string is its number of distinct letters. Return the sum of the appeals of all substrings. For `"abbca"` the answer is 28.
+
+**Math first.** A substring's appeal counts each distinct letter **once**. Credit that "once" to the letter's **first** occurrence inside the substring. Position $i$ is the first copy of its letter in a substring exactly when the substring starts after the previous copy of that letter:
+
+$$
+\text{answer} = \sum_{i=0}^{n-1} (i - p_i)(n - i)
+$$
+
+where:
+
+- $p_i$ is the index of the previous occurrence of the letter $s_i$, or $-1$ if there is none;
+- $i - p_i$ counts the start positions $p_i + 1, \dots, i$, which leave no earlier copy inside;
+- $n - i$ counts the end positions $i, \dots, n - 1$, which are unrestricted.
+
+Example: `"abbca"`, $n = 5$.
+
+| $i$ | letter | previous copy $p_i$ | starts $i - p_i$ | ends $n - i$ | contribution |
+| --- | --- | --- | --- | --- | --- |
+| 0 | a | $-1$ | 1 | 5 | 5 |
+| 1 | b | $-1$ | 2 | 4 | 8 |
+| 2 | b | 1 | 1 | 3 | 3 |
+| 3 | c | $-1$ | 4 | 2 | 8 |
+| 4 | a | 0 | 4 | 1 | 4 |
+
+Total: $5 + 8 + 3 + 8 + 4 = \mathbf{28}$. For `"code"`, all letters differ: $1 \cdot 4 + 2 \cdot 3 + 3 \cdot 2 + 4 \cdot 1 = 20$.
+
+**Idea.** Keep `lastSeen[c]`, the latest index of each letter (a frequency-style array of 26 positions). At each position, add the contribution and update.
+
+```java
+static long appealSum(String s) {
+    int[] lastSeen = new int[26];
+    Arrays.fill(lastSeen, -1);
+    long total = 0, n = s.length();
+    for (int i = 0; i < n; i++) {
+        int c = s.charAt(i) - 'a';
+        total += (i - lastSeen[c]) * (n - i);           // substrings in which s[i] is the first copy of its letter
+        lastSeen[c] = i;
+    }
+    return total;
+}
+```
+
+**Answer.** 28 for `"abbca"` and 20 for `"code"`; the lab also checks several strings against a brute-force count over every substring. $O(n)$ time and $O(26)$ space.
+
+### 3. LeetCode 828: Count Unique Characters of All Substrings of a Given String (Hard)
+
+**Problem.** For a string `t`, let $u(t)$ be the number of letters that appear **exactly once** in `t`. Return the sum of $u(t)$ over all substrings `t` of `s` (uppercase letters only). For `"ABA"` the answer is 8.
+
+**Math first.** Now a letter counts only when it is the **only** copy in the substring, so the substring must avoid both the previous **and** the next copy:
+
+$$
+\text{answer} = \sum_{i=0}^{n-1} (i - p_i)(q_i - i)
+$$
+
+where:
+
+- $p_i$ is the index of the previous copy of $s_i$, or $-1$ if none;
+- $q_i$ is the index of the next copy of $s_i$, or $n$ if none;
+- the substring must start in $p_i + 1, \dots, i$ and end in $i, \dots, q_i - 1$.
+
+Example: `"ABA"`, $n = 3$.
+
+- $i = 0$, `A`: $p = -1$, $q = 2$. Contribution $(0 + 1)(2 - 0) = 2$ (the substrings `A`, `AB`).
+- $i = 1$, `B`: $p = -1$, $q = 3$. Contribution $(1 + 1)(3 - 1) = 4$ (every substring containing `B`).
+- $i = 2$, `A`: $p = 0$, $q = 3$. Contribution $(2 - 0)(3 - 2) = 2$ (the substrings `A`, `BA`).
+
+Total $2 + 4 + 2 = 8$. Problem 2's formula would give $(1)(3) + (2)(2) + (2)(1) = 9$ here, because in `"ABA"` itself the first `A` counts as a distinct letter but not as a unique one.
+
+**Idea.** One left-to-right pass records each position's previous copy, one right-to-left pass its next copy, and a final pass adds the products.
+
+```java
+static int uniqueLetterString(String s) {
+    int n = s.length();
+    int[] previous = new int[n], next = new int[n], lastSeen = new int[26];
+    Arrays.fill(lastSeen, -1);
+    for (int i = 0; i < n; i++) {
+        previous[i] = lastSeen[s.charAt(i) - 'A'];
+        lastSeen[s.charAt(i) - 'A'] = i;
+    }
+    Arrays.fill(lastSeen, n);
+    for (int i = n - 1; i >= 0; i--) {
+        next[i] = lastSeen[s.charAt(i) - 'A'];
+        lastSeen[s.charAt(i) - 'A'] = i;
+    }
+    long total = 0;
+    for (int i = 0; i < n; i++) total += (long) (i - previous[i]) * (next[i] - i); // s[i] is the only copy of its letter
+    return (int) total;
+}
+```
+
+**Answer.** 10 for `"ABC"`, 8 for `"ABA"` and 92 for `"LEETCODE"`, all confirmed by brute force in the lab. Three passes of $n$ steps: $O(n)$ time and $O(n)$ space, versus $O(n^2)$ substrings (5 billion for $n = 10^5$) for brute force. (Keeping just the last two positions of each letter brings the space down to $O(26)$.)
+
+## Mathematical Abstraction
+
+Every technique in this lesson counts the same set in a smarter order. The contribution technique swaps a double sum, and inclusion–exclusion corrects overlaps with alternating signs:
+
+$$
+\sum_{T \in \mathcal{T}} \; \sum_{x \in T} w(x) = \sum_{x} w(x) \cdot \#\lbrace T \in \mathcal{T} : x \text{ counts in } T \rbrace,
+\qquad
+\Big\lvert \bigcup_{i=1}^{k} A_i \Big\rvert = \sum_{\emptyset \ne J \subseteq \lbrace 1, \dots, k \rbrace} (-1)^{\lvert J \rvert + 1} \Big\lvert \bigcap_{j \in J} A_j \Big\rvert
+$$
+
+where:
+
+- $\mathcal{T}$ is the family of objects being totalled (all substrings, all subarrays), and $w(x)$ is what element $x$ adds when it counts;
+- $J$ runs over the non-empty groups of sets, added when $\lvert J \rvert$ is odd and subtracted when it is even;
+- $\#\lbrace \cdot \rbrace$ and $\lvert \cdot \rvert$ both mean "how many".
+
+Example: for the appeal of `"abbca"`, $\mathcal{T}$ is the 15 substrings, $w = 1$, and position $i$ counts in $(i - p_i)(n - i)$ of them, giving $5 + 8 + 3 + 8 + 4 = 28$. For the multiples of 2, 3 or 5 up to 100, the seven groups give $50 + 33 + 20 - 16 - 10 - 6 + 3 = 74$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Appendix C, "Counting and Probability", §C.1 "Counting"; Chapter 8, "Sorting in Linear Time", §8.2 "Counting sort" (the frequency array as an algorithm); and Chapter 5, §5.2 "Indicator random variables" (the probabilistic form of the contribution technique). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §5.1 "String Sorts", which builds key-indexed counting on a `count[]` array: <https://algs4.cs.princeton.edu/51radix/>.
+- Ronald L. Graham, Donald E. Knuth and Oren Patashnik, *Concrete Mathematics*, 2nd edition (Addison-Wesley, 1994), Chapter 2, "Sums" (changing the order of summation).
+- Martin Aigner and Günter M. Ziegler, *Proofs from THE BOOK* (Springer), the chapter "Pigeon-hole and double counting".
+- Benoît Rittaud and Albrecht Heeffer, "The pigeonhole principle, two centuries before Dirichlet", *The Mathematical Intelligencer* 36 (2014), on the history of the principle.
+- LeetCode: [2063. Vowels of All Substrings](https://leetcode.com/problems/vowels-of-all-substrings/), [2262. Total Appeal of A String](https://leetcode.com/problems/total-appeal-of-a-string/), [828. Count Unique Characters of All Substrings of a Given String](https://leetcode.com/problems/count-unique-characters-of-all-substrings-of-a-given-string/).
+
+[← Suffix Array](../suffix-array/index.qmd) · [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd)

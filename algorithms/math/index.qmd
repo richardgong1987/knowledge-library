@@ -1,56 +1,503 @@
 ---
 title: "Math"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "Computer arithmetic for algorithms: integer overflow and Math.addExact, modular arithmetic, fast exponentiation by the bits of the exponent, integer square roots by binary search and Newton's method, floor division of negative numbers, and hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+A computer's integers are not the integers from school. They have a largest value, they wrap around when you pass it, and they round negative quotients the "wrong" way. This lesson shows each of those surprises with real numbers, then builds the small set of tools every interview problem with numbers needs: modular arithmetic, fast powers, integer square roots and floor division.
 
-**LeetCode 50 — Pow(x, n).** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`MathLab.java`](MathLab.java). Run it from this folder with `java MathLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-Repeated multiplication n times is understandable, but for very large exponents it performs far too many operations.
+Here are three one-line Java calculations. Each looks harmless, and each gives a wrong answer.
 
-## One simple idea
+- `2_000_000_000 + 2_000_000_000` should be four billion. Java prints **−294,967,296**.
+- $3^{200} \bmod 1{,}000{,}000{,}007$: multiplying 3 by itself 200 times works, but $3^{10^{18}}$ would take $10^{18}$ multiplications, which is about 30 years at a billion per second.
+- `-7 / 2` should be $-3.5$, rounded **down** to $-4$. Java prints $-3$.
 
-Use algebraic structure to reduce work: an even power is the square of a half-power, so each step approximately halves the exponent.
+We want arithmetic that never silently overflows, powers that take about 60 steps instead of $10^{18}$, and division that rounds the way the problem means.
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+## Explain it like I'm ten
 
-## Formula and immediate translation
+::: {.callout-tip}
+A car's mileage counter has six wheels of digits. At 999,999 kilometres, drive one more kilometre and it shows **000,000**. The car did not teleport home; the counter simply ran out of wheels. A Java `int` is a counter with 32 binary wheels. Its biggest value is 2,147,483,647, and one more makes it jump to −2,147,483,648. This is called **overflow**.
+
+Overflow is not just a puzzle. On 4 June 1996 the first Ariane 5 rocket broke up about 40 seconds after launch. Its navigation software converted a 64-bit number to a 16-bit integer, the value was too big to fit, and the resulting error stopped the computers that told the rocket which way was up (inquiry report chaired by J. L. Lions, July 1996).
+
+A **clock** is the friendly kind of wrap-around. Ten o'clock plus five hours is three o'clock, because a clock counts *modulo 12*. Programs use the same trick on purpose: "give the answer modulo 1,000,000,007" just means "use a clock with 1,000,000,007 hours", so the numbers never grow too big.
+
+To compute a big power fast, think of **folding paper**. Each fold doubles the thickness: 1, 2, 4, 8, 16 layers after four folds. You do not add one layer at a time; you double. Fast exponentiation doubles the exponent the same way.
+:::
+
+## From simple to advanced
+
+### Level 1: integers have a largest value
+
+A Java `int` has 32 bits. One bit is the sign, so it holds every whole number in this range:
 
 $$
-x^{2k}=(x^k)^2,\qquad x^{2k+1}=x(x^k)^2
+-2^{31} \le x \le 2^{31} - 1
 $$
 
-**Symbols and notation:** x is the base; k a nonnegative integer; 2k and 2k+1 are even and odd exponents. Multiplication of two half-power results replaces computing every exponent level.
+where:
 
-**Insert actual numbers:** For x=2 and exponent 5, 5=2×2+1. Compute 2²=4, square to 16, multiply by 2 to obtain 32. Only logarithmically many halving steps are needed.
+- $x$ is any value an `int` can hold;
+- $2^{31} = 2{,}147{,}483{,}648$, the number of non-negative values (0 counts as one of them);
+- $2^{31} - 1$ is `Integer.MAX_VALUE` and $-2^{31}$ is `Integer.MIN_VALUE`.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: $2^{31} - 1 = 2{,}147{,}483{,}648 - 1 = 2{,}147{,}483{,}647$. A `long` has 64 bits and reaches $2^{63} - 1 \approx 9.22 \times 10^{18}$.
 
-## Why the mathematics leads to an algorithm
+When a result passes the limit, Java does not stop. It **wraps around** by $2^{32}$, exactly like the mileage counter:
 
-Prove identities from exponent rules; recursively reduce the exponent until zero; the base case x⁰=1.
+$$
+\text{stored} = \text{true} - 2^{32} \quad \text{when } 2^{31} \le \text{true} < 2^{32} + 2^{31}
+$$
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+where:
 
-## Make the idea executable
+- "true" is the mathematical answer;
+- "stored" is what the `int` actually holds;
+- $2^{32} = 4{,}294{,}967{,}296$ is the number of different 32-bit patterns.
 
-Start with the numerical example above and write a tiny function or test that reproduces it. For comparison, examine the [original executable patterns library](../examples/patterns.mjs). This topic's main challenge is its mathematical invariant rather than framework setup.
+Example: $2{,}000{,}000{,}000 + 2{,}000{,}000{,}000 = 4{,}000{,}000{,}000$, which is too big. Stored: $4{,}000{,}000{,}000 - 4{,}294{,}967{,}296 = -294{,}967{,}296$. That is the number Java printed.
 
-## Complexity and correctness boundaries
+Three ways to stay safe:
 
-**Work bound:** O(log n) multiplication steps for nonnegative integer n; n is magnitude of exponent.
+1. **Use a wider type.** Compute in `long` when an `int` might overflow.
+2. **Rearrange.** The midpoint `(low + high) / 2` overflows for $\text{low} = 1{,}500{,}000{,}000$ and $\text{high} = 2{,}000{,}000{,}000$, because their sum is 3.5 billion. `low + (high - low) / 2` never makes a number bigger than `high`, and gives $1{,}750{,}000{,}000$. Joshua Bloch found this exact bug in the JDK's own binary search in 2006, nine years after it shipped.
+3. **Ask Java to check.** `Math.addExact`, `Math.multiplyExact` and `Math.subtractExact` throw an `ArithmeticException` instead of wrapping.
 
-**Counterexample or limitation:** Negative exponents require reciprocal (when base≠0), and fixed-width integer power can overflow. Do not confuse a mathematical formula with floating-point exactness.
+LeetCode 7, *Reverse Integer* (Medium), is the classic overflow exercise: reverse the digits of an `int`, and return 0 if the result does not fit. `123` becomes `321`, `-123` becomes `-321` and `120` becomes `21`. Each step computes $r \leftarrow 10r + d$, where $d$ is the last digit, and the checked methods catch the one step that overflows:
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+```java
+static int reverse(int x) {
+    int reversed = 0;
+    while (x != 0) {
+        try {
+            reversed = Math.addExact(Math.multiplyExact(reversed, 10), x % 10);
+        } catch (ArithmeticException overflow) {
+            return 0;                                   // LeetCode 7 asks for 0 when the answer does not fit
+        }
+        x /= 10;
+    }
+    return reversed;
+}
+```
 
-## Reference and practice
+For $x = 1{,}534{,}236{,}469$ the reversed number would be $9{,}646{,}324{,}351$, more than four times `Integer.MAX_VALUE`, so the answer is 0. Negative numbers need no special case: in Java `-123 % 10` is $-3$, so the digits come out negative and the sum stays negative.
 
-- **CLRS (4th edition):** CLRS Chapter 31 (number theory and fast modular exponentiation).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 50 — Pow(x, n). [Original problem page or practice resource](https://leetcode.com/problems/powx-n/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+### Level 2: clock arithmetic (modular arithmetic)
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+Many problems say "return the answer modulo $10^9 + 7$". The reason is that the remainder of a sum or product can be computed from the remainders of the parts, so the numbers never need to grow:
+
+$$
+(a + b) \bmod m = \big((a \bmod m) + (b \bmod m)\big) \bmod m, \qquad
+(a \cdot b) \bmod m = \big((a \bmod m) \cdot (b \bmod m)\big) \bmod m
+$$
+
+where:
+
+- $a$ and $b$ are whole numbers;
+- $m$ is the modulus, the number of "hours" on the clock;
+- $a \bmod m$ is the remainder after dividing $a$ by $m$, a number from $0$ to $m - 1$.
+
+Example with $m = 7$, $a = 15$, $b = 20$. The remainders are $15 \bmod 7 = 1$ and $20 \bmod 7 = 6$.
+
+- Sum: $(15 + 20) \bmod 7 = 35 \bmod 7 = 0$, and $(1 + 6) \bmod 7 = 7 \bmod 7 = 0$. Same answer.
+- Product: $(15 \cdot 20) \bmod 7 = 300 \bmod 7 = 300 - 294 = 6$, and $(1 \cdot 6) \bmod 7 = 6$. Same answer.
+- Difference: $(3 - 5) \bmod 7$ should be $5$ (two hours before 3 o'clock on a 7-hour clock). Java's `%` gives $-2$; `Math.floorMod(3 - 5, 7)` gives $5$.
+- Division does **not** work this way: $\frac{a}{b} \bmod m$ needs a *modular inverse*, which the [Number Theory](../number-theory/index.qmd) lesson builds.
+
+Why exactly $1{,}000{,}000{,}007$? It is prime (which makes division possible), and the product of two remainders fits in a `long`:
+
+$$
+(m - 1)^2 = (10^9 + 6)^2 = 10^{18} + 12 \cdot 10^{9} + 36 < 2^{63} - 1 \approx 9.22 \times 10^{18}
+$$
+
+where $m = 10^9 + 7$ is the modulus and $m - 1$ is the largest possible remainder.
+
+Example: the largest product is $1{,}000{,}000{,}012{,}000{,}000{,}036$, about $1.0 \times 10^{18}$, which is nine times smaller than the `long` limit. So reducing both factors first is enough:
+
+```java
+static final long MOD = 1_000_000_007;
+
+static long mulMod(long a, long b) {
+    return a % MOD * (b % MOD) % MOD;                   // both factors are below 1e9+7, so the product is below 2^63
+}
+```
+
+`mulMod(123456789, 987654321)` is $259{,}106{,}859$. The exact product, $121{,}932{,}631{,}112{,}635{,}269$, also fits in a `long` here, but the product of two numbers near $10^{12}$ would not, and `mulMod` reduces them first.
+
+### Level 3: fast exponentiation, using the bits of the exponent
+
+To compute $a^n$, the slow way multiplies $n - 1$ times. The fast way writes $n$ in binary. Each bit says whether one particular "doubled" power is needed:
+
+$$
+n = \sum_{i} b_i 2^{i} \quad \Longrightarrow \quad a^{n} = \prod_{i \,:\, b_i = 1} a^{2^{i}}
+$$
+
+where:
+
+- $b_i$ is bit number $i$ of $n$ (0 or 1), counting from the right, starting at 0;
+- $a^{2^i}$ is $a$ squared $i$ times: $a, a^2, a^4, a^8, \dots$;
+- $\prod_{i : b_i = 1}$ multiplies only the powers whose bit is 1.
+
+Example: $n = 13 = 1101_2 = 8 + 4 + 1$, so $3^{13} = 3^{8} \cdot 3^{4} \cdot 3^{1}$. Squaring gives $3^1 = 3$, $3^2 = 9$, $3^4 = 81$, $3^8 = 6{,}561$. Then $6{,}561 \cdot 81 \cdot 3 = 1{,}594{,}323$, which is $3^{13}$. That took 3 squarings and 2 extra multiplications instead of 12 multiplications.
+
+The loop reads the bits from the right. `base` walks through $a, a^2, a^4, \dots$, and `result` collects the ones whose bit is 1:
+
+```java
+static long power(long base, long exponent, long mod) {
+    long result = 1;
+    base %= mod;
+    while (exponent > 0) {
+        if ((exponent & 1) == 1) result = result * base % mod; // this bit of the exponent is 1
+        base = base * base % mod;                               // base^1, base^2, base^4, base^8, ...
+        exponent >>= 1;
+    }
+    return result;
+}
+```
+
+Trace of `power(3, 13, ...)`:
+
+| Step | `exponent` (binary) | Last bit | `result` | `base` afterwards |
+| --- | --- | --- | --- | --- |
+| 1 | 1101 | 1 | $1 \cdot 3 = 3$ | 9 |
+| 2 | 110 | 0 | 3 | 81 |
+| 3 | 11 | 1 | $3 \cdot 81 = 243$ | 6,561 |
+| 4 | 1 | 1 | $243 \cdot 6{,}561 = 1{,}594{,}323$ | (not needed) |
+
+With modulus 1,000 the answer is $1{,}594{,}323 \bmod 1{,}000 = 323$. The loop runs once per bit, so $n = 10^9$, which has 30 bits, needs 30 rounds instead of a billion multiplications. LeetCode 50, *Pow(x, n)*, is the same loop with `double` values; there, a negative $n$ means computing $1 / x^{-n}$, and $n = -2^{31}$ must be widened to `long` before negating, because $2^{31}$ does not fit in an `int`.
+
+### Level 4: integer square roots
+
+The integer square root of $x$ is the largest whole number whose square is at most $x$:
+
+$$
+\operatorname{isqrt}(x) = \lfloor \sqrt{x} \rfloor = \max \lbrace r \ge 0 : r^2 \le x \rbrace
+$$
+
+where:
+
+- $x \ge 0$ is a whole number;
+- $\lfloor \cdot \rfloor$ means "round down to a whole number";
+- $r$ ranges over whole numbers.
+
+Example: $\operatorname{isqrt}(8) = 2$, because $2^2 = 4 \le 8$ but $3^2 = 9 > 8$. And $\operatorname{isqrt}(2{,}147{,}395{,}600) = 46{,}340$ exactly, because $46{,}340^2 = 2{,}147{,}395{,}600$. That number is the largest perfect square below `Integer.MAX_VALUE`, so `46_341 * 46_341` already overflows an `int`.
+
+There are two good methods. **Binary search** on $r$ is the interview favourite (problem 1 below). **Newton's method** is faster. It improves a guess $r$ by averaging it with $x / r$: if $r$ is too big, then $x / r$ is too small, and their average is closer.
+
+$$
+r_{k+1} = \left\lfloor \frac{r_k + \lfloor x / r_k \rfloor}{2} \right\rfloor, \qquad r_0 = x
+$$
+
+where:
+
+- $r_k$ is the guess after $k$ steps;
+- $\lfloor x / r_k \rfloor$ is the whole-number quotient, the guess "from the other side";
+- the loop stops at the first $r_k$ with $r_k^2 \le x$.
+
+Example: $x = 8$. Start at $r_0 = 8$. Then $r_1 = \lfloor (8 + 1) / 2 \rfloor = 4$, $r_2 = \lfloor (4 + 2) / 2 \rfloor = 3$, $r_3 = \lfloor (3 + 2) / 2 \rfloor = 2$. Now $2^2 = 4 \le 8$, so the answer is 2.
+
+```java
+static long isqrtNewton(long x) {
+    if (x < 2) return x;
+    long r = x;
+    while (r * r > x) r = (r + x / r) / 2;              // each step lands closer to the root, never below it
+    return r;
+}
+```
+
+Newton's guesses never drop below the true root, because the average of $r$ and $x / r$ is at least $\sqrt{x}$ (the arithmetic mean is at least the geometric mean). Far from the root each step roughly halves the guess; close to it, the number of correct digits doubles each step.
+
+### Level 5: dividing negative numbers
+
+Java's `/` **truncates**: it throws away the fraction, which moves negative answers *up* toward zero. Many problems need the **floor** instead, which always moves down. Both versions satisfy the same division identity; they differ only in the remainder:
+
+$$
+a = b \cdot q + r, \qquad
+\begin{cases}
+q = \operatorname{trunc}(a / b), \; r \text{ has the sign of } a & \text{Java } \texttt{/} \text{ and } \texttt{\%} \\
+q = \lfloor a / b \rfloor, \; 0 \le r < b & \texttt{Math.floorDiv} \text{ and } \texttt{Math.floorMod}, \; b > 0
+\end{cases}
+$$
+
+where:
+
+- $a$ is the dividend and $b$ the divisor;
+- $q$ is the quotient and $r$ the remainder;
+- $\operatorname{trunc}$ drops the fraction, rounding toward zero.
+
+Example: $a = -7$, $b = 2$, true quotient $-3.5$.
+
+- Truncation: $q = -3$, $r = -1$, and $2 \cdot (-3) + (-1) = -7$. This is Java's `-7 / 2` and `-7 % 2`.
+- Floor: $q = -4$, $r = 1$, and $2 \cdot (-4) + 1 = -7$. This is `Math.floorDiv(-7, 2)` and `Math.floorMod(-7, 2)`.
+
+Floor matters whenever a negative number must land in a valid slot. If day 0 is a Monday, then day $-1$ (yesterday) must be a Sunday, slot 6, not slot $-1$:
+
+```java
+static int dayOfWeek(int dayNumber) {                   // day 0 is a Monday; negative days are in the past
+    return Math.floorMod(dayNumber, 7);
+}
+```
+
+`dayOfWeek(-1)` is 6, while `-1 % 7` is $-1$. The same applies to grid cells with negative coordinates, circular buffers and hash buckets.
+
+## Why it works and what it costs
+
+**Why the modular rules hold.** Write $a = q_a m + r_a$ and $b = q_b m + r_b$. Then $a + b = (q_a + q_b)m + (r_a + r_b)$, and the multiple of $m$ does not change the remainder. For the product, $ab = (\text{a multiple of } m) + r_a r_b$, for the same reason. With $15 = 2 \cdot 7 + 1$ and $20 = 2 \cdot 7 + 6$: $15 \cdot 20 = (\dots) \cdot 7 + 1 \cdot 6$, so the remainder is 6.
+
+**Why fast exponentiation is correct.** The loop keeps this invariant:
+
+$$
+\text{result} \cdot \text{base}^{\,\text{exponent}} = a^{n}
+$$
+
+where "result", "base" and "exponent" are the three variables in the code, and $a^n$ is the value we want.
+
+Example: in the trace above the triples are $(1, 3, 13)$, $(3, 9, 6)$, $(3, 81, 3)$, $(243, 6{,}561, 1)$ and $(1{,}594{,}323, \dots, 0)$. Check the second one: $3 \cdot 9^{6} = 3 \cdot 531{,}441 = 1{,}594{,}323$. Correct.
+
+- *Initially* result $= 1$, base $= a$, exponent $= n$, so it holds.
+- *An even exponent* $2e$: squaring the base and halving the exponent gives $(\text{base}^2)^{e} = \text{base}^{2e}$. Nothing changes.
+- *An odd exponent* $2e + 1$: moving one factor of base into result gives $(\text{result} \cdot \text{base}) \cdot (\text{base}^2)^{e} = \text{result} \cdot \text{base}^{2e+1}$. Nothing changes.
+- *At the end* the exponent is 0, so result $= a^n$.
+
+**Costs, counted on the examples:**
+
+| Task | Method | Steps for the example | Growth |
+| --- | --- | --- | --- |
+| $a^{n}$ | multiply $n - 1$ times | $3^{13}$: 12 multiplications | $O(n)$ |
+| $a^{n}$ | fast power | $3^{13}$: 4 rounds, 7 multiplications | $O(\log n)$; 30 rounds for $n = 10^9$ |
+| $\operatorname{isqrt}(x)$ | try $r = 0, 1, 2, \dots$ | $x = 8$: 4 tries | $O(\sqrt{x})$ |
+| $\operatorname{isqrt}(x)$ | binary search | $x = 8$: 3 rounds | $O(\log x)$; at most 31 rounds for an `int` |
+| $\operatorname{isqrt}(x)$ | Newton | $x = 8$: 3 updates | $O(\log x)$ halvings, then a few doubling-precision steps |
+| checked add | `Math.addExact` | one comparison more than `+` | $O(1)$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Adding or multiplying large `int` values | A negative or far-too-small answer, with no error | Compute in `long`, or use `Math.addExact` and `Math.multiplyExact` |
+| `(low + high) / 2` in a binary search | A negative midpoint for indices above about $10^9$ | `low + (high - low) / 2` |
+| `mid * mid <= x` with `int mid` | Wrong square roots once `mid` exceeds 46,340 | Make `mid` a `long`, or test `mid <= x / mid` |
+| `Math.abs(Integer.MIN_VALUE)` | Still $-2{,}147{,}483{,}648$, because $2^{31}$ does not fit | Widen to `long` before taking the absolute value or negating |
+| `(a - b) % m` | A negative "remainder" used as an index | `Math.floorMod(a - b, m)` |
+| `-7 / 2` when you meant the floor | $-3$ instead of $-4$ | `Math.floorDiv` |
+| `a * b % MOD` when `a` and `b` are not yet reduced | Overflow before the `%` runs | Reduce both first, as in `mulMod` |
+| `(long) Math.pow(3, 40) % MOD` | A slightly wrong answer: `double` holds only 53 bits | Integer fast power |
+| Dividing under a modulus as `a / b % MOD` | A wrong answer, because division is not compatible with `mod` | Multiply by the modular inverse (see Number Theory) |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 69: Sqrt(x) (Easy)
+
+**Problem.** Given $x \ge 0$, return $\lfloor \sqrt{x} \rfloor$ without using a built-in square root. For $x = 8$ the answer is 2, because $\sqrt{8} \approx 2.83$.
+
+**Math first.** The condition $r^2 \le x$ is true for small $r$ and false for big $r$, and it switches exactly once. So the answer is the **last** $r$ where it is true, which binary search finds:
+
+$$
+\operatorname{answer} = \max \lbrace r \in [0, x] : r^2 \le x \rbrace
+$$
+
+where:
+
+- $r$ is a candidate root, a whole number between 0 and $x$;
+- $[0, x]$ is the search range, which certainly contains the answer.
+
+Example: $x = 8$. The range is $[0, 8]$. Try 4: $16 > 8$, so the answer is in $[0, 3]$. Try 2: $4 \le 8$, so it is in $[2, 3]$. Try 3: $9 > 8$, so it is in $[2, 2]$. The answer is **2**.
+
+**Idea.** Keep a range `[low, high]` that always contains the answer. Test the middle. If its square fits, the answer is the middle or above; otherwise it is below. Round the middle **up**, or `low = mid` could repeat forever when `high = low + 1`.
+
+```java
+static int mySqrt(int x) {
+    long low = 0, high = x;
+    while (low < high) {
+        long mid = (low + high + 1) / 2;                // round up, so low = mid always makes progress
+        if (mid * mid <= x) low = mid; else high = mid - 1;
+    }
+    return (int) low;
+}
+```
+
+**Answer.** `mySqrt(8) = 2` and `mySqrt(4) = 2`. `mySqrt(2147483647) = 46340`, which needs the `long` variables: in `int`, `46341 * 46341` would wrap to a negative number and "pass" the test. The range halves each round, so there are at most $\lceil \log_2 2^{31} \rceil = 31$ rounds: $O(\log x)$ time and $O(1)$ space.
+
+### 2. LeetCode 43: Multiply Strings (Medium)
+
+**Problem.** Multiply two non-negative integers given as strings, up to 200 digits each, without converting them to numbers. `"123" × "456"` is `"56088"`.
+
+**Math first.** Number the digits from the right, starting at 0. Digit $i$ of the first number is worth $a_i \cdot 10^{i}$. Multiplying everything out, each pair of digits lands in the column $i + j$:
+
+$$
+\Big(\sum_i a_i 10^{i}\Big) \cdot \Big(\sum_j b_j 10^{j}\Big) = \sum_k c_k 10^{k}, \qquad c_k = \sum_{i + j = k} a_i b_j
+$$
+
+where:
+
+- $a_i$ and $b_j$ are digits counted from the right (the units digit is number 0);
+- $c_k$ is the column sum for $10^{k}$, which may be bigger than 9 before carrying.
+
+Example: $123 \times 456$, so $a = (3, 2, 1)$ and $b = (6, 5, 4)$ from the right.
+
+- $c_0 = 3 \cdot 6 = 18$
+- $c_1 = 3 \cdot 5 + 2 \cdot 6 = 27$
+- $c_2 = 3 \cdot 4 + 2 \cdot 5 + 1 \cdot 6 = 28$
+- $c_3 = 2 \cdot 4 + 1 \cdot 5 = 13$
+- $c_4 = 1 \cdot 4 = 4$
+
+Carrying from the right: 18 gives digit 8, carry 1; $27 + 1 = 28$ gives 8, carry 2; $28 + 2 = 30$ gives 0, carry 3; $13 + 3 = 16$ gives 6, carry 1; $4 + 1 = 5$. Reading upward: **56088**.
+
+**Idea.** Fill the column sums with two loops, then sweep once from the right, carrying. A product of an $n$-digit and an $m$-digit number has at most $n + m$ digits, so that many columns is enough. Strip leading zeros at the end, keeping one zero for `"0"`.
+
+```java
+static String multiply(String num1, String num2) {
+    int[] column = new int[num1.length() + num2.length()];
+    for (int i = 0; i < num1.length(); i++)
+        for (int j = 0; j < num2.length(); j++)
+            column[i + j] += digitFromRight(num1, i) * digitFromRight(num2, j);
+    StringBuilder digits = new StringBuilder();
+    int carry = 0;
+    for (int sum : column) {
+        digits.append((sum + carry) % 10);
+        carry = (sum + carry) / 10;
+    }
+    while (digits.length() > 1 && digits.charAt(digits.length() - 1) == '0') digits.deleteCharAt(digits.length() - 1);
+    return digits.reverse().toString();
+}
+
+static int digitFromRight(String number, int i) {
+    return number.charAt(number.length() - 1 - i) - '0';
+}
+```
+
+**Answer.** `multiply("123", "456") = "56088"`, `multiply("99", "99") = "9801"` and `multiply("0", "52") = "0"`. A column sum is at most $81 \times 200 = 16{,}200$, so `int` is safe. There are $n \cdot m$ digit products, $3 \times 3 = 9$ in the example: $O(nm)$ time and $O(n + m)$ space. (Karatsuba's method reaches $O(n^{1.585})$, but no interview expects it.)
+
+### 3. LeetCode 829: Consecutive Numbers Sum (Hard)
+
+**Problem.** Given $n \le 10^9$, count the ways to write $n$ as a sum of one or more consecutive positive integers. For $n = 15$ the answer is 4: $15$, $7 + 8$, $4 + 5 + 6$ and $1 + 2 + 3 + 4 + 5$.
+
+**Math first.** A run of $k$ numbers starting at $x$ is $x + (x + 1) + \dots + (x + k - 1)$. The young Gauss's pairing trick (first number plus last, second plus second-to-last) gives its sum:
+
+$$
+n = kx + \frac{k(k-1)}{2}
+\quad \Longleftrightarrow \quad
+x = \frac{n - k(k-1)/2}{k}, \qquad x \ge 1
+$$
+
+where:
+
+- $k \ge 1$ is how many numbers are in the run;
+- $x$ is the first number, which must be a positive whole number;
+- $\frac{k(k-1)}{2} = 0 + 1 + \dots + (k-1)$ is the extra amount the later numbers add above $x$.
+
+So $k$ works exactly when $n - k(k-1)/2$ is positive and divisible by $k$. Example: $n = 15$.
+
+| $k$ | $n - k(k-1)/2$ | Divisible by $k$? | First number $x$ |
+| --- | --- | --- | --- |
+| 1 | $15 - 0 = 15$ | yes | 15 |
+| 2 | $15 - 1 = 14$ | yes | 7 |
+| 3 | $15 - 3 = 12$ | yes | 4 |
+| 4 | $15 - 6 = 9$ | no | — |
+| 5 | $15 - 10 = 5$ | yes | 1 |
+| 6 | $15 - 15 = 0$ | stop: $x$ would be 0 | — |
+
+Four values of $k$ work, so the answer is **4**.
+
+**Idea.** Try every $k$ while $k(k-1)/2 < n$, and count the ones where the division is exact. Because $k(k-1)/2$ grows like $k^2/2$, the loop stops near $k = \sqrt{2n}$.
+
+```java
+static int consecutiveNumbersSum(int n) {
+    int ways = 0;
+    for (long k = 1; k * (k - 1) / 2 < n; k++) {
+        if ((n - k * (k - 1) / 2) % k == 0) ways++;      // the first term x is a whole number
+    }
+    return ways;
+}
+```
+
+**Answer.** 2 for $n = 5$, 3 for $n = 9$, 4 for $n = 15$, and 1 for $n = 16$ (a power of two can only be written as itself). The loop runs about $\sqrt{2n}$ times: for $n = 10^9$ that is about $44{,}721$ rounds, instead of trying every starting number. $O(\sqrt{n})$ time, $O(1)$ space. `k` is a `long` because $k(k-1)$ near $44{,}721^2 \approx 2 \times 10^9$ would overflow an `int`.
+
+### 4. LeetCode 233: Number of Digit One (Hard)
+
+**Problem.** Count how many times the digit 1 appears in all the numbers from 0 to $n$, for $n \le 10^9$. For $n = 13$ the answer is 6: the numbers 1, 10, 12 and 13 have one each, and 11 has two.
+
+**Math first.** Count the ones in each decimal place separately and add up. Fix a place value $p$ (1 for units, 10 for tens, and so on), and split $n$ into the part to the left of that place, the digit at it, and the part to the right:
+
+$$
+\text{ones}(p) = \text{high} \cdot p +
+\begin{cases}
+0 & \text{if } d = 0 \\
+\text{low} + 1 & \text{if } d = 1 \\
+p & \text{if } d \ge 2
+\end{cases}
+\qquad
+\text{high} = \left\lfloor \frac{n}{10p} \right\rfloor, \;
+d = \left\lfloor \frac{n}{p} \right\rfloor \bmod 10, \;
+\text{low} = n \bmod p
+$$
+
+where:
+
+- $p$ is the place value, $10^{0}, 10^{1}, 10^{2}, \dots$;
+- $\text{high}$ is the number formed by the digits to the left of the place. Each full cycle $0, 1, \dots, 9$ of that place shows a 1 there for exactly $p$ numbers;
+- $d$ is the digit at the place, and $\text{low}$ is the number formed by the digits to its right;
+- the cases count the last, unfinished cycle: none if it has not reached 1, $\text{low} + 1$ numbers if it is in the middle of the 1s, and all $p$ if it has passed them.
+
+Example: $n = 213$.
+
+- Units, $p = 1$: high $= 21$, $d = 3$, low $= 0$. Ones $= 21 \cdot 1 + 1 = 22$ (1, 11, 21, ..., 211).
+- Tens, $p = 10$: high $= 2$, $d = 1$, low $= 3$. Ones $= 2 \cdot 10 + (3 + 1) = 24$ (10 to 19, 110 to 119, then 210 to 213).
+- Hundreds, $p = 100$: high $= 0$, $d = 2$, low $= 13$. Ones $= 0 + 100 = 100$ (100 to 199).
+
+Total: $22 + 24 + 100 = \mathbf{146}$. For $n = 13$: units give $1 \cdot 1 + 1 = 2$ and tens give $0 + (3 + 1) = 4$, which is 6.
+
+**Idea.** Loop over the place values, apply the formula, and add. There are only as many places as $n$ has digits.
+
+```java
+static int countDigitOne(int n) {
+    long ones = 0;
+    for (long p = 1; p <= n; p *= 10) {                 // long: for n near 10^9, p * 10 passes the int limit
+        long high = n / (p * 10), digit = n / p % 10, low = n % p;
+        ones += high * p;                               // full cycles of 0..9 at this place
+        if (digit == 1) ones += low + 1;
+        else if (digit > 1) ones += p;
+    }
+    return (int) ones;
+}
+```
+
+**Answer.** `countDigitOne(13) = 6`, `countDigitOne(213) = 146` and `countDigitOne(1000000000) = 900000001` (nine places with $10^8$ ones each, plus the leading 1 of $10^9$). The lab checks every $n$ up to 3,000 against a brute-force count. The loop runs once per digit, 10 times for $n = 10^9$: $O(\log_{10} n)$ time and $O(1)$ space, instead of reading a billion numbers.
+
+## Mathematical Abstraction
+
+Java integer arithmetic is clock arithmetic with $2^{32}$ hours, shifted so the clock is centred on zero. Fast exponentiation is the binary expansion of the exponent:
+
+$$
+x \oplus y = \big((x + y + 2^{31}) \bmod 2^{32}\big) - 2^{31},
+\qquad
+a^{n} \bmod m = \prod_{i \,:\, b_i = 1} \left(a^{2^{i}} \bmod m\right) \bmod m
+$$
+
+where:
+
+- $x \oplus y$ is what Java's `int` addition returns, and $x + y$ is the true sum;
+- $2^{31}$ shifts the range $[-2^{31}, 2^{31} - 1]$ to $[0, 2^{32} - 1]$ and back;
+- $b_i$ are the bits of the exponent $n$, and $m$ is the modulus.
+
+Example: for $x = y = 2{,}000{,}000{,}000$, the sum plus $2^{31}$ is $6{,}147{,}483{,}648$; modulo $2^{32}$ that is $6{,}147{,}483{,}648 - 4{,}294{,}967{,}296 = 1{,}852{,}516{,}352$; minus $2^{31}$ gives $-294{,}967{,}296$, exactly what Java printed. And $3^{13} \bmod 1000$ uses the bits of $13 = 1101_2$: $(3 \cdot 81 \cdot 6{,}561) \bmod 1000 = 1{,}594{,}323 \bmod 1000 = 323$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 3, "Characterizing Running Times" (§3.3 covers floors, ceilings and modular arithmetic), and Chapter 31, "Number-Theoretic Algorithms" (§31.6, "Powers of an element", gives exponentiation by repeated squaring). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Introduction to Programming in Java*, §1.2 "Built-in Types of Data", on the `int` range and overflow: <https://introcs.cs.princeton.edu/java/12types/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 2, *Seminumerical Algorithms*, §4.6.3, "Evaluation of Powers".
+- Ronald L. Graham, Donald E. Knuth and Oren Patashnik, *Concrete Mathematics*, 2nd edition (Addison-Wesley, 1994), Chapter 3, "Integer Functions" (floors, ceilings and `mod`).
+- Joshua Bloch, "Extra, Extra – Read All About It: Nearly All Binary Searches and Mergesorts are Broken", Google Research Blog, June 2006: <https://research.google/blog/extra-extra-read-all-about-it-nearly-all-binary-searches-and-mergesorts-are-broken/>.
+- J. L. Lions (chair), *Ariane 5 Flight 501 Failure: Report by the Inquiry Board*, Paris, 19 July 1996.
+- Brian Hayes, "Gauss's Day of Reckoning", *American Scientist* 94(3), 2006, on the history of the schoolboy-Gauss story.
+- Java SE API: `Math.addExact`, `Math.multiplyExact`, `Math.floorDiv` and `Math.floorMod` in [`java.lang.Math`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Math.html).
+- LeetCode: [7. Reverse Integer](https://leetcode.com/problems/reverse-integer/), [50. Pow(x, n)](https://leetcode.com/problems/powx-n/), [69. Sqrt(x)](https://leetcode.com/problems/sqrtx/), [43. Multiply Strings](https://leetcode.com/problems/multiply-strings/), [829. Consecutive Numbers Sum](https://leetcode.com/problems/consecutive-numbers-sum/), [233. Number of Digit One](https://leetcode.com/problems/number-of-digit-one/).
+
+[Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd) · [Number Theory →](../number-theory/index.qmd)

@@ -1,64 +1,394 @@
 ---
 title: "String Matching"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "Finding a pattern in a text: the naive O(n·m) worst case, borders and the KMP prefix function, the amortised O(n + m) proof, the Z-function, Boyer–Moore and Horspool, and hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+String matching asks where a short *pattern* occurs inside a long *text*. Every editor's "Find", every `grep`, and every DNA search does it. This lesson starts with the obvious method, shows the input that makes it slow, and then builds the Knuth–Morris–Pratt algorithm, which never looks at a text character twice in a row of failures. The same idea, the **border** of a string, then solves several hard interview problems in a few lines each.
 
-**LeetCode 28 — Find the Index of the First Occurrence in a String.** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`StringMatchingLab.java`](StringMatchingLab.java). Run it from this folder with `java StringMatchingLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-For each text position, compare every pattern character again. On repeated prefixes this restarts work that already established partial agreement.
+Find the pattern `aaab` in the text `aaaaaaab`.
 
-## One simple idea
+The obvious method places the pattern under each position of the text and compares from left to right:
 
-The KMP prefix function records the longest proper prefix of the pattern that is also a suffix of what was matched. After a mismatch, move the PATTERN state without moving the text backwards.
+```text
+shift 0:  aaaaaaab      shift 4:  aaaaaaab
+          aaab  ✗ at 4th          aaab  ✓
+```
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+At shifts 0, 1, 2 and 3 the first three letters match and the fourth fails, so each shift costs 4 comparisons. Shift 4 matches, also after 4. That is $5 \times 4 = 20$ comparisons for an 8-letter text.
 
-## Formula and immediate translation
+Scale it up: a text of a million `a`s followed by `b`, and a pattern of a thousand. Each of about $10^6$ shifts compares about $10^3$ letters, roughly $10^9$ comparisons. Worse, each shift re-reads letters it has just read. The three `a`s matched at shift 0 tell us exactly what the text looks like, yet shift 1 reads them again.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Your friend has a secret handshake: *clap, clap, snap, clap, clap, stomp*. You watch a long dance and want to spot it.
+
+You see *clap, clap, snap, clap, clap*, and then a **clap** instead of the stomp. Do you have to start watching from scratch? No. The last two moves you saw, *clap, clap*, are also how the handshake **begins**. So you carry on as if you have already seen two moves of the handshake, and check whether *snap* comes next.
+
+That is the whole idea of KMP: when a match breaks, jump back to the longest piece you have just seen that is **also the start of the pattern**. You never re-watch the dance.
+
+James H. Morris conceived this algorithm, and Donald Knuth discovered it independently a few weeks later while studying automata theory. Morris and Vaughan Pratt wrote it up in a 1970 technical report, and the three published it together in 1977.
+:::
+
+## From simple to advanced
+
+### Level 1: the naive matcher and its worst case
+
+Try every shift $s$ and compare the pattern with the text starting there:
+
+```java
+static int naiveSearch(String text, String pattern) {
+    for (int shift = 0; shift + pattern.length() <= text.length(); shift++) {
+        int k = 0;
+        while (k < pattern.length() && text.charAt(shift + k) == pattern.charAt(k)) k++;
+        if (k == pattern.length()) return shift;
+    }
+    return -1;
+}
+```
+
+In the worst case every shift runs almost to the end of the pattern before failing:
 
 $$
-\pi[i]=\max\{k<i+1:P[0:k]=P[i-k+1:i+1]\}
+C_{\text{naive}} \le (n - m + 1) \cdot m
 $$
 
-**Symbols and notation:** P is the pattern; i is its current zero-based position; π[i] is the length k of the longest proper prefix equal to a suffix of P's prefix ending at i. Ranges use half-open indexing.
+where:
 
-**Insert actual numbers:** For pattern 'abab', prefix ending at index 3 is 'abab'. Its proper prefix 'ab' equals its suffix 'ab', so π[3]=2. On mismatch after matching 'abab', continue with 2 previously matched characters instead of restarting from zero.
+- $n$ is the text length and $m$ the pattern length;
+- $n - m + 1$ is the number of shifts at which the pattern fits inside the text;
+- each shift compares at most $m$ characters.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: text `aaaaaaab` ($n = 8$) and pattern `aaab` ($m = 4$) give $(8 - 4 + 1) \times 4 = 20$, exactly the count from the problem. For $n = 10^6$ and $m = 10^3$ it is about $10^9$.
 
-## Why the mathematics leads to an algorithm
+On ordinary English text the first comparison usually fails, so the naive method is fast in practice. Java's `String.indexOf` is essentially this loop. The trouble is inputs full of repetition, such as DNA, binary data, or an attacker's string.
 
-The already-read text suffix is known to equal a pattern prefix. Other shorter candidates have been excluded, so falling back to π retains the longest possible useful progress.
+### Level 2: borders and the prefix function
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+A **border** of a string is a proper prefix that is also a suffix. `abacaba` has the borders `a` and `aba`: it starts with `aba` and ends with `aba`. The **prefix function** records the longest border of every prefix of the pattern:
 
-## Make the idea executable
+$$
+\pi[i] = \max \lbrace k < i + 1 : p_0 \dots p_{k-1} = p_{i-k+1} \dots p_i \rbrace
+$$
 
-The [original algorithm examples](../examples/patterns.mjs) provide a small runnable related operation:
+where:
 
-~~~js
-import { kmpFind } from '../examples/patterns.mjs';
+- $p_0 \dots p_i$ is the prefix of the pattern that ends at position $i$;
+- $k$ is the length of a candidate border; $k < i + 1$ makes it *proper*, shorter than the prefix itself;
+- $\pi[i]$ is the length of the longest border, and 0 if there is none.
 
-console.log(kmpFind('ababcabc','abc'));
-~~~
+Example: the pattern `abacabab`.
 
-Run from a saved `.mjs` file inside this topic directory. The exported operation is tested with Node's standard test runner. Some examples illustrate a prerequisite rather than the entire specialised algorithm; in that case, the mathematical model above remains the definition of the full task.
+| $i$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| $p_i$ | a | b | a | c | a | b | a | b |
+| longest border of $p_0 \dots p_i$ | — | — | `a` | — | `a` | `ab` | `aba` | `ab` |
+| $\pi[i]$ | 0 | 0 | 1 | 0 | 1 | 2 | 3 | 2 |
 
-## Complexity and correctness boundaries
+Computing $\pi$ reuses itself. If the border of length $k = \pi[i-1]$ can be extended by one letter, $\pi[i] = k + 1$. If not, the next candidate is the longest border *of that border*, $\pi[k-1]$, and so on. Position 7 shows the fall-back:
 
-**Work bound:** O(n+m) time and O(m) prefix-table space for text length n and pattern length m.
+- $k = \pi[6] = 3$, the border `aba`. Extend it? $p_7 = $ `b` but $p_3 = $ `c`. No.
+- Fall back to $k = \pi[2] = 1$, the border `a`. Extend it? $p_7 = $ `b` and $p_1 = $ `b`. Yes, so $\pi[7] = 2$.
 
-**Counterexample or limitation:** KMP relies on exact symbol equality and matching semantics. Unicode grapheme segmentation, case folding or normalisation need to be handled consistently outside the core algorithm.
+```java
+static int[] prefixFunction(String p) {
+    int[] pi = new int[p.length()];
+    for (int i = 1, k = 0; i < p.length(); i++) {
+        while (k > 0 && p.charAt(i) != p.charAt(k)) k = pi[k - 1];   // fall back to the next shorter border
+        if (p.charAt(i) == p.charAt(k)) k++;
+        pi[i] = k;
+    }
+    return pi;
+}
+```
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+### Level 3: Knuth–Morris–Pratt search
 
-## Reference and practice
+KMP walks through the text once, keeping $k$, the number of pattern letters matched so far. On a mismatch it does not move backwards in the text. It shrinks $k$ to the longest border of what has been matched, because that border is the longest part that could still be the start of a match:
 
-- **CLRS (4th edition):** CLRS Chapter 32 §32.4 (Knuth–Morris–Pratt).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 28 — Find the Index of the First Occurrence in a String. [Original problem page or practice resource](https://leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+$$
+k \leftarrow \pi[k - 1] \quad \text{while } k > 0 \text{ and } t_i \ne p_k
+$$
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+where:
+
+- $t_i$ is the current text letter and $p_k$ the next pattern letter we hoped to see;
+- $p_0 \dots p_{k-1}$ has just been matched against the text, so the text ends with it;
+- its longest border, of length $\pi[k-1]$, is therefore both a suffix of what we read and a prefix of the pattern.
+
+Example: search for `abacabab` in `abacabacabab`.
+
+- Positions 0 to 6 match, so $k = 7$ (`abacaba`).
+- At position 7 the text has `c` but $p_7 = $ `b`. Fall back: $k = \pi[6] = 3$, keeping the border `aba`.
+- Now $p_3 = $ `c` matches the text's `c`, so $k = 4$, and positions 8 to 11 match `abab`, reaching $k = 8$.
+- The match ends at position 11, so it starts at $11 - 8 + 1 = 4$.
+
+The naive matcher would have gone back to shift 1 and re-read six letters.
+
+```java
+static int kmpSearch(String text, String pattern) {
+    if (pattern.isEmpty()) return 0;
+    int[] pi = prefixFunction(pattern);
+    for (int i = 0, k = 0; i < text.length(); i++) {
+        while (k > 0 && text.charAt(i) != pattern.charAt(k)) k = pi[k - 1];
+        if (text.charAt(i) == pattern.charAt(k)) k++;
+        if (k == pattern.length()) return i - k + 1;
+    }
+    return -1;
+}
+```
+
+The search loop is the prefix-function loop with the text in place of the pattern. An equivalent trick runs `prefixFunction` on `pattern + "#" + text`: wherever $\pi$ equals $m$, a match ends. The separator `#` must not occur in either string; it stops a border from growing longer than the pattern.
+
+### Level 4: the Z-function
+
+The Z-function looks at the same structure from the other side. Instead of "the longest border ending here", it records "how far the string matches its own beginning, starting here":
+
+$$
+z[i] = \max \lbrace \ell : s_0 \dots s_{\ell - 1} = s_i \dots s_{i + \ell - 1} \rbrace, \qquad z[0] = n \text{ by convention}
+$$
+
+where:
+
+- $s$ is the string, of length $n$;
+- $z[i]$ is the length of the longest common prefix of $s$ and the suffix that starts at $i$;
+- the algorithm keeps a *Z-box* $[l, r)$, the rightmost window known to equal a prefix of $s$, and reuses it.
+
+Example: $s = $ `aabxaab`, $n = 7$.
+
+| $i$ | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| $s_i$ | a | a | b | x | a | a | b |
+| $z[i]$ | 7 | 1 | 0 | 0 | 3 | 1 | 0 |
+
+At $i = 4$ the suffix `aab` matches the prefix `aab`, so $z[4] = 3$ and the box becomes $[4, 7)$. At $i = 5$, inside the box, the letters from 5 on are a copy of the letters from $5 - 4 = 1$ on, so $z[5]$ starts at $\min(7 - 5, z[1]) = \min(2, 1) = 1$ without any comparison; one more comparison confirms it stops there.
+
+```java
+static int[] zFunction(String s) {
+    int n = s.length();
+    int[] z = new int[n];
+    for (int i = 1, l = 0, r = 0; i < n; i++) {
+        if (i < r) z[i] = Math.min(r - i, z[i - l]);   // reuse what the box [l, r) already matched
+        while (i + z[i] < n && s.charAt(z[i]) == s.charAt(i + z[i])) z[i]++;
+        if (i + z[i] > r) { l = i; r = i + z[i]; }
+    }
+    if (n > 0) z[0] = n;
+    return z;
+}
+```
+
+To search, compute $z$ for `pattern + "\0" + text`: every position after the separator with $z = m$ is a match. Interview problem 1 does exactly that. Dan Gusfield's textbook opens with this function, which he calls *fundamental preprocessing*, and derives other exact-matching algorithms from it.
+
+### Level 5: Boyer–Moore and Horspool, skipping ahead
+
+KMP and Z read every text letter at least once. Boyer–Moore (1977) can skip letters. It compares the pattern **from right to left**, and on a mismatch uses the text letter it just saw to jump the pattern forward, often by its whole length. Nigel Horspool's 1980 simplification keeps only that *bad-character* jump:
+
+$$
+\text{shift}(c) =
+\begin{cases}
+m - 1 - j & \text{if } j \text{ is the last position of } c \text{ in } p_0 \dots p_{m-2} \\
+m & \text{if } c \text{ does not occur in } p_0 \dots p_{m-2}
+\end{cases}
+$$
+
+where:
+
+- $c$ is the text letter under the **last** position of the current window;
+- $j$ is where $c$ last appears in the pattern, ignoring the pattern's final letter;
+- the shift slides the pattern so that occurrence lines up with $c$, or past $c$ entirely if the pattern does not contain it.
+
+Example: pattern `abcd` ($m = 4$) gives $\text{shift}(a) = 3$, $\text{shift}(b) = 2$, $\text{shift}(c) = 1$, and 4 for every other letter. In the text `xxxxabcd`, the first window ends in `x`, so the pattern jumps 4 places straight to `abcd`, which matches. Two windows were examined instead of the naive five, and the first four text letters were each looked at once or not at all.
+
+On natural-language text with a long pattern, Boyer–Moore typically examines only a fraction of the text, which is why tools such as GNU `grep` use variants of it. Its worst case without extra rules is still $O(nm)$; the full algorithm adds a *good-suffix* rule, and with Galil's refinement it is linear.
+
+| Matcher | Preprocessing | Search, worst case | Best when |
+| --- | --- | --- | --- |
+| Naive | none | $O(nm)$ | short patterns, ordinary text |
+| Rabin–Karp ([Rolling Hash](../rolling-hash/index.qmd)) | $O(m)$ | $O(nm)$, expected $O(n + m)$ | many patterns of one length |
+| Finite automaton (CLRS §32.3) | $O(m \lvert \Sigma \rvert)$ | $O(n)$ | small alphabet $\Sigma$, fixed pattern |
+| KMP | $O(m)$ | $O(n)$ | guaranteed linear time, streaming text |
+| Z-function | $O(n + m)$ together | $O(n + m)$ | borders and prefix comparisons |
+| Boyer–Moore / Horspool | $O(m + \lvert \Sigma \rvert)$ | $O(nm)$; linear with Galil's rule | long patterns, large alphabet |
+
+## Why it works and what it costs
+
+**Why KMP finds every match.** The invariant is: *after reading $t_i$, $k$ is the length of the longest prefix of the pattern that ends at position $i$ of the text.* Suppose it held after $t_{i-1}$. Any match ending at $i$ must extend a prefix ending at $i - 1$, and every prefix ending at $i - 1$ is a border of $p_0 \dots p_{k-1}$, because that is the longest one. The fall-back chain $k, \pi[k-1], \pi[\pi[k-1]-1], \dots$ lists exactly those borders from longest to shortest, so the first one that extends by $t_i$ is the longest prefix ending at $i$. When $k = m$, a whole match ends at $i$.
+
+**Why KMP is linear, the amortised argument.** Watch the value of $k$:
+
+$$
+\text{fall-backs} \le \text{increments} \le n, \qquad C_{\text{KMP}} \le n + \text{fall-backs} \le 2n
+$$
+
+where:
+
+- each text letter causes at most one increment $k \leftarrow k + 1$, so there are at most $n$ increments;
+- each fall-back $k \leftarrow \pi[k-1]$ lowers $k$ by at least 1, and $k$ never drops below 0, so the fall-backs cannot outnumber the increments;
+- $C_{\text{KMP}}$ counts character comparisons: one that ends the inner loop for each of the $n$ letters, plus one failed comparison per fall-back.
+
+Example: text `aaaaaaab`, pattern `aaab`, so $\pi = [0, 1, 2, 0]$. Positions 0 to 2 match directly. At each of positions 3 to 6, the `b` fails against an `a`, $k$ falls back from 3 to $\pi[2] = 2$, and the next `a` matches, giving $k = 3$ again. Position 7 matches `b`. That is 8 ending comparisons plus 4 fall-backs, **12** comparisons, within the bound $2n = 16$ and well below the naive 20. The same argument applied to the pattern gives at most $2m$ comparisons for `prefixFunction`, so KMP costs $O(n + m)$ time and $O(m)$ extra space. For $n = 10^6$, $m = 10^3$: at most about $2 \times 10^6 + 2 \times 10^3$ comparisons instead of $10^9$.
+
+**Why the Z-function is linear.** The right edge $r$ of the Z-box only moves right, at most $n$ times in total, and every successful comparison in the `while` loop moves it. Each $i$ also makes at most one failed comparison, so the total is at most $2n$.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Restarting the pattern from 0 after a mismatch | Correct but quadratic on `aaaa…ab` | Fall back to $\pi[k-1]$ |
+| Falling back with `if` instead of `while` | Wrong $\pi$ when two fall-backs are needed: for `aaab` it gives $\pi[3] = 1$ instead of 0 | Keep falling back until a letter matches or $k = 0$ |
+| Using $\pi[k]$ instead of $\pi[k-1]$ | Off by one, sometimes an index out of range | $\pi$ of the matched prefix $p_0 \dots p_{k-1}$ is $\pi[k-1]$ |
+| Concatenating without a separator | A border longer than the pattern: $\pi$ of `aaaa` ends with 3, more than `aa` | Insert a character that occurs in neither string, such as `#` or `\0` |
+| Treating `z[0]` as a real match length | Every search "finds" the pattern at position 0 | Start the scan after the separator; set `z[0]` by convention |
+| Expecting Boyer–Moore to be linear | Slow on repetitive text with only the bad-character rule | Use KMP or Z when the worst case matters |
+| Returning 0 vs −1 for an empty pattern inconsistently | Disagreement with `String.indexOf("")`, which returns 0 | Decide the convention and test it |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 28: Find the Index of the First Occurrence in a String (Easy)
+
+**Problem.** Return the index of the first occurrence of `needle` in `haystack`, or $-1$. For `haystack = "sadbutsad"`, `needle = "sad"` the answer is 0; for `"leetcode"` and `"leeto"` it is $-1$.
+
+**Math first.** Glue the needle, a separator, and the haystack into one string $u$. A match at haystack position $i$ means the suffix of $u$ starting at $m + 1 + i$ begins with the whole needle:
+
+$$
+\text{answer} = \min \lbrace i : z_u[m + 1 + i] = m \rbrace, \qquad u = \text{needle} + \diamond + \text{haystack}
+$$
+
+where:
+
+- $m$ is the needle's length, and $m + 1$ skips the needle and the separator;
+- $z_u$ is the Z-function of $u$ from Level 4;
+- $\diamond$ is a separator that occurs in neither string (the code uses the character `\0`), so no $z$ value after it can exceed $m$.
+
+Example: $u = $ `sad◇sadbutsad`, $m = 3$. At position $m + 1 + 0 = 4$ the suffix `sadbutsad` starts with `sad`, so $z_u[4] = 3 = m$ and the answer is $i = 0$.
+
+**Idea.** Compute $z$ once, then scan for the first value equal to $m$. KMP (`kmpSearch` in Level 3) solves this equally well; the Z version shows the second tool in action.
+
+```java
+static int strStr(String haystack, String needle) {
+    int[] z = zFunction(needle + "\0" + haystack);   // "\0" never occurs in the input
+    for (int i = needle.length() + 1; i < z.length; i++) {
+        if (z[i] == needle.length()) return i - needle.length() - 1;
+    }
+    return -1;
+}
+```
+
+**Answer.** `strStr("sadbutsad", "sad") = 0` and `strStr("leetcode", "leeto") = -1`. The lab also compares the naive matcher, KMP and this one with `String.indexOf` on 2,000 random inputs. Time and space are $O(n + m)$. For $n = 10^4$ and $m = 5 \times 10^3$ the naive method can need $(n - m + 1) \cdot m \approx 2.5 \times 10^7$ comparisons, while the Z-function needs at most about $2(n + m) = 3 \times 10^4$.
+
+### 2. LeetCode 459: Repeated Substring Pattern (Easy)
+
+**Problem.** Can the string be built by repeating one of its substrings at least twice? `"abab"` is `"ab"` twice, so yes; `"aba"` cannot be, so no.
+
+**Math first.** If the longest border has length $b = \pi[n-1]$, the string repeats every $q = n - b$ letters, and $q$ is its **smallest period**. The string is a repetition exactly when that period divides the length:
+
+$$
+\text{repeated}(s) \iff b > 0 \ \land\ n \bmod (n - b) = 0, \qquad b = \pi[n - 1]
+$$
+
+where:
+
+- $n$ is the string's length and $b$ its longest border;
+- $n - b$ is the smallest period: shifting the string by $n - b$ lines the border up with itself;
+- $b > 0$ excludes a string whose only "period" is its whole length.
+
+Example: `abcabcabc` has $\pi[8] = 6$ (the border `abcabc`), so $q = 9 - 6 = 3$ and $9 \bmod 3 = 0$: yes, `abc` three times. `aba` has $b = 1$, $q = 2$, and $3 \bmod 2 = 1$: no.
+
+**Idea.** One call to `prefixFunction` and one division.
+
+```java
+static boolean repeatedSubstringPattern(String s) {
+    int n = s.length(), border = prefixFunction(s)[n - 1];
+    return border > 0 && n % (n - border) == 0;
+}
+```
+
+**Answer.** `abab` → true ($b = 2$, $q = 2$, $4 \bmod 2 = 0$); `aba` → false; `abcabcabc` → true. $O(n)$ time and space, for $n$ up to $10^4$.
+
+### 3. LeetCode 1392: Longest Happy Prefix (Hard)
+
+**Problem.** A *happy prefix* is a non-empty prefix that is also a suffix, other than the whole string. Return the longest one, or `""`. For `"level"` the answer is `"l"`; for `"ababab"` it is `"abab"` (the prefix and suffix may overlap). The length is up to $10^5$.
+
+**Math first.** A happy prefix is exactly a border, so the longest one is the last value of the prefix function:
+
+$$
+\text{answer} = s_0 \dots s_{\pi[n-1] - 1}
+$$
+
+where $\pi[n-1]$ is the length of the longest border of the whole string $s$, and the answer is the prefix of that length. Example: for `ababab`, $\pi = [0, 0, 1, 2, 3, 4]$, so the answer has length 4: `abab`. For `level`, $\pi = [0, 0, 0, 0, 1]$, giving `l`.
+
+**Idea.** The problem is rated Hard because comparing every prefix with every suffix is $O(n^2)$, about $10^{10}$ steps for $n = 10^5$. The prefix function gives the answer in $O(n)$. A rolling hash comparing each prefix with the suffix of the same length also works in $O(n)$, but only with high probability.
+
+```java
+static String longestPrefix(String s) {
+    return s.substring(0, prefixFunction(s)[s.length() - 1]);
+}
+```
+
+**Answer.** `longestPrefix("level") = "l"` and `longestPrefix("ababab") = "abab"`. At most $2n$ comparisons, about $2 \times 10^5$ for the largest input: $O(n)$ time and space.
+
+### 4. LeetCode 214: Shortest Palindrome (Hard)
+
+**Problem.** Add the fewest characters to the **front** of $s$ to make it a palindrome. For `"aacecaaa"` the answer is `"aaacecaaa"`; for `"abcd"` it is `"dcbabcd"`. The length is up to $5 \times 10^4$.
+
+**Math first.** Whatever is added in front must mirror the end of $s$. So keep the **longest palindromic prefix** $P$ of $s$ and mirror the rest. A prefix of $s$ is a palindrome exactly when it is also a suffix of the reversed string $\overline{s}$, so the longest one is a border of $s + \# + \overline{s}$:
+
+$$
+\lvert P \rvert = \pi_{u}[\lvert u \rvert - 1], \quad u = s + \# + \overline{s}, \qquad \text{answer} = \overline{s_{\lvert P \rvert} \dots s_{n-1}} + s
+$$
+
+where:
+
+- $\overline{x}$ is $x$ written backwards;
+- a prefix $s_0 \dots s_{k-1}$ that equals its own reverse appears at the end of $\overline{s}$, so it is a border of $u$;
+- `#` stops a border from running past the middle, so $\lvert P \rvert \le n$;
+- the answer mirrors only the part after $P$.
+
+Example: $s = $ `aacecaaa`, $\overline{s} = $ `aaacecaa`, $u = $ `aacecaaa#aaacecaa` (17 letters). The last prefix-function value is $\pi_u[16] = 7$, the palindrome `aacecaa`. The rest of $s$ is `a`; reversed it is `a`; so the answer is `a` + `aacecaaa` = `aaacecaaa`. For `abcd`, the longest palindromic prefix is `a`, the rest `bcd` reversed is `dcb`, giving `dcbabcd`.
+
+**Idea.** One prefix function on a string of length $2n + 1$, then one reversal and one concatenation.
+
+```java
+static String shortestPalindrome(String s) {
+    String reversed = new StringBuilder(s).reverse().toString();
+    int[] pi = prefixFunction(s + "#" + reversed);   // "#" stops a border from crossing the middle
+    int palindromePrefix = pi[pi.length - 1];
+    return new StringBuilder(s.substring(palindromePrefix)).reverse() + s;
+}
+```
+
+**Answer.** `shortestPalindrome("aacecaaa") = "aaacecaaa"` and `shortestPalindrome("abcd") = "dcbabcd"`. The lab confirms on 500 random strings that the result is a palindrome and that no shorter addition works. Checking every prefix for being a palindrome costs $O(n^2)$, about $2.5 \times 10^9$ steps for $n = 5 \times 10^4$; this costs $O(n)$, about $2 \times (2n + 1) \approx 2 \times 10^5$ comparisons, and $O(n)$ space.
+
+## Mathematical Abstraction
+
+String matching reduces to one function, the longest border of every prefix, and a counting argument that makes it linear:
+
+$$
+\pi[i] = \max \lbrace k \le i : p_0 \dots p_{k-1} = p_{i-k+1} \dots p_i \rbrace, \qquad C_{\text{KMP}}(n, m) \le 2n + 2m
+$$
+
+where:
+
+- $\pi[i]$ is the length of the longest proper border of $p_0 \dots p_i$;
+- $C_{\text{KMP}}(n, m)$ is the number of character comparisons for a text of length $n$ and a pattern of length $m$;
+- the bound holds because $k$ rises at most once per letter and every fall-back lowers it.
+
+Example: for $p = $ `abacabab`, $\pi = [0, 0, 1, 0, 1, 2, 3, 2]$; the last value says `ab` is both a prefix and a suffix. Searching `aaaaaaab` for `aaab` costs 12 comparisons, against the bound $2 \times 8 = 16$ and the naive 20. The same $\pi$ answers LeetCode 1392 directly, gives the smallest period $n - \pi[n-1]$ for LeetCode 459, and on $s + \# + \overline{s}$ gives the longest palindromic prefix for LeetCode 214.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 32, "String Matching": §32.1 the naive algorithm, §32.3 finite automata, §32.4 the Knuth-Morris-Pratt algorithm. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Donald E. Knuth, James H. Morris, Jr. and Vaughan R. Pratt, "Fast Pattern Matching in Strings", *SIAM Journal on Computing* 6(2), 323–350 (1977).
+- Robert S. Boyer and J Strother Moore, "A Fast String Searching Algorithm", *Communications of the ACM* (1977); R. Nigel Horspool, "Practical Fast Searching in Strings", *Software: Practice and Experience* 10(6), 501–506 (1980).
+- Dan Gusfield, *Algorithms on Strings, Trees, and Sequences* (Cambridge University Press, 1997), Chapter 1, "Exact Matching: Fundamental Preprocessing and First Algorithms" (the Z algorithm).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §5.3 "Substring Search" (brute force, KMP, Boyer–Moore, Rabin–Karp): <https://algs4.cs.princeton.edu/53substring/>.
+- *Algorithms for Competitive Programming*, "Prefix function – Knuth–Morris–Pratt": <https://cp-algorithms.com/string/prefix-function.html>, and "Z-function": <https://cp-algorithms.com/string/z-function.html>.
+- LeetCode: [28. Find the Index of the First Occurrence in a String](https://leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string/), [459. Repeated Substring Pattern](https://leetcode.com/problems/repeated-substring-pattern/), [1392. Longest Happy Prefix](https://leetcode.com/problems/longest-happy-prefix/), [214. Shortest Palindrome](https://leetcode.com/problems/shortest-palindrome/).
+
+[← Rolling Hash](../rolling-hash/index.qmd) · [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd) · [Suffix Array →](../suffix-array/index.qmd)

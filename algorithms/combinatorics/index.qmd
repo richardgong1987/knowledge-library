@@ -1,64 +1,464 @@
 ---
 title: "Combinatorics"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "Counting without listing: the product rule, permutations, combinations and Pascal's rule, stars and bars, Catalan numbers, binomial coefficients modulo a prime, and hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+Combinatorics is the art of counting things without writing them all down. A handful of rules, the product rule, permutations, combinations, stars and bars and the Catalan numbers, answer an enormous range of questions: how many paths cross a grid, how many trees have a given shape, which permutation comes 9th. This lesson builds each rule from a tiny example you can check by hand, then uses them on interview problems where listing is hopeless.
 
-**LeetCode 77 — Combinations.** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`CombinatoricsLab.java`](CombinatoricsLab.java). Run it from this folder with `java CombinatoricsLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-Trying to generate every ordering then deduplicate wastes work when selection order does not matter.
+A robot stands in the top-left corner of a grid with 3 rows and 7 columns. It may only step **right** or **down**. How many different paths reach the bottom-right corner?
 
-## One simple idea
+- Listing them works for this grid: there are 28.
+- On a $100 \times 100$ grid there are about $2.3 \times 10^{58}$ paths. Listing a billion per second would take far longer than the age of the universe.
+- One formula gives the answer immediately: every path is 8 moves, 2 of them down, so the count is "choose which 2 of the 8 moves go down", $\binom{8}{2} = 28$.
 
-Separate permutations (order matters) from combinations (only membership matters). Selecting k items from n distinct items counts each unordered group exactly once.
+## Explain it like I'm ten
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+::: {.callout-tip}
+**Getting dressed.** You have 3 T-shirts and 2 pairs of trousers. For each T-shirt you can pick either pair, so there are $3 \times 2 = 6$ outfits. That is the **product rule**: when choices happen one after another, multiply.
 
-## Formula and immediate translation
+**A podium or a team?** Five children run a race. Gold, silver and bronze can be awarded in $5 \times 4 \times 3 = 60$ ways, because the order matters. But if the three fastest simply form a *team*, the order does not matter, and each team was counted $3 \times 2 \times 1 = 6$ times in those 60. So there are $60 / 6 = 10$ teams.
+
+**Walking to school.** Draw the streets as a grid. Write 1 on every corner of the top row and the left column. Every other corner gets the sum of the corner above it and the corner to its left, because the last step came from one of those two. The numbers you write are **Pascal's triangle**, turned on its side. Blaise Pascal wrote his *Traité du triangle arithmétique* in 1654 (published 1665), although the triangle was known centuries earlier in China, where it is called Yang Hui's triangle, and in India and Persia.
+
+**Sharing sweets.** To share 5 identical sweets among 3 children, line the sweets up and drop 2 dividers among them: `★★|★|★★` means 2, 1 and 2 sweets. Every arrangement of 5 stars and 2 bars is one way to share. This is called **stars and bars**. William Feller's *An Introduction to Probability Theory and Its Applications* (1950) made this argument famous.
+:::
+
+## From simple to advanced
+
+### Level 1: the product rule
+
+If a task is a sequence of steps, and step $i$ can be done in $c_i$ ways whatever happened before, the whole task can be done in
 
 $$
-\binom{n}{k}=\frac{n!}{k!(n-k)!}
+N = c_1 \cdot c_2 \cdot \dots \cdot c_t
 $$
 
-**Symbols and notation:** n is total number of distinct choices; k the selected count; '!' denotes factorial; the binomial coefficient counts k-element subsets.
+where:
 
-**Insert actual numbers:** With n=5,k=2, 5!=120,2!=2,3!=6. So 120/(2×6)=10 selections. You can list pairs (1,2),(1,3),...(4,5) to check.
+- $t$ is the number of steps;
+- $c_i$ is the number of choices at step $i$;
+- $N$ is the number of different complete outcomes.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: 3 T-shirts, 2 trousers and 2 pairs of shoes give $3 \cdot 2 \cdot 2 = 12$ outfits. A 4-digit PIN has $10 \cdot 10 \cdot 10 \cdot 10 = 10{,}000$ possibilities.
 
-## Why the mathematics leads to an algorithm
+A special case appears everywhere: **a set of $n$ items has $2^n$ subsets**, because each item is independently "in" or "out". For $\lbrace a, b, c \rbrace$ that is $2 \cdot 2 \cdot 2 = 8$. Counting from 0 to $2^n - 1$ in binary lists them all: bit $i$ says whether item $i$ is in.
 
-All ordered k-tuples of distinct items number n!/(n−k)!, and each unordered set appears k! times under reordering; divide to remove that overcount.
+```java
+static List<String> subsets(String items) {
+    List<String> result = new ArrayList<>();
+    for (int mask = 0; mask < (1 << items.length()); mask++) {
+        StringBuilder subset = new StringBuilder();
+        for (int i = 0; i < items.length(); i++) if ((mask >> i & 1) == 1) subset.append(items.charAt(i));
+        result.add(subset.toString());
+    }
+    return result;
+}
+```
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+`subsets("abc")` returns the 8 subsets `""`, `a`, `b`, `ab`, `c`, `ac`, `bc`, `abc`. The partner of the product rule is the **sum rule**: if the outcomes split into separate cases, add the counts of the cases.
 
-## Make the idea executable
+### Level 2: permutations, when order matters
 
-The [original algorithm examples](../examples/patterns.mjs) provide a small runnable related operation:
+Choosing $k$ things **in order** from $n$ different things: the first has $n$ choices, the second $n - 1$, and so on.
 
-~~~js
-import { subsets } from '../examples/patterns.mjs';
+$$
+P(n, k) = n \cdot (n - 1) \cdots (n - k + 1) = \frac{n!}{(n - k)!}
+$$
 
-console.log(subsets([1,2,3]));
-~~~
+where:
 
-Run from a saved `.mjs` file inside this topic directory. The exported operation is tested with Node's standard test runner. Some examples illustrate a prerequisite rather than the entire specialised algorithm; in that case, the mathematical model above remains the definition of the full task.
+- $n$ is how many different things there are;
+- $k$ is how many are chosen, in order;
+- $n! = n \cdot (n-1) \cdots 2 \cdot 1$ ("$n$ factorial"), with $0! = 1$.
 
-## Complexity and correctness boundaries
+Example: gold, silver and bronze among 5 runners: $P(5, 3) = 5 \cdot 4 \cdot 3 = \frac{120}{2} = 60$. Arranging all 4 of 4 books on a shelf: $P(4, 4) = 4! = 24$.
 
-**Work bound:** Outputting every combination takes Ω(C(n,k)) results; computing a single binomial value can be much cheaper.
+```java
+static long permutations(int n, int k) {
+    long ways = 1;
+    for (int i = 0; i < k; i++) ways *= n - i;
+    return ways;
+}
+```
 
-**Counterexample or limitation:** The formula counts index-distinct objects. If the input contains repeated values and output uniqueness is by value, counting needs extra conditions.
+Factorials grow explosively. $20! = 2{,}432{,}902{,}008{,}176{,}640{,}000$ still fits in a `long`, but $21!$ does not, so never compute $n!$ directly for big $n$. Generating the permutations themselves, rather than counting them, is the job of [backtracking](../backtracking/index.qmd).
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+### Level 3: combinations, when order does not matter
 
-## Reference and practice
+A team is a podium with the order forgotten. Each team of $k$ appears $k!$ times among the ordered choices, so divide:
 
-- **CLRS (4th edition):** CLRS Appendix C (counting), Chapter 4 (recursion).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 77 — Combinations. [Original problem page or practice resource](https://leetcode.com/problems/combinations/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+$$
+\binom{n}{k} = \frac{P(n, k)}{k!} = \frac{n!}{k!\,(n-k)!}
+$$
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+where:
+
+- $\binom{n}{k}$, read "$n$ choose $k$", counts the subsets of size $k$;
+- $k!$ is the number of orders of one fixed team;
+- $\binom{n}{k} = \binom{n}{n-k}$, because choosing who is in is the same as choosing who is out.
+
+Example: teams of 3 from 5 runners: $\binom{5}{3} = \frac{60}{3!} = \frac{60}{6} = 10$. And $\binom{5}{2} = 10$ too, since picking the 2 who stay out picks the team. A poker hand is $\binom{52}{5} = 2{,}598{,}960$.
+
+To avoid huge factorials, build the answer one factor at a time. After step $i$ the running value is exactly $\binom{n-k+i}{i}$, a whole number, so each division is exact:
+
+```java
+static long choose(int n, int k) {
+    if (k < 0 || k > n) return 0;
+    k = Math.min(k, n - k);                             // C(n, k) = C(n, n-k): use the shorter loop
+    long ways = 1;
+    for (int i = 1; i <= k; i++) ways = ways * (n - k + i) / i; // C(n-k+i-1, i-1) becomes C(n-k+i, i), exactly
+    return ways;
+}
+```
+
+Trace of `choose(5, 2)`: $i = 1$ gives $1 \cdot 4 / 1 = 4 = \binom{4}{1}$; $i = 2$ gives $4 \cdot 5 / 2 = 10 = \binom{5}{2}$. Multiply **before** dividing. In `choose(7, 3)` the running values are $5$, $5 \cdot 6 / 2 = 15$ and $15 \cdot 7 / 3 = 35$; dividing first would compute $5 / 2 = 2$ at step 2 and end with a wrong answer.
+
+### Level 4: Pascal's rule
+
+Look at one particular runner, Ann. Every team of $k$ either leaves Ann out (then all $k$ come from the other $n - 1$) or includes her (then $k - 1$ more come from the other $n - 1$):
+
+$$
+\binom{n}{k} = \binom{n-1}{k-1} + \binom{n-1}{k}, \qquad \binom{n}{0} = \binom{n}{n} = 1
+$$
+
+where:
+
+- $\binom{n-1}{k-1}$ counts the teams that include Ann;
+- $\binom{n-1}{k}$ counts the teams without her;
+- the edges are 1: there is one empty team and one team of everybody.
+
+Example: $\binom{5}{2} = \binom{4}{1} + \binom{4}{2} = 4 + 6 = 10$. The first rows of the triangle:
+
+```text
+n = 0:            1
+n = 1:          1   1
+n = 2:        1   2   1
+n = 3:      1   3   3   1
+n = 4:    1   4   6   4   1
+n = 5:  1   5  10  10   5   1
+```
+
+Each row sums to $2^n$ (row 5: $1 + 5 + 10 + 10 + 5 + 1 = 32$), because it splits all subsets by size. Pascal's rule uses only **additions**, so it can be computed modulo any number without inverses:
+
+```java
+static long[][] pascal(int rows) {                      // c[n][k] = C(n, k) mod 1e9+7
+    long[][] c = new long[rows][];
+    for (int n = 0; n < rows; n++) {
+        c[n] = new long[n + 1];
+        c[n][0] = c[n][n] = 1;
+        for (int k = 1; k < n; k++) c[n][k] = (c[n - 1][k - 1] + c[n - 1][k]) % MOD; // teams without Ann, plus teams with Ann
+    }
+    return c;
+}
+```
+
+This is also the grid-walking picture from the analogy: the number of paths to a corner is the sum of the paths to the corner above and the corner to the left.
+
+### Level 5: stars and bars
+
+How many ways can $n$ **identical** items go into $k$ **different** groups, if a group may be empty? Write the items as stars and separate the groups with $k - 1$ bars. Every arrangement of the row is one distribution:
+
+$$
+\#\lbrace (x_1, \dots, x_k) : x_1 + \dots + x_k = n,\; x_i \ge 0 \rbrace = \binom{n + k - 1}{k - 1}
+$$
+
+where:
+
+- $x_i$ is the number of items in group $i$;
+- the row has $n$ stars and $k - 1$ bars, so $n + k - 1$ spots in total;
+- choosing which $k - 1$ spots hold bars fixes the whole row.
+
+Example: 5 sweets and 3 children. The row has $5 + 2 = 7$ spots, so there are $\binom{7}{2} = 21$ ways. `★★|★|★★` is $(2, 1, 2)$, and `||★★★★★` is $(0, 0, 5)$. If every child must get **at least one** sweet, hand out one each first and share the remaining 2 freely: $\binom{2 + 2}{2} = \binom{4}{2} = 6$.
+
+```java
+static long distribute(int items, int groups) {         // identical items, distinct groups, empty groups allowed
+    return choose(items + groups - 1, groups - 1);      // place (groups - 1) bars among items + groups - 1 spots
+}
+```
+
+The lab checks `distribute(5, 3) = 21` against a brute-force count of every $(x_1, x_2, x_3)$.
+
+### Level 6: Catalan numbers
+
+How many ways can 3 pairs of brackets be balanced? Here are all of them:
+
+```text
+((()))   (()())   (())()   ()(())   ()()()
+```
+
+Five. Counting them uses a trick. A bracket string is a path: `(` steps up, `)` steps down, and it is balanced when it ends at height 0 without ever going below 0. There are $\binom{2n}{n}$ paths with $n$ ups and $n$ downs. The **bad** ones dip below zero. Flipping every step of a bad path up to and including its first dip (ups become downs and downs become ups) turns it into a path with $n + 1$ ups, and every path with $n + 1$ ups comes from exactly one bad path. So:
+
+$$
+C_n = \binom{2n}{n} - \binom{2n}{n+1} = \frac{1}{n+1} \binom{2n}{n}
+$$
+
+where:
+
+- $C_n$ is the $n$-th Catalan number;
+- $\binom{2n}{n}$ counts all strings of $n$ opening and $n$ closing brackets;
+- $\binom{2n}{n+1}$ counts the bad ones, through the reflection.
+
+Example: $n = 3$. $\binom{6}{3} - \binom{6}{4} = 20 - 15 = 5$, and also $\frac{1}{4} \binom{6}{3} = \frac{20}{4} = 5$. The sequence starts $1, 1, 2, 5, 14, 42, 132$.
+
+```java
+static long catalan(int n) {
+    return choose(2 * n, n) / (n + 1);
+}
+```
+
+The Catalan numbers also count binary trees with $n$ nodes, ways to triangulate a polygon with $n + 2$ sides, and mountain ranges drawn with $n$ up-strokes and $n$ down-strokes. Richard Stanley's book *Catalan Numbers* (Cambridge, 2015) collects 214 different things they count. They also satisfy a recurrence, split by the first matched pair, which problem 2 uses.
+
+### Level 7: binomial coefficients modulo a prime
+
+Answers such as $\binom{1000}{500}$ have 300 digits, so problems ask for them modulo $p = 10^9 + 7$. Division is not allowed under a modulus, but multiplying by an **inverse** is (see [Number Theory](../number-theory/index.qmd)):
+
+$$
+\binom{n}{k} \bmod p = n! \cdot (k!)^{-1} \cdot \big((n-k)!\big)^{-1} \bmod p, \qquad x^{-1} \equiv x^{p-2} \pmod p
+$$
+
+where:
+
+- $p$ is a prime larger than $n$ (otherwise $n!$ is a multiple of $p$ and the formula breaks);
+- $x^{-1}$ is the number that multiplied by $x$ gives 1 modulo $p$;
+- $x^{p-2}$ is that inverse, by Fermat's little theorem, computed with fast exponentiation.
+
+Example: $\binom{5}{2} \bmod 7$. Here $5! = 120 = 17 \cdot 7 + 1 \equiv 1$; $2! = 2$, whose inverse is 4 ($2 \cdot 4 = 8 \equiv 1$); $3! = 6$, whose inverse is 6 ($6 \cdot 6 = 36 \equiv 1$). So $\binom{5}{2} \equiv 1 \cdot 4 \cdot 6 = 24 \equiv 3$. Check: $10 \bmod 7 = 3$.
+
+```java
+static long chooseMod(int n, int k, long p) {           // p is prime and n < p
+    if (k < 0 || k > n) return 0;
+    long[] fact = new long[n + 1];
+    fact[0] = 1;
+    for (int i = 1; i <= n; i++) fact[i] = fact[i - 1] * i % p;
+    return fact[n] * power(fact[k], p - 2, p) % p * power(fact[n - k], p - 2, p) % p;
+}
+```
+
+When many coefficients are needed, build the factorial table once and reuse it, so each query costs only two fast powers (or precompute the inverse factorials too, and each query is two multiplications). For small $n$, the Pascal table from Level 4 is simpler and needs no inverses at all; problem 4 uses it. For $n \ge p$, Lucas's theorem splits $n$ and $k$ into base-$p$ digits.
+
+## Why it works and what it costs
+
+**Why the product rule works.** Draw the choices as a tree: the root has $c_1$ branches, each of those has $c_2$, and so on. Each complete outcome is one path from the root to a leaf, and the number of leaves is $c_1 \cdot c_2 \cdots c_t$. The 3 T-shirts give 3 branches, each splitting into 2 trousers: 6 leaves.
+
+**Why every combination rule is a bijection.** Each formula says "these things correspond one to one with those things":
+
+- teams of $k$ ↔ (podiums of $k$) grouped by their $k!$ orders: $60 / 6 = 10$;
+- teams ↔ (teams with Ann) or (teams without Ann): $4 + 6 = 10$;
+- sweet distributions ↔ rows of stars and bars: $\binom{7}{2} = 21$;
+- bad bracket strings ↔ strings with $n + 1$ openers (by reflection): $20 - 15 = 5$.
+
+Counting the easier side gives the answer for the harder side. This is the most important technique in combinatorics.
+
+**Costs:**
+
+| Quantity | Method | Example | Cost |
+| --- | --- | --- | --- |
+| $P(n, k)$ | multiply $k$ factors | $P(5, 3)$: 3 multiplications | $O(k)$ |
+| $\binom{n}{k}$ exactly | multiplicative loop | $\binom{5}{2}$: 2 steps | $O(\min(k, n-k))$, exact while it fits in a `long` |
+| all $\binom{n}{k}$ for $n < N$ | Pascal's triangle | 7 rows: 21 entries | $O(N^2)$ time and space |
+| $\binom{n}{k} \bmod p$ | factorials and Fermat | $\binom{5}{2} \bmod 7$: 5 multiplications, 2 powers | $O(n + \log p)$; $O(1)$ per query after an $O(n)$ table |
+| $C_n$ | $\binom{2n}{n} / (n+1)$ | $C_3$: 3 steps, then $/4$ | $O(n)$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Using permutations when order does not matter | Teams of 3 counted $3! = 6$ times too often | Divide by $k!$, that is, use $\binom{n}{k}$ |
+| Computing $n!$ directly | Overflow from $21!$ on | The multiplicative loop, Pascal's triangle, or work modulo $p$ |
+| `ways / i * (n - k + i)` | Truncated division and a wrong answer | Multiply first: `ways * (n - k + i) / i` |
+| Dividing under a modulus, `fact[n] / fact[k] % p` | A wrong answer, since division does not survive `mod` | Multiply by the modular inverse $x^{p-2}$ |
+| `chooseMod` with $n \ge p$ | $n! \equiv 0$, so every answer becomes 0 | Lucas's theorem, or Pascal's triangle |
+| Using $k$ bars in stars and bars | One group too many | $k$ groups need $k - 1$ bars: $\binom{n + k - 1}{k - 1}$ |
+| Treating $k$ as 0-based in LeetCode 60 | The permutation after the right one | Convert to a rank first: `k - 1` |
+| Forgetting the $-1$ in LeetCode 1569 | Each answer one too big | The original order does not count |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 62: Unique Paths (Medium)
+
+**Problem.** A robot on an $m \times n$ grid starts top-left and moves only right or down. Count the paths to the bottom-right corner. For $m = 3$ rows and $n = 7$ columns the answer is 28.
+
+**Math first.** Every path makes exactly $m - 1$ down moves and $n - 1$ right moves, in some order. A path is fully described by **which** of its moves are the downs:
+
+$$
+\text{paths}(m, n) = \binom{(m - 1) + (n - 1)}{m - 1}
+$$
+
+where:
+
+- $m - 1$ is the number of down moves and $n - 1$ the number of right moves;
+- $(m - 1) + (n - 1)$ is the length of every path;
+- choosing the positions of the down moves fixes the rest.
+
+Example: $m = 3$, $n = 7$: paths have $2 + 6 = 8$ moves, so $\binom{8}{2} = \frac{8 \cdot 7}{2} = 28$. For $m = 3$, $n = 2$: $\binom{3}{2} = 3$ paths, namely RDD, DRD and DDR.
+
+**Idea.** The grid DP (each cell is the sum of the cell above and the cell to the left) is Pascal's rule in disguise and costs $O(mn)$. The formula skips it.
+
+```java
+static int uniquePaths(int m, int n) {
+    return (int) choose(m + n - 2, m - 1);              // choose which of the m+n-2 moves go down
+}
+```
+
+**Answer.** `uniquePaths(3, 7) = 28` and `uniquePaths(3, 2) = 3`. $O(\min(m, n))$ time and $O(1)$ space. LeetCode guarantees the answer is at most $2 \times 10^9$, so the intermediate values of `choose` stay far below the `long` limit.
+
+### 2. LeetCode 96: Unique Binary Search Trees (Medium)
+
+**Problem.** How many structurally different binary search trees store the keys $1, \dots, n$? For $n = 3$ the answer is 5.
+
+**Math first.** Pick the root $r$. The keys $1, \dots, r - 1$ must form the left subtree and $r + 1, \dots, n$ the right one, and the two shapes can be chosen independently (product rule). Summing over the roots (sum rule):
+
+$$
+G(n) = \sum_{r=1}^{n} G(r - 1) \cdot G(n - r), \qquad G(0) = 1
+$$
+
+where:
+
+- $G(i)$ is the number of BST shapes with $i$ keys;
+- $G(r - 1)$ counts the left subtrees and $G(n - r)$ the right ones;
+- $G(0) = 1$ counts the empty tree, which is one shape.
+
+Example: $n = 3$.
+
+- Root 1: $G(0) \cdot G(2) = 1 \cdot 2 = 2$.
+- Root 2: $G(1) \cdot G(1) = 1 \cdot 1 = 1$.
+- Root 3: $G(2) \cdot G(0) = 2 \cdot 1 = 2$.
+
+Total $2 + 1 + 2 = 5$. This is the Catalan recurrence, so $G(n) = C_n$: $G(3) = C_3 = 5$.
+
+**Idea.** Fill $G(0), G(1), \dots, G(n)$ in order, each from the smaller ones. (The closed form $\binom{2n}{n} / (n + 1)$ from Level 6 also works.)
+
+```java
+static int numTrees(int n) {
+    long[] trees = new long[n + 1];                     // trees[i] = number of BST shapes with i keys
+    trees[0] = 1;
+    for (int i = 1; i <= n; i++)
+        for (int root = 1; root <= i; root++) trees[i] += trees[root - 1] * trees[i - root]; // left shapes times right shapes
+    return (int) trees[n];
+}
+```
+
+**Answer.** `numTrees(3) = 5`, `numTrees(1) = 1`, and `numTrees(19) = 1767263190`, the largest input LeetCode allows. The double loop does $\frac{n(n+1)}{2}$ multiplications, 6 for $n = 3$: $O(n^2)$ time and $O(n)$ space.
+
+### 3. LeetCode 60: Permutation Sequence (Hard)
+
+**Problem.** List the permutations of $1, \dots, n$ in increasing order. Return the $k$-th one (counting from 1), for $n \le 9$. For $n = 4$, $k = 9$ the answer is `"2314"`.
+
+**Math first.** Permutations starting with a given first digit form a block of $(n-1)!$ consecutive entries. Inside it, each second digit gives a block of $(n-2)!$, and so on. So the rank $k - 1$, written in the **factorial number system**, spells out the answer:
+
+$$
+k - 1 = \sum_{i=0}^{n-1} d_i \cdot i!, \qquad 0 \le d_i \le i
+$$
+
+where:
+
+- $d_i$ is the digit belonging to $i!$, worked out from the largest $i$ down with $d_i = \lfloor \text{rank} / i! \rfloor$ and then $\text{rank} \leftarrow \text{rank} \bmod i!$;
+- $d_{n-1}$ is the position, counting from 0, of the first number among those still unused; $d_{n-2}$ chooses the second; and so on.
+
+Example: $n = 4$, $k = 9$, rank $8$.
+
+| $i$ | $i!$ | $d_i = \lfloor \text{rank} / i! \rfloor$ | rank left | unused before | picked |
+| --- | --- | --- | --- | --- | --- |
+| 3 | 6 | $\lfloor 8 / 6 \rfloor = 1$ | $8 \bmod 6 = 2$ | 1, 2, 3, 4 | 2 |
+| 2 | 2 | $\lfloor 2 / 2 \rfloor = 1$ | 0 | 1, 3, 4 | 3 |
+| 1 | 1 | 0 | 0 | 1, 4 | 1 |
+| 0 | 1 | 0 | 0 | 4 | 4 |
+
+So $8 = 1 \cdot 3! + 1 \cdot 2! + 0 \cdot 1! + 0 \cdot 0!$ and the answer is **2314**. Check: the 6 permutations starting with 1 come first, then `2134`, `2143`, `2314`; the 9th is `2314`.
+
+**Idea.** Keep the unused numbers in a sorted list. At each step, the digit $d_i$ is an index into that list: remove that element and append it. This skips the $k - 1$ permutations before the answer instead of generating them.
+
+```java
+static String getPermutation(int n, int k) {
+    List<Integer> unused = new ArrayList<>();
+    int[] factorial = new int[n];
+    factorial[0] = 1;
+    for (int i = 1; i < n; i++) factorial[i] = factorial[i - 1] * i;
+    for (int i = 1; i <= n; i++) unused.add(i);
+    StringBuilder result = new StringBuilder();
+    int rank = k - 1;                                   // count from 0
+    for (int i = n - 1; i >= 0; i--) {
+        result.append(unused.remove(rank / factorial[i])); // each choice of the next digit covers i! permutations
+        rank %= factorial[i];
+    }
+    return result.toString();
+}
+```
+
+**Answer.** `"213"` for $(3, 3)$, `"2314"` for $(4, 9)$, `"123"` for $(3, 1)$, and `"4321"` for $(4, 24)$, the last one. There are $n$ steps, each removing from a list of at most $n$ items: $O(n^2)$ time and $O(n)$ space, so 81 operations for $n = 9$ instead of up to $9! = 362{,}880$ permutations.
+
+### 4. LeetCode 1569: Number of Ways to Reorder Array to Get Same BST (Hard)
+
+**Problem.** Inserting a permutation of $1, \dots, n$ into an empty binary search tree builds one particular tree. Count the **other** orders of the same numbers that build the identical tree, modulo $10^9 + 7$, for $n \le 1000$. For `[3, 4, 5, 1, 2]` the answer is 5.
+
+**Math first.** The first number must be the root. After that, the left-subtree numbers must keep their own relative order (recursively), and so must the right-subtree numbers, but the two sequences may be **interleaved** freely. Choosing which of the $n - 1$ positions hold left-subtree numbers is a combination:
+
+$$
+W(T) = \binom{\lvert L \rvert + \lvert R \rvert}{\lvert L \rvert} \cdot W(L) \cdot W(R), \qquad W(\text{tree with} \le 2 \text{ nodes}) = 1, \qquad \text{answer} = W(T) - 1
+$$
+
+where:
+
+- $T$ is the tree, $L$ and $R$ its left and right subtrees;
+- $\lvert L \rvert$ and $\lvert R \rvert$ are their sizes, so $\lvert L \rvert + \lvert R \rvert = n - 1$;
+- $W(T)$ is the number of orders that build $T$, including the given one, hence the $-1$.
+
+Example: `[3, 4, 5, 1, 2]`. The root is 3, the left part is `[1, 2]` and the right part is `[4, 5]`. Each part has only one valid order (for `[1, 2]`, 1 must come before 2), so $W = 1$ for each. The interleavings: $\binom{4}{2} = 6$, namely `1245`, `1425`, `1452`, `4125`, `4152`, `4512`, each after the root 3. So $W(T) = 6 \cdot 1 \cdot 1 = 6$, and the answer is $6 - 1 = \mathbf{5}$. For `[2, 1, 3]`: $\binom{2}{1} - 1 = 1$ (the other order is `[2, 3, 1]`). For `[1, 2, 3]`: the left part is empty, $\binom{2}{0} = 1$, so the answer is 0.
+
+**Idea.** Recurse exactly as the formula says: split by the root, multiply the interleavings by the two recursive answers. The coefficients come from the Pascal table of Level 4, modulo $10^9 + 7$, so no division is needed.
+
+```java
+static int numOfWays(int[] nums) {
+    List<Integer> order = new ArrayList<>();
+    for (int x : nums) order.add(x);
+    return (int) ((waysToBuild(order, pascal(nums.length)) - 1 + MOD) % MOD); // every order except the given one
+}
+
+static long waysToBuild(List<Integer> order, long[][] c) {
+    if (order.size() <= 2) return 1;
+    List<Integer> left = new ArrayList<>(), right = new ArrayList<>();
+    for (int x : order.subList(1, order.size())) {
+        if (x < order.get(0)) left.add(x); else right.add(x);
+    }
+    long interleavings = c[order.size() - 1][left.size()];       // where the left keys sit among the other n-1
+    return interleavings * waysToBuild(left, c) % MOD * waysToBuild(right, c) % MOD;
+}
+```
+
+**Answer.** 5 for `[3, 4, 5, 1, 2]`, 1 for `[2, 1, 3]`, and 0 for `[1, 2, 3]`. The lab confirms the first by trying all $5! = 120$ orders and finding exactly 6 that build the same tree. The `+ MOD` keeps the answer non-negative when $W(T) \bmod p$ happens to be 0. The Pascal table costs $\frac{n^2}{2} = 500{,}000$ additions for $n = 1000$, and the recursion splits lists for $O(n^2)$ in the worst case (a sorted input): $O(n^2)$ time and space.
+
+## Mathematical Abstraction
+
+The binomial coefficient is the centre of the subject. It has a closed form, a recurrence, and a famous relative:
+
+$$
+\binom{n}{k} = \frac{n!}{k!\,(n-k)!} = \binom{n-1}{k-1} + \binom{n-1}{k},
+\qquad
+C_n = \frac{1}{n+1}\binom{2n}{n}
+$$
+
+where:
+
+- $\binom{n}{k}$ counts the $k$-element subsets of an $n$-element set;
+- the recurrence splits those subsets by whether they contain one fixed element;
+- $C_n$ is the $n$-th Catalan number, which counts balanced bracket strings, binary trees with $n$ nodes and BSTs on $n$ keys.
+
+Example: $\binom{5}{2} = \frac{120}{2 \cdot 6} = 10 = \binom{4}{1} + \binom{4}{2} = 4 + 6$. And $C_3 = \frac{1}{4}\binom{6}{3} = \frac{20}{4} = 5$, the five bracket strings of Level 6 and the five BSTs of problem 2. Permutations are $\binom{n}{k} \cdot k!$ ($10 \cdot 6 = 60$ podiums), and stars and bars is $\binom{n + k - 1}{k - 1}$ ($\binom{7}{2} = 21$ ways to share 5 sweets among 3 children).
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Appendix C, "Counting and Probability", §C.1 "Counting" (rules of sum and product, permutations, combinations, binomial coefficients). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Ronald L. Graham, Donald E. Knuth and Oren Patashnik, *Concrete Mathematics*, 2nd edition (Addison-Wesley, 1994), Chapter 5, "Binomial Coefficients".
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 1, *Fundamental Algorithms*, §1.2.6, "Binomial Coefficients".
+- Richard P. Stanley, *Catalan Numbers* (Cambridge University Press, 2015).
+- William Feller, *An Introduction to Probability Theory and Its Applications*, Volume 1 (Wiley, 1950), for the stars-and-bars argument.
+- Blaise Pascal, *Traité du triangle arithmétique* (written 1654, published 1665).
+- LeetCode: [62. Unique Paths](https://leetcode.com/problems/unique-paths/), [96. Unique Binary Search Trees](https://leetcode.com/problems/unique-binary-search-trees/), [60. Permutation Sequence](https://leetcode.com/problems/permutation-sequence/), [1569. Number of Ways to Reorder Array to Get Same BST](https://leetcode.com/problems/number-of-ways-to-reorder-array-to-get-same-bst/).
+
+[← Number Theory](../number-theory/index.qmd) · [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd) · [Probability and Statistics →](../probability-and-statistics/index.qmd)

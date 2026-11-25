@@ -1,64 +1,496 @@
 ---
 title: "Probability and Statistics"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "Sample spaces with dice, conditional probability and Bayes' rule, expectation and its linearity, variance and the standard error, the geometric distribution, sampling by weight, probability dynamic programming, and hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+Probability puts a number between 0 and 1 on "how likely". Statistics goes the other way: from data, it estimates those numbers and says how much to trust the estimate. For algorithms, four ideas carry almost everything: count outcomes in a **sample space**, update with **conditional probability**, average with **expectation** (whose linearity is the most useful trick in the subject), and push probabilities forward step by step with **dynamic programming**.
 
-**LeetCode 528 — Random Pick with Weight.** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`ProbabilityAndStatisticsLab.java`](ProbabilityAndStatisticsLab.java). Run it from this folder with `java ProbabilityAndStatisticsLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-Choosing a uniformly random index ignores different requested weights; a bucket-by-bucket simulation is wasteful for many queries.
+Thirty children each write their name on a card. The teacher shuffles the cards and hands them back at random. **On average, how many children get their own card back?**
 
-## One simple idea
+- The direct method lists every possible shuffle and counts. There are $30! \approx 2.65 \times 10^{32}$ shuffles, far too many.
+- Guessing is no better: should it grow with the class size, or shrink?
+- With **linearity of expectation**, the answer takes one line: each child gets their own card with probability $\frac{1}{30}$, and 30 children times $\frac{1}{30}$ is exactly **1**. That is true for a class of 3 or of 3 million.
 
-Build cumulative weights so each integer ticket from 1 to total weight corresponds to exactly one index, then use binary search to find its owner.
+## Explain it like I'm ten
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+::: {.callout-tip}
+**Marbles in a bag.** A bag holds 10 marbles, 3 of them red. Close your eyes and pick one. The chance it is red is $\frac{3}{10}$: the number of ways to win divided by the number of equally likely ways things can go. Every probability on this page starts from that sentence.
 
-## Formula and immediate translation
+**The fair price of a game.** You roll a die and win as many sweets as it shows. Play a thousand times and you will collect about 3,500 sweets, so the game is worth **3.5 sweets per roll**, even though no single roll ever shows 3.5. That long-run average is the *expected value*.
+
+**Asking each child.** To find how many children get their own card back, do not look at whole shuffles. Ask each child separately, "what is *your* chance?" Each says $\frac{1}{30}$. Add up the 30 answers. Averages can always be added like this, even when the children's luck is tangled together. This puzzle is old: Pierre Rémond de Montmort studied it in 1708 as the *problème des rencontres* (the matching problem).
+
+**Thinking in people, not percentages.** Gerd Gigerenzer showed in *Calculated Risks* (2002) that doctors and patients judge medical tests far better when the numbers are told as counts, "8 out of 1,000 women", than as conditional percentages. Level 2 uses his trick: imagine 10,000 real people and count them.
+:::
+
+## From simple to advanced
+
+### Level 1: sample spaces and counting
+
+A **sample space** $\Omega$ is the set of everything that can happen. An **event** $A$ is a set of outcomes. When all outcomes are equally likely:
 
 $$
-P(I=i)=\frac{w_i}{\sum_jw_j}
+P(A) = \frac{\lvert A \rvert}{\lvert \Omega \rvert}
 $$
 
-**Symbols and notation:** I is the sampled index; w_i is its nonnegative weight; the denominator is total positive weight over all indices; P is a probability.
+where:
 
-**Insert actual numbers:** For weights [1,3,2], total weight=1+3+2=6. Index 0 has probability 1/6, index 1 probability 3/6=1/2, index 2 probability 2/6=1/3. Ticket ranges are [1],[2,3,4],[5,6].
+- $\Omega$ (omega) is the sample space;
+- $A \subseteq \Omega$ is the event we care about;
+- $\lvert A \rvert$ is the number of outcomes in $A$, and $\lvert \Omega \rvert$ the total.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: roll two dice. $\Omega$ is the 36 pairs $(1,1), (1,2), \dots, (6,6)$. The event "the sum is 7" is $\lbrace (1,6), (2,5), (3,4), (4,3), (5,2), (6,1) \rbrace$, so $P = \frac{6}{36} = \frac{1}{6}$. "The sum is at least 10" is $(4,6), (5,5), (6,4), (5,6), (6,5), (6,6)$, also $\frac{6}{36}$.
 
-## Why the mathematics leads to an algorithm
+```java
+static double probabilityOfSum(int target) {            // two fair dice: 36 equally likely outcomes
+    int favourable = 0;
+    for (int a = 1; a <= 6; a++)
+        for (int b = 1; b <= 6; b++) if (a + b == target) favourable++;
+    return favourable / 36.0;
+}
+```
 
-Each ticket maps to one index and index i receives exactly w_i tickets; a uniform ticket therefore implements the requested distribution.
+Two rules save a lot of counting:
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+- **Complement:** $P(\text{not } A) = 1 - P(A)$. "At least one six in two rolls" is $1 - \left(\frac{5}{6}\right)^2 = 1 - \frac{25}{36} = \frac{11}{36}$.
+- **Independence:** if two events do not influence each other, $P(A \text{ and } B) = P(A) \cdot P(B)$. That is how $\left(\frac{5}{6}\right)^2$ arose: "no six on roll 1" and "no six on roll 2".
 
-## Make the idea executable
+### Level 2: conditional probability and Bayes' rule
 
-The [original algorithm examples](../examples/patterns.mjs) provide a small runnable related operation:
+New information shrinks the sample space. The probability of $A$ **given** that $B$ happened is
 
-~~~js
-import { lowerBound } from '../examples/patterns.mjs';
+$$
+P(A \mid B) = \frac{P(A \cap B)}{P(B)}, \qquad P(B) > 0
+$$
 
-console.log(lowerBound([1,4,6],5));
-~~~
+where:
 
-Run from a saved `.mjs` file inside this topic directory. The exported operation is tested with Node's standard test runner. Some examples illustrate a prerequisite rather than the entire specialised algorithm; in that case, the mathematical model above remains the definition of the full task.
+- $P(A \mid B)$ is read "the probability of $A$ given $B$";
+- $A \cap B$ is the event that both happen;
+- dividing by $P(B)$ rescales, so the outcomes inside $B$ add up to 1.
 
-## Complexity and correctness boundaries
+Example: two dice, and you are told the first die shows 6. What is the chance the sum is at least 10? Only 6 outcomes remain, $(6,1), \dots, (6,6)$, and 3 of them win: $(6,4), (6,5), (6,6)$. With the formula: $P(A \cap B) = \frac{3}{36}$, $P(B) = \frac{6}{36}$, so $P(A \mid B) = \frac{3}{6} = \frac{1}{2}$, up from $\frac{1}{6}$.
 
-**Work bound:** O(n) preprocess cumulative sums, O(log n) per weighted sample using binary search, O(n) memory.
+Writing $P(A \cap B)$ in two ways, as $P(A \mid B) P(B)$ and as $P(B \mid A) P(A)$, gives **Bayes' rule**, which turns a condition around:
 
-**Counterexample or limitation:** A sample showing approximate frequencies after 10 draws does not PROVE correctness. Beware floating-point edge cases and ensure total weight>0.
+$$
+P(S \mid +) = \frac{P(+ \mid S)\, P(S)}{P(+ \mid S)\, P(S) + P(+ \mid H)\, P(H)}
+$$
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+where:
 
-## Reference and practice
+- $S$ means "sick", $H$ means "healthy", and $+$ means "the test is positive";
+- $P(S)$ is the **prior**, how common the illness is before any test;
+- $P(+ \mid S)$ is how often the test catches the illness, and $P(+ \mid H)$ is how often it raises a false alarm;
+- the denominator is $P(+)$, every way of testing positive.
 
-- **CLRS (4th edition):** CLRS Chapter 5 (randomised analysis) and Appendix C (probability).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 528 — Random Pick with Weight. [Original problem page or practice resource](https://leetcode.com/problems/random-pick-with-weight/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+Example: 1% of people are sick, the test catches 90% of them, and it falsely alarms 5% of healthy people. Count 10,000 people, as Gigerenzer suggests:
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+- 100 are sick, and $90$ of them test positive.
+- 9,900 are healthy, and $5\%$ of them, $495$, also test positive.
+- So $90 + 495 = 585$ people test positive, and only 90 of them are sick: $P(S \mid +) = \frac{90}{585} \approx 0.154$.
+
+With the formula: $\frac{0.9 \times 0.01}{0.9 \times 0.01 + 0.05 \times 0.99} = \frac{0.009}{0.0585} \approx 0.154$. A positive result from a "90% accurate" test means only about a **15%** chance of being sick, because healthy people vastly outnumber sick ones.
+
+```java
+static double bayes(double prior, double truePositiveRate, double falsePositiveRate) {
+    double positive = truePositiveRate * prior + falsePositiveRate * (1 - prior); // every way to test positive
+    return truePositiveRate * prior / positive;
+}
+```
+
+If the prior were 50% instead of 1%, the same test would give $\frac{0.45}{0.45 + 0.025} \approx 0.947$. The base rate matters as much as the test.
+
+### Level 3: expectation, and why it adds up
+
+A **random variable** $X$ is a number that depends on the outcome. Its **expected value** is the probability-weighted average:
+
+$$
+E[X] = \sum_{x} x \cdot P(X = x)
+$$
+
+where:
+
+- $x$ runs over the values $X$ can take;
+- $P(X = x)$ is the probability of each value;
+- $E[X]$ is the long-run average over many repetitions.
+
+Example: one die. $E[X] = (1 + 2 + 3 + 4 + 5 + 6) \cdot \frac{1}{6} = \frac{21}{6} = 3.5$.
+
+The most useful fact in the subject is **linearity of expectation**: the expectation of a sum is the sum of the expectations, **even when the parts depend on each other**.
+
+$$
+E[X_1 + X_2 + \dots + X_n] = E[X_1] + E[X_2] + \dots + E[X_n]
+$$
+
+where:
+
+- $X_1, \dots, X_n$ are any random variables on the same sample space;
+- no independence is needed.
+
+Example: the sum of two dice has $E = 3.5 + 3.5 = 7$, without listing the 11 possible sums.
+
+It is most powerful with **indicator variables**. To count how often something happens, write the count as a sum of 0/1 variables, one per "place" it could happen, and add their probabilities. For the shuffled cards:
+
+$$
+X = \sum_{i=1}^{n} I_i, \qquad E[I_i] = P(\text{child } i \text{ gets card } i) = \frac{1}{n}, \qquad E[X] = n \cdot \frac{1}{n} = 1
+$$
+
+where:
+
+- $X$ is the number of children who get their own card (the *fixed points* of the random permutation);
+- $I_i$ is 1 if child $i$ gets card $i$ and 0 otherwise, so $E[I_i]$ is just that probability;
+- the $I_i$ are dependent (if 29 children have their own cards, so does the 30th), but linearity does not care.
+
+Example: for $n = 3$, the six shuffles $123, 132, 213, 231, 312, 321$ have $3, 1, 1, 0, 0, 1$ fixed points. Their total is 6, and $6 / 6 = 1$. For $n = 30$ the answer is still exactly 1. The lab shuffles 200,000 times to confirm it:
+
+```java
+static double averageFixedPoints(int n, int trials, Random random) {
+    List<Integer> cards = new ArrayList<>();
+    for (int i = 0; i < n; i++) cards.add(i);
+    int total = 0;
+    for (int t = 0; t < trials; t++) {
+        Collections.shuffle(cards, random);
+        for (int i = 0; i < n; i++) if (cards.get(i) == i) total++; // child i got their own card back
+    }
+    return (double) total / trials;
+}
+```
+
+### Level 4: variance, and how much to trust an average
+
+The mean says where values sit; the **variance** says how far they spread from it:
+
+$$
+\operatorname{Var}(X) = E\big[(X - E[X])^2\big] = E[X^2] - (E[X])^2, \qquad \sigma = \sqrt{\operatorname{Var}(X)}
+$$
+
+where:
+
+- $E[X^2]$ is the average of the squared values;
+- $\sigma$ (sigma), the **standard deviation**, is the spread in the same units as $X$.
+
+Example: one die. $E[X^2] = \frac{1 + 4 + 9 + 16 + 25 + 36}{6} = \frac{91}{6} \approx 15.167$, so $\operatorname{Var}(X) = \frac{91}{6} - 3.5^2 = \frac{91}{6} - \frac{49}{4} = \frac{35}{12} \approx 2.917$ and $\sigma \approx 1.708$. For **independent** variables, variances add too: two dice have variance $\frac{35}{12} \cdot 2 = \frac{35}{6} \approx 5.83$.
+
+```java
+static double[] meanAndVariance(double[] values) {
+    double sum = 0, sumOfSquares = 0;
+    for (double v : values) { sum += v; sumOfSquares += v * v; }
+    double mean = sum / values.length;
+    return new double[] {mean, sumOfSquares / values.length - mean * mean}; // E[X^2] - (E[X])^2
+}
+```
+
+For the data $2, 4, 4, 4, 5, 5, 7, 9$ it returns mean 5 and variance 4 (standard deviation 2). This treats the values as the whole population. When they are a **sample** from something bigger, statisticians divide by $n - 1$ instead of $n$ (Bessel's correction): $\frac{32}{7} \approx 4.571$. For values with a large mean, the subtraction $E[X^2] - (E[X])^2$ loses precision; Welford's one-pass method avoids that.
+
+This is where statistics begins. The average of $n$ independent rolls has a much smaller spread than one roll:
+
+$$
+\operatorname{SE}(\bar{X}) = \frac{\sigma}{\sqrt{n}}
+$$
+
+where:
+
+- $\bar{X}$ is the sample mean of $n$ independent measurements;
+- $\operatorname{SE}$, the **standard error**, is the standard deviation of $\bar{X}$;
+- $\sigma$ is the standard deviation of one measurement.
+
+Example: 10,000 die rolls. $\operatorname{SE} = \frac{1.708}{\sqrt{10{,}000}} = \frac{1.708}{100} \approx 0.017$. So the average of 10,000 rolls will almost always land within about $3.5 \pm 0.05$ (three standard errors). The lab rolls 10,000 times and checks exactly that. To halve the error you need **four times** as many samples, which is why simulations get expensive.
+
+### Level 5: waiting times, the geometric distribution
+
+Roll a die until a six appears. The number of rolls $K$ follows the **geometric distribution**:
+
+$$
+P(K = k) = (1 - p)^{k-1}\, p, \qquad E[K] = \frac{1}{p}
+$$
+
+where:
+
+- $p$ is the chance of success on each independent try ($\frac{1}{6}$ for a six);
+- $(1-p)^{k-1}$ is the chance of $k - 1$ failures first;
+- $E[K]$ is the average number of tries, including the successful one.
+
+Example: $P(\text{first six on roll } 3) = \left(\frac{5}{6}\right)^2 \cdot \frac{1}{6} = \frac{25}{216} \approx 0.116$, and on average you wait $E[K] = 1 / \frac{1}{6} = 6$ rolls. The quick derivation: one roll always happens, and with probability $1 - p$ you are back where you started, so $E = 1 + (1 - p) E$, which solves to $E = 1/p$.
+
+Linearity and the geometric distribution together solve the **coupon collector** problem: how many rolls until every face has appeared? After $j$ faces have been seen, a *new* one appears with probability $\frac{6 - j}{6}$, so that wait averages $\frac{6}{6-j}$ rolls:
+
+$$
+E[\text{rolls}] = \sum_{j=0}^{m-1} \frac{m}{m - j} = m \left(1 + \frac{1}{2} + \dots + \frac{1}{m}\right)
+$$
+
+where $m$ is the number of faces and $j$ is how many different faces have been seen so far.
+
+Example: $m = 6$ gives $\frac{6}{6} + \frac{6}{5} + \frac{6}{4} + \frac{6}{3} + \frac{6}{2} + \frac{6}{1} = 1 + 1.2 + 1.5 + 2 + 3 + 6 = 14.7$ rolls. The last face alone costs 6 of them.
+
+```java
+static double expectedRollsToSeeAllFaces(int faces) {
+    double expected = 0;
+    for (int seen = 0; seen < faces; seen++) expected += (double) faces / (faces - seen); // a new face has chance (faces - seen) / faces
+    return expected;
+}
+```
+
+### Level 6: pushing probabilities forward (probability DP)
+
+Many problems describe a process that moves step by step: a knight jumping, a player drawing cards. Instead of following one random path, keep the probability of **every** state and update them all at once:
+
+$$
+P_{t+1}(s') = \sum_{s} P_t(s) \cdot T(s \to s')
+$$
+
+where:
+
+- $P_t(s)$ is the probability of being in state $s$ after $t$ steps;
+- $T(s \to s')$ is the chance of moving from $s$ to $s'$ in one step;
+- the sum collects every way of arriving at $s'$.
+
+Example: a knight on a $3 \times 3$ board at the corner $(0, 0)$. Of its 8 moves, only 2 stay on the board, to $(1, 2)$ and $(2, 1)$, so after one step $P_1 = \frac{1}{8}$ on each of those squares, and the total still on the board is $\frac{2}{8} = 0.25$. Problems 2 and 3 below are exactly this recurrence. It is the same idea as a Markov chain, and the same code shape as any dynamic programming table.
+
+## Why it works and what it costs
+
+**Why linearity holds without independence.** Expectation is a weighted sum over outcomes $\omega$: $E[X + Y] = \sum_\omega (X(\omega) + Y(\omega)) P(\omega) = \sum_\omega X(\omega) P(\omega) + \sum_\omega Y(\omega) P(\omega) = E[X] + E[Y]$. Splitting a sum never needed independence. For $n = 3$ cards: $E[I_1] + E[I_2] + E[I_3] = \frac{2}{6} + \frac{2}{6} + \frac{2}{6} = 1$ (each child is a fixed point in 2 of the 6 shuffles), which matches the direct count $\frac{6}{6}$. By contrast, $E[XY] = E[X] E[Y]$ and $\operatorname{Var}(X + Y) = \operatorname{Var}(X) + \operatorname{Var}(Y)$ **do** need independence.
+
+**Why Bayes is just counting.** In the 10,000-person picture, $P(S \mid +)$ is "sick positives over all positives", $\frac{90}{90 + 495}$. Dividing top and bottom by 10,000 turns each count into a probability, which is the formula.
+
+**Why sampling by weight is fair.** In problem 1, ticket numbers $1, \dots, W$ are equally likely, and index $i$ owns exactly $w_i$ consecutive tickets, so $P(i) = \frac{w_i}{W}$.
+
+**Costs:**
+
+| Task | Method | Example | Cost |
+| --- | --- | --- | --- |
+| $P(A)$ by enumeration | count outcomes | two dice: 36 outcomes | $O(\lvert \Omega \rvert)$ |
+| Expected count | linearity, indicators | fixed points: $n$ terms of $\frac{1}{n}$ | $O(n)$, versus $n!$ outcomes |
+| Monte Carlo estimate | average $N$ simulations | 10,000 rolls, error about 0.017 | $O(N)$, error shrinks like $1 / \sqrt{N}$ |
+| Weighted pick | prefix sums, binary search | weights $[1, 3]$: 1 comparison | $O(n)$ to build, $O(\log n)$ per pick |
+| Probability DP | push probabilities forward | knight, $n = 3$, $k = 2$: $2 \times 9 \times 8 = 144$ updates | $O(\text{steps} \times \text{states} \times \text{moves})$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Mixing up $P(A \mid B)$ and $P(B \mid A)$ | "The test is 90% accurate, so I am 90% likely to be sick" | Bayes' rule, with the base rate |
+| Multiplying probabilities of dependent events | A wrong joint probability | $P(A \cap B) = P(A \mid B) \, P(B)$ |
+| Integer division, `favourable / 36` | Every probability is 0 | Divide by `36.0` |
+| Assuming $E[XY] = E[X] E[Y]$ always | Wrong answers for dependent variables | Only for independent ones; linearity of sums is the safe rule |
+| Creating `new Random()` on every call | Slow, and poorly seeded streams | One `Random` per object, seeded in tests |
+| Tickets $0, \dots, W - 1$ compared with `prefix >= ticket` | Index 0 gets one ticket too many | Tickets $1, \dots, W$, or compare with `>` |
+| Linear scan for every weighted pick | $O(n)$ per call, too slow for $10^4$ calls | Binary search the prefix sums |
+| Comparing probabilities with `==` | Tests that fail by $10^{-16}$ | Compare within a tolerance, such as $10^{-5}$ |
+| Summing the last `maxPts` states afresh in LeetCode 837 | $O(n \cdot \text{maxPts})$, too slow | Keep a sliding window sum |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 528: Random Pick with Weight (Medium)
+
+**Problem.** Given positive weights $w_0, \dots, w_{n-1}$, implement `pickIndex()`, which returns index $i$ with probability $w_i / W$, where $W$ is the total. For `w = [1, 3]`, index 0 should come back $\frac{1}{4}$ of the time and index 1 $\frac{3}{4}$ of the time.
+
+**Math first.** Hand out $W$ lottery tickets, numbered 1 to $W$: index 0 gets the first $w_0$, index 1 the next $w_1$, and so on. Draw one ticket uniformly. With prefix sums $S_i = w_0 + \dots + w_i$:
+
+$$
+\text{pick}(t) = \min \lbrace i : S_i \ge t \rbrace, \qquad P(\text{pick} = i) = \frac{S_i - S_{i-1}}{W} = \frac{w_i}{W}
+$$
+
+where:
+
+- $t$ is the ticket, uniform on $1, \dots, W$;
+- $S_i$ is the last ticket owned by index $i$, with $S_{-1} = 0$;
+- $\min \lbrace i : S_i \ge t \rbrace$ is the first index whose block reaches ticket $t$.
+
+Example: `w = [1, 3]`, so $S = [1, 4]$ and $W = 4$. Ticket 1 goes to index 0; tickets 2, 3 and 4 go to index 1. So $P(0) = \frac{1}{4}$ and $P(1) = \frac{3}{4}$. For `w = [2, 5, 3]`, $S = [2, 7, 10]$: tickets 1–2, 3–7 and 8–10 give probabilities $0.2$, $0.5$ and $0.3$.
+
+**Idea.** Build the prefix sums once. Each pick draws a ticket and binary-searches for the first prefix sum that is at least the ticket, because the prefix sums are increasing.
+
+```java
+static final class WeightedPicker {
+    final int[] prefix;                                 // prefix[i] = w[0] + ... + w[i]
+    final Random random;
+
+    WeightedPicker(int[] w, Random random) {
+        prefix = new int[w.length];
+        for (int i = 0; i < w.length; i++) prefix[i] = w[i] + (i > 0 ? prefix[i - 1] : 0);
+        this.random = random;
+    }
+
+    int pickIndex() {
+        return indexForTicket(random.nextInt(prefix[prefix.length - 1]) + 1); // a ticket from 1 to W
+    }
+
+    int indexForTicket(int ticket) {                    // the first index whose prefix sum reaches the ticket
+        int low = 0, high = prefix.length - 1;
+        while (low < high) {
+            int mid = (low + high) / 2;
+            if (prefix[mid] >= ticket) high = mid; else low = mid + 1;
+        }
+        return low;
+    }
+}
+```
+
+**Answer.** For `[1, 3]`, tickets 1, 2, 3, 4 map to indices 0, 1, 1, 1, and in 100,000 seeded picks the lab sees index 1 about 75% of the time. Building costs $O(n)$; each pick costs $O(\log n)$, about 14 comparisons for $n = 10^4$. $W \le 10^4 \times 10^5 = 10^9$ still fits in an `int`.
+
+### 2. LeetCode 837: New 21 Game (Medium)
+
+**Problem.** Alice starts with 0 points. While she has fewer than $k$ points, she draws a whole number from 1 to `maxPts` uniformly at random and adds it. She stops as soon as she has $k$ or more. What is the probability that she ends with at most $n$ points? For $n = 21$, $k = 17$, `maxPts` $= 10$ the answer is $0.73278$.
+
+**Math first.** Let $R(s)$ be the probability that her score is **ever exactly** $s$. She reaches $s$ by drawing $j$ from a score $s - j$ at which she was still drawing, that is, $s - j < k$:
+
+$$
+R(0) = 1, \qquad R(s) = \frac{1}{M} \sum_{j=1}^{M} R(s - j)\, [\, 0 \le s - j < k \,], \qquad \text{answer} = \sum_{s=k}^{n} R(s)
+$$
+
+where:
+
+- $M$ is `maxPts`, so each draw has probability $\frac{1}{M}$;
+- $[\, \cdot \,]$ is 1 when the condition holds, so only scores where she still draws contribute;
+- the stopping scores $k, k+1, \dots$ are reached at most once each, and the answer adds those up to $n$.
+
+Example: $n = 2$, $k = 2$, $M = 2$. $R(1) = \frac{1}{2} R(0) = 0.5$. $R(2) = \frac{1}{2}(R(1) + R(0)) = \frac{1}{2}(0.5 + 1) = 0.75$. The answer is $R(2) = 0.75$. Check by hand: draw 2 at once (probability $\frac{1}{2}$, ends at 2) or draw 1 then 1 ($\frac{1}{4}$, ends at 2); only "1 then 2" ($\frac{1}{4}$) ends at 3. So $\frac{3}{4}$.
+
+**Idea.** The sum in $R(s)$ covers a sliding window of the last $M$ scores, so keep it as a running total: add $R(s)$ when $s$ is still a drawing score, and drop $R(s - M)$ when it falls out of the window. If $n \ge k - 1 + M$, even the worst case stays at most $n$, and the answer is 1.
+
+```java
+static double new21Game(int n, int k, int maxPts) {
+    if (k == 0 || n >= k - 1 + maxPts) return 1.0;      // she never draws, or can never pass n
+    double[] reach = new double[n + 1];                 // reach[s] = probability that the score is ever exactly s
+    reach[0] = 1;
+    double window = 1, answer = 0;                      // window = sum of reach[t] for scores t that still draw and can reach s
+    for (int s = 1; s <= n; s++) {
+        reach[s] = window / maxPts;
+        if (s < k) window += reach[s]; else answer += reach[s];  // below k she draws again; from k on she stops
+        if (s - maxPts >= 0 && s - maxPts < k) window -= reach[s - maxPts]; // too far back to reach s + 1
+    }
+    return answer;
+}
+```
+
+**Answer.** $1.0$ for $(10, 1, 10)$; $0.6$ for $(6, 1, 10)$, since she draws once and wins on 1 to 6; $0.75$ for $(2, 2, 2)$; and $0.73278$ for $(21, 17, 10)$. The loop runs $n$ times with $O(1)$ work each: $O(n)$ time and space, instead of $O(n \cdot M)$ for summing the window afresh, which is $10^8$ for $n = M = 10^4$.
+
+### 3. LeetCode 688: Knight Probability in Chessboard (Medium)
+
+**Problem.** A knight starts at `(row, column)` on an $n \times n$ board and makes exactly $k$ moves, each chosen uniformly from its 8 possible moves, even ones that leave the board (once off, it stays off). What is the probability it is still on the board at the end? For $n = 3$, $k = 2$, start $(0, 0)$, the answer is $0.0625$.
+
+**Math first.** This is Level 6 with states = squares:
+
+$$
+P_{t+1}(r', c') = \sum_{(dr, dc)} \frac{1}{8}\, P_t(r' - dr,\, c' - dc), \qquad \text{answer} = \sum_{(r, c)} P_k(r, c)
+$$
+
+where:
+
+- $P_t(r, c)$ is the probability of standing on square $(r, c)$ after $t$ moves;
+- $(dr, dc)$ runs over the 8 knight moves, such as $(1, 2)$ and $(-2, 1)$;
+- probability that jumps off the board simply disappears, so the final total is the answer.
+
+Example: $n = 3$, start $(0, 0)$. Step 1: only $(1, 2)$ and $(2, 1)$ are on the board, each with $\frac{1}{8}$. Step 2: from $(1, 2)$, only $(0, 0)$ and $(2, 0)$ stay on the board; from $(2, 1)$, only $(0, 0)$ and $(0, 2)$. Each of those 4 paths has probability $\frac{1}{8} \cdot \frac{1}{8} = \frac{1}{64}$, so the answer is $\frac{4}{64} = 0.0625$.
+
+**Idea.** Keep an $n \times n$ table of probabilities and update it $k$ times, spreading each square's probability over its 8 moves in eighths.
+
+```java
+static double knightProbability(int n, int k, int row, int column) {
+    int[][] moves = {{1, 2}, {2, 1}, {2, -1}, {1, -2}, {-1, -2}, {-2, -1}, {-2, 1}, {-1, 2}};
+    double[][] chance = new double[n][n];               // chance[r][c] = probability of standing on (r, c) now
+    chance[row][column] = 1;
+    for (int step = 0; step < k; step++) {
+        double[][] next = new double[n][n];
+        for (int r = 0; r < n; r++)
+            for (int c = 0; c < n; c++)
+                for (int[] m : moves) {
+                    int nr = r + m[0], nc = c + m[1];
+                    if (nr >= 0 && nr < n && nc >= 0 && nc < n) next[nr][nc] += chance[r][c] / 8; // each move has chance 1/8
+                }
+        chance = next;
+    }
+    return Arrays.stream(chance).flatMapToDouble(Arrays::stream).sum();
+}
+```
+
+**Answer.** $0.0625$ for the example, $0.25$ after one move, and $1.0$ for $n = 1$, $k = 0$. There are $k \cdot n^2 \cdot 8$ updates: for the limits $n = 25$, $k = 100$ that is $500{,}000$, so $O(k n^2)$ time and $O(n^2)$ space. Simulating random walks would only estimate the answer, with error shrinking like $1 / \sqrt{N}$.
+
+### 4. LeetCode 1467: Probability of a Two Boxes Having The Same Number of Distinct Balls (Hard)
+
+**Problem.** There are $2m$ balls in up to 8 colours, `balls[i]` of colour $i$ (at most 6 each). They are shuffled uniformly; the first $m$ go into box 1 and the rest into box 2. What is the probability that both boxes contain the same number of **distinct colours**? For `balls = [2, 1, 1]` the answer is $0.66667$.
+
+**Math first.** Treat every ball as distinguishable. Choosing which $m$ balls go into box 1 gives $\binom{2m}{m}$ equally likely splits. A split is described by $c_i$, the number of colour-$i$ balls in box 1, and $\binom{b_i}{c_i}$ ways pick which ones. So:
+
+$$
+P = \frac{1}{\binom{2m}{m}} \sum_{\substack{c_0 + \dots + c_{r-1} = m \\ 0 \le c_i \le b_i}} \left[\, \#\lbrace i : c_i > 0 \rbrace = \#\lbrace i : c_i < b_i \rbrace \,\right] \prod_{i} \binom{b_i}{c_i}
+$$
+
+where:
+
+- $b_i$ is `balls[i]`, $r$ is the number of colours and $m$ is half the total;
+- $c_i > 0$ means colour $i$ appears in box 1, and $c_i < b_i$ means some of it is left for box 2;
+- the bracket is 1 when the two distinct-colour counts are equal;
+- $\prod_i \binom{b_i}{c_i}$ is how many of the $\binom{2m}{m}$ equally likely splits have exactly these counts.
+
+Example: `[2, 1, 1]`, so $m = 2$ and $\binom{4}{2} = 6$ splits.
+
+| $(c_0, c_1, c_2)$ | colours in box 1 | colours in box 2 | equal? | weight $\prod \binom{b_i}{c_i}$ |
+| --- | --- | --- | --- | --- |
+| $(2, 0, 0)$ | 1 | 2 | no | $1$ |
+| $(1, 1, 0)$ | 2 | 2 | yes | $2 \cdot 1 \cdot 1 = 2$ |
+| $(1, 0, 1)$ | 2 | 2 | yes | $2$ |
+| $(0, 1, 1)$ | 2 | 1 | no | $1$ |
+
+The weights add to 6, as they must, and the favourable ones to $2 + 2 = 4$. So $P = \frac{4}{6} \approx 0.66667$.
+
+**Idea.** Recurse over the colours, choosing $c_i$ for each, and carry two things: how many balls box 1 still needs, and the *balance* (distinct colours in box 1 minus those in box 2). At the end, a split counts if box 1 is exactly full and the balance is 0. Multiply in $\binom{b_i}{c_i}$ along the way.
+
+```java
+static double getProbability(int[] balls) {
+    int half = Arrays.stream(balls).sum() / 2;
+    return favourableSplits(balls, 0, half, 0) / choose(2 * half, half);
+}
+
+// Weighted count of ways to put `left` more balls into box 1 from colours i, i+1, ...
+// balance = (colours seen in box 1) - (colours seen in box 2) so far.
+static double favourableSplits(int[] balls, int i, int left, int balance) {
+    if (i == balls.length) return left == 0 && balance == 0 ? 1 : 0;
+    double ways = 0;
+    for (int take = 0; take <= Math.min(balls[i], left); take++) {
+        int change = (take > 0 ? 1 : 0) - (take < balls[i] ? 1 : 0); // is this colour in box 1? in box 2?
+        ways += choose(balls[i], take) * favourableSplits(balls, i + 1, left - take, balance + change);
+    }
+    return ways;
+}
+```
+
+`choose` is the exact binomial coefficient from the [Combinatorics](../combinatorics/index.qmd) lesson.
+
+**Answer.** $1.0$ for `[1, 1]`, $\frac{4}{6} \approx 0.66667$ for `[2, 1, 1]`, and $0.6$ for `[1, 2, 1, 2]`. The recursion tries at most $\prod_i (b_i + 1) \le 7^8 \approx 5.8$ million combinations, each with $O(1)$ work, and needs $O(r)$ stack. $\binom{48}{24} \approx 3.2 \times 10^{13}$ fits easily in a `long`, and a `double` holds the weighted sums exactly enough for the $10^{-5}$ tolerance.
+
+## Mathematical Abstraction
+
+Two identities do most of the work. Bayes' rule turns a conditional probability around, and linearity of expectation adds averages without caring about dependence:
+
+$$
+P(A \mid B) = \frac{P(B \mid A)\, P(A)}{P(B)},
+\qquad
+E\Big[\sum_{i=1}^{n} X_i\Big] = \sum_{i=1}^{n} E[X_i]
+$$
+
+where:
+
+- $A$ and $B$ are events with $P(B) > 0$;
+- $X_1, \dots, X_n$ are random variables on the same sample space, independent or not;
+- with indicator variables $X_i \in \lbrace 0, 1 \rbrace$, $E[X_i]$ is simply the probability that event $i$ happens.
+
+Example: a positive test with a 1% prior, 90% detection and 5% false alarms gives $P(\text{sick} \mid +) = \frac{0.9 \times 0.01}{0.0585} \approx 0.154$. And 30 shuffled name cards give $E[\text{matches}] = 30 \times \frac{1}{30} = 1$, the same as for 3 cards, where the six shuffles have $3 + 1 + 1 + 0 + 0 + 1 = 6$ matches in total, an average of 1.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 5, "Probabilistic Analysis and Randomized Algorithms" (§5.2, indicator random variables), and Appendix C, "Counting and Probability" (§C.2 probability, §C.3 discrete random variables, §C.4 the geometric and binomial distributions). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Ronald L. Graham, Donald E. Knuth and Oren Patashnik, *Concrete Mathematics*, 2nd edition (Addison-Wesley, 1994), Chapter 8, "Discrete Probability".
+- Joseph K. Blitzstein and Jessica Hwang, *Introduction to Probability*, 2nd edition (CRC Press, 2019), free online at <https://probabilitybook.net/>: conditional probability, Bayes, expectation, indicator variables.
+- Gerd Gigerenzer, *Calculated Risks: How to Know When Numbers Deceive You* (Simon & Schuster, 2002), on natural frequencies.
+- Pierre Rémond de Montmort, *Essay d'analyse sur les jeux de hazard* (1708), the matching problem (*problème des rencontres*).
+- LeetCode: [528. Random Pick with Weight](https://leetcode.com/problems/random-pick-with-weight/), [837. New 21 Game](https://leetcode.com/problems/new-21-game/), [688. Knight Probability in Chessboard](https://leetcode.com/problems/knight-probability-in-chessboard/), [1467. Probability of a Two Boxes Having The Same Number of Distinct Balls](https://leetcode.com/problems/probability-of-a-two-boxes-having-the-same-number-of-distinct-balls/).
+
+[← Combinatorics](../combinatorics/index.qmd) · [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd) · [Geometry →](../geometry/index.qmd)

@@ -1,64 +1,459 @@
 ---
 title: "Rolling Hash"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "From a sliding window of digits to Rabin–Karp: the polynomial hash, the O(1) sliding update, prefix hashes, collision probability and double hashing, and hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+A rolling hash gives every window of a string a number, its *fingerprint*, and moves from one window to the next in a single step instead of re-reading the whole window. Comparing two fingerprints costs one comparison, however long the windows are. This lesson starts with plain decimal digits, adds a modulus so the numbers stay small, builds the Rabin–Karp search, and then measures honestly how often two different windows share a fingerprint.
 
-**LeetCode 28 — Find the Index of the First Occurrence in a String (Rabin–Karp variant).** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`RollingHashLab.java`](RollingHashLab.java). Run it from this folder with `java RollingHashLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-Recompute the numeric fingerprint of each length-m substring from scratch, even though adjacent substrings share m−1 characters.
+Find the pattern `159` in the text `314159`.
 
-## One simple idea
+The obvious method lines the pattern up under each position of the text and compares letter by letter. For a text of length $n$ and a pattern of length $L$ there are $n - L + 1$ positions, each costing up to $L$ comparisons:
 
-Update a hash by removing the outgoing symbol's contribution, shifting by the base and adding the new symbol. Check actual characters when hashes match.
+- here, $6 - 3 + 1 = 4$ positions and at most $4 \times 3 = 12$ comparisons, which is fine;
+- for a text of $n = 10^6$ letters and a pattern of $L = 1{,}000$, it is up to about $10^6 \times 10^3 = 10^9$ comparisons.
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+Hashing each window from scratch does not help, because computing a hash also reads all $L$ letters. What we want is a hash that can be **updated** when the window moves one step, in constant time.
 
-## Formula and immediate translation
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Write a long number on a strip of paper and lay a cardboard frame over it that shows three digits at a time. You see `314`. Now slide the frame one place to the right:
+
+- the `3` disappears off the left edge;
+- the `1` and `4` each move one place to the left, so they are worth ten times more;
+- a new digit, `1`, appears on the right.
+
+Now you see `141`, and you never had to re-read the middle digits. That is a rolling hash: **take the old number, remove the digit that left, shift, add the digit that arrived.**
+
+CLRS introduces the Rabin–Karp algorithm in exactly this way, by pretending that every character is a decimal digit. Richard Karp and Michael Rabin, who published the algorithm in 1987, called these numbers *fingerprints*: like a detective, you compare fingerprints first, and only check the suspect properly when the fingerprints match.
+:::
+
+## From simple to advanced
+
+### Level 1: a window of digits is a number
+
+Read the window's characters as the digits of a number in base $B$:
 
 $$
-H_{i+1}=(B(H_i-c_iB^{m-1})+c_{i+m})\bmod M
+H(s_0 s_1 \dots s_{L-1}) = \sum_{i=0}^{L-1} s_i \, B^{L-1-i} = s_0 B^{L-1} + s_1 B^{L-2} + \dots + s_{L-1}
 $$
 
-**Symbols and notation:** H_i is the hash of the length-m window starting at i; B is the alphabet base, M modulus, c_i outgoing encoded character, c_(i+m) incoming encoded character.
+where:
 
-**Insert actual numbers:** For digits '1234', window size m=3, base B=10 and a large modulus M>1000, H₀=123. Remove outgoing 1×100 to get 23, shift by 10 to 230 and add incoming 4: H₁=234, matching substring '234'.
+- $s_0, \dots, s_{L-1}$ are the characters of the window, each turned into a number;
+- $L$ is the window length;
+- $B$ is the base; the first character gets the biggest place value, $B^{L-1}$, exactly as in ordinary writing.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: with $B = 10$ and the window `314`, $H = 3 \cdot 100 + 1 \cdot 10 + 4 = 314$. The hash of a digit string in base 10 is just the number itself.
 
-## Why the mathematics leads to an algorithm
+Computing it left to right needs no powers at all. Multiply what you have by $B$ and add the next digit: $3 \to 3 \cdot 10 + 1 = 31 \to 31 \cdot 10 + 4 = 314$. This is *Horner's rule*.
 
-The polynomial hash is a base-B positional number. Adjacent windows differ by one removed digit, multiplication by B, and one appended digit, so the update represents the next window.
+### Level 2: sliding the window in one step
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+When the window moves from $s_0 \dots s_{L-1}$ to $s_1 \dots s_L$, remove the leftmost digit's contribution, shift everything one place up, and add the new digit:
 
-## Make the idea executable
+$$
+H' = \big(H - s_0 B^{L-1}\big) \cdot B + s_L
+$$
 
-The [original algorithm examples](../examples/patterns.mjs) provide a small runnable related operation:
+where:
 
-~~~js
-import { kmpFind } from '../examples/patterns.mjs';
+- $H$ is the hash of the old window and $H'$ the hash of the new one;
+- $s_0 B^{L-1}$ is what the leaving digit contributed, because it sat in the highest place;
+- multiplying by $B$ moves every remaining digit up one place;
+- $s_L$ is the digit entering on the right, in the ones place.
 
-console.log(kmpFind('ababcabc','abc'));
-~~~
+Example: slide a 3-digit window along `314159`, so $B^{L-1} = 10^2 = 100$.
 
-Run from a saved `.mjs` file inside this topic directory. The exported operation is tested with Node's standard test runner. Some examples illustrate a prerequisite rather than the entire specialised algorithm; in that case, the mathematical model above remains the definition of the full task.
+| Old window | Remove the left digit | Shift and add | New window |
+| --- | --- | --- | --- |
+| 314 | $314 - 3 \cdot 100 = 14$ | $14 \cdot 10 + 1 = 141$ | 141 |
+| 141 | $141 - 1 \cdot 100 = 41$ | $41 \cdot 10 + 5 = 415$ | 415 |
+| 415 | $415 - 4 \cdot 100 = 15$ | $15 \cdot 10 + 9 = 159$ | **159** |
 
-## Complexity and correctness boundaries
+The fourth window equals the pattern 159, so the pattern is at position 3. Each window took one subtraction, one multiplication and one addition, whatever the window length.
 
-**Work bound:** O(n+m) expected matching with rolling updates and verification as needed; worst-case can approach O(nm) under adversarial collisions.
+```java
+static List<Integer> slidingNumbers(String digits, int length) {
+    int top = (int) Math.pow(10, length - 1), h = 0;   // top = 10^(L-1), the place value of the leftmost digit
+    List<Integer> windows = new ArrayList<>();
+    for (int i = 0; i < digits.length(); i++) {
+        if (i >= length) h -= (digits.charAt(i - length) - '0') * top;   // drop the leftmost digit
+        h = h * 10 + (digits.charAt(i) - '0');                          // shift left, append the new digit
+        if (i >= length - 1) windows.add(h);
+    }
+    return windows;
+}
+```
 
-**Counterexample or limitation:** Hashes can collide: matching hash values do NOT prove strings equal. Modulo with negative intermediates requires normalisation in some languages.
+`slidingNumbers("314159", 3)` returns `[314, 141, 415, 159]`.
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+### Level 3: letters, a bigger base and a modulus
 
-## Reference and practice
+Real text has more than ten symbols. Give each letter a value, $a = 1, b = 2, \dots, z = 26$, and pick a base larger than the alphabet, such as $B = 31$. Now the numbers grow fast: a 20-letter window can reach $31^{20} \approx 6.7 \times 10^{29}$, far beyond the $9.2 \times 10^{18}$ a `long` can hold. So keep only the remainder modulo a prime $M$:
 
-- **CLRS (4th edition):** CLRS Chapter 32 §32.2 (Rabin–Karp string matching).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 28 — Find the Index of the First Occurrence in a String (Rabin–Karp variant). [Original problem page or practice resource](https://leetcode.com/problems/find-the-index-of-the-first-occurrence-in-a-string/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+$$
+H = \left(\sum_{i=0}^{L-1} s_i\, B^{L-1-i}\right) \bmod M, \qquad H' = \Big(\big(H - s_0 \cdot (B^{L-1} \bmod M)\big) \cdot B + s_L\Big) \bmod M
+$$
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+where:
+
+- $M$ is a large prime, typically $10^9 + 7$; real code reduces after every multiplication, which gives the same remainder because remainders respect $+$ and $\times$;
+- $B^{L-1} \bmod M$ is computed once, before sliding;
+- the bracket $H - s_0 \cdot (B^{L-1} \bmod M)$ can be **negative**, so it must be brought back into $[0, M)$ before going on.
+
+Example: take a tiny prime $M = 101$ so the numbers stay readable, $B = 31$, and slide from `abc` to `bcd`.
+
+- $H(\texttt{abc}) = (1 \cdot 961 + 2 \cdot 31 + 3) \bmod 101 = 1026 \bmod 101 = 16$.
+- The leaving letter's weight is $B^2 \bmod M = 961 \bmod 101 = 52$.
+- Remove it: $16 - 1 \cdot 52 = -36$, which wraps to $-36 + 101 = 65$.
+- Shift and add: $(65 \cdot 31 + 4) \bmod 101 = 2019 \bmod 101 = 100$.
+
+Check directly: $H(\texttt{bcd}) = (2 \cdot 961 + 3 \cdot 31 + 4) \bmod 101 = 2019 \bmod 101 = 100$. The two agree.
+
+```java
+static int value(char c) {
+    return c - 'a' + 1;   // a = 1, ..., z = 26; never 0, so "a" and "aa" differ
+}
+
+record PolyHash(long base, long mod) {
+    long of(String s) {
+        long h = 0;
+        for (char c : s.toCharArray()) h = (h * base + value(c)) % mod;   // Horner's rule
+        return h;
+    }
+
+    long slide(long h, char out, char in, long topPower) {   // topPower = B^(L-1) mod M
+        long dropped = Math.floorMod(h - value(out) * topPower, mod);
+        return (dropped * base + value(in)) % mod;
+    }
+
+    long power(int exponent) {   // B^exponent mod M
+        long p = 1;
+        for (int i = 0; i < exponent; i++) p = p * base % mod;
+        return p;
+    }
+}
+```
+
+`Math.floorMod` does the wrap from $-36$ to $65$; Java's `%` would leave $-36$. With $M \approx 10^9$ and $B = 31$, every product stays below $3.2 \times 10^{10}$, comfortably inside a `long`.
+
+### Level 4: Rabin–Karp search
+
+Rabin–Karp slides a window along the text and compares its hash with the pattern's hash. Equal strings always have equal hashes, but with a modulus, **different strings can too**. So a hash match is only a candidate, and the algorithm confirms it by comparing characters. A match that fails the check is a *spurious hit*.
+
+$$
+\text{report } i \iff H(t_i \dots t_{i+L-1}) = H(p) \ \land\ t_i \dots t_{i+L-1} = p
+$$
+
+where:
+
+- $t$ is the text, $p$ the pattern and $L = \lvert p \rvert$ its length;
+- $i$ runs over the start positions $0, \dots, n - L$;
+- the first test is one number comparison; the second, costing $L$, runs only when the first passes.
+
+Example: search for `abc` in `mapabc` with $B = 31$, $M = 101$. The pattern's hash is 16. The windows hash to:
+
+| $i$ | Window | Hash | Result |
+| --- | --- | --- | --- |
+| 0 | `map` | $(13 \cdot 961 + 1 \cdot 31 + 16) \bmod 101 = 12540 \bmod 101 = 16$ | hash matches, characters differ: spurious |
+| 1 | `apa` | 44 | skipped |
+| 2 | `pab` | 57 | skipped |
+| 3 | `abc` | 16 | hash matches, characters match: **found** |
+
+```java
+static List<Integer> rabinKarp(String text, String pattern, PolyHash hasher) {
+    int n = text.length(), length = pattern.length();
+    List<Integer> matches = new ArrayList<>();
+    if (length == 0 || length > n) return matches;
+    long target = hasher.of(pattern), h = hasher.of(text.substring(0, length));
+    long top = hasher.power(length - 1);
+    for (int i = 0; ; i++) {
+        if (h == target && text.startsWith(pattern, i)) matches.add(i);   // equal hashes can still be different strings
+        if (i + length == n) return matches;
+        h = hasher.slide(h, text.charAt(i), text.charAt(i + length), top);
+    }
+}
+```
+
+`rabinKarp("mapabc", "abc", …)` returns `[3]`: the spurious hit at 0 is rejected. With a real modulus such as $10^9 + 7$, spurious hits are so rare that the expected running time is $O(n + L)$ plus $L$ for each real match.
+
+### Level 5: prefix hashes, any substring in one step
+
+Sliding handles windows of one fixed length. Some problems need the hash of *any* substring. Store the hash of every prefix, and subtract:
+
+$$
+P_0 = 0, \quad P_{i+1} = (P_i \cdot B + s_i) \bmod M, \qquad H(s_i \dots s_{j-1}) = \big(P_j - P_i \cdot B^{\,j-i}\big) \bmod M
+$$
+
+where:
+
+- $P_i$ is the hash of the first $i$ characters, the prefix $s_0 \dots s_{i-1}$;
+- $s_i \dots s_{j-1}$ is the substring from index $i$ up to but not including $j$, of length $j - i$;
+- $P_i \cdot B^{\,j-i}$ is the prefix of length $i$ shifted up by $j - i$ places, which is exactly the part of $P_j$ that is *not* the substring.
+
+Example: `abcd` with $B = 31$, $M = 101$.
+
+| $i$ | 0 | 1 | 2 | 3 | 4 |
+| --- | --- | --- | --- | --- | --- |
+| $P_i$ | 0 | $1$ | $1 \cdot 31 + 2 = 33$ | $(33 \cdot 31 + 3) \bmod 101 = 16$ | $(16 \cdot 31 + 4) \bmod 101 = 96$ |
+
+The substring `bcd` is $i = 1$, $j = 4$. With $B^3 \bmod 101 = 29791 \bmod 101 = 97$: $H = (96 - 1 \cdot 97) \bmod 101 = -1 \bmod 101 = 100$. That is the same 100 as in Level 3.
+
+```java
+static final class PrefixHash {
+    final long[] prefix, power;
+    final long mod;
+
+    PrefixHash(String s, long base, long mod) {
+        this.mod = mod;
+        prefix = new long[s.length() + 1];
+        power = new long[s.length() + 1];
+        power[0] = 1;
+        for (int i = 0; i < s.length(); i++) {
+            prefix[i + 1] = (prefix[i] * base + value(s.charAt(i))) % mod;
+            power[i + 1] = power[i] * base % mod;
+        }
+    }
+
+    long of(int from, int to) {   // the hash of s[from, to)
+        return Math.floorMod(prefix[to] - prefix[from] * power[to - from], mod);
+    }
+}
+```
+
+Building the two arrays costs $O(n)$; after that, every substring hash costs $O(1)$.
+
+### Level 6: how often do hashes collide, and double hashing
+
+A modulus throws information away, so collisions are certain to exist: `elk` and `sun` both hash to 37 with $M = 101$. The question is how *likely* they are. There are two useful answers.
+
+**One pair.** If the base $B$ is chosen at random, two different strings of length $L$ collide with probability
+
+$$
+P\big[H(s) = H(t)\big] \le \frac{L - 1}{M}
+$$
+
+where:
+
+- $s \ne t$ are two strings of the same length $L$;
+- $M$ is prime, and the probability is over the random choice of $B$ from $\lbrace 0, \dots, M - 1 \rbrace$;
+- the reason: $H(s) - H(t)$ is a non-zero polynomial in $B$ of degree at most $L - 1$, and such a polynomial has at most $L - 1$ roots modulo a prime.
+
+Example: $L = 10$, $M = 10^9 + 7$ gives at most $9 / (10^9 + 7) \approx 9 \times 10^{-9}$. One comparison is very safe.
+
+**Many windows.** A problem that puts $W$ window hashes into a set compares, in effect, all $\binom{W}{2} \approx W^2/2$ pairs. That is the birthday paradox again:
+
+$$
+E[\text{colliding pairs}] \approx \frac{W^2}{2M}
+$$
+
+where:
+
+- $W$ is the number of windows hashed;
+- $M$ is the number of possible hash values;
+- each of the $W^2/2$ pairs collides with probability about $1/M$.
+
+Example: $W = 10^5$ windows and $M = 10^9 + 7$ give $10^{10} / (2 \times 10^9) \approx 5$ expected collisions. Five wrong answers is far too many. The fix is **double hashing**: compute two hashes with different bases and primes, and treat the pair as one value. Now $M$ is effectively $M_1 M_2 \approx 10^{18}$ and the expectation drops to about $10^{10} / (2 \times 10^{18}) = 5 \times 10^{-9}$.
+
+```java
+record DoubleHash(PrefixHash first, PrefixHash second) {
+    DoubleHash(String s) {
+        this(new PrefixHash(s, 131, 1_000_000_007L), new PrefixHash(s, 137, 998_244_353L));
+    }
+
+    long of(int from, int to) {
+        return first.of(from, to) * second.mod + second.of(from, to);
+    }
+}
+```
+
+Packing $h_1 \cdot M_2 + h_2$ gives each pair its own `long`, because $h_2 < M_2$ and $M_1 M_2 \approx 9.98 \times 10^{17}$ is below the `long` limit. For full safety against an adversary who knows your constants, choose the bases at random when the program starts, exactly as universal hashing does in the [Hash Function](../hash-function/index.qmd) lesson.
+
+## Why it works and what it costs
+
+**Why the sliding update is exact.** Split the old hash into its first term and the rest: $H = s_0 B^{L-1} + R$, where $R = \sum_{i=1}^{L-1} s_i B^{L-1-i}$ is the hash of $s_1 \dots s_{L-1}$. Then
+
+$$
+(H - s_0 B^{L-1}) \cdot B + s_L = R \cdot B + s_L = \sum_{i=1}^{L-1} s_i B^{L-i} + s_L = \sum_{i=1}^{L} s_i B^{L-i} = H'
+$$
+
+where the last sum is exactly Level 1's formula for the window $s_1 \dots s_L$. Example: $(314 - 300) \cdot 10 + 1 = 14 \cdot 10 + 1 = 141$. Taking remainders at every step changes nothing, because $(x + y) \bmod M$ and $(x \cdot y) \bmod M$ depend only on $x \bmod M$ and $y \bmod M$.
+
+**Why Rabin–Karp is never wrong.** It reports a position only after comparing the characters, so a collision can cost time but never produce a false answer, and equal strings always have equal hashes, so no real match is ever skipped. Without the check, a collision would be reported as a match. In the interview problems below, which skip the check for speed, double hashing is what keeps the chance of a wrong answer negligible.
+
+**Costs, counted on a text of $n$ letters and windows of length $L$:**
+
+| Method | Work | $n = 10^6$, $L = 10^3$ |
+| --- | --- | --- |
+| Compare every window letter by letter | $(n - L + 1) \cdot L$ | about $10^9$ |
+| Hash every window from scratch | $(n - L + 1) \cdot L$ | about $10^9$ |
+| Rolling hash | $L$ for the first window, then 1 per window | about $10^6$ |
+| Prefix hashes | $n$ to build, then 1 per substring | about $10^6$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `(h - out * top) % mod` | A negative hash, so equal windows compare unequal | `Math.floorMod`, or add `mod` before `%` |
+| A modulus so large that `h * base` overflows | Silent garbage hashes | Keep $M \cdot B < 2^{63}$; with $M \approx 10^9$ any base below $10^9$ is safe |
+| Letter values that start at 0 | `a`, `aa`, `aaa` all hash to 0, which breaks prefix-hash comparisons of different lengths | Map letters to $1, \dots, 26$ |
+| Base 1, or a base not larger than the alphabet | With $B = 1$ the hash is the letter sum, so `ab` and `ba` collide | Choose $B$ larger than the alphabet, ideally at random |
+| Trusting a hash match in Rabin–Karp | `map` reported as an occurrence of `abc` when $M = 101$ | Compare the characters after a hash match |
+| One modulus for $10^5$ or more windows | About $W^2 / 2M = 5$ collisions; occasional wrong answers | Double hashing, or verify candidates |
+| `long` overflow as the modulus ($M = 2^{64}$) | Strings built from the Thue–Morse sequence collide for every odd base, and an even base forgets the early letters entirely | Use a prime modulus |
+| Recomputing $B^{L-1}$ for every window | The algorithm becomes $O(nL)$ again | Compute it once before sliding |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 187: Repeated DNA Sequences (Medium)
+
+**Problem.** A DNA string uses the letters `A`, `C`, `G`, `T`. Return every 10-letter substring that occurs more than once. For `"AAAAACCCCCAAAAACCCCCCAAAAAGGGTTT"` the answer is `["AAAAACCCCC", "CCCCCAAAAA"]`.
+
+**Math first.** Four letters fit in 2 bits: $A = 0$, $C = 1$, $G = 2$, $T = 3$. Use base $B = 4$ and modulus $M = 4^{10} = 2^{20}$. Taking the remainder by $4^{10}$ removes the leftmost letter automatically, so the slide is a shift, an OR and a mask:
+
+$$
+H' = (H \cdot 4 + v) \bmod 4^{10} = \big((H \ll 2) \mid v\big) \,\&\, (2^{20} - 1)
+$$
+
+where:
+
+- $v \in \lbrace 0, 1, 2, 3 \rbrace$ is the value of the letter entering the window;
+- $H \cdot 4 = H \ll 2$ shifts every letter up one base-4 place, and $\mid v$ (bitwise OR) writes the new letter into the two empty bits;
+- $\bmod\, 4^{10}$, which is $\&\,(2^{20} - 1)$, drops the letter that slid out the top;
+- there are exactly $4^{10}$ windows and $4^{10}$ possible hashes, so different windows get different hashes: this hash **cannot collide**.
+
+Example: `AAAAACCCCC` has five zeros followed by five ones, so $H = 4^4 + 4^3 + 4^2 + 4 + 1 = 341$. Shifting it five letters up gives `CCCCCAAAAA` $= 341 \cdot 4^5 = 349{,}184$.
+
+**Idea.** Slide along the string, keeping the 20-bit hash. A hash seen before means a repeat; a second set makes sure each repeat is reported once.
+
+```java
+static List<String> findRepeatedDnaSequences(String s) {
+    Set<Integer> seen = new HashSet<>(), reported = new HashSet<>();
+    List<String> repeated = new ArrayList<>();
+    int h = 0;
+    for (int i = 0; i < s.length(); i++) {
+        h = ((h << 2) | "ACGT".indexOf(s.charAt(i))) & 0xFFFFF;   // keep the last 10 letters: 20 bits
+        if (i >= 9 && !seen.add(h) && reported.add(h)) repeated.add(s.substring(i - 9, i + 1));
+    }
+    return repeated;
+}
+```
+
+**Answer.** `["AAAAACCCCC", "CCCCCAAAAA"]`, and `["AAAAAAAAAA"]` for 13 A's. One shift, OR and mask per letter: $O(n)$ time for $n$ up to $10^5$, and at most $n - 9$ integers in the sets, instead of $n - 9$ ten-letter strings.
+
+### 2. LeetCode 1044: Longest Duplicate Substring (Hard)
+
+**Problem.** Return any longest substring that occurs at least twice (the occurrences may overlap), or `""` if there is none. The length is up to $3 \times 10^4$. For `"banana"` the answer is `"ana"`.
+
+**Math first.** Let $f(L)$ say whether some substring of length $L$ occurs twice. It is **monotone**: if a substring of length $L$ repeats, its first $L - 1$ letters repeat too. So the answer is the largest $L$ with $f(L)$ true, and binary search finds it:
+
+$$
+L^{*} = \max\lbrace L : f(L) \rbrace, \qquad f(L) \iff \exists\, i < j : H(s_i \dots s_{i+L-1}) = H(s_j \dots s_{j+L-1})
+$$
+
+where:
+
+- $L^{*}$ is the answer's length;
+- $\exists\, i < j$ means "there are two start positions $i$ and $j$";
+- with double hashing, equal hashes mean equal substrings except with negligible probability.
+
+Example: `banana`, $n = 6$.
+
+- $L = 3$: the windows are `ban`, `ana`, `nan`, `ana`. The hash of `ana` appears twice, so $f(3)$ is true.
+- $L = 4$: `bana`, `anan`, `nana` are all different, so $f(4)$ is false, and so is $f(L)$ for every larger $L$.
+
+So $L^{*} = 3$ and the answer is `ana`.
+
+**Idea.** Binary search $L$ between 0 and $n - 1$. For each candidate, put every window's double hash into a set and stop at the first repeat. Prefix hashes make each window's hash $O(1)$.
+
+```java
+static String longestDupSubstring(String s) {
+    DoubleHash hash = new DoubleHash(s);
+    int low = 0, high = s.length() - 1, bestStart = 0;
+    while (low < high) {   // the largest length that occurs twice
+        int mid = (low + high + 1) / 2;
+        int start = repeatedStart(hash, s.length(), mid);
+        if (start >= 0) { low = mid; bestStart = start; } else high = mid - 1;
+    }
+    return s.substring(bestStart, bestStart + low);
+}
+
+static int repeatedStart(DoubleHash hash, int n, int length) {   // a window seen earlier, or -1
+    Set<Long> seen = new HashSet<>();
+    for (int i = 0; i + length <= n; i++) {
+        if (!seen.add(hash.of(i, i + length))) return i;
+    }
+    return -1;
+}
+```
+
+**Answer.** `"ana"` for `banana` and `""` for `abcd`. For $n = 3 \times 10^4$ the binary search makes about $\log_2(3 \times 10^4) \approx 15$ checks of at most $n$ windows each, roughly $4.5 \times 10^5$ hash-set operations: $O(n \log n)$ expected time and $O(n)$ space. The [Suffix Array](../suffix-array/index.qmd) lesson solves the same question without any hashing, as the largest value in the LCP array.
+
+### 3. LeetCode 1316: Distinct Echo Substrings (Hard)
+
+**Problem.** Count the *distinct* non-empty substrings that are some string written twice, $a + a$. The text has at most 2,000 lowercase letters. For `"abcabcabc"` the answer is 3: `abcabc`, `bcabca` and `cabcab`.
+
+**Math first.** A substring of length $2h$ starting at $i$ is an echo exactly when its two halves are equal, and prefix hashes compare the halves in $O(1)$. Collect the hash of each echo in a set to count distinct ones:
+
+$$
+\text{echo}(i, h) \iff H(s_i \dots s_{i+h-1}) = H(s_{i+h} \dots s_{i+2h-1}), \qquad \text{answer} = \Big\lvert \lbrace H(s_i \dots s_{i+2h-1}) : \text{echo}(i, h) \rbrace \Big\rvert
+$$
+
+where:
+
+- $h$ is the half length, from 1 to $n/2$, and $i$ is the start;
+- the two hashes in the condition are the left and right halves;
+- $\lvert \cdot \rvert$ counts the elements of the set, so repeated echoes count once.
+
+Example: `abcabcabc`. With $h = 3$: at $i = 0$ the halves are `abc` and `abc`, an echo `abcabc`; at $i = 1$, `bca` and `bca` give `bcabca`; at $i = 2$, `cab` and `cab` give `cabcab`; at $i = 3$, `abc` and `abc` give `abcabc` again, which the set ignores. No other half length produces an echo (with $h = 1$, no letter is followed by itself). The answer is **3**.
+
+**Idea.** Try every start $i$ and half length $h$, compare the halves by hash, and add the whole echo's hash to a set.
+
+```java
+static int distinctEchoSubstrings(String text) {
+    DoubleHash hash = new DoubleHash(text);
+    Set<Long> echoes = new HashSet<>();
+    int n = text.length();
+    for (int half = 1; 2 * half <= n; half++) {
+        for (int i = 0; i + 2 * half <= n; i++) {
+            if (hash.of(i, i + half) == hash.of(i + half, i + 2 * half)) echoes.add(hash.of(i, i + 2 * half));
+        }
+    }
+    return echoes.size();
+}
+```
+
+**Answer.** 3 for `abcabcabc` and 2 for `leetcodeleetcode` (`ee` and the whole string). The lab checks both hashed solutions against plain string comparison on 300 random inputs. The pairs $(i, h)$ number $\sum_{h=1}^{n/2} (n - 2h + 1) \approx n^2 / 4$, which is about $10^6$ for $n = 2{,}000$, each $O(1)$: $O(n^2)$ time, and $O(n^2)$ space in the worst case for the set. Comparing the halves letter by letter instead costs up to $h$ steps per pair, which is $O(n^3)$ in the worst case.
+
+## Mathematical Abstraction
+
+A rolling hash is a polynomial evaluated at the base, modulo a prime, together with the rule that slides it one position:
+
+$$
+H_i = \left(\sum_{j=0}^{L-1} s_{i+j}\, B^{L-1-j}\right) \bmod M, \qquad H_{i+1} = \Big(\big(H_i - s_i B^{L-1}\big) B + s_{i+L}\Big) \bmod M
+$$
+
+where:
+
+- $H_i$ is the hash of the window of length $L$ that starts at position $i$;
+- $B$ is the base, larger than every character value, and $M$ is a large prime;
+- two different windows collide with probability at most $(L - 1)/M$ for a random base, and $W$ windows contain about $W^2 / 2M$ colliding pairs.
+
+Example: $B = 31$, $M = 101$, letters $a = 1, \dots, z = 26$. $H(\texttt{abc}) = 16$. Sliding to `bcd` removes $1 \cdot 52$ to get $(16 - 52) \bmod 101 = 65$, then gives $H(\texttt{bcd}) = (65 \cdot 31 + 4) \bmod 101 = 100$. With a real $M \approx 10^9$ and $10^5$ windows, about 5 collisions are expected; with two moduli, about $5 \times 10^{-9}$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 32, "String Matching", §32.2 "The Rabin-Karp algorithm". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Richard M. Karp and Michael O. Rabin, "Efficient Randomized Pattern-Matching Algorithms", *IBM Journal of Research and Development* 31(2), 249–260 (1987).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §5.3 "Substring Search", including `RabinKarp.java`: <https://algs4.cs.princeton.edu/53substring/>.
+- *Algorithms for Competitive Programming*, "String Hashing" (prefix hashes and collision estimates): <https://cp-algorithms.com/string/string-hashing.html>.
+- LeetCode: [187. Repeated DNA Sequences](https://leetcode.com/problems/repeated-dna-sequences/), [1044. Longest Duplicate Substring](https://leetcode.com/problems/longest-duplicate-substring/), [1316. Distinct Echo Substrings](https://leetcode.com/problems/distinct-echo-substrings/).
+
+[← Hash Function](../hash-function/index.qmd) · [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd) · [String Matching →](../string-matching/index.qmd)

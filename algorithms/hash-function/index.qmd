@@ -1,64 +1,501 @@
 ---
 title: "Hash Function"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "What makes a hash function good (deterministic, uniform, avalanche), the division and multiplication methods, mixers, universal hashing, Java's equals/hashCode contract and records, cryptographic hashes, and hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+A hash table is only as fast as its hash function. The [Hash Table](../hash-table/index.qmd) lesson took the function for granted and studied what to do when two keys collide. This lesson studies the function itself: what makes one good, the two classic recipes, how to make collisions unlikely even against an enemy, how Java objects get their hash codes, and when you need a cryptographic hash instead.
 
-**LeetCode 705 — Design HashSet.** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`HashFunctionLab.java`](HashFunctionLab.java). Run it from this folder with `java HashFunctionLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-Store keys in one huge direct-address array covering the entire potential domain. This wastes memory when only a few keys are used.
+A program stores objects in a table with $m = 8$ slots, using the obvious hash $h(k) = k \bmod 8$. The keys are memory addresses, and addresses are usually multiples of 8: say $8, 16, 24, 32, 40$.
 
-## One simple idea
+| Key $k$ | 8 | 16 | 24 | 32 | 40 |
+| --- | --- | --- | --- | --- | --- |
+| $k \bmod 8$ | 0 | 0 | 0 | 0 | 0 |
+| $k \bmod 7$ | 1 | 2 | 3 | 4 | 5 |
 
-A hash function maps a large key universe into a small table. Collisions are not an implementation mistake; you must define how to resolve them.
+With 8 slots **every key lands in slot 0**, so the table has become one long list and each lookup walks all of it. Changing the table to 7 slots spreads the same keys over five different slots. Nothing about the keys changed; only the function did. Choosing the function is the whole subject of this lesson.
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+## Explain it like I'm ten
 
-## Formula and immediate translation
+::: {.callout-tip}
+A post office has 10 pigeonholes, numbered 0 to 9. A lazy rule says: *put each letter in the hole that matches the last digit of the house number.* That works well in most towns. But on a street where every house has an even number, holes 1, 3, 5, 7 and 9 stay empty while the even holes overflow.
+
+A good rule looks at **the whole address**, stirs it up thoroughly, and only then picks a hole. It must also give the same hole every time for the same letter, or the postman could never find it again.
+
+So a good hash function is like a fingerprint machine: the same finger always gives the same print, different fingers almost always give different prints, and a tiny change to the finger changes the print completely.
+
+Donald Knuth's *The Art of Computer Programming* credits the idea of hashing to Hans Peter Luhn, who described it in an internal IBM memo in January 1953.
+:::
+
+## From simple to advanced
+
+### Level 1: what a good hash function must do
+
+A hash function maps every key to one of $m$ slots. Three properties decide whether it is any good:
+
+1. **Deterministic.** The same key always gives the same slot. Otherwise a key stored today cannot be found tomorrow.
+2. **Uniform.** Keys spread evenly over the slots.
+3. **Avalanche.** Changing one bit of the key changes about half the bits of the hash, so similar keys do not cluster.
+
+Uniform means that a random key is equally likely to land in each slot:
 
 $$
-h(k)=k\bmod m
+P\big(h(k) = j\big) = \frac{1}{m} \text{ for each slot } j, \qquad E[\text{keys in slot } j] = \frac{n}{m}
 $$
 
-**Symbols and notation:** k is an integer key; m is a positive table size; h(k) is the chosen bucket index from 0 to m−1.
+where:
 
-**Insert actual numbers:** With m=5, keys 12 and 17 both map to bucket 2 because 12 mod 5=2 and 17 mod 5=2. Keep both keys using separate chaining or probing, not by overwriting blindly.
+- $h(k)$ is the slot chosen for key $k$;
+- $j$ is any slot number from $0$ to $m - 1$;
+- $n$ is the number of keys stored, so $n / m$ is the average load per slot.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: $n = 40$ keys in $m = 8$ slots should give about $40 / 8 = 5$ keys per slot. With $h(k) = k \bmod 8$ and keys that are all multiples of 8, slot 0 gets all 40 and the other seven get none.
 
-## Why the mathematics leads to an algorithm
+Two hash codes fail these tests in instructive ways:
 
-Every key maps deterministically to a bucket, and collision handling retains all mapped entries. Correct lookups compare actual keys, not merely hash values.
+```java
+// sketch: two broken hashCode methods
+@Override public int hashCode() { return 1; }                      // deterministic, but every key collides
+@Override public int hashCode() { return (int) System.nanoTime(); } // spreads keys, but never finds them again
+```
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+### Level 2: the division method, and how to choose m
 
-## Make the idea executable
+The simplest recipe is the remainder:
 
-The [original algorithm examples](../examples/patterns.mjs) provide a small runnable related operation:
+$$
+h(k) = k \bmod m
+$$
 
-~~~js
-import { containsDuplicate } from '../examples/patterns.mjs';
+where:
 
-console.log(containsDuplicate([12,17,12]));
-~~~
+- $k$ is the key, as a whole number;
+- $m$ is the number of slots;
+- $\bmod$ is the remainder after division, always from $0$ to $m - 1$.
 
-Run from a saved `.mjs` file inside this topic directory. The exported operation is tested with Node's standard test runner. Some examples illustrate a prerequisite rather than the entire specialised algorithm; in that case, the mathematical model above remains the definition of the full task.
+Example: $h(16) = 16 \bmod 7 = 2$.
 
-## Complexity and correctness boundaries
+```java
+static int divisionHash(int k, int m) {
+    return Math.floorMod(k, m);
+}
+```
 
-**Work bound:** O(1) expected insert/search with suitable load factor and distribution; O(n) worst-case for some collision strategies.
+`Math.floorMod` keeps negative keys in range: `Math.floorMod(-3, 8)` is 5, while `-3 % 8` is $-3$.
 
-**Counterexample or limitation:** A hash can have collisions; two equal hashes do not imply equal keys. Expected O(1) needs reasonable distribution/load management, not only a modulo formula.
+The remainder only works well if $m$ has nothing in common with patterns in the keys. Strings show this clearly. Read a two-letter word as a base-256 number, the way a computer stores two bytes: `"ab"` becomes $97 \cdot 256 + 98 = 24{,}930$, because the character codes are $a = 97$ and $b = 98$. Now try four table sizes:
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+| $m$ | `"ab"` = 24,930 | `"ba"` = 25,185 | `"bc"` = 25,187 | `"zb"` = 31,330 | What goes wrong |
+| --- | --- | --- | --- | --- | --- |
+| $256 = 2^8$ | 98 | 97 | 99 | **98** | Only the last letter counts, so `"ab"` and `"zb"` collide |
+| $255 = 2^8 - 1$ | **195** | **195** | 197 | 220 | $256 \equiv 1 \pmod{255}$, so the hash is the *sum* of the letters, and anagrams collide |
+| $257 = 2^8 + 1$ | **1** | 256 | **1** | 233 | $256 \equiv -1 \pmod{257}$, so the hash alternates signs: $98 - 97 = 99 - 98 = 1$ |
+| $701$, a prime | 395 | 650 | 652 | 486 | No pattern to exploit |
 
-## Reference and practice
+The rule of thumb follows: **choose $m$ to be a prime that is not close to a power of two.** A power of two keeps only the low bits; $2^p - 1$ and $2^p + 1$ turn the hash into a sum or an alternating sum of the characters. Java's `HashMap` breaks this rule on purpose, using powers of two for speed, and repairs the damage with a bit mixer (Level 4).
 
-- **CLRS (4th edition):** CLRS Chapter 11 §§11.2–11.4 (hashing and collision handling).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 705 — Design HashSet. [Original problem page or practice resource](https://leetcode.com/problems/design-hashset/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+### Level 3: the multiplication method
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+Instead of dividing, multiply the key by an irrational constant and keep the fractional part. Knuth suggests the golden ratio:
+
+$$
+h(k) = \big\lfloor m \cdot \operatorname{frac}(k A) \big\rfloor, \qquad A = \frac{\sqrt{5} - 1}{2} \approx 0.6180339887
+$$
+
+where:
+
+- $\operatorname{frac}(x) = x - \lfloor x \rfloor$ is the part after the decimal point, a number in $[0, 1)$;
+- multiplying that fraction by $m$ and rounding down picks one of the slots $0, \dots, m - 1$;
+- $A$ is the golden ratio minus 1; any irrational constant works, and this one spreads consecutive keys especially evenly.
+
+Example: $k = 3$, $m = 8$. Then $3A = 1.8541019662$, its fraction is $0.8541019662$, and $8 \times 0.8541019662 = 6.8328$, so $h(3) = 6$. Doing the same for keys 1 to 8:
+
+| $k$ | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| $\operatorname{frac}(kA)$ | 0.618 | 0.236 | 0.854 | 0.472 | 0.090 | 0.708 | 0.326 | 0.944 |
+| $h(k)$ | 4 | 1 | 6 | 3 | 0 | 5 | 2 | 7 |
+
+Eight keys, eight different slots: a perfect spread. Because $m$ only decides how many leading digits of the fraction to keep, it can be a power of two, $m = 2^p$. That allows an all-integer version: multiply by $\lfloor 2^{32} A \rfloor = 2{,}654{,}435{,}769$, let the 32-bit product wrap around, and keep the top $p$ bits.
+
+```java
+static int multiplicationHash(double k, int m) {
+    double fraction = k * A - Math.floor(k * A);
+    return (int) Math.floor(m * fraction);
+}
+
+static int fibonacciHash(int k, int p) {   // a table of m = 2^p slots
+    return (k * 0x9E3779B9) >>> (32 - p);   // 0x9E3779B9 = floor(2^32 * A)
+}
+```
+
+The integer version is often called *Fibonacci hashing*. With $p = 3$ it gives exactly the row above. It is not perfect either: keys 8 and 16 both land in slot 7. No fixed function is safe for every set of keys, which is the point of Level 5.
+
+### Level 4: avalanche and bit mixers
+
+A table with $m = 2^p$ slots looks only at the lowest $p$ bits of the hash. If the hash leaves the high bits of the key up there, keys that differ only in their high bits collide. A **mixer** stirs every input bit into every output bit. The goal is the avalanche property:
+
+$$
+E\big[\,\text{output bits that change}\,\big] = \frac{w}{2} \quad \text{when one input bit flips}
+$$
+
+where:
+
+- $w$ is the width of the hash in bits, 32 here;
+- "change" compares the hash of a key with the hash of the same key with one bit flipped;
+- each output bit should flip with probability $\tfrac{1}{2}$, so on average half of them flip.
+
+Example: 10 (`1010`) and 11 (`1011`) differ in one bit. The identity hash leaves them differing in 1 of 32 bits. The mixer below turns them into `0xe9250490` and `0x93a0fe04`, which differ in **17** of 32 bits. Over 10,000 keys the average is about 16, which is $w / 2$.
+
+```java
+static int mix(int h) {
+    h ^= h >>> 16;
+    h *= 0x85ebca6b;
+    h ^= h >>> 13;
+    h *= 0xc2b2ae35;
+    h ^= h >>> 16;
+    return h;
+}
+```
+
+This is the 32-bit finaliser from Austin Appleby's MurmurHash3. Each XOR-shift pulls high bits down, and each multiplication by a large odd constant pushes low bits up. `java.util.HashMap` uses a much lighter mixer, a single `h ^ (h >>> 16)`, because its red-black-tree bins limit the damage from a poor spread; the [Hash Table](../hash-table/index.qmd) lesson works through it, together with `String.hashCode`.
+
+### Level 5: universal hashing, a random function against an enemy
+
+Every fixed hash function has a bad set of keys. If the universe $U$ has at least $n \cdot m$ keys, the pigeonhole principle puts at least $n$ of them in a single slot, and an attacker who knows the function can send exactly those. In 2011 this "hash flooding" froze web servers in many languages.
+
+The cure, from Carter and Wegman (1979), is to choose the function **at random** when the table is created, from a family where no pair of keys is likely to collide:
+
+$$
+h_{a,b}(k) = \big((a k + b) \bmod p\big) \bmod m, \qquad P\big[h_{a,b}(k) = h_{a,b}(l)\big] \le \frac{1}{m} \text{ for every } k \ne l
+$$
+
+where:
+
+- $p$ is a prime larger than every key;
+- $a$ is chosen at random from $\lbrace 1, \dots, p - 1 \rbrace$ and $b$ from $\lbrace 0, \dots, p - 1 \rbrace$;
+- the probability is over that random choice of $a$ and $b$, not over the keys, so it holds for **any** keys, even ones picked by an attacker;
+- a family with this guarantee is called *universal*.
+
+Example: $p = 13$, $m = 4$, $a = 5$, $b = 2$, key $k = 7$. First $5 \cdot 7 + 2 = 37$ and $37 \bmod 13 = 11$, then $11 \bmod 4 = 3$, so $h_{5,2}(7) = 3$. There are $12 \times 13 = 156$ functions in this family. The lab tries all of them on every pair of keys from 0 to 12: the worst pair collides under 30 of the 156 functions, a probability of $30 / 156 \approx 0.19$, below the promised $1/4$.
+
+```java
+record UniversalHash(long a, long b, long p, int m) {
+    static UniversalHash random(long p, int m, Random rng) {
+        return new UniversalHash(1 + rng.nextLong(p - 1), rng.nextLong(p), p, m);
+    }
+
+    int of(long k) {
+        return (int) ((a * k + b) % p % m);
+    }
+}
+```
+
+Once chosen, the function is fixed, so it is still deterministic. With chaining, the guarantee gives an expected chain length of at most $1 + n/m$ for every input. Production systems use the same idea with stronger *keyed* hashes: Python's `str` hash and Rust's default `HashMap` hasher are both SipHash with a random secret key.
+
+### Level 6: hash codes for Java objects
+
+`HashMap` asks each key for its `hashCode()` and checks matches with `equals()`. The two must agree:
+
+$$
+a \equiv b \implies h(a) = h(b)
+$$
+
+where:
+
+- $a \equiv b$ means `a.equals(b)` is true, and $h(a)$ is `a.hashCode()`;
+- $\implies$ means "if the left side is true, the right side must be true";
+- the arrow points one way only: different objects may share a hash code, which is just a collision;
+- breaking it means two equal keys look in different buckets, so `get` misses a key you just stored.
+
+Example: `"Aa"` and `"BB"` are different strings with the same hash code, 2112. That is allowed. But a `Point(3, 4)` that equals another `Point(3, 4)` must give the same hash code, or a `HashSet` will not find it.
+
+To combine several fields, Java's `Objects.hash` and `Arrays.hashCode` use the same polynomial as `String.hashCode`:
+
+$$
+r_0 = 1, \qquad r_{i+1} = 31 \cdot r_i + h(f_i)
+$$
+
+where $f_0, f_1, \dots$ are the fields in order and $h(f_i)$ is each field's own hash code (an `Integer`'s is its value). Example: `Objects.hash(3, 4)` gives $r_1 = 31 \cdot 1 + 3 = 34$, then $r_2 = 31 \cdot 34 + 4 = 1{,}058$. Multiplying by 31 before adding makes the order matter, so $(3, 4)$ and $(4, 3)$ usually differ.
+
+```java
+static final class Point {
+    final int x, y;
+
+    Point(int x, int y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        return o instanceof Point p && p.x == x && p.y == y;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(x, y);   // 31 * (31 * 1 + x) + y
+    }
+}
+```
+
+A **record** writes both methods for you, from all of its fields, and its fields cannot be reassigned:
+
+```java
+record Cell(int row, int col) {}   // equals and hashCode are generated from both fields
+```
+
+Prefer a record for any value used as a key. The exact number a record's `hashCode` returns is deliberately unspecified, so never store it or depend on it.
+
+### Level 7: cryptographic and non-cryptographic hashes
+
+Everything so far is a **non-cryptographic** hash: fast, well spread, but easy to reverse or to collide on purpose. A **cryptographic** hash adds three promises: given an output, nobody can find an input for it (*preimage resistance*); given an input, nobody can find a second one with the same output; and nobody can find any two inputs that collide. It pays for this with long outputs and much more work per byte.
+
+| | Non-cryptographic | Cryptographic |
+| --- | --- | --- |
+| Examples | `String.hashCode`, MurmurHash3, xxHash, FNV-1a | SHA-256, SHA-3, BLAKE3 |
+| Output size | 32 or 64 bits | 256 bits or more |
+| Speed | a few instructions per key | many rounds per 64-byte block |
+| Survives an attacker | no (a keyed hash such as SipHash resists flooding) | yes, for collisions and preimages |
+| Use for | hash tables, Bloom filters, checksums | signatures, content addresses, integrity checks |
+
+Output size matters because of the birthday paradox from the [Hash Table](../hash-table/index.qmd) lesson. With $m$ possible outputs, a collision becomes a coin flip after about
+
+$$
+n_{1/2} \approx \sqrt{2\, m \ln 2}
+$$
+
+where:
+
+- $n_{1/2}$ is the number of random keys at which the chance of at least one collision reaches 50%;
+- $m$ is the number of possible hash values, $2^b$ for a $b$-bit hash;
+- $\ln 2 \approx 0.693$ comes from solving $e^{-n^2/(2m)} = \tfrac{1}{2}$.
+
+Example: a 32-bit hash has $m = 2^{32} = 4{,}294{,}967{,}296$, so $n_{1/2} \approx \sqrt{2 \times 4.295 \times 10^9 \times 0.693} \approx 77{,}163$ keys. That is why 32 bits are fine for choosing a bucket but useless as a unique ID. For SHA-256 the same formula gives about $2^{128}$, far beyond any computer.
+
+The JDK computes SHA-256 directly:
+
+```java
+static String sha256Hex(String text) throws Exception {
+    byte[] digest = MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
+    return HexFormat.of().formatHex(digest);
+}
+```
+
+`"cat"` hashes to `77af778b51abd4a3…` and `"cau"`, one bit away, to `bbcfcbdecdfec348…`. The two 256-bit outputs differ in 122 bits, close to the ideal 128. Two old cryptographic hashes are now broken: MD5 collisions have been practical since 2004, and the first SHA-1 collision was published in 2017 (SHAttered). For passwords, even SHA-256 is wrong because it is *too fast* to guess against; use a slow, salted password hash such as bcrypt, scrypt or Argon2.
+
+## Why it works and what it costs
+
+**Why the universal family keeps its promise.** Fix two keys $k \ne l$ below $p$, and write $r = (ak + b) \bmod p$ and $s = (al + b) \bmod p$.
+
+- Because $p$ is prime and $a \ne 0$, $r - s \equiv a(k - l) \not\equiv 0$, so $r \ne s$: the first step never collides.
+- Each pair $(a, b)$ gives a different pair $(r, s)$, and there are $p(p-1)$ of each, so $(r, s)$ is a uniformly random pair of different numbers.
+- A collision needs $r \equiv s \pmod m$. For a fixed $r$, at most $\lceil p/m \rceil - 1 \le (p - 1)/m$ of the $p - 1$ other values of $s$ qualify.
+- So the probability is at most $\frac{(p-1)/m}{p-1} = \frac{1}{m}$.
+
+With $p = 13$ and $m = 4$: for each $r$, at most $\lceil 13/4 \rceil - 1 = 3$ of the 12 other values share its remainder mod 4, so at most $3/12 = 1/4$ of the functions collide. The lab's exhaustive count, 30 of 156, is consistent with that.
+
+**Why the division method wants a prime away from powers of two.** Two patterns cause trouble. If the keys share a factor with $m$ (multiples of 8 with $m = 8$), they can only reach the slots that are multiples of that factor; a prime $m$ shares no factor with any smaller stride. If the radix is $\pm 1$ modulo $m$ (256 with $m = 255$ or $m = 257$), every character gets the weight $\pm 1$ and the hash collapses to a sum or an alternating sum; 257 is prime, so being prime is not enough on its own. With $m = 701$, the weights of the two letters are $256$ and $1$, so neither collapse happens.
+
+**Costs.**
+
+| Hash | Work per key | Notes |
+| --- | --- | --- |
+| Division $k \bmod m$ | one division | $m$ should be prime |
+| Multiplication / Fibonacci | one multiplication and a shift | $m$ may be $2^p$ |
+| MurmurHash3 finaliser | 2 multiplications, 3 XOR-shifts | good avalanche |
+| Universal $h_{a,b}$ | one multiplication, two remainders | provable $1/m$ bound |
+| `String.hashCode` | $O(L)$ for $L$ characters, cached in the string | not attacker-safe |
+| SHA-256 | $O(L)$, many rounds per 64 bytes | cryptographic |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Division method with $m = 2^p$ on structured keys | Only the low bits count; aligned keys or shared suffixes collide | A prime $m$ away from powers of two, or a mixer first |
+| `Math.abs(key.hashCode()) % m` | `"polygenelubricants".hashCode()` is `Integer.MIN_VALUE`, and `Math.abs` keeps it negative: index $-2$ for $m = 7$ | `Math.floorMod(h, m)` |
+| Overriding `equals` without `hashCode` | A `HashSet` cannot find an equal object you just added | Override both, or use a `record` |
+| Treating `hashCode` as a unique ID | `"Aa"` and `"BB"` share 2112; any 32-bit hash collides after about 77,000 keys | Compare with `equals`; use a 128-bit or cryptographic hash for IDs |
+| A hash that changes over time | Keys vanish after insertion | Hash only immutable fields; never use time or a fresh random number |
+| MD5 or SHA-1 for security | Attackers can build collisions | SHA-256 or SHA-3 |
+| Any fast hash for passwords | Billions of guesses per second | bcrypt, scrypt or Argon2, with a salt |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 49: Group Anagrams (Medium)
+
+**Problem.** Group the words that are anagrams of each other. For `["eat", "tea", "tan", "ate", "nat", "bat"]` the answer is `[["eat", "tea", "ate"], ["tan", "nat"], ["bat"]]`, in any order.
+
+**Math first.** "Is an anagram of" is an *equivalence*: it splits words into classes. A **canonical key** is a function that is equal exactly on one class, so it can serve as the hash-map key:
+
+$$
+s \sim t \iff \kappa(s) = \kappa(t), \qquad \kappa(s) = \text{the letters of } s \text{ in sorted order}
+$$
+
+where:
+
+- $s \sim t$ means "$s$ and $t$ are anagrams";
+- $\kappa(s)$ (kappa) is the canonical key; two words have the same letters exactly when their sorted spellings match;
+- $\iff$ means "exactly when", so equal keys go together and different keys stay apart.
+
+Example: $\kappa(\texttt{eat}) = \kappa(\texttt{tea}) = \kappa(\texttt{ate}) = \texttt{aet}$, $\kappa(\texttt{tan}) = \kappa(\texttt{nat}) = \texttt{ant}$, and $\kappa(\texttt{bat}) = \texttt{abt}$. Three different keys, so three groups.
+
+**Idea.** This is the `equals`/`hashCode` contract in miniature: choose a key whose equality *is* the equality you care about, then let `HashMap` do the grouping. A 26-letter count vector would also work as the key.
+
+```java
+static List<List<String>> groupAnagrams(String[] words) {
+    Map<String, List<String>> groups = new HashMap<>();
+    for (String word : words) {
+        char[] letters = word.toCharArray();
+        Arrays.sort(letters);   // anagrams share one sorted spelling
+        groups.computeIfAbsent(new String(letters), key -> new ArrayList<>()).add(word);
+    }
+    return new ArrayList<>(groups.values());
+}
+```
+
+**Answer.** Three groups: `[eat, tea, ate]`, `[tan, nat]`, `[bat]`. For $n$ words of length up to $L$, sorting each costs $O(L \log L)$, so the total is $O(n L \log L)$ time and $O(nL)$ space. Here $n = 6$, $L = 3$. The count-vector key brings this down to $O(nL)$.
+
+### 2. LeetCode 535: Encode and Decode TinyURL (Medium)
+
+**Problem.** Design `encode`, which turns a long URL into a short one, and `decode`, which turns it back. Any scheme is allowed, as long as `decode(encode(url))` returns `url`.
+
+**Math first.** A short code is a hash of the URL into a small space, so collisions are a birthday problem. Six characters from 62 (digits, lower case, upper case) give
+
+$$
+m = 62^6 = 56{,}800{,}235{,}584, \qquad n_{1/2} \approx \sqrt{2\, m \ln 2} \approx 280{,}610
+$$
+
+where:
+
+- $m$ is the number of different six-character codes;
+- $n_{1/2}$ is the number of stored URLs at which the chance of at least one repeated code reaches 50%, from Level 7.
+
+Example: 57 billion codes sounds enormous, but a collision is likely after only about $\sqrt{2 \times 5.68 \times 10^{10} \times 0.693} \approx 280{,}610$ URLs. A real service has more URLs than that, so it **must** check for collisions.
+
+**Idea.** Draw a random six-character code, which behaves like an ideal hash. If the code is already taken, draw again. Store code → URL in a map, and decode by looking up the part after the last `/`.
+
+```java
+static final class Codec {
+    static final String ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    final Map<String, String> urlByCode = new HashMap<>();
+    final Random random = new Random(42);
+
+    String encode(String longUrl) {
+        String code;
+        do {
+            StringBuilder letters = new StringBuilder();
+            for (int i = 0; i < 6; i++) letters.append(ALPHABET.charAt(random.nextInt(62)));
+            code = letters.toString();
+        } while (urlByCode.containsKey(code));   // a collision: draw another code
+        urlByCode.put(code, longUrl);
+        return "http://tinyurl.com/" + code;
+    }
+
+    String decode(String shortUrl) {
+        return urlByCode.get(shortUrl.substring(shortUrl.lastIndexOf('/') + 1));
+    }
+}
+```
+
+**Answer.** `decode(encode("https://leetcode.com/problems/design-tinyurl"))` returns the same URL, and the lab round-trips 1,000 more. While the table holds $n$ codes, a fresh draw collides with probability $n / m$; even at $n = 10^6$ that is $10^6 / (5.68 \times 10^{10}) \approx 0.00002$, so the loop almost always runs once. Both operations are $O(1)$ expected time; space is $O(n)$. A counter written in base 62 avoids collisions entirely, at the cost of codes that can be guessed in order.
+
+### 3. LeetCode 1923: Longest Common Subpath (Hard)
+
+**Problem.** There are $n$ cities, numbered $0$ to $n - 1$, and several friends, each with a path given as a list of cities. Return the length of the longest contiguous run of cities that appears in **every** path. Up to $10^5$ cities, and the paths have at most $10^5$ entries in total. For `[[0,1,2,3,4], [2,3,4], [4,0,1,2,3]]` the answer is 2, from `[2, 3]`.
+
+**Math first.** Hash each window of $L$ cities as a base-$B$ number. With $B > n - 1$, every city is a single "digit", so different windows are different numbers before the remainder is taken:
+
+$$
+H(c_0, \dots, c_{L-1}) = \left(\sum_{j=0}^{L-1} c_j\, B^{L-1-j}\right) \bmod M, \qquad \text{shared}(L) \iff \bigcap_{i} S_i(L) \ne \emptyset
+$$
+
+where:
+
+- $c_0, \dots, c_{L-1}$ are the cities in one window;
+- $B$ is the base, larger than every city number, and $M$ is a large prime;
+- $S_i(L)$ is the set of hashes of all windows of length $L$ in path $i$;
+- shared$(L)$ is true when some window of length $L$ is in every path; it is *monotone*: if a length-$L$ run is shared, so is its first $L - 1$ cities.
+
+Example: the cities are below 10, so take $B = 10$ and the hash is just the digits.
+
+- $L = 2$: $S_1 = \lbrace 1, 12, 23, 34 \rbrace$ (the window `[0, 1]` reads as 01), $S_2 = \lbrace 23, 34 \rbrace$, $S_3 = \lbrace 40, 1, 12, 23 \rbrace$. The intersection is $\lbrace 23 \rbrace$, so length 2 is shared.
+- $L = 3$: $S_1 = \lbrace 12, 123, 234 \rbrace$, $S_2 = \lbrace 234 \rbrace$, $S_3 = \lbrace 401, 12, 123 \rbrace$. $S_1 \cap S_2 = \lbrace 234 \rbrace$, which is not in $S_3$, so length 3 is not shared.
+
+The largest shared length is **2**.
+
+**Idea.** Binary search for the largest $L$ with shared$(L)$, which monotonicity allows. For each candidate, slide a window along every path and intersect the sets of hashes. The real code uses $B = 100{,}003$ and **two** primes, $M_1 = 10^9 + 7$ and $M_2 = 998{,}244{,}353$, packed into one 64-bit key. With one prime, about $10^5 \times 10^5 = 10^{10}$ pairs of windows meet in the intersections, so up to about $10^{10} / 10^9 = 10$ false matches could be expected; with two, about $10^{10} / 10^{18} = 10^{-8}$. The window update `h * BASE + next`, minus the city that left times $B^L$, is the rolling hash that the [next lesson](../rolling-hash/index.qmd) derives step by step.
+
+```java
+static final long BASE = 100_003, MOD1 = 1_000_000_007, MOD2 = 998_244_353;
+
+static int longestCommonSubpath(int n, int[][] paths) {
+    int low = 0, high = Integer.MAX_VALUE;
+    for (int[] path : paths) high = Math.min(high, path.length);
+    while (low < high) {   // the largest length that every path shares
+        int mid = (low + high + 1) / 2;
+        if (allShare(paths, mid)) low = mid; else high = mid - 1;
+    }
+    return low;
+}
+
+static boolean allShare(int[][] paths, int length) {
+    Set<Long> common = windowHashes(paths[0], length);
+    for (int i = 1; i < paths.length && !common.isEmpty(); i++) common.retainAll(windowHashes(paths[i], length));
+    return !common.isEmpty();
+}
+```
+
+```java
+static Set<Long> windowHashes(int[] path, int length) {
+    long power1 = 1, power2 = 1;   // BASE^length, the weight of the city that leaves the window
+    for (int i = 0; i < length; i++) { power1 = power1 * BASE % MOD1; power2 = power2 * BASE % MOD2; }
+    Set<Long> hashes = new HashSet<>();
+    long h1 = 0, h2 = 0;
+    for (int i = 0; i < path.length; i++) {
+        h1 = (h1 * BASE + path[i]) % MOD1;
+        h2 = (h2 * BASE + path[i]) % MOD2;
+        if (i >= length) {
+            h1 = Math.floorMod(h1 - path[i - length] * power1, MOD1);
+            h2 = Math.floorMod(h2 - path[i - length] * power2, MOD2);
+        }
+        if (i >= length - 1) hashes.add(h1 * MOD2 + h2);   // two hashes packed into one 64-bit key
+    }
+    return hashes;
+}
+```
+
+**Answer.** 2 for the example; 0 for `[[0], [1], [2]]`; 1 for `[[0,1,2,3,4], [4,3,2,1,0]]`. The lab also compares against a plain window-by-window comparison on 200 random small inputs. With $S \le 10^5$ cities in all, each check is $O(S)$ and the binary search makes about $\log_2 10^5 \approx 17$ checks, so roughly $1.7 \times 10^6$ hash updates: $O(S \log S)$ time and $O(S)$ space.
+
+## Mathematical Abstraction
+
+A hash function is a map from a huge universe into a few slots. It is useful when equal keys agree and different keys rarely collide, and universal hashing makes "rarely" a theorem:
+
+$$
+h : U \to \lbrace 0, \dots, m - 1 \rbrace, \qquad a \equiv b \implies h(a) = h(b), \qquad P_{h \in \mathcal{H}}\big[h(k) = h(l)\big] \le \frac{1}{m} \ \text{ for } k \ne l
+$$
+
+where:
+
+- $U$ is the set of all possible keys and $m$ the number of slots;
+- $a \equiv b$ means the keys are equal (`a.equals(b)`), and the middle rule is the `equals`/`hashCode` contract: it must hold for *every* function you use;
+- $\mathcal{H}$ is a universal family such as $h_{a,b}(k) = ((ak + b) \bmod p) \bmod m$, and the probability is over choosing $h$ at random from it.
+
+Example: with $p = 13$ and $m = 4$, the bound promises that any two keys collide under at most $1/4$ of the 156 functions, that is at most 39; the worst pair actually collides under 30. A fixed function can be beaten: $k \bmod 8$ sends 8, 16, 24, 32 and 40 all to slot 0, while $k \bmod 7$ sends them to slots 1 to 5.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 11, "Hash Tables", §11.3 "Hash functions": the division and multiplication methods and random (universal) hashing. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 3, *Sorting and Searching*, 2nd edition (Addison-Wesley, 1998), §6.4 "Hashing": multiplicative hashing with the golden ratio, and the history crediting H. P. Luhn's 1953 IBM memo.
+- J. Lawrence Carter and Mark N. Wegman, "Universal Classes of Hash Functions", *Journal of Computer and System Sciences* 18(2), 143–154 (1979).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §3.4 "Hash Tables", including modular hashing and Java's `hashCode` conventions: <https://algs4.cs.princeton.edu/34hash/>.
+- Joshua Bloch, *Effective Java*, 3rd edition (Addison-Wesley, 2018), Item 11, "Always override hashCode when you override equals"; and the `java.lang.Object.hashCode` contract: <https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Object.html#hashCode()>.
+- Austin Appleby, MurmurHash3 and the SMHasher test suite: <https://github.com/aappleby/smhasher>.
+- NIST FIPS 180-4, *Secure Hash Standard* (SHA-256): <https://csrc.nist.gov/pubs/fips/180-4/upd1/final>; Xiaoyun Wang and Hongbo Yu, "How to Break MD5 and Other Hash Functions", EUROCRYPT 2005; Marc Stevens et al., "The First Collision for Full SHA-1", CRYPTO 2017: <https://shattered.io/>.
+- LeetCode: [49. Group Anagrams](https://leetcode.com/problems/group-anagrams/), [535. Encode and Decode TinyURL](https://leetcode.com/problems/encode-and-decode-tinyurl/), [1923. Longest Common Subpath](https://leetcode.com/problems/longest-common-subpath/).
+
+[← Bit Manipulation](../bit-manipulation/index.qmd) · [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd) · [Rolling Hash →](../rolling-hash/index.qmd)

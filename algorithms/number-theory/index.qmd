@@ -1,56 +1,433 @@
 ---
 title: "Number Theory"
-description: "A mathematical algorithm explained in plain English and with an explicit numerical substitution."
+description: "Divisibility and primes, the sieve of Eratosthenes, Euclid's greatest common divisor and its extended form, Bézout's identity, modular inverses by extended Euclid and by Fermat's little theorem, and hard interview problems solved math-first."
 ---
 
-## Start with a specific question
+Number theory is the study of whole numbers: which ones divide which, which ones are prime, and what is left over after division. Three ancient ideas do nearly all the work in interviews. The **sieve of Eratosthenes** finds every prime up to $n$. **Euclid's algorithm** finds the greatest common divisor of two numbers in a handful of steps. And **modular inverses** let you divide when an answer is taken modulo $10^9 + 7$.
 
-**LeetCode 1979 — Find Greatest Common Divisor of Array.** We will reason from a very small example rather than introduce a complicated notation first.
+All code is in [`NumberTheoryLab.java`](NumberTheoryLab.java). Run it from this folder with `java NumberTheoryLab.java`; it checks every number on this page and prints `OK`.
 
-## What the obvious approach overlooks
+## The problem
 
-Listing every divisor of two large numbers is slow and obscures the invariant.
+A baker has **252 chocolate cookies** and **105 vanilla cookies**. She wants to pack them into identical boxes, every box with the same mix, and no cookie left over. What is the largest number of boxes she can fill?
 
-## One simple idea
+- The number of boxes must divide both 252 and 105. Trying every candidate from 105 downwards means up to 105 divisions.
+- For numbers with 18 digits, trying candidates one by one would take longer than a lifetime.
+- Euclid's algorithm answers in **3 divisions**: 21 boxes, each with 12 chocolate and 5 vanilla cookies.
 
-Euclid's algorithm uses the fact that replacing the larger number by its remainder preserves the set of common divisors.
+A second question follows naturally. If a problem asks for $\frac{10}{2}$ "modulo $1{,}000{,}000{,}007$", you cannot just divide the remainders. You need a number that behaves like $\frac{1}{2}$ on that clock. Number theory finds it: $500{,}000{,}004$.
 
-Before reading symbols, explain the intended operation aloud. If you can say which information is saved and which work is avoided, you have the core intuition.
+## Explain it like I'm ten
 
-## Formula and immediate translation
+::: {.callout-tip}
+**Euclid with floor tiles.** You have a floor 252 tiles long and 105 wide, and you want the biggest square tiles that cover it exactly. Lay the biggest squares you can, $105 \times 105$. Two fit, and a strip $42 \times 105$ is left. Now cover that strip with $42 \times 42$ squares: two fit, leaving $42 \times 21$. Cover that with $21 \times 21$ squares: exactly two fit, nothing left. So **21** is the biggest tile, and the greatest common divisor of 252 and 105. Each step is one division with remainder. Euclid wrote this method down in his *Elements* (Book VII, Propositions 1 and 2) around 300 BC. Donald Knuth calls it "the granddaddy of all algorithms", because it is the oldest nontrivial algorithm still in use (*The Art of Computer Programming*, Volume 2).
+
+**Eratosthenes with children in a line.** Children wearing the numbers 2 to 30 stand in a line. The first child still standing, number 2, is prime; every child wearing a multiple of 2 after it sits down. The next one standing, 3, is prime; multiples of 3 sit down. Then 5 does the same. Whoever is still standing at the end is a prime. This is the sieve of Eratosthenes, from the third century BC, known to us through Nicomachus's *Introduction to Arithmetic*.
+
+**An inverse on a clock.** On a clock with 7 hours, "times 5" undoes "times 3": $3 \times 5 = 15$, which is one full turn and then 1. So on that clock, 5 *is* one third.
+:::
+
+## From simple to advanced
+
+### Level 1: divisors and primes
+
+$d$ **divides** $n$, written $d \mid n$, when $n = d \cdot k$ for some whole number $k$. A **prime** is a number $p \ge 2$ whose only divisors are 1 and $p$. To test whether $n$ is prime, you only need to try divisors up to its square root:
 
 $$
-\gcd(a,b)=\gcd(b,a\bmod b)
+n \text{ composite} \implies \exists\, d : 2 \le d \le \sqrt{n} \;\land\; d \mid n
 $$
 
-**Symbols and notation:** gcd(a,b) is the greatest common divisor of integers a,b; a mod b is the remainder after dividing a by nonzero b.
+where:
 
-**Insert actual numbers:** For a=48,b=18, remainder is 48 mod 18=12. So gcd(48,18)=gcd(18,12)=gcd(12,6)=gcd(6,0)=6.
+- "composite" means $n \ge 2$ and $n$ is not prime;
+- $\exists\, d$ means "there is some whole number $d$";
+- the reason: if $n = d \cdot e$ with both factors above $\sqrt{n}$, then $d \cdot e > \sqrt{n} \cdot \sqrt{n} = n$, which is impossible.
 
-This numerical calculation is essential: the expression must mean the same thing when evaluated by hand and when written in code.
+Example: $n = 91$. Since $\sqrt{91} \approx 9.5$, try 2 to 9: $91 = 7 \times 13$, found at 7, so 91 is not prime. For $n = 97$ ($\sqrt{97} \approx 9.8$), none of 2 to 9 divides it, so 97 is prime after only 8 tries instead of 95.
 
-## Why the mathematics leads to an algorithm
+```java
+static boolean isPrime(int n) {
+    if (n < 2) return false;
+    for (int d = 2; (long) d * d <= n; d++) {
+        if (n % d == 0) return false;                   // found a divisor no bigger than sqrt(n)
+    }
+    return true;
+}
+```
 
-Any number dividing both a and b also divides a−qb, which equals the remainder; the reverse direction holds too. Therefore the set of common divisors is unchanged.
+The `(long)` cast matters: for $n = 2^{31} - 1$, which is prime, `d * d` in `int` would overflow before the loop ended.
 
-This argument is the bridge between 'the equation looks plausible' and 'the result is correct for all inputs satisfying the assumptions'.
+Every whole number $n \ge 2$ splits into primes in exactly one way (the *fundamental theorem of arithmetic*). That gives a second view of the greatest common divisor (gcd) and the least common multiple (lcm): take the **smaller** power of each prime for the gcd, and the **larger** for the lcm.
 
-## Make the idea executable
+$$
+\gcd(a, b) = \prod_p p^{\min(\alpha_p, \beta_p)}, \qquad
+\operatorname{lcm}(a, b) = \prod_p p^{\max(\alpha_p, \beta_p)}, \qquad
+\gcd(a, b) \cdot \operatorname{lcm}(a, b) = a \cdot b
+$$
 
-Start with the numerical example above and write a tiny function or test that reproduces it. For comparison, examine the [original executable patterns library](../examples/patterns.mjs). This topic's main challenge is its mathematical invariant rather than framework setup.
+where:
 
-## Complexity and correctness boundaries
+- $\alpha_p$ and $\beta_p$ are how many times the prime $p$ divides $a$ and $b$;
+- $\prod_p$ multiplies over all primes (most have exponent 0 and contribute 1).
 
-**Work bound:** O(log min(|a|,|b|)) remainder steps in the Euclidean algorithm for positive integers.
+Example: $252 = 2^2 \cdot 3^2 \cdot 7$ and $105 = 3 \cdot 5 \cdot 7$.
 
-**Counterexample or limitation:** Stop when second argument becomes zero; gcd(a,0)=|a|. For negative inputs define gcd nonnegative and normalise signs.
+- gcd: $2^0 \cdot 3^1 \cdot 5^0 \cdot 7^1 = 21$.
+- lcm: $2^2 \cdot 3^2 \cdot 5^1 \cdot 7^1 = 4 \cdot 9 \cdot 5 \cdot 7 = 1{,}260$.
+- Check: $21 \times 1{,}260 = 26{,}460 = 252 \times 105$.
 
-Always declare the input domain first. For example, a modulus must be positive, a probability denominator nonzero and a character indexing convention fixed. Many seemingly clever solutions fail because these conditions were never stated.
+Factoring is slow for big numbers, which is why the next levels compute the gcd without it.
 
-## Reference and practice
+### Level 2: the sieve of Eratosthenes
 
-- **CLRS (4th edition):** CLRS Chapter 31 §31.2 (greatest common divisor).. [Official publisher table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **LeetCode:** LeetCode 1979 — Find Greatest Common Divisor of Array. [Original problem page or practice resource](https://leetcode.com/problems/find-greatest-common-divisor-of-array/).
-- **Self-check:** Recalculate the displayed numbers without looking at the formula, then explain the invariant and identify where assumptions matter.
+To find **all** primes up to $n$, testing each number separately repeats work. The sieve crosses out multiples instead. Two details make it fast:
 
-[← Algorithms](../index.qmd) · [Understand every symbol](../guides/read-the-math.qmd)
+1. Only primes need to cross anything out. A composite such as 4 has nothing new to remove, because its multiples are multiples of 2.
+2. A prime $p$ starts crossing at $p^2$. Every smaller multiple $k \cdot p$ with $k < p$ has a prime factor smaller than $p$ and is already gone.
+
+Trace to $n = 30$:
+
+```text
+start:   2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30
+p = 2:   cross 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30          (14 crossings)
+p = 3:   cross 9, 12, 15, 18, 21, 24, 27, 30                                 (8 crossings)
+p = 5:   cross 25, 30                                                        (2 crossings)
+p = 7:   7 * 7 = 49 > 30, so stop
+left:    2  3  5  7 11 13 17 19 23 29
+```
+
+```java
+static boolean[] sieve(int n) {
+    boolean[] isPrime = new boolean[n + 1];
+    for (int i = 2; i <= n; i++) isPrime[i] = true;
+    for (int p = 2; (long) p * p <= n; p++) {
+        if (!isPrime[p]) continue;
+        for (int multiple = p * p; multiple <= n; multiple += p) isPrime[multiple] = false; // smaller multiples are already crossed out
+    }
+    return isPrime;
+}
+```
+
+The number of crossings is the sum, over the primes $p$ with $p^2 \le n$, of how many multiples lie between $p^2$ and $n$:
+
+$$
+\text{crossings}(n) = \sum_{p \text{ prime},\; p^2 \le n} \left( \left\lfloor \frac{n}{p} \right\rfloor - p + 1 \right) \;\le\; n \sum_{p \le n} \frac{1}{p} \approx n \ln \ln n
+$$
+
+where:
+
+- $\lfloor n / p \rfloor$ is the number of multiples of $p$ from $p$ up to $n$, and $p - 1$ of them (those below $p^2$) are skipped;
+- $\sum_{p \le n} \frac{1}{p}$ is the sum of the reciprocals of the primes, which grows like $\ln \ln n$ (Mertens, 1874);
+- $\ln$ is the natural logarithm.
+
+Example: $n = 30$ gives $(15 - 2 + 1) + (10 - 3 + 1) + (6 - 5 + 1) = 14 + 8 + 2 = 24$ crossings, within the estimate $30 \ln \ln 30 \approx 30 \times 1.224 \approx 36.7$. For $n = 10^6$, $\ln \ln 10^6 \approx 2.63$, so about 2.6 million crossings find all 78,498 primes below a million. The double logarithm grows so slowly that the sieve is almost linear.
+
+### Level 3: Euclid's algorithm
+
+Euclid's key fact is that a number divides both $a$ and $b$ exactly when it divides both $b$ and the remainder $a \bmod b$:
+
+$$
+\gcd(a, b) =
+\begin{cases}
+a & \text{if } b = 0 \\
+\gcd(b,\; a \bmod b) & \text{if } b > 0
+\end{cases}
+$$
+
+where:
+
+- $\gcd(a, b)$ is the greatest common divisor, the largest number dividing both;
+- $a \bmod b$ is the remainder of $a$ divided by $b$;
+- $\gcd(a, 0) = a$, because every number divides 0.
+
+Example: $\gcd(252, 105)$.
+
+- $252 = 2 \cdot 105 + 42$, so $\gcd(252, 105) = \gcd(105, 42)$.
+- $105 = 2 \cdot 42 + 21$, so $\gcd(105, 42) = \gcd(42, 21)$.
+- $42 = 2 \cdot 21 + 0$, so $\gcd(42, 21) = \gcd(21, 0) = 21$.
+
+Three divisions, the same three steps as the floor tiles.
+
+```java
+static long gcd(long a, long b) {
+    return b == 0 ? a : gcd(b, a % b);
+}
+
+static long lcm(long a, long b) {
+    return a / gcd(a, b) * b;                           // divide first, so the intermediate value stays small
+}
+```
+
+`lcm(252, 105)` is $252 / 21 \times 105 = 12 \times 105 = 1{,}260$. Writing `a * b / gcd(a, b)` gives the same value on paper, but `a * b` can overflow when the lcm itself fits.
+
+How many steps can Euclid take? The slowest inputs are neighbouring Fibonacci numbers, where every quotient is 1. $\gcd(89, 55)$ walks down the whole sequence $89, 55, 34, 21, 13, 8, 5, 3, 2, 1$: 9 divisions. Lamé's theorem (1844) says the number of divisions is at most five times the number of decimal digits of the smaller number, so at most $5 \times 2 = 10$ here and at most about 90 for 18-digit numbers.
+
+### Level 4: extended Euclid, Bézout and the modular inverse
+
+Running Euclid backwards writes the gcd as a combination of the two numbers. This is **Bézout's identity**:
+
+$$
+a x + b y = \gcd(a, b) \quad \text{for some whole numbers } x, y
+$$
+
+where:
+
+- $x$ and $y$ are whole numbers, and one of them is usually negative;
+- the extended algorithm finds them using the same divisions as plain Euclid.
+
+Example: $252x + 105y = 21$. Undo the divisions from the last one up:
+
+- $21 = 105 - 2 \cdot 42$
+- $42 = 252 - 2 \cdot 105$, so $21 = 105 - 2 \cdot (252 - 2 \cdot 105) = 5 \cdot 105 - 2 \cdot 252$
+
+So $x = -2$, $y = 5$, and indeed $252 \cdot (-2) + 105 \cdot 5 = -504 + 525 = 21$.
+
+The recursive version does this automatically. If the call on $(b, a \bmod b)$ returns $x', y'$ with $b x' + (a \bmod b) y' = g$, then substituting $a \bmod b = a - \lfloor a / b \rfloor b$ gives $a y' + b (x' - \lfloor a / b \rfloor y') = g$:
+
+```java
+static long[] extendedGcd(long a, long b) {             // returns {g, x, y} with a*x + b*y = g
+    if (b == 0) return new long[] {a, 1, 0};
+    long[] next = extendedGcd(b, a % b);                // b*x' + (a % b)*y' = g
+    return new long[] {next[0], next[2], next[1] - (a / b) * next[2]};
+}
+```
+
+**The modular inverse.** "Dividing by $a$" modulo $m$ means multiplying by a number $a^{-1}$ with $a \cdot a^{-1} \equiv 1 \pmod m$. Bézout shows exactly when one exists:
+
+$$
+a^{-1} \bmod m \text{ exists} \iff \gcd(a, m) = 1, \qquad a x + m y = 1 \implies a x \equiv 1 \pmod m
+$$
+
+where:
+
+- $\equiv \pmod m$ means "has the same remainder modulo $m$";
+- $\gcd(a, m) = 1$ means $a$ and $m$ share no factor ("coprime");
+- the $x$ from extended Euclid is the inverse, after moving it into the range $0$ to $m - 1$.
+
+Example: the inverse of 3 modulo 7. Extended Euclid gives $3 \cdot (-2) + 7 \cdot 1 = 1$, so $x = -2$, and $-2 \bmod 7 = 5$. Check: $3 \times 5 = 15 = 2 \times 7 + 1$. On the other hand, 4 has no inverse modulo 8: $\gcd(4, 8) = 4$, and $4x$ is always $0$ or $4$ modulo 8, never 1.
+
+```java
+static long modInverse(long a, long m) {                // needs gcd(a, m) = 1
+    long[] g = extendedGcd(a, m);
+    if (g[0] != 1) throw new ArithmeticException(a + " has no inverse modulo " + m);
+    return Math.floorMod(g[1], m);
+}
+```
+
+### Level 5: Fermat's little theorem, the shortcut for prime moduli
+
+When the modulus is a prime $p$, such as $10^9 + 7$, there is a one-line inverse. Fermat stated the theorem in a letter to Frénicle de Bessy dated 18 October 1640:
+
+$$
+a^{p-1} \equiv 1 \pmod p \quad \text{for } p \text{ prime and } p \nmid a,
+\qquad \text{so} \qquad a^{-1} \equiv a^{p-2} \pmod p
+$$
+
+where:
+
+- $p$ is a prime and $a$ is not a multiple of $p$ ($p \nmid a$ means "$p$ does not divide $a$");
+- $a^{p-2} \cdot a = a^{p-1} \equiv 1$, so $a^{p-2}$ is the inverse;
+- $a^{p-2}$ is computed by fast exponentiation (see the [Math](../math/index.qmd) lesson) in about $\log_2 p$ rounds.
+
+Example: $p = 7$, $a = 3$. Then $3^6 = 729 = 104 \times 7 + 1 \equiv 1$, as promised, and $3^{5} = 243 = 34 \times 7 + 5$, so $3^{-1} \equiv 5$, the same answer extended Euclid gave. For $p = 1{,}000{,}000{,}007$:
+
+- $2^{-1} = 500{,}000{,}004$, because $2 \times 500{,}000{,}004 = 1{,}000{,}000{,}008 \equiv 1$;
+- $3^{-1} = 333{,}333{,}336$, because $3 \times 333{,}333{,}336 = 1{,}000{,}000{,}008 \equiv 1$;
+- so "$10 / 2$" is $10 \times 500{,}000{,}004 = 5{,}000{,}000{,}040$, and $5{,}000{,}000{,}040 - 5 \times 1{,}000{,}000{,}007 = 5$. Correct.
+
+```java
+static long inverseModPrime(long a, long p) {           // p is prime and a is not a multiple of p
+    return power(a, p - 2, p);                          // Fermat: a^(p-1) = 1, so a^(p-2) is the inverse
+}
+```
+
+Which one to use? Fermat is shorter but only works for a **prime** modulus. Extended Euclid works for any modulus, as long as $\gcd(a, m) = 1$. (Euler's theorem generalises Fermat to any modulus: $a^{\varphi(m)} \equiv 1$, where $\varphi(m)$ counts the numbers below $m$ coprime to it.) The [Combinatorics](../combinatorics/index.qmd) lesson uses these inverses to compute $\binom{n}{k}$ modulo a prime.
+
+## Why it works and what it costs
+
+**Why Euclid is correct.** Write $a = qb + r$. If $d$ divides $a$ and $b$, it divides $r = a - qb$. If $d$ divides $b$ and $r$, it divides $a = qb + r$. So the pairs $(a, b)$ and $(b, r)$ have exactly the **same** common divisors, and therefore the same greatest one. The second number strictly decreases ($r < b$), so the recursion reaches $b = 0$, where $\gcd(a, 0) = a$. With $252 = 2 \cdot 105 + 42$: the number 21 divides 252 and 105, and so it divides $252 - 2 \cdot 105 = 42$.
+
+**Why the sieve is correct.** Invariant: *when the outer loop reaches $p$, a number below $p^2$ is still marked prime exactly when it is prime.* Every composite $c$ has a prime factor $q \le \sqrt{c}$, and $c \ge q^2$, so $c$ is crossed out when the loop handles $q$. A prime is never crossed out, because every crossed number is a multiple $k \cdot p$ with $k \ge p \ge 2$. Once $p^2 > n$, the invariant covers every number up to $n$.
+
+**Why Fermat holds (sketch).** Multiply each of $1, 2, \dots, p - 1$ by $a$ modulo $p$. The results are the same numbers in a different order, because $ai \equiv aj$ would force $p \mid a(i - j)$, which is impossible for $i \ne j$. Multiplying all of them gives $a^{p-1} (p-1)! \equiv (p-1)!$, and $(p-1)!$ has an inverse, so $a^{p-1} \equiv 1$. With $p = 7$, $a = 3$: the products $3, 6, 9, 12, 15, 18$ reduce to $3, 6, 2, 5, 1, 4$, which is $1$ to $6$ shuffled.
+
+**Costs:**
+
+| Task | Method | Example | Cost |
+| --- | --- | --- | --- |
+| Is $n$ prime? | trial division to $\sqrt{n}$ | $n = 97$: 8 divisions | $O(\sqrt{n})$ |
+| All primes $\le n$ | sieve | $n = 30$: 24 crossings | $O(n \log \log n)$ time, $O(n)$ space |
+| Distinct prime factors | trial division | $252$: try 2, 3, then 7 is left | $O(\sqrt{n})$ |
+| $\gcd(a, b)$ | Euclid | $(252, 105)$: 3 divisions | $O(\log \min(a, b))$ |
+| Bézout $x, y$ | extended Euclid | $(252, 105)$: 3 levels of recursion | $O(\log \min(a, b))$ |
+| $a^{-1} \bmod p$ | Fermat, fast power | $p = 10^9 + 7$: 30 rounds | $O(\log p)$ |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `d * d <= n` with `int d` | For $n$ near $2^{31}$ the product overflows, and the loop runs on or stops wrongly | `(long) d * d <= n` |
+| Treating 1 as prime | Every prime count is one too high | Primes start at 2 |
+| Forgetting the leftover factor in trial division | $194 = 2 \cdot 97$ loses the 97 | After the loop, `if (n > 1)` the rest is a prime |
+| `a * b / gcd(a, b)` for the lcm | Overflow when $a \cdot b$ passes $2^{63}$ even though the lcm fits | `a / gcd(a, b) * b` |
+| Using Fermat with a modulus that is not prime | A wrong inverse, with no error | Extended Euclid |
+| Asking for an inverse when $\gcd(a, m) \ne 1$ | No inverse exists, so any number returned is garbage | Check the gcd first and fail loudly |
+| Using the negative $x$ from extended Euclid directly | A negative "inverse" | `Math.floorMod(x, m)` |
+| Computing gcd of every pair, as in LeetCode 952 | $\frac{n(n-1)}{2} \approx 2 \times 10^8$ gcd calls, too slow | Connect each number to its prime factors |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 204: Count Primes (Medium)
+
+**Problem.** Count the primes strictly less than $n$, for $n$ up to $5 \times 10^6$. For $n = 10$ the answer is 4: 2, 3, 5 and 7.
+
+**Math first.** The answer is the prime-counting function $\pi(n - 1)$. The sieve computes every primality at once, and the prime number theorem tells us roughly what to expect:
+
+$$
+\text{answer} = \pi(n - 1) = \sum_{k=2}^{n-1} [\, k \text{ is prime} \,], \qquad \pi(x) \approx \frac{x}{\ln x}
+$$
+
+where:
+
+- $[\, \cdot \,]$ is 1 when the statement inside is true and 0 otherwise;
+- $\pi(x)$ is the number of primes up to $x$;
+- $\frac{x}{\ln x}$ is the prime number theorem's estimate, which slightly undercounts.
+
+Example: $n = 10$. Of $2, 3, \dots, 9$, the primes are $2, 3, 5, 7$, so the answer is 4. For $n = 5{,}000{,}000$, the estimate is $5 \times 10^6 / \ln(5 \times 10^6) \approx 5 \times 10^6 / 15.42 \approx 324{,}000$, and the true count is $348{,}513$.
+
+**Idea.** Run the sieve up to $n - 1$ and count what is still marked. Trial division of every number would cost up to $\sum_k \sqrt{k} \approx \frac{2}{3} n^{3/2}$, about $7 \times 10^{9}$ steps for $n = 5 \times 10^6$; the sieve needs about $n \ln \ln n \approx 1.4 \times 10^{7}$.
+
+```java
+static int countPrimes(int n) {
+    if (n < 3) return 0;
+    int count = 0;
+    for (boolean prime : sieve(n - 1)) if (prime) count++;
+    return count;
+}
+```
+
+**Answer.** `countPrimes(10) = 4`, `countPrimes(0) = countPrimes(1) = 0`, and `countPrimes(5000000) = 348513`. $O(n \log \log n)$ time and $O(n)$ space (5 MB of `boolean` for the largest input). A common speed-up sieves only odd numbers, which halves both time and memory.
+
+### 2. LeetCode 365: Water and Jug Problem (Medium)
+
+**Problem.** You have two jugs holding $x$ and $y$ litres, and unlimited water. You may fill a jug, empty a jug, or pour one into the other until the first is empty or the second is full. Can you end with exactly `target` litres in the two jugs together? For $x = 3$, $y = 5$ and target 4 the answer is **yes**.
+
+**Math first.** Every move changes the total by a multiple of $g = \gcd(x, y)$, and Bézout says every multiple of $g$ can be built from $x$ and $y$. So:
+
+$$
+\text{reachable}(t) \iff t \le x + y \;\land\; g \mid t, \qquad g = \gcd(x, y)
+$$
+
+where:
+
+- $t$ is the target amount;
+- $x + y$ is the most both jugs can hold together;
+- $g \mid t$ means $g$ divides $t$.
+
+Example 1: $x = 3$, $y = 5$, $t = 4$. Then $g = 1$ divides 4 and $4 \le 8$, so it is reachable. Bézout gives the recipe $4 = 3 \cdot 3 + 5 \cdot (-1)$: pour three small jugs into the big one, emptying the big one once when it fills. Example 2: $x = 2$, $y = 6$, $t = 5$. Then $g = 2$, and 2 does not divide 5, so it is impossible: every amount you can make is even.
+
+**Idea.** Why does every move keep the total a multiple of $g$? Each jug always holds a multiple of $g$: filling gives $x$ or $y$, emptying gives 0, and pouring stops when one jug is full ($x$ or $y$) or empty (0), with the total unchanged. So the whole problem is one gcd.
+
+```java
+static boolean canMeasureWater(int x, int y, int target) {
+    return target <= x + y && target % gcd(x, y) == 0;  // Bezout: the reachable totals are the multiples of gcd(x, y)
+}
+```
+
+**Answer.** `true` for $(3, 5, 4)$, `false` for $(2, 6, 5)$, `true` for $(1, 2, 3)$, and `false` for $(3, 5, 9)$ because 9 litres do not fit in 8. A breadth-first search over all $(x + 1)(y + 1)$ jug states also works, but Euclid needs $O(\log \min(x, y))$ time and $O(1)$ space.
+
+### 3. LeetCode 952: Largest Component Size by Common Factor (Hard)
+
+**Problem.** Given up to $2 \times 10^4$ distinct numbers, each at most $10^5$, connect two numbers when they share a factor greater than 1. Return the size of the largest connected group. For `[4, 6, 15, 35]` the answer is 4: 4 and 6 share 2, 6 and 15 share 3, and 15 and 35 share 5.
+
+**Math first.** Two numbers share a factor greater than 1 exactly when they share a **prime** factor. So instead of linking numbers to each other, link each number to its own primes:
+
+$$
+\gcd(u, v) > 1 \iff \exists \text{ prime } p : p \mid u \;\land\; p \mid v
+$$
+
+where:
+
+- $u$ and $v$ are two of the numbers;
+- $p \mid u$ means the prime $p$ divides $u$.
+
+Then $u$ and $v$ are in the same group exactly when a chain of "number – prime – number – prime – …" links them. Example: $4 = 2^2$, $6 = 2 \cdot 3$, $15 = 3 \cdot 5$, $35 = 5 \cdot 7$.
+
+```text
+4 — 2 — 6 — 3 — 15 — 5 — 35 — 7
+```
+
+Everything hangs together, so the answer is **4**. For `[20, 50, 9, 63]`: $20 = 2^2 \cdot 5$ and $50 = 2 \cdot 5^2$ link through 2 and 5; $9 = 3^2$ and $63 = 3^2 \cdot 7$ link through 3. There are two groups of size 2, so the answer is 2.
+
+**Idea.** Use union-find (see [Union-Find](../union-find/index.qmd)) over the values $0, \dots, \max$. For each number, factor it by trial division and union it with each of its primes. Finally count how many input numbers share each root. A number up to $10^5$ has at most 6 distinct primes, because $2 \cdot 3 \cdot 5 \cdot 7 \cdot 11 \cdot 13 = 30{,}030$ and multiplying by 17 passes $10^5$.
+
+```java
+static int largestComponentSize(int[] nums) {
+    int[] parent = new int[Arrays.stream(nums).max().getAsInt() + 1];
+    for (int i = 0; i < parent.length; i++) parent[i] = i;
+    for (int x : nums) {
+        for (int p : primeFactors(x)) parent[find(parent, x)] = find(parent, p); // x joins the group of each of its primes
+    }
+    Map<Integer, Integer> groupSize = new HashMap<>();
+    int best = 0;
+    for (int x : nums) best = Math.max(best, groupSize.merge(find(parent, x), 1, Integer::sum));
+    return best;
+}
+
+static int find(int[] parent, int x) {
+    while (parent[x] != x) {
+        parent[x] = parent[parent[x]];                  // path halving keeps the trees shallow
+        x = parent[x];
+    }
+    return x;
+}
+```
+
+`primeFactors` is trial division that records each prime once:
+
+```java
+static List<Integer> primeFactors(int n) {              // the distinct primes that divide n
+    List<Integer> primes = new ArrayList<>();
+    for (int p = 2; (long) p * p <= n; p++) {
+        if (n % p != 0) continue;
+        primes.add(p);
+        while (n % p == 0) n /= p;
+    }
+    if (n > 1) primes.add(n);                           // what is left is one prime above the square root
+    return primes;
+}
+```
+
+**Answer.** 4 for `[4, 6, 15, 35]`, 2 for `[20, 50, 9, 63]`, and 8 for `[2, 3, 6, 7, 4, 12, 21, 39]`. Factoring costs at most $\sqrt{10^5} \approx 316$ trial divisions per number, so about $2 \times 10^4 \times 316 \approx 6.3$ million steps, plus at most 6 unions per number. Comparing every pair by gcd would need about $2 \times 10^{8}$ gcd calls. $O(n \sqrt{M})$ time and $O(M)$ space, where $M$ is the largest value. A smallest-prime-factor sieve up to $M$ makes each factorization $O(\log M)$.
+
+## Mathematical Abstraction
+
+Almost everything in this lesson follows from one recursion and one identity:
+
+$$
+\gcd(a, b) = \gcd(b, a \bmod b), \quad \gcd(a, 0) = a,
+\qquad
+\exists\, x, y : ax + by = \gcd(a, b)
+$$
+
+where:
+
+- $a \bmod b$ is the remainder of $a$ divided by $b$;
+- $x$ and $y$ are the Bézout coefficients that extended Euclid returns;
+- when $\gcd(a, m) = 1$, the $x$ in $ax + my = 1$ is the inverse of $a$ modulo $m$, and for a prime $m = p$ it also equals $a^{p-2} \bmod p$.
+
+Example: $\gcd(252, 105) \to \gcd(105, 42) \to \gcd(42, 21) \to \gcd(21, 0) = 21$, with $252 \cdot (-2) + 105 \cdot 5 = 21$. For $a = 3$ and $m = 7$: $3 \cdot (-2) + 7 \cdot 1 = 1$, so $3^{-1} \equiv -2 \equiv 5 \pmod 7$, and Fermat agrees: $3^{5} = 243 \equiv 5 \pmod 7$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 31, "Number-Theoretic Algorithms": §31.1 elementary notions (divisibility, primes), §31.2 greatest common divisor (Euclid and extended Euclid), §31.3 modular arithmetic, §31.4 solving modular linear equations, §31.6 powers of an element. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Introduction to Programming in Java*, §2.3 "Recursion", which develops Euclid's algorithm in Java: <https://introcs.cs.princeton.edu/java/23recursion/>.
+- Donald E. Knuth, *The Art of Computer Programming*, Volume 2, *Seminumerical Algorithms*, 3rd edition, §4.5.2, "The Greatest Common Divisor" (the "granddaddy of all algorithms" remark).
+- Ronald L. Graham, Donald E. Knuth and Oren Patashnik, *Concrete Mathematics*, 2nd edition (Addison-Wesley, 1994), Chapter 4, "Number Theory".
+- Euclid, *Elements*, Book VII, Propositions 1 and 2; Nicomachus of Gerasa, *Introduction to Arithmetic*, Book I, for the sieve attributed to Eratosthenes.
+- Pierre de Fermat, letter to Bernard Frénicle de Bessy, 18 October 1640, in *Œuvres de Fermat*, Volume II.
+- LeetCode: [204. Count Primes](https://leetcode.com/problems/count-primes/), [365. Water and Jug Problem](https://leetcode.com/problems/water-and-jug-problem/), [952. Largest Component Size by Common Factor](https://leetcode.com/problems/largest-component-size-by-common-factor/).
+
+[← Math](../math/index.qmd) · [Mathematics, Bits, and String Algorithms](../groups/06-maths-strings.qmd) · [Combinatorics →](../combinatorics/index.qmd)
