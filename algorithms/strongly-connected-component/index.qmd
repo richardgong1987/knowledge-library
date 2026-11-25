@@ -1,67 +1,393 @@
 ---
 title: "Strongly Connected Component"
-description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
+description: "Grouping the vertices of a directed graph by mutual reachability: why it is an equivalence relation, Kosaraju–Sharir's two passes over the graph and its reverse, Tarjan's one-pass low-link method, the condensation DAG, all traced on six one-way streets, and hard interview problems solved math-first."
 ---
 
-## Begin with an actual graph
+In a directed graph, two vertices are **strongly connected** when each can reach the other. The groups of mutually reachable vertices are the *strongly connected components* (SCCs). Squash each group into a single dot and what remains is always a DAG, a graph with no cycles. That makes SCCs the standard first step for anything involving cycles in directed graphs: deadlocks, circular imports, web-page ranking and 2-SAT.
 
-**LeetCode 1192 — Critical Connections in a Network (related connectivity theme).** In a directed service graph A→B, B→C, C→A and C→D, the first three services can all reach one another, but D cannot return.
+All code is in [`StronglyConnectedComponentLab.java`](StronglyConnectedComponentLab.java). Run it from this folder with `java StronglyConnectedComponentLab.java`; it checks every number on this page and prints `OK`.
 
-The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
+## The problem
 
-## Why a tempting approach is wrong or wasteful
+A small town has six crossings, numbered 0 to 5, joined by seven **one-way** streets:
 
-Treat directed reachability like undirected connectivity and call A,B,C,D one connected group. This loses the direction requirement.
+```text
+0 → 1      1 → 2      2 → 0      2 → 3
+3 → 4      4 → 3      4 → 5
+```
 
-## The idea that simplifies the problem
+A delivery driver wants to know: from which crossings can I drive to some place **and still get back**? Crossing 0 can reach 5 along $0 \to 1 \to 2 \to 3 \to 4 \to 5$, but nothing leaves 5, so a driver who goes to 5 is stuck there. On the other hand 3 and 4 can always reach each other.
 
-A strongly connected component contains vertices that are mutually reachable in BOTH directions. Contracting every SCC produces a directed acyclic graph.
+- Asking "can $u$ reach $v$, and can $v$ reach $u$?" for every pair separately means a search from every vertex: $V \times (V + E) = 6 \times 13 = 78$ steps here, and about $10^5 \times (2 \times 10^5) = 2 \times 10^{10}$ for $10^5$ crossings and $10^5$ streets.
+- We want all the groups at once, in one or two searches: $O(V + E)$.
 
-## Formalise it — explain symbols immediately
+## Explain it like I'm ten
+
+::: {.callout-tip}
+In a classroom, notes may only be passed in certain directions: Ann may pass to Ben but Ben may not pass back to Ann directly. Notes can travel through other children, though.
+
+Call two children *pen pals* if each can get a note to the other, maybe through friends. Pen pals form **clubs**: inside a club, anyone can reach anyone. Between clubs, notes only ever flow one way. If they could flow both ways, the two clubs would really be one club.
+
+So draw each club as one big circle. The arrows between the circles never go round in a loop. That picture, clubs as dots and one-way arrows between them, is called the **condensation**.
+
+Robert Sedgewick and Kevin Wayne, in *Algorithms* (4th edition, Section 4.2), find these clubs with two depth-first searches: one on the graph, one with every arrow turned around. Their Java version is barely longer than an ordinary depth-first search, and this lesson traces the same method by hand.
+:::
+
+## From simple to advanced
+
+### Level 1: mutual reachability is an equivalence relation
+
+Write $u \leadsto v$ when there is a directed path from $u$ to $v$ (a path of length 0 counts, so $u \leadsto u$). Define
 
 $$
-u\sim v\iff(u\leadsto v)\land(v\leadsto u)
+u \sim v \iff (u \leadsto v) \land (v \leadsto u)
 $$
 
-**Every symbol explained:** u,v are vertices; u↝v means a directed path exists from u to v; ∧ means both conditions must hold; ∼ is mutual reachability.
+where:
 
-**Numbers substituted into the relation:** With A→B→C→A, A can reach C via B and C can reach A directly, so A∼C. D has no path back to C, so C is not equivalent to D. SCCs are {A,B,C} and {D}.
+- $u \leadsto v$ means "$u$ can reach $v$ along the arrows";
+- $\land$ means "and";
+- $u \sim v$ reads "$u$ and $v$ are strongly connected".
 
-Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
+This relation is an **equivalence relation**, which is exactly what is needed to split the vertices into non-overlapping groups:
 
-## Algorithm progression
+- *reflexive:* $u \sim u$, through the empty path;
+- *symmetric:* the definition is the same with $u$ and $v$ swapped;
+- *transitive:* if $u \sim v$ and $v \sim w$, then $u \leadsto v \leadsto w$ and $w \leadsto v \leadsto u$, so $u \sim w$.
 
-1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
-2. Start from the concrete example above and perform one legal edge decision.
-3. Record the changed state and check whether the invariant still holds.
-4. Continue until all required edges, vertices, or candidate states have been processed.
+Example: $0 \leadsto 2$ (along $0 \to 1 \to 2$) and $2 \leadsto 0$ (directly), so $0 \sim 2$. But $0 \leadsto 5$ while $5 \not\leadsto 0$, so $0 \not\sim 5$. The groups are $\lbrace 0, 1, 2 \rbrace$, $\lbrace 3, 4 \rbrace$ and $\lbrace 5 \rbrace$. Counting ordered pairs $(u, v)$ with $u \sim v$ gives $3^2 + 2^2 + 1^2 = 9 + 4 + 1 = 14$, which is what the brute force below finds.
 
-**Proof sketch:** Mutual reachability is reflexive, symmetric and transitive, hence it partitions vertices into equivalence classes. Edges between these classes cannot form a cycle, or the classes would be one SCC.
+```java
+static boolean[][] reachability(int n, int[][] edges) {
+    List<List<Integer>> next = adjacency(n, edges);
+    boolean[][] reach = new boolean[n][n];
+    for (int s = 0; s < n; s++) {
+        Deque<Integer> stack = new ArrayDeque<>(List.of(s));
+        reach[s][s] = true;
+        while (!stack.isEmpty()) {
+            for (int v : next.get(stack.pop())) {
+                if (!reach[s][v]) { reach[s][v] = true; stack.push(v); }
+            }
+        }
+    }
+    return reach;
+}
+```
 
-## Run a small implementation
+Then $u \sim v$ exactly when `reach[u][v] && reach[v][u]`. This is correct, but it searches from every vertex: $O(V (V + E))$ time and $O(V^2)$ memory.
 
-~~~js
-import { componentsDFS } from '../examples/patterns.mjs';
+### Level 2: Kosaraju–Sharir, two passes and a reversed graph
 
-console.log(componentsDFS([[1],[0,2],[1],[]]));
-~~~
+This algorithm is usually credited to S. Rao Kosaraju (1978) and to Micha Sharir, who published it independently in 1981. It needs one observation: **reversing every arrow does not change the components**, because $u \sim v$ only asks for paths in both directions. What reversal does change is the direction of the arrows **between** components.
 
-The implementation is in the [small, tested Node.js algorithms lab](../examples/patterns.mjs). Save the snippet beside this `.qmd` as a `.mjs` file and run it with Node.
+1. **Pass 1.** Run a depth-first search on the graph and record the order in which vertices **finish** (when all their exits are explored).
+2. **Pass 2.** Reverse every arrow. Take the vertices in order of **latest finish first**; each search started from an unlabelled vertex labels exactly one component.
 
-The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+Why the order matters: the vertex that finishes last lies in a *source* component of the condensation, one with no arrows coming in. In the reversed graph that component has no arrows going **out**, so a search started there cannot leak into any other component.
 
-## Work and limitations
+$$
+C \to C' \text{ in the condensation} \;\Rightarrow\; \max_{u \in C} f(u) > \max_{v \in C'} f(v)
+$$
 
-**Complexity:** O(V+E) time with Tarjan or Kosaraju on adjacency lists; O(V) auxiliary state.
+where:
 
-**Where this reasoning fails:** Finding undirected connected components is not enough. Tarjan and Kosaraju use DFS structure, but the graph direction is central.
+- $C$ and $C'$ are two different components, with an arrow from some vertex of $C$ to some vertex of $C'$;
+- $f(u)$ is the finishing time of $u$ in pass 1;
+- so a component "upstream" always contains a later finisher than every component "downstream" of it.
 
-As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+Example: pass 1 from 0 walks $0 \to 1 \to 2$, skips 0 (already seen), continues $2 \to 3 \to 4$, skips 3, and reaches 5. Then the vertices finish in the order 5, 4, 3, 2, 1, 0. The component $\lbrace 0, 1, 2 \rbrace$ contains the last finisher, 0, which is later than everything in $\lbrace 3, 4 \rbrace$ (latest 3) and in $\lbrace 5 \rbrace$. Pass 2 uses the reversed streets $1 \to 0$, $2 \to 1$, $0 \to 2$, $3 \to 2$, $4 \to 3$, $3 \to 4$, $5 \to 4$:
 
-## Connections
+| Start (latest finish first) | Reached in the reversed graph | Component |
+| --- | --- | --- |
+| 0 | 0, 2, 1 (the arrow back to 0 is ignored) | 0 = $\lbrace 0, 1, 2 \rbrace$ |
+| 3 | 3, 4 (the arrow to 2 leads into a labelled vertex) | 1 = $\lbrace 3, 4 \rbrace$ |
+| 5 | 5 (the arrow to 4 leads into a labelled vertex) | 2 = $\lbrace 5 \rbrace$ |
 
-- **Textbook:** CLRS Chapter 20 §20.5 (strongly connected components).. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **Practice:** LeetCode 1192 — Critical Connections in a Network (related connectivity theme). Treat any online solution as a second explanation to compare, not a script to copy.
-- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+If pass 2 had started at 5 instead, it would have walked $5 \to 4 \to 3 \to 2 \to 1 \to 0$ in the reversed graph and wrongly lumped all six crossings into one group.
 
-[← Algorithms](../index.qmd)
+```java
+static int[] kosaraju(int n, int[][] edges) {
+    List<List<Integer>> graph = adjacency(n, edges), reversed = adjacency(n, reverse(edges));
+    Deque<Integer> finishOrder = new ArrayDeque<>();
+    boolean[] seen = new boolean[n];
+    for (int v = 0; v < n; v++) if (!seen[v]) finishDfs(v, graph, seen, finishOrder);
+    int[] component = new int[n];
+    Arrays.fill(component, -1);
+    int count = 0;
+    for (int v : finishOrder) if (component[v] == -1) label(v, reversed, component, count++);  // latest finisher first
+    return component;
+}
+
+static void finishDfs(int u, List<List<Integer>> graph, boolean[] seen, Deque<Integer> finishOrder) {
+    seen[u] = true;
+    for (int v : graph.get(u)) if (!seen[v]) finishDfs(v, graph, seen, finishOrder);
+    finishOrder.push(u);                                // the front of the deque finished last
+}
+
+static void label(int u, List<List<Integer>> reversed, int[] component, int id) {
+    component[u] = id;
+    for (int v : reversed.get(u)) if (component[v] == -1) label(v, reversed, component, id);
+}
+```
+
+Edges are pairs `{from, to}`; `reverse` swaps each pair. The result is `component = [0, 0, 0, 1, 1, 2]`, and as a bonus the component numbers come out in **topological order** of the condensation. Two passes over $V$ vertices and $E$ edges: $O(V + E)$.
+
+### Level 3: Tarjan, one pass with low-links
+
+Robert Tarjan's 1972 algorithm finds the same components in a single depth-first search. Number the vertices in the order they are first discovered, $\text{index}(u)$, and keep every vertex on a stack until its component is complete. Then compute
+
+$$
+\text{low}(u) = \min\Big(\text{index}(u),\; \min_{\text{child } c} \text{low}(c),\; \min_{u \to w,\; w \text{ on the stack}} \text{index}(w)\Big)
+$$
+
+where:
+
+- $\text{index}(u)$ is the discovery number of $u$: 0 for the first vertex visited, 1 for the second, and so on;
+- a *child* $c$ is a vertex first discovered through the edge $u \to c$;
+- $w$ "on the stack" means $w$ has been discovered but its component is not finished yet;
+- $\text{low}(u)$ is the earliest open vertex that $u$, or anything below it in the search, can jump back to.
+
+The rule: **$u$ is the first vertex of its component exactly when $\text{low}(u) = \text{index}(u)$.** Nothing below $u$ can escape to an older open vertex, so $u$ and everything above it on the stack form one component. Pop them.
+
+Example: the search discovers 0, 1, 2, 3, 4, 5 in that order, so $\text{index}(v) = v$.
+
+| Vertex | Index | How low is found | Low | Component finished here? |
+| --- | --- | --- | --- | --- |
+| 5 | 5 | no exits | 5 | $5 = 5$: pop $\lbrace 5 \rbrace$ |
+| 4 | 4 | edge $4 \to 3$, 3 on the stack: $\min(4, 3)$; child 5 has low 5 | 3 | no, $3 \ne 4$ |
+| 3 | 3 | child 4 has low 3 | 3 | $3 = 3$: pop $\lbrace 4, 3 \rbrace$ |
+| 2 | 2 | edge $2 \to 0$, 0 on the stack: $\min(2, 0)$; child 3 has low 3 | 0 | no |
+| 1 | 1 | child 2 has low 0 | 0 | no |
+| 0 | 0 | child 1 has low 0 | 0 | $0 = 0$: pop $\lbrace 2, 1, 0 \rbrace$ |
+
+The rows are in the order the vertices **finish**. Tarjan emits the components as $\lbrace 5 \rbrace$, $\lbrace 3, 4 \rbrace$, $\lbrace 0, 1, 2 \rbrace$: the **reverse** topological order, the opposite of Kosaraju.
+
+```java
+void visit(int u) {
+    index[u] = low[u] = time++;
+    stack.push(u);
+    onStack[u] = true;
+    for (int v : graph.get(u)) {
+        if (index[v] == -1) { visit(v); low[u] = Math.min(low[u], low[v]); }
+        else if (onStack[v]) low[u] = Math.min(low[u], index[v]);   // an edge back into an open component
+    }
+    if (low[u] == index[u]) {                       // u is the first vertex of its component
+        int v;
+        do { v = stack.pop(); onStack[v] = false; component[v] = count; } while (v != u);
+        count++;
+    }
+}
+```
+
+The `onStack` test matters. When the search at 4 later looks at an arrow into an already **finished** component, that arrow must be ignored: the old component is closed and cannot merge with anything new.
+
+Both algorithms are $O(V + E)$. Tarjan makes one pass and needs no reversed copy of the graph; Kosaraju is easier to remember and to prove. Both are recursive, so very deep graphs need an explicit stack or a larger thread stack.
+
+### Level 4: the condensation DAG
+
+Contract each component to a single vertex, keeping one arrow wherever a street crosses between components. The result is always acyclic: a cycle through two components would make every vertex on it mutually reachable, so they would be one component.
+
+$$
+G^{\text{SCC}} = \big(\lbrace C_1, \dots, C_k \rbrace,\; \lbrace (C_i, C_j) : i \ne j,\ \exists\, u \in C_i,\, v \in C_j,\ u \to v \rbrace\big)
+$$
+
+where:
+
+- $C_1, \dots, C_k$ are the $k$ strongly connected components;
+- $\exists$ means "there exists": $(C_i, C_j)$ is an arrow when at least one street goes from $C_i$ to $C_j$;
+- $G^{\text{SCC}}$ is the condensation, a DAG.
+
+Example: with $C_0 = \lbrace 0, 1, 2 \rbrace$, $C_1 = \lbrace 3, 4 \rbrace$ and $C_2 = \lbrace 5 \rbrace$, the street $2 \to 3$ gives $C_0 \to C_1$ and the street $4 \to 5$ gives $C_1 \to C_2$. The streets $0 \to 1$, $1 \to 2$, $2 \to 0$, $3 \to 4$ and $4 \to 3$ stay inside a component and disappear. The condensation is the chain $C_0 \to C_1 \to C_2$.
+
+Many questions about a directed graph become easy questions about its condensation. A classic one: **how many one-way streets must be added so that every crossing can reach every other?**
+
+$$
+\text{streets to add} =
+\begin{cases}
+0, & k = 1 \\
+\max(s, t), & k > 1
+\end{cases}
+$$
+
+where:
+
+- $k$ is the number of components;
+- $s$ is the number of *source* components (no arrows in) and $t$ the number of *sink* components (no arrows out) in the condensation.
+
+Example: the chain $C_0 \to C_1 \to C_2$ has $s = 1$ source ($C_0$) and $t = 1$ sink ($C_2$), so $\max(1, 1) = 1$ new street suffices: $5 \to 0$ joins the sink back to the source, and the lab confirms that the town then has a single component.
+
+Other uses of the condensation: dynamic programming on the DAG (for example, the most coins you can collect when every coin in a component can be picked up), 2-SAT (a formula is satisfiable exactly when no variable $x$ is in the same component as $\lnot x$), and deadlock detection (a component of size at least 2 is a cycle of processes waiting on each other).
+
+### Level 5: a special case, graphs where every vertex has one exit
+
+If every vertex has **at most one** outgoing arrow, the graph is called a *functional graph*. Following the arrows from any start traces a single path, which either stops or falls into a cycle. Then every component is either a single vertex or **exactly one cycle**, and no DFS is needed: walk each path, stamp each vertex with the time you reached it, and detect a cycle when you step onto a vertex stamped during the **current** walk. LeetCode 2360 below uses exactly this.
+
+## Why it works and what it costs
+
+**Kosaraju–Sharir.** The key lemma is the inequality of Level 2: if the condensation has an arrow $C \to C'$, then $C$ contains a vertex that finishes later than every vertex of $C'$. (If the search entered $C$ first, it reached all of $C'$ before leaving $C$; if it entered $C'$ first, it could not reach $C$ at all and finished $C'$ entirely first.) So the overall last finisher is in a source component. In the reversed graph that component is a sink, so pass 2 labels exactly that component. Remove it and repeat the argument on what is left.
+
+**Tarjan.** The invariant is: *the stack holds, in discovery order, exactly the discovered vertices whose component is not complete.* A vertex $u$ with $\text{low}(u) = \text{index}(u)$ cannot reach any older vertex still on the stack, so no vertex above it can either, and none of them can reach outside without coming back through $u$. Everything above $u$ on the stack is therefore $u$'s component.
+
+**Costs on the example** ($V = 6$, $E = 7$):
+
+| Method | Time | Extra space | On our six crossings |
+| --- | --- | --- | --- |
+| Reachability from every vertex | $O(V (V + E))$ | $O(V^2)$ | $6 \times 13 = 78$ steps, a $6 \times 6$ table |
+| Kosaraju–Sharir | $O(V + E)$ | reversed graph, $O(V + E)$ | 2 passes of 13 steps |
+| Tarjan | $O(V + E)$ | $O(V)$ | 1 pass of 13 steps |
+| Functional graph walk | $O(V)$ | $O(V)$ | only when every vertex has one exit |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Pass 2 of Kosaraju on the **original** graph | Components merge with everything downstream | Pass 2 must use the reversed graph |
+| Pass 2 in increasing finishing order | The first search leaks out of a sink component and merges groups | Take the latest finisher first |
+| Tarjan updating `low` from a vertex that is not on the stack | Separate components are merged | Use `index[v]` only when `onStack[v]` |
+| Using an undirected connected-components algorithm on a directed graph | 0 and 5 end up together, although 5 cannot return | Strong connectivity needs paths both ways |
+| Assuming a component of size 1 is a cycle | Every isolated vertex is reported as a deadlock | A size-1 component is a cycle only if it has a self-loop |
+| Deep recursion on $10^5$ vertices | `StackOverflowError` | An iterative DFS, or run in a `Thread` with a bigger stack |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 1557: Minimum Number of Vertices to Reach All Nodes (Medium)
+
+**Problem.** Given a directed **acyclic** graph with $n$ vertices, return the smallest set of vertices from which every vertex is reachable. For $n = 6$ and edges `[[0,1],[0,2],[2,5],[3,4],[4,2]]` the answer is `[0,3]`.
+
+**Math first.** In a DAG every component is a single vertex, so the condensation is the graph itself. A vertex with no incoming edge cannot be reached from anywhere else, so it **must** be chosen; and every other vertex can be traced backwards to such a vertex, so those are **enough**:
+
+$$
+\text{answer} = \lbrace v : \text{in}(v) = 0 \rbrace
+$$
+
+where $\text{in}(v)$ is the number of edges pointing into $v$. In a graph with cycles the same reasoning picks one vertex from each source component of the condensation.
+
+Example: the edges point into 1, 2, 5, 4 and 2. The vertices never pointed at are 0 and 3, so the answer is $\lbrace 0, 3 \rbrace$. From 0 you reach 1, 2, 5; from 3 you reach 4, 2, 5.
+
+**Idea.** Mark every vertex that some edge points into, and return the unmarked ones.
+
+```java
+static List<Integer> findSmallestSetOfVertices(int n, List<List<Integer>> edges) {
+    boolean[] hasIncoming = new boolean[n];
+    for (List<Integer> e : edges) hasIncoming[e.get(1)] = true;
+    List<Integer> sources = new ArrayList<>();
+    for (int v = 0; v < n; v++) if (!hasIncoming[v]) sources.add(v);
+    return sources;
+}
+```
+
+**Answer.** `[0,3]` for the example, and `[0,2,3]` for LeetCode's second example. $O(V + E)$ time and $O(V)$ space: for $10^5$ vertices and edges, about $2 \times 10^5$ steps.
+
+### 2. LeetCode 802: Find Eventual Safe States (Medium)
+
+**Problem.** `graph[i]` lists the vertices that $i$ points to. A vertex is **terminal** if it has no exits, and **safe** if every path from it ends at a terminal vertex. Return the safe vertices in increasing order. For `[[1,2],[2,3],[5],[0],[5],[],[]]` the answer is `[2,4,5,6]`.
+
+**Math first.** A vertex is unsafe exactly when some path from it can go round a cycle forever, that is, when it can reach a component of size at least 2 (or a self-loop). Equivalently, safety is defined from the exits:
+
+$$
+\text{safe}(v) \iff \forall\, (v \to w):\ \text{safe}(w)
+$$
+
+where:
+
+- $\forall$ means "for every": every exit of $v$ must lead to a safe vertex;
+- a terminal vertex has no exits, so it is safe automatically;
+- we want the smallest set satisfying this rule, which is what repeatedly peeling off safe vertices produces.
+
+Example: terminals 5 and 6 are safe. Vertex 2's only exit is 5, so 2 is safe. Vertex 4's only exit is 5, so 4 is safe. Vertex 0 exits to 1 and 2, but 1 exits to 3 and 3 exits back to 0: the cycle $0 \to 1 \to 3 \to 0$ is a component of size 3, so 0, 1 and 3 are never peeled. Safe: $\lbrace 2, 4, 5, 6 \rbrace$.
+
+**Idea.** This is Kahn's algorithm on the reversed graph. Count each vertex's exits; start from the terminals; each time a vertex becomes safe, its parents lose one unsafe exit, and a parent with none left becomes safe too.
+
+```java
+static List<Integer> eventualSafeNodes(int[][] graph) {
+    int n = graph.length;
+    List<List<Integer>> parents = new ArrayList<>();
+    for (int i = 0; i < n; i++) parents.add(new ArrayList<>());
+    int[] exitsLeft = new int[n];
+    for (int u = 0; u < n; u++) {
+        exitsLeft[u] = graph[u].length;
+        for (int v : graph[u]) parents.get(v).add(u);
+    }
+    Deque<Integer> ready = new ArrayDeque<>();
+    for (int v = 0; v < n; v++) if (exitsLeft[v] == 0) ready.add(v);
+    boolean[] safe = new boolean[n];
+    while (!ready.isEmpty()) {
+        int v = ready.poll();
+        safe[v] = true;
+        for (int u : parents.get(v)) if (--exitsLeft[u] == 0) ready.add(u);   // every exit of u is now safe
+    }
+    List<Integer> answer = new ArrayList<>();
+    for (int v = 0; v < n; v++) if (safe[v]) answer.add(v);
+    return answer;
+}
+```
+
+**Answer.** `[2,4,5,6]` for the example, and `[4]` for LeetCode's second example. Each vertex is peeled at most once and each edge decremented once: $O(V + E)$ time and space, about $10^4 + 4 \times 10^4 = 5 \times 10^4$ steps at LeetCode's limits of $10^4$ vertices and $4 \times 10^4$ edges. Running Tarjan and marking every vertex that can reach a component of size at least 2 gives the same answer.
+
+### 3. LeetCode 2360: Longest Cycle in a Graph (Hard)
+
+**Problem.** Each vertex $i$ has at most one exit, `edges[i]` ($-1$ for none). Return the length of the longest cycle, or $-1$ if there is none. For `[3,3,4,2,3]` the answer is 3, from the cycle $2 \to 4 \to 3 \to 2$.
+
+**Math first.** This is a functional graph (Level 5), so every component with more than one vertex is a single cycle. Walk from each unvisited vertex, stamping each vertex $v$ with the time $t(v)$ you reach it. If the walk steps onto a vertex $v$ stamped **during this walk**, the vertices from $v$ to the current one form the cycle:
+
+$$
+\text{cycle length} = t_{\text{now}} - t(v) + 1, \qquad \text{provided } t(v) \ge t_{\text{walk start}}
+$$
+
+where:
+
+- $t_{\text{now}}$ is the stamp of the last vertex added before stepping back onto $v$;
+- $t(v)$ is the stamp of the vertex we stepped onto;
+- the condition $t(v) \ge t_{\text{walk start}}$ checks that $v$ was reached in this walk, not in an earlier one (an earlier walk's cycle has already been counted).
+
+Example: walk from 0: $t(0) = 1$, $t(3) = 2$, $t(2) = 3$, $t(4) = 4$, then step to 3, stamped at $2 \ge 1$. Length $4 - 2 + 1 = 3$. Walk from 1: $t(1) = 5$, then step to 3, stamped at $2 < 5$, so this is an old cycle and is not counted again. Answer 3.
+
+**Idea.** One stamp array, one clock. Every vertex is stamped exactly once across all walks.
+
+```java
+static int longestCycle(int[] edges) {
+    int n = edges.length, best = -1, clock = 0;
+    int[] visitedAt = new int[n];                       // 0 = never visited
+    for (int start = 0; start < n; start++) {
+        if (visitedAt[start] != 0) continue;
+        int walkStart = clock + 1, v = start;
+        while (v != -1 && visitedAt[v] == 0) {
+            visitedAt[v] = ++clock;
+            v = edges[v];
+        }
+        if (v != -1 && visitedAt[v] >= walkStart) best = Math.max(best, clock - visitedAt[v] + 1);  // met our own trail
+    }
+    return best;
+}
+```
+
+**Answer.** 3 for the example, $-1$ for `[2,-1,3,1]` (the walk $0 \to 2 \to 3 \to 1$ ends at a dead end), and 2 for `[1,0]`. $O(n)$ time and space, since each of up to $10^5$ vertices is stamped once. Tarjan's algorithm also works, taking the largest component of size at least 2, but the walk is simpler.
+
+## Mathematical Abstraction
+
+Strong connectivity is an equivalence relation, its classes are the components, and contracting them leaves a DAG:
+
+$$
+u \sim v \iff (u \leadsto v) \land (v \leadsto u), \qquad V = C_1 \sqcup C_2 \sqcup \dots \sqcup C_k, \qquad G^{\text{SCC}} \text{ is acyclic}
+$$
+
+where:
+
+- $u \leadsto v$ means a directed path leads from $u$ to $v$, and $\sim$ is "reach each other";
+- $\sqcup$ is a union of non-overlapping sets, so every vertex lies in exactly one component $C_i$;
+- $G^{\text{SCC}}$ is the condensation, with one vertex per component and an arrow $C_i \to C_j$ when some edge leads from $C_i$ to $C_j$.
+
+Example: the six crossings split as $\lbrace 0, 1, 2 \rbrace \sqcup \lbrace 3, 4 \rbrace \sqcup \lbrace 5 \rbrace$, so $k = 3$, and the condensation is the chain $C_0 \to C_1 \to C_2$. Kosaraju reports the components in that order ($[0, 0, 0, 1, 1, 2]$), Tarjan in the reverse order, with low-links $(0, 0, 0, 3, 3, 5)$. Adding $\max(s, t) = \max(1, 1) = 1$ street, $5 \to 0$, makes $k = 1$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 20 "Elementary Graph Algorithms", Section 20.3 "Depth-first search" and Section 20.5 "Strongly connected components" (the two-pass algorithm and the component graph). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §4.2 "Directed Graphs", with Java `KosarajuSharirSCC` and `TarjanSCC`: <https://algs4.cs.princeton.edu/42digraph/>.
+- Jeff Erickson, *Algorithms* (2019), Chapter 6 "Depth-First Search", free at <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- Robert Tarjan, "Depth-first search and linear graph algorithms", *SIAM Journal on Computing* 1(2), 1972.
+- Micha Sharir, "A strong-connectivity algorithm and its applications in data flow analysis", *Computers & Mathematics with Applications* 7(1), 1981.
+- LeetCode: [1557. Minimum Number of Vertices to Reach All Nodes](https://leetcode.com/problems/minimum-number-of-vertices-to-reach-all-nodes/), [802. Find Eventual Safe States](https://leetcode.com/problems/find-eventual-safe-states/), [2360. Longest Cycle in a Graph](https://leetcode.com/problems/longest-cycle-in-a-graph/).
+
+[← Minimum Spanning Tree](../minimum-spanning-tree/index.qmd) · [Graph Algorithms and Connectivity](../groups/05-graph-algorithms.qmd) · [Biconnected Component →](../biconnected-component/index.qmd)

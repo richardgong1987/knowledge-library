@@ -1,67 +1,428 @@
 ---
 title: "Union-Find"
-description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
+description: "From quick-find to union by size with path compression: the parent array, find and union traced on six elements, why the trees stay shallow, the inverse Ackermann bound, and hard interview problems solved math-first."
 ---
 
-## Begin with an actual graph
+Union-find (also called a *disjoint-set* structure) keeps track of groups that only ever merge. It answers "are these two in the same group?" and "how many groups are there?" in almost one step each. This lesson builds it in four small improvements, traces every array on six elements, and then uses it on four interview problems.
 
-**LeetCode 547 — Number of Provinces.** Imagine cities 0,1,2,3. Roads connect 0–1 and 1–2, so the first three cities belong to one province while city 3 remains separate.
+All code is in [`UnionFindLab.java`](UnionFindLab.java). Run it from this folder with `java UnionFindLab.java`; it checks every number on this page and prints `OK`.
 
-The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
+## The problem
 
-## Why a tempting approach is wrong or wasteful
-
-Re-run DFS over all previous roads after each new road to discover components. If there are many online connection queries, this repeats the same traversals.
-
-## The idea that simplifies the problem
-
-Use a forest of parent pointers. Every city points, directly or indirectly, to one representative. Union merges two representative sets; find determines membership.
-
-## Formalise it — explain symbols immediately
+Six children, numbered 0 to 5, arrive in a playground. During the morning the teacher hears about new friendships, one at a time:
 
 $$
-connected(u,v)\iff find(u)=find(v)
+(0, 1), \quad (2, 3), \quad (0, 2), \quad (4, 5), \quad (5, 3)
 $$
 
-**Every symbol explained:** u and v are cities; find(x) returns the representative/root for the component containing x. The double arrow means 'if and only if'.
+where each pair $(a, b)$ means "child $a$ and child $b$ became friends", and a friend of a friend counts as being in the same group.
 
-**Numbers substituted into the relation:** Start representatives [0,1,2,3]. Union(0,1) makes find(0)=find(1). Union(1,2) makes find(2) equal too. Thus connected(0,2) is true; connected(0,3) is false; there are two components.
+Example: after the first three pairs, children 0, 1, 2 and 3 form one group, while 4 and 5 are still alone. After the fourth pair there are two groups, $\lbrace 0, 1, 2, 3 \rbrace$ and $\lbrace 4, 5 \rbrace$. After the fifth pair everybody is in one group.
 
-Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
+Between friendships the teacher keeps asking two questions: *are children 1 and 3 in the same group?* and *how many groups are there now?*
 
-## Algorithm progression
+- Searching the friendship graph (depth-first or breadth-first) answers one question in $O(V + E)$ steps, where $V$ is the number of children and $E$ the number of friendships.
+- With $10^5$ children, $10^5$ friendships and $10^5$ questions, that is about $10^5 \times 2 \times 10^5 = 2 \times 10^{10}$ steps. Far too slow.
+- We want each question and each new friendship to cost **about one step**.
 
-1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
-2. Start from the concrete example above and perform one legal edge decision.
-3. Record the changed state and check whether the invariant still holds.
-4. Continue until all required edges, vertices, or candidate states have been processed.
+## Explain it like I'm ten
 
-**Proof sketch:** Each union merges exactly two previously distinct equivalence classes. Path compression only changes parent pointers, not which root any node reaches; union-by-size bounds tree growth.
+::: {.callout-tip}
+Every friend group has a **captain**. Each child points at one other child in the same group, someone who is "closer to the captain". The captain points at herself.
 
-## Run a small implementation
+- *Which group am I in?* Follow the pointing fingers until you reach someone who points at herself. That is your captain. Two children are in the same group exactly when they reach the same captain.
+- *Two groups become friends?* The two captains meet, and the captain of the **smaller** group starts pointing at the captain of the bigger one. Now everyone has one captain again.
+- *A shortcut:* after you have walked to your captain once, you and everyone you passed on the way point **straight at the captain**. Next time it is one step.
 
-~~~js
-import { DSU } from '../examples/patterns.mjs';
+Robert Sedgewick and Kevin Wayne open their book *Algorithms* (4th edition, Section 1.5) with exactly this problem, which they call *dynamic connectivity*. They improve it step by step: quick-find, then quick-union, then weighted quick-union, then path compression. This lesson follows the same path.
+:::
 
-const d=new DSU(4); d.union(0,1); d.union(1,2); console.log(d.find(0)===d.find(2));
-~~~
+## From simple to advanced
 
-The implementation is in the [small, tested Node.js algorithms lab](../examples/patterns.mjs). Save the snippet beside this `.qmd` as a `.mjs` file and run it with Node.
+### Level 1: quick-find, one label per child
 
-The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+Give every child a group label `id[x]`. Two children are friends-of-friends exactly when their labels match, which is one comparison. To merge two groups, relabel every child of one group, which means scanning the whole array.
 
-## Work and limitations
+$$
+\text{cost}(\text{union}) = n, \qquad \text{cost}(m \text{ unions}) = m \cdot n
+$$
 
-**Complexity:** O((n+m) α(n)) for n elements and m union/find operations with path compression and union by rank; α(n) is inverse Ackermann, extremely slow growing.
+where:
 
-**Where this reasoning fails:** This data structure is for connectivity under additions. It does not directly support arbitrary edge deletions while preserving fast queries.
+- $n$ is the number of elements (children);
+- one union reads all $n$ labels, because any of them might need relabelling;
+- $m$ is the number of unions performed.
 
-As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+Example: $n = 6$ and the first three unions cost $3 \times 6 = 18$ label reads. With $n = 10^5$ and $m = 10^5$ unions the cost is $10^{10}$ reads, the same disaster as before.
 
-## Connections
+```java
+boolean connected(int a, int b) {
+    return id[a] == id[b];
+}
 
-- **Textbook:** CLRS Chapter 19 (disjoint-set forests).. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **Practice:** LeetCode 547 — Number of Provinces. Treat any online solution as a second explanation to compare, not a script to copy.
-- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+void union(int a, int b) {
+    int from = id[a], to = id[b];
+    for (int i = 0; i < id.length; i++) {
+        if (id[i] == from) id[i] = to;          // relabel the whole group: n steps every time
+    }
+}
+```
 
-[← Algorithms](../index.qmd)
+After `union(0, 1)`, `union(2, 3)` and `union(0, 2)`:
+
+```text
+child: 0  1  2  3  4  5
+id   : 3  3  3  3  4  5
+```
+
+### Level 2: quick-union, a parent array
+
+Instead of a label, each element stores one **parent**. Following parents leads to a **root**, an element that is its own parent, and the root names the group. This is a forest: one tree per group. A union now changes only **one** entry: one root starts pointing at the other.
+
+$$
+\text{cost}(\text{find}(x)) = \text{depth}(x) + 1
+$$
+
+where:
+
+- $\text{find}(x)$ returns the root of $x$'s tree;
+- $\text{depth}(x)$ is the number of parent steps from $x$ to its root, so a root has depth 0;
+- the $+1$ is the final check that the root is its own parent.
+
+Example: the danger is a tall, thin tree. Union 0 with 1, then 0 with 2, and so on up to 5, always hanging the root of 0's tree under the other element:
+
+```text
+parent: [1, 2, 3, 4, 5, 5]      chain 0 → 1 → 2 → 3 → 4 → 5
+```
+
+Now $\text{depth}(0) = 5 = n - 1$, so $\text{find}(0)$ costs $5 + 1 = 6$ steps. With $n = 10^5$ a single find could take $10^5$ steps. We only moved the slowness from `union` to `find`.
+
+```java
+int find(int x) {
+    while (parent[x] != x) x = parent[x];
+    return x;
+}
+
+void union(int a, int b) {
+    parent[find(a)] = find(b);
+}
+```
+
+### Level 3: union by size keeps every tree short
+
+The fix is the captain rule: **hang the smaller tree under the root of the bigger one**. Keep `size[r]`, the number of elements in the tree whose root is $r$.
+
+$$
+\text{depth}(x) \le \lfloor \log_2 n \rfloor
+$$
+
+where:
+
+- $\text{depth}(x)$ is the number of parent steps from $x$ to its root;
+- $n$ is the number of elements;
+- $\lfloor \cdot \rfloor$ rounds down to a whole number.
+
+**Why.** $x$ gets one step deeper only when its tree is hung under another root, and union by size only does that when the other tree is **at least as big**. So every time $x$ gets deeper, the size of $x$'s tree at least doubles. It starts at 1 and can never exceed $n$, so it can double at most $\log_2 n$ times.
+
+Example: for $n = 6$, $\lfloor \log_2 6 \rfloor = \lfloor 2.58 \rfloor = 2$, so no find ever takes more than 2 parent steps. For $n = 10^6$ the bound is $\lfloor 19.93 \rfloor = 19$ steps instead of up to 999,999. In the chain experiment from Level 2, union by size hangs every new element straight under 0, so the parent array becomes `[0, 0, 0, 0, 0, 0]` and every depth is at most 1.
+
+```java
+boolean union(int a, int b) {
+    int ra = find(a), rb = find(b);
+    if (ra == rb) return false;                 // already one group: this edge would close a cycle
+    if (size[ra] < size[rb]) { int t = ra; ra = rb; rb = t; }
+    parent[rb] = ra;                            // hang the smaller tree under the bigger root
+    size[ra] += size[rb];
+    count--;
+    return true;
+}
+```
+
+Trace on our six children. Start with `parent = [0, 1, 2, 3, 4, 5]` and every size 1.
+
+| Step | Roots found | Sizes compared | Change | `parent` after |
+| --- | --- | --- | --- | --- |
+| `union(0, 1)` | 0 and 1 | 1 vs 1, tie | `parent[1] = 0`, `size[0] = 2` | `[0, 0, 2, 3, 4, 5]` |
+| `union(2, 3)` | 2 and 3 | 1 vs 1, tie | `parent[3] = 2`, `size[2] = 2` | `[0, 0, 2, 2, 4, 5]` |
+| `union(0, 2)` | 0 and 2 | 2 vs 2, tie | `parent[2] = 0`, `size[0] = 4` | `[0, 0, 0, 2, 4, 5]` |
+| `union(4, 5)` | 4 and 5 | 1 vs 1, tie | `parent[5] = 4`, `size[4] = 2` | `[0, 0, 0, 2, 4, 4]` |
+
+After the third union, child 3 sits at depth 2 (3 → 2 → 0). Its tree has 4 elements and $\log_2 4 = 2$, so the bound is met exactly.
+
+**Union by rank** is the variant in CLRS. Instead of the size, each root stores a *rank*, an upper bound on its tree's height. The lower-rank root goes under the higher-rank one, and a rank grows by 1 only when two equal ranks meet. The same doubling argument gives the same $\log_2 n$ bound. Size is easier to explain and also tells you how big each group is.
+
+### Level 4: path compression and the inverse Ackermann function
+
+Every find walks from $x$ to the root anyway, so on the way back it can make **every node on the path point straight at the root**. This is one line of recursion:
+
+```java
+int find(int x) {
+    if (parent[x] != x) parent[x] = find(parent[x]);   // path compression: point x straight at the root
+    return parent[x];
+}
+```
+
+Continue the trace from `parent = [0, 0, 0, 2, 4, 4]`:
+
+- `find(3)` walks 3 → 2 → 0, returns root 0 and sets `parent[3] = 0`. Now `parent = [0, 0, 0, 0, 4, 4]`.
+- `union(5, 3)` finds roots 4 (size 2) and 0 (size 4). The smaller tree goes under the bigger: `parent[4] = 0`, `size[0] = 6`. Now `parent = [0, 0, 0, 0, 0, 4]`.
+
+Everybody is one group, and the deepest child, 5, is 2 steps from the root.
+
+With union by rank or size **and** path compression together, Robert Tarjan proved in 1975 that any sequence of operations is almost linear:
+
+$$
+\text{total cost of } m \text{ operations on } n \text{ elements} = O\big(m \, \alpha(n)\big), \qquad \alpha(n) = \min \lbrace k : A_k(1) \ge n \rbrace
+$$
+
+where:
+
+- $m$ is the number of `find` and `union` calls;
+- $A_k$ is the *Ackermann function*, which grows ridiculously fast as $k$ grows: CLRS defines it by $A_0(j) = j + 1$ and "apply $A_{k-1}$ to $j$, $j + 1$ times" for $A_k(j)$;
+- $\alpha(n)$, the *inverse Ackermann function*, is the smallest level $k$ at which $A_k(1)$ reaches $n$.
+
+Example: the first values are $A_0(1) = 2$, $A_1(1) = 3$, $A_2(1) = 7$, $A_3(1) = 2047$, and $A_4(1)$ is far larger than $10^{80}$, the estimated number of atoms in the observable universe. So:
+
+- for our $n = 6$: $A_1(1) = 3 < 6 \le 7 = A_2(1)$, so $\alpha(6) = 2$;
+- for $n = 10^6$: $A_3(1) = 2047 < 10^6$, but $A_4(1) \ge 10^6$, so $\alpha(10^6) = 4$;
+- for any $n$ you could ever store, $\alpha(n) \le 4$.
+
+So $m = 10^6$ operations on $10^6$ elements cost about $4 \times 10^6$ pointer steps, times a small constant. In practice that is "one step per operation". In 1979 Tarjan also proved that a broad class of pointer-based set-union algorithms cannot avoid this $\alpha$ factor, so the bound is not just a weakness of the proof.
+
+**Path halving** is an iterative variant: while walking up, set `parent[x] = parent[parent[x]]` and jump to the grandparent. It halves the path in one pass, needs no recursion, and has the same $O(\alpha(n))$ amortised bound.
+
+### Level 5: what the forest tells you
+
+A union-find answers more than "same group?".
+
+$$
+c = n - u
+$$
+
+where:
+
+- $c$ is the number of groups (connected components);
+- $n$ is the number of elements;
+- $u$ is the number of **successful** unions, the calls that returned `true` because they joined two different groups.
+
+Example: our five friendships were all successful, so $c = 6 - 5 = 1$. Asking for `union(1, 5)` now returns `false`, because 1 and 5 already share root 0, and $c$ stays 1.
+
+That `false` has a second meaning: **the edge $(a, b)$ closes a cycle**, because $a$ and $b$ were already connected some other way. Kruskal's minimum-spanning-tree algorithm uses exactly this test to skip edges.
+
+Real variants you will meet:
+
+- **Weighted union-find.** Each element also stores a number relative to its parent, such as "$x$ is twice $y$". Find multiplies along the path. It solves equation systems like LeetCode 399, Evaluate Division.
+- **Offline deletion.** Union-find cannot split a group. If edges are deleted, process the operations backwards so deletions become unions.
+- **Rollback.** Union by size *without* path compression changes only two entries per union, so a union can be undone. This is the basis of offline dynamic connectivity.
+
+## Why it works and what it costs
+
+**The invariant.** *Two elements are in the same group exactly when `find` returns the same root for both.*
+
+- *Initially* every element is its own root and its own group, so it holds.
+- *`union` keeps it:* it changes only the parent of one root, `rb`, to the other root, `ra`. Every element that used to reach `rb` now reaches `ra`, which is exactly the merged group, and no other element moves.
+- *Path compression keeps it:* it changes `parent[x]` from some ancestor of $x$ to the root of $x$'s own tree. The root that $x$ reaches is unchanged.
+
+**The costs, counted on the example.** In the Level 2 chain, `find(0)` takes 5 parent steps. With union by size the same five unions give depth at most 1, and in the mixed trace the worst depth is 2, as the $\lfloor \log_2 6 \rfloor = 2$ bound promises.
+
+| Version | `find` | `union` | $m$ operations, $n = 10^6$ |
+| --- | --- | --- | --- |
+| Quick-find | $O(1)$ | $O(n)$ | up to $10^{12}$ steps |
+| Quick-union | $O(n)$ worst | $O(n)$ worst | up to $10^{12}$ steps |
+| Union by size or rank | $O(\log n)$ | $O(\log n)$ | about $2 \times 10^7$ steps |
+| Size or rank plus path compression | $O(\alpha(n))$ amortised | $O(\alpha(n))$ amortised | about $4 \times 10^6$ steps |
+
+Memory is two integer arrays of length $n$ (`parent` and `size`).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| `parent[a] = b` instead of linking the two **roots** | Elements fall out of their group; answers become wrong after a few unions | Always link `find(a)` and `find(b)` |
+| Testing `parent[a] == parent[b]` | Two members of one group at different depths look like strangers | Compare `find(a) == find(b)` |
+| Decrementing the group count on every union | The count goes too low, even negative | Decrement only when the roots differ |
+| Nodes numbered 1 to $n$ in an array of size $n$ | `ArrayIndexOutOfBoundsException` on node $n$ | Allocate $n + 1$ slots, or subtract 1 from every label |
+| Recursive `find` without union by size | `StackOverflowError` on a chain of $10^5$ elements | Union by size or rank keeps depth below 17 for $10^5$; or use iterative path halving |
+| Expecting union-find to delete an edge | No such operation exists | Rebuild, or process the operations in reverse |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 547: Number of Provinces (Medium)
+
+**Problem.** `isConnected[i][j] = 1` means cities $i$ and $j$ are directly connected. A province is a group of directly or indirectly connected cities. Count the provinces. For `[[1,1,0],[1,1,0],[0,0,1]]` the answer is 2.
+
+**Math first.** Provinces are connected components, so Level 5 applies:
+
+$$
+\text{provinces} = n - u
+$$
+
+where:
+
+- $n$ is the number of cities;
+- $u$ is the number of successful unions over all pairs $i < j$ with $\text{isConnected}[i][j] = 1$.
+
+Example: $n = 3$. The only connected pair with $i < j$ is $(0, 1)$, and joining it succeeds, so $u = 1$ and there are $3 - 1 = 2$ provinces: $\lbrace 0, 1 \rbrace$ and $\lbrace 2 \rbrace$.
+
+**Idea.** Read only the upper triangle of the symmetric matrix, union every connected pair, and return the union-find's group count.
+
+```java
+static int findCircleNum(int[][] isConnected) {
+    int n = isConnected.length;
+    UnionFind uf = new UnionFind(n);
+    for (int i = 0; i < n; i++) {
+        for (int j = i + 1; j < n; j++) {
+            if (isConnected[i][j] == 1) uf.union(i, j);
+        }
+    }
+    return uf.count;
+}
+```
+
+**Answer.** 2 for the example, and 3 for the identity matrix (no roads). The matrix has $\frac{n(n-1)}{2}$ pairs above the diagonal, so for $n = 200$ that is 19,900 checks, each with an $O(\alpha(n))$ union: $O(n^2 \alpha(n))$ time and $O(n)$ extra space.
+
+### 2. LeetCode 684: Redundant Connection (Medium)
+
+**Problem.** A tree on nodes $1 \dots n$ had one extra edge added. Return an edge whose removal leaves a tree; if there are several, return the one that appears last in the input. For `[[1,2],[2,3],[3,4],[1,4],[1,5]]` the answer is `[1,4]`.
+
+**Math first.** A tree on $n$ nodes has exactly $n - 1$ edges, so $n$ edges contain exactly one cycle. Read the edges in order:
+
+$$
+e = (a, b) \text{ is redundant} \iff \text{find}(a) = \text{find}(b) \text{ when } e \text{ arrives}
+$$
+
+where:
+
+- $\text{find}(a) = \text{find}(b)$ means $a$ and $b$ are already connected by earlier edges;
+- such an edge closes the cycle, and it is the **last** cycle edge in the input, which is the one the problem wants.
+
+Example: $(1,2)$, $(2,3)$ and $(3,4)$ succeed and build the group $\lbrace 1, 2, 3, 4 \rbrace$. Then $(1, 4)$ arrives with $\text{find}(1) = \text{find}(4)$, so the answer is $[1, 4]$. The cycle is $1 - 2 - 3 - 4 - 1$.
+
+**Idea.** Union the edges in order and return the first one whose union fails.
+
+```java
+static int[] findRedundantConnection(int[][] edges) {
+    UnionFind uf = new UnionFind(edges.length + 1);
+    for (int[] e : edges) {
+        if (!uf.union(e[0], e[1])) return e;        // both ends already joined: e closes the cycle
+    }
+    throw new IllegalArgumentException("the input has no cycle");
+}
+```
+
+**Answer.** `[1,4]` for the example, and `[2,3]` for `[[1,2],[1,3],[2,3]]`. Each of the $n$ edges costs one $O(\alpha(n))$ union: $O(n \, \alpha(n))$ time, $O(n)$ space. For $n = 1000$ that is about 1,000 unions.
+
+### 3. LeetCode 685: Redundant Connection II (Hard)
+
+**Problem.** The same idea with **directed** edges: a rooted tree (every node has one parent, except the root) had one extra directed edge added. Return the edge to remove, preferring the last one in the input. For `[[2,1],[3,1],[4,2],[1,4]]` the answer is `[2,1]`.
+
+**Math first.** In a rooted tree the in-degree is $\text{in}(v) = 1$ for every node except the root, which has $\text{in}(r) = 0$. One extra edge breaks this in one of three ways, and each has its own answer:
+
+$$
+\text{answer} =
+\begin{cases}
+\text{second}, & \text{some } \text{in}(v) = 2 \text{ and removing second leaves no cycle} \\
+\text{first}, & \text{some } \text{in}(v) = 2 \text{ and a cycle remains without second} \\
+\text{the edge that closes the cycle}, & \text{every } \text{in}(v) \le 1
+\end{cases}
+$$
+
+where:
+
+- $\text{in}(v)$ is the number of edges pointing into $v$;
+- *first* and *second* are the two edges into the node $v$ with $\text{in}(v) = 2$, in input order;
+- a cycle is detected with union-find exactly as in LeetCode 684.
+
+Example: node 1 has two parents, so first $= [2, 1]$ and second $= [3, 1]$. Leave out $[3, 1]$ and union the rest: $2 - 1$ succeeds, $4 - 2$ succeeds, then $1 - 4$ fails because 1 and 4 are already joined. A cycle $1 \to 4 \to 2 \to 1$ remains, so the bad edge is first, $[2, 1]$. Check: without it, $3 \to 1 \to 4 \to 2$ is a valid tree rooted at 3.
+
+**Idea.** Find the node with two parents, if any. Try the edges without the later parent edge: if nothing fails, the later edge was the extra one. If a union fails, the answer is the earlier parent edge, or, when no node had two parents, the edge that failed.
+
+```java
+static int[] findRedundantDirectedConnection(int[][] edges) {
+    int n = edges.length;
+    int[] parentOf = new int[n + 1];
+    int[] first = null, second = null;              // the two edges into a node with two parents
+    for (int[] e : edges) {
+        if (parentOf[e[1]] == 0) parentOf[e[1]] = e[0];
+        else { first = new int[] {parentOf[e[1]], e[1]}; second = e; }
+    }
+    UnionFind uf = new UnionFind(n + 1);
+    for (int[] e : edges) {
+        if (e == second) continue;                  // try the tree without the later parent edge
+        if (!uf.union(e[0], e[1])) return first == null ? e : first;
+    }
+    return second;
+}
+```
+
+**Answer.** `[2,1]` for the example; `[2,3]` for `[[1,2],[1,3],[2,3]]` (two parents, no cycle); and `[4,1]` for `[[1,2],[2,3],[3,4],[4,1],[1,5]]` (a cycle, no two parents). Two passes over $n$ edges: $O(n \, \alpha(n))$ time and $O(n)$ space.
+
+### 4. LeetCode 1579: Remove Max Number of Edges to Keep Graph Fully Traversable (Hard)
+
+**Problem.** An undirected graph on nodes $1 \dots n$ has three edge types: type 1 only Alice may use, type 2 only Bob, type 3 both. Remove as many edges as possible so that each of them can still reach every node; return $-1$ if that is impossible from the start. For $n = 4$ and `[[3,1,2],[3,2,3],[1,1,3],[1,2,4],[1,1,2],[2,3,4]]` the answer is 2.
+
+**Math first.** Alice needs a spanning tree of her edges, and so does Bob: $n - 1$ edges each. A shared edge counts for both, so take shared edges first. If $u_3$ shared edges are useful, each person needs only $n - 1 - u_3$ private edges:
+
+$$
+\text{kept} = u_3 + 2(n - 1 - u_3) = 2(n - 1) - u_3, \qquad \text{answer} = \lvert E \rvert - \text{kept}
+$$
+
+where:
+
+- $u_3$ is the number of type-3 edges that joined two groups (successful unions);
+- $\lvert E \rvert$ is the total number of edges;
+- the formula holds only if both people end up with one group; otherwise the answer is $-1$.
+
+Example: $n = 4$, $\lvert E \rvert = 6$. The shared edges $1 - 2$ and $2 - 3$ both succeed, so $u_3 = 2$. Alice then adds $2 - 4$ (her $1 - 3$ and $1 - 2$ are already covered), and Bob adds $3 - 4$. So kept $= 2 \times 3 - 2 = 4$ and the answer is $6 - 4 = \mathbf{2}$.
+
+**Idea.** Keep one union-find per person. Feed shared edges to both, counting an edge as used if it helped either. Then feed private edges to their owner. Greedy is safe because a shared edge can always stand in for one Alice edge and one Bob edge at the same time.
+
+```java
+static int maxNumEdgesToRemove(int n, int[][] edges) {
+    UnionFind alice = new UnionFind(n), bob = new UnionFind(n);
+    int used = 0;
+    for (int[] e : edges) {
+        if (e[0] != 3) continue;                    // shared edges first: one edge serves both people
+        boolean forAlice = alice.union(e[1] - 1, e[2] - 1);
+        boolean forBob = bob.union(e[1] - 1, e[2] - 1);
+        if (forAlice || forBob) used++;
+    }
+    for (int[] e : edges) {
+        if (e[0] == 1 && alice.union(e[1] - 1, e[2] - 1)) used++;
+        if (e[0] == 2 && bob.union(e[1] - 1, e[2] - 1)) used++;
+    }
+    if (alice.count > 1 || bob.count > 1) return -1;
+    return edges.length - used;
+}
+```
+
+**Answer.** 2 for the example, 0 when no edge is spare, and $-1$ for `[[3,2,3],[1,1,2],[2,3,4]]` because Alice can never reach node 4. Two passes over $\lvert E \rvert$ edges with $O(\alpha(n))$ unions: $O(\lvert E \rvert \, \alpha(n))$ time and $O(n)$ space. For $10^5$ edges that is about $2 \times 10^5$ unions.
+
+## Mathematical Abstraction
+
+Union-find maintains a partition of $n$ elements into disjoint groups, each named by a root:
+
+$$
+x \sim y \iff \text{find}(x) = \text{find}(y), \qquad c = n - u, \qquad \text{cost}(m \text{ operations}) = O\big(m \, \alpha(n)\big)
+$$
+
+where:
+
+- $x \sim y$ means "$x$ and $y$ are in the same group", an equivalence relation (reflexive, symmetric, transitive);
+- $\text{find}(x)$ is the root of $x$'s tree;
+- $c$ is the number of groups, $n$ the number of elements and $u$ the number of successful unions;
+- $\alpha(n)$ is the inverse Ackermann function, at most 4 for every practical $n$, and the bound needs both union by size (or rank) and path compression.
+
+Example: on our six children, after five successful unions $c = 6 - 5 = 1$, and $\text{find}(1) = \text{find}(5) = 0$, so $1 \sim 5$. Union by size alone guarantees depth at most $\lfloor \log_2 6 \rfloor = 2$; adding path compression makes the amortised cost per operation $O(\alpha(n))$, and here $\alpha(6) = 2$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 19, "Data Structures for Disjoint Sets": disjoint-set forests, union by rank, path compression and the $\alpha(n)$ analysis. [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §1.5 "Case Study: Union-Find", with Java quick-find, quick-union and weighted quick-union: <https://algs4.cs.princeton.edu/15uf/>.
+- Bernard A. Galler and Michael J. Fischer, "An improved equivalence algorithm", *Communications of the ACM* 7(5), 1964, the original disjoint-set forest.
+- Robert E. Tarjan, "Efficiency of a Good But Not Linear Set Union Algorithm", *Journal of the ACM* 22(2), 1975, the $O(m \, \alpha(n))$ bound.
+- LeetCode: [547. Number of Provinces](https://leetcode.com/problems/number-of-provinces/), [684. Redundant Connection](https://leetcode.com/problems/redundant-connection/), [685. Redundant Connection II](https://leetcode.com/problems/redundant-connection-ii/), [1579. Remove Max Number of Edges to Keep Graph Fully Traversable](https://leetcode.com/problems/remove-max-number-of-edges-to-keep-graph-fully-traversable/).
+
+[Graph Algorithms and Connectivity](../groups/05-graph-algorithms.qmd) · [Shortest Path →](../shortest-path/index.qmd)

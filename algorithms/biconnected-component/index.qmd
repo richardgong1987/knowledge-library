@@ -1,61 +1,354 @@
 ---
 title: "Biconnected Component"
-description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
+description: "Finding the weak spots of an undirected network: articulation points and bridges by definition, the DFS discovery time d[u] and low-link low[u] traced with numbers on six towns, the tests low[v] > d[u] and low[v] ≥ d[u], biconnected blocks with an edge stack, and hard interview problems solved math-first."
 ---
 
-## Begin with an actual graph
+Some vertices and edges hold a network together on their own: remove one and the network falls into pieces. A vertex like that is an **articulation point** (or *cut vertex*), an edge like that is a **bridge**, and the pieces that survive any single vertex failure are the **biconnected components**. This lesson finds all of them with one depth-first search, using two numbers per vertex.
 
-**LeetCode 1192 — Critical Connections in a Network.** In an undirected network, three nodes A,B,C form a triangle and node D is attached only to C. If link C–D fails, D is disconnected.
+All code is in [`BiconnectedComponentLab.java`](BiconnectedComponentLab.java). Run it from this folder with `java BiconnectedComponentLab.java`; it checks every number on this page and prints `OK`.
 
-The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
+## The problem
 
-## Why a tempting approach is wrong or wasteful
+Six towns, numbered 0 to 5, are joined by seven two-way roads:
 
-Remove every edge one by one and run a full reachability search to test whether it was a bridge. This repeats lots of traversal.
+```text
+0 – 1      1 – 2      2 – 0          (a triangle)
+1 – 3                                (one road between the triangles)
+3 – 4      4 – 5      5 – 3          (another triangle)
+```
 
-## The idea that simplifies the problem
+The council asks: **which single town, if it were cut off by a flood, would split the region? Which single road, if it collapsed, would do the same?** By eye: town 1, town 3 and road 1 – 3.
 
-One DFS can compute discovery times and low-link values. A subtree that cannot reach an ancestor without using its parent edge is attached by a bridge.
+- The direct method removes each town (and each road) in turn and counts the pieces with a search: $V$ searches of $O(V + E)$ each, plus $E$ more for the roads. Here that is $(6 + 7) \times 13 = 169$ steps.
+- For $10^5$ towns and $10^5$ roads it is about $(2 \times 10^5)^2 = 4 \times 10^{10}$ steps. We want one search: $O(V + E)$.
 
-## Formalise it — explain symbols immediately
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Two villages sit on either side of a river with a single bridge between them. If that bridge falls down, nobody can get across. That is exactly what a **bridge** means in a graph: an edge that is the *only* way between two parts.
+
+Now think of two groups of friends who only know each other through one child, Sam. If Sam is off sick, the two groups have no way to pass messages. Sam is an **articulation point**.
+
+How do we find them without knocking everything down one at a time? Explore the network like a maze, keeping a ball of string behind you (that is depth-first search). Write on each town the time you first arrived. Then ask every town one question: **"Without walking back along my own string, what is the earliest-numbered town I can get to?"** If the towns beyond some road can only ever get back to themselves, that road is the only way in, so it is a bridge.
+
+John Hopcroft and Robert Tarjan published this one-search method in 1973. CLRS develops it step by step in an end-of-chapter problem, "Articulation points, bridges, and biconnected components" (Problem 22-2 in the 3rd edition).
+:::
+
+## From simple to advanced
+
+### Level 1: the definitions, and the slow way
+
+Write $c(G)$ for the number of connected pieces of a graph $G$. Removing a vertex removes its roads too.
 
 $$
-low(v)=\min\bigl(tin(v),\ tin(w)\text{ for back edges},\ low(c)\text{ for DFS children}\bigr)
+v \text{ is an articulation point} \iff c(G - v) > c(G), \qquad e \text{ is a bridge} \iff c(G - e) > c(G)
 $$
 
-**Every symbol explained:** tin(v) is the discovery time of vertex v; low(v) is the smallest discovery time reachable from v's DFS subtree using tree edges then at most one back edge; c is a DFS child and w a back-edge ancestor.
+where:
 
-**Numbers substituted into the relation:** Suppose DFS discovers A at time 0, B at 1, C at 2 and D at 3, with triangle back edge C→A. Then low(C)=0 due to A; low(D)=3 since D has no back edge. Because low(D)=3>tin(C)=2, edge C–D is a bridge.
+- $G - v$ is the graph with vertex $v$ and all its edges deleted;
+- $G - e$ is the graph with only the edge $e$ deleted;
+- $c(\cdot)$ counts connected pieces.
 
-Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
+Example: our map is one piece, $c(G) = 1$. Removing town 1 leaves $\lbrace 0, 2 \rbrace$ and $\lbrace 3, 4, 5 \rbrace$, so $c(G - 1) = 2 > 1$: an articulation point. Removing town 0 leaves $\lbrace 1, 2, 3, 4, 5 \rbrace$ still joined, so $c(G - 0) = 1$: not one. Counting for every town gives $(1, 2, 1, 2, 1, 1)$, so the articulation points are 1 and 3. Removing the road $1 - 3$ also gives 2 pieces, so it is a bridge; every other road lies on a triangle, so removing it changes nothing.
 
-## Algorithm progression
+```java
+static int componentsWithout(int n, int[][] edges, int removed) {
+    List<List<Integer>> adj = adjacency(n, edges);
+    boolean[] seen = new boolean[n];
+    int pieces = 0;
+    for (int s = 0; s < n; s++) {
+        if (s == removed || seen[s]) continue;
+        pieces++;
+        Deque<Integer> stack = new ArrayDeque<>(List.of(s));
+        seen[s] = true;
+        while (!stack.isEmpty()) {
+            for (int v : adj.get(stack.pop())) {
+                if (v != removed && !seen[v]) { seen[v] = true; stack.push(v); }
+            }
+        }
+    }
+    return pieces;
+}
+```
 
-1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
-2. Start from the concrete example above and perform one legal edge decision.
-3. Record the changed state and check whether the invariant still holds.
-4. Continue until all required edges, vertices, or candidate states have been processed.
+This is correct and worth keeping as a checker, but it repeats a full search for every vertex.
 
-**Proof sketch:** If low(child)>tin(parent), no route from the child's subtree reaches the parent or an ancestor except the tree edge: removing that edge separates the graph. Otherwise a back edge provides an alternate route.
+### Level 2: the DFS tree and its back edges
 
-## Run a small implementation
+Run one depth-first search from town 0 and number the towns in the order they are first reached: the **discovery time** $d[u]$. Every road then plays one of two roles:
 
-Trace a graph of at most four vertices by hand, then write a short DFS/stack routine that maintains the exact invariant below. The general-purpose [DFS/BFS implementations](../examples/patterns.mjs) give a tested starting point; note where the specialised operation requires additional state.
+- a **tree edge**, along which the search first reached a new town (the "string");
+- a **back edge**, which leads from a town to one of its **ancestors** on the string.
 
-The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+In an *undirected* graph there is nothing else: a road between two branches of the tree would have been followed as a tree edge before the search left the first branch. That fact is what makes the method work.
 
-## Work and limitations
+$$
+\text{every edge } (u, w) \text{ satisfies: } u \text{ is an ancestor of } w \text{ or } w \text{ is an ancestor of } u
+$$
 
-**Complexity:** O(V+E) time and O(V) DFS state. Edge IDs or parent-edge handling matter when parallel edges exist.
+where "ancestor" means "on the tree path from the root down to that vertex".
 
-**Where this reasoning fails:** A bridge is an EDGE, an articulation point is a VERTEX, and biconnected components have more specific vertex/edge connectivity definitions. Distinguish these before answering.
+Example: from 0 the search goes $0 \to 1 \to 2$ and finds the road $2 - 0$ back to the root: a back edge. It returns to 1, goes $1 \to 3 \to 4 \to 5$, and finds the road $5 - 3$ back to 3: another back edge. So $d = (0, 1, 2, 3, 4, 5)$ for towns 0 to 5; the tree edges are $0 - 1$, $1 - 2$, $1 - 3$, $3 - 4$, $4 - 5$, and the back edges are $2 - 0$ and $5 - 3$. Each back edge joins a town to its ancestor, as promised.
 
-As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+### Level 3: the low value, how high a subtree can climb
 
-## Connections
+For each town $u$, look at its whole subtree (everything the search reached from $u$) and ask how far **up** the tree it can jump using at most one back edge:
 
-- **Textbook:** Connects to CLRS Chapter 20 (DFS and graph structure); bridge and biconnected algorithms extend these foundations.. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **Practice:** LeetCode 1192 — Critical Connections in a Network. Treat any online solution as a second explanation to compare, not a script to copy.
-- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+$$
+\text{low}[u] = \min\Big(d[u],\;\; \min_{(u, w) \text{ back edge}} d[w],\;\; \min_{v \text{ child of } u} \text{low}[v]\Big)
+$$
 
-[← Algorithms](../index.qmd)
+where:
+
+- $d[u]$ is the discovery time of $u$;
+- a back edge $(u, w)$ jumps from $u$ to an ancestor $w$ (the road to $u$'s own parent does not count: that is the string we came along);
+- a *child* $v$ is a town first reached from $u$ along a tree edge;
+- $\text{low}[u]$ is the smallest discovery time reachable from $u$'s subtree by tree edges downwards and one back edge upwards.
+
+Example: $\text{low}$ is computed as each town finishes, deepest first.
+
+| Town | $d$ | Back edges | Children's low | $\text{low}$ |
+| --- | --- | --- | --- | --- |
+| 2 | 2 | to 0: $d = 0$ | none | $\min(2, 0) = 0$ |
+| 5 | 5 | to 3: $d = 3$ | none | $\min(5, 3) = 3$ |
+| 4 | 4 | none | 5: 3 | $\min(4, 3) = 3$ |
+| 3 | 3 | none | 4: 3 | $\min(3, 3) = 3$ |
+| 1 | 1 | none | 2: 0, 3: 3 | $\min(1, 0, 3) = 0$ |
+| 0 | 0 | none | 1: 0 | $\min(0, 0) = 0$ |
+
+So $\text{low} = (0, 0, 0, 3, 3, 3)$ for towns 0 to 5. The left triangle can climb all the way to 0; the right triangle can climb no higher than 3.
+
+### Level 4: reading off bridges and articulation points
+
+Take a tree edge from parent $u$ to child $v$. Everything in $v$'s subtree can climb up to discovery time $\text{low}[v]$ and no further. Compare that with $d[u]$:
+
+$$
+(u, v) \text{ is a bridge} \iff \text{low}[v] > d[u], \qquad
+u \text{ is an articulation point} \iff
+\begin{cases}
+\text{some child } v \text{ has } \text{low}[v] \ge d[u], & u \text{ is not the root} \\
+u \text{ has at least 2 children}, & u \text{ is the root}
+\end{cases}
+$$
+
+where:
+
+- $u$ is the parent and $v$ a child in the DFS tree;
+- $\text{low}[v] > d[u]$: $v$'s subtree cannot even reach $u$ except through the road $(u, v)$, so that road is its only link;
+- $\text{low}[v] \ge d[u]$: $v$'s subtree cannot get **above** $u$, so removing $u$ cuts it off from the rest;
+- the root has nothing above it, so it is a cut vertex only when it has two subtrees that can only meet through it.
+
+Example, every tree edge of our map:
+
+| Tree edge $(u, v)$ | $\text{low}[v]$ vs $d[u]$ | Bridge? ($>$) | $u$ cut vertex? ($\ge$, non-root) |
+| --- | --- | --- | --- |
+| $(0, 1)$ | $0$ vs $0$ | no | root: has 1 child, so no |
+| $(1, 2)$ | $0$ vs $1$ | no | no |
+| $(1, 3)$ | $3$ vs $1$ | **yes**, $3 > 1$ | **yes**, $3 \ge 1$ |
+| $(3, 4)$ | $3$ vs $3$ | no, $3 \not> 3$ | **yes**, $3 \ge 3$ |
+| $(4, 5)$ | $3$ vs $4$ | no | no |
+
+Result: bridge $1 - 3$, articulation points 1 and 3, exactly as the slow method found. The edge $(3, 4)$ shows why the two tests differ by one symbol: the subtree $\lbrace 4, 5 \rbrace$ can climb back to 3 itself (so the road $3 - 4$ is not a bridge), but not above 3 (so town 3 is a cut vertex).
+
+The root rule in action: in the path $1 - 0 - 2$ searched from 0, the root 0 has two children, 1 and 2, and is indeed a cut vertex. Our root 0 has only one child, because 2 is reached through 1.
+
+```java
+void dfs(int u, int parent) {
+    disc[u] = low[u] = time++;
+    int children = 0;
+    for (int v : adj.get(u)) {
+        if (v == parent) continue;
+        if (disc[v] != -1) { low[u] = Math.min(low[u], disc[v]); continue; }   // back edge to an ancestor
+        children++;
+        dfs(v, u);
+        low[u] = Math.min(low[u], low[v]);
+        if (low[v] > disc[u]) bridges.add(new int[] {u, v});                 // v's subtree cannot reach u or above
+        if (parent != -1 && low[v] >= disc[u]) cutVertices.add(u);         // v's subtree cannot reach above u
+    }
+    if (parent == -1 && children >= 2) cutVertices.add(u);                 // a root needs two separate subtrees
+}
+```
+
+`disc` starts filled with $-1$ ("not visited"), and the constructor calls `dfs(v, -1)` from every unvisited vertex, so a disconnected graph is handled piece by piece. When the loop meets an already-visited **descendant** (the other end of a back edge, seen from above), `Math.min` with its larger `disc` changes nothing. One search, each road looked at twice: $O(V + E)$.
+
+### Level 5: the biconnected components themselves
+
+A **biconnected component** (or *block*) is a maximal set of edges in which every two edges lie on a common simple cycle; a lone bridge is a block by itself. Blocks share no edges, and two blocks meet at most at an articulation point. On our map the blocks are the left triangle $\lbrace 0, 1, 2 \rbrace$, the bridge $\lbrace 1, 3 \rbrace$ and the right triangle $\lbrace 3, 4, 5 \rbrace$.
+
+To collect them, push every edge onto a stack as the search uses it. Whenever a child $v$ of $u$ satisfies $\text{low}[v] \ge d[u]$, the edges pushed since $(u, v)$, together with $(u, v)$ itself, form one block: pop them.
+
+```java
+void dfs(int u, int parent) {
+    disc[u] = low[u] = time++;
+    for (int v : adj.get(u)) {
+        if (v == parent) continue;
+        if (disc[v] == -1) {
+            edgeStack.push(new int[] {u, v});
+            dfs(v, u);
+            low[u] = Math.min(low[u], low[v]);
+            if (low[v] >= disc[u]) blocks.add(popBlock(u, v));   // u seals off v's subtree: a block ends here
+        } else if (disc[v] < disc[u]) {
+            edgeStack.push(new int[] {u, v});                    // a back edge, pushed once from its lower end
+            low[u] = Math.min(low[u], disc[v]);
+        }
+    }
+}
+
+Set<Integer> popBlock(int u, int v) {
+    Set<Integer> block = new TreeSet<>();
+    int[] edge;
+    do {
+        edge = edgeStack.pop();
+        block.add(edge[0]);
+        block.add(edge[1]);
+    } while (edge[0] != u || edge[1] != v);
+    return block;
+}
+```
+
+Trace: the search pushes $0 - 1$, $1 - 2$, $2 - 0$, then $1 - 3$, $3 - 4$, $4 - 5$, $5 - 3$. Back at 3, the child 4 has $\text{low} = 3 \ge d[3] = 3$, so pop down to $3 - 4$: block $\lbrace 3, 4, 5 \rbrace$. Back at 1, child 3 has $3 \ge 1$: pop $1 - 3$, block $\lbrace 1, 3 \rbrace$. Back at 0, child 1 has $0 \ge 0$: pop the rest, block $\lbrace 0, 1, 2 \rbrace$.
+
+Joining each block to the articulation points it contains gives the **block-cut tree**, which is always a tree when the graph is connected:
+
+$$
+\sum_{a \text{ cut vertex}} (\text{blocks containing } a) = B + A - 1
+$$
+
+where $B$ is the number of blocks, $A$ the number of articulation points, and each term on the left counts the tree edges at one articulation point.
+
+Example: town 1 is in 2 blocks and town 3 is in 2 blocks, so the left side is $2 + 2 = 4$; with $B = 3$ and $A = 2$ the right side is $3 + 2 - 1 = 4$. The block-cut tree is the path $\lbrace 0,1,2 \rbrace - 1 - \lbrace 1,3 \rbrace - 3 - \lbrace 3,4,5 \rbrace$.
+
+**A related idea: 2-edge-connected components.** Delete every bridge; the pieces that remain survive any single *road* failure. Here deleting $1 - 3$ leaves $\lbrace 0, 1, 2 \rbrace$ and $\lbrace 3, 4, 5 \rbrace$. Note that these may still contain articulation points: two triangles sharing one town have no bridge, but the shared town is a cut vertex.
+
+## Why it works and what it costs
+
+**Why the low test is right.** Because an undirected DFS has only tree edges and back edges (Level 2), every road leaving $v$'s subtree either is the tree edge $(u, v)$ or is a back edge to an ancestor of $v$, which is $u$ or something above $u$. So:
+
+- If $\text{low}[v] > d[u]$, no back edge from the subtree reaches $u$ or above; the only road out is $(u, v)$. Removing it isolates the subtree: a bridge. Conversely, if $\text{low}[v] \le d[u]$, a back edge gives a second route around $(u, v)$.
+- If $\text{low}[v] \ge d[u]$ and $u$ is not the root, nothing from the subtree reaches strictly above $u$, so every route from the subtree to the root passes through $u$: removing $u$ disconnects them. If $\text{low}[v] < d[u]$ for every child, each subtree has its own way around $u$.
+- The root has no "above". Its children's subtrees cannot be joined by a road (that would be a cross edge), so with two or more children the root is the only link between them.
+
+**Costs on the example** ($V = 6$, $E = 7$):
+
+| Method | Time | On our six towns |
+| --- | --- | --- |
+| Remove each vertex and edge, then search | $O((V + E)(V + E))$ | $13 \times 13 = 169$ steps |
+| One DFS with $d$ and $\text{low}$ | $O(V + E)$ | 6 visits, $2 \times 7 = 14$ adjacency checks |
+| Blocks with an edge stack | $O(V + E)$ | each of the 7 edges pushed and popped once |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Using $\ge$ for bridges or $>$ for cut vertices | Road $3 - 4$ is reported as a bridge, or town 3 is missed | Bridge: $\text{low}[v] > d[u]$. Cut vertex: $\text{low}[v] \ge d[u]$ |
+| Applying the $\ge$ test to the root | The root is always reported, since $\text{low}[v] \ge 0$ | Root: cut vertex only with at least 2 DFS children |
+| Skipping the parent **vertex** when there are parallel roads | A doubled road $u - v$ is reported as a bridge | Skip the parent **edge id** instead, so the second copy counts as a back edge |
+| Updating `low[u]` with `low[w]` across a back edge | A cut vertex can be missed: a subtree that only reaches back to $u$ seems to escape above $u$ through $u$'s own low value | Across a back edge use `disc[w]`; use `low` only from children |
+| Starting the search from one vertex only | Weak spots in other pieces are missed | Start a new search from every unvisited vertex |
+| Recursion on a path of $10^5$ vertices | `StackOverflowError` | Iterative DFS, or a thread with a larger stack |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 1192: Critical Connections in a Network (Hard)
+
+**Problem.** $n$ servers are joined by undirected connections. A connection is **critical** if removing it makes some server unable to reach another. Return all critical connections. For $n = 4$ and `[[0,1],[1,2],[2,0],[1,3]]` the answer is `[[1,3]]`.
+
+**Math first.** Critical connections are exactly the bridges:
+
+$$
+(u, v) \text{ critical} \iff \text{low}[v] > d[u] \quad \text{for the tree edge from parent } u \text{ to child } v
+$$
+
+where $d$ is the DFS discovery time and $\text{low}$ the smallest discovery time reachable from $v$'s subtree using one back edge.
+
+Example: the search from 0 discovers 0, 1, 2, 3, so $d = (0, 1, 2, 3)$. Server 2 has the back edge to 0, so $\text{low}[2] = 0$; server 3 has none, so $\text{low}[3] = 3$; then $\text{low}[1] = \min(1, 0, 3) = 0$. Tree edge $(1, 2)$: $0 > 1$ is false. Tree edge $(1, 3)$: $3 > 1$ is true, so $[1, 3]$ is critical. Tree edge $(0, 1)$: $0 > 0$ is false.
+
+**Idea.** Run the Level 4 search once and return its bridges.
+
+```java
+static List<List<Integer>> criticalConnections(int n, List<List<Integer>> connections) {
+    int[][] edges = new int[connections.size()][];
+    for (int i = 0; i < edges.length; i++) edges[i] = new int[] {connections.get(i).get(0), connections.get(i).get(1)};
+    List<List<Integer>> answer = new ArrayList<>();
+    for (int[] bridge : new CutFinder(n, edges).bridges) answer.add(List.of(bridge[0], bridge[1]));
+    return answer;
+}
+```
+
+**Answer.** `[[1,3]]` for the example, and `[[0,1]]` for two servers joined by one connection. $O(V + E)$ time and space: at LeetCode's limit of $10^5$ servers and $10^5$ connections, about $3 \times 10^5$ steps, compared with about $10^5 \times (2 \times 10^5) = 2 \times 10^{10}$ for removing each connection in turn and searching again. The recursion can be $10^5$ deep, so an iterative DFS is safer in production code.
+
+### 2. LeetCode 1568: Minimum Number of Days to Disconnect Island (Hard)
+
+**Problem.** A grid has land (1) and water (0); land cells touching up, down, left or right form an island. The grid is *connected* when it has exactly one island. Each day you may turn one land cell into water. Return the minimum number of days to make the grid disconnected. For `[[0,1,1,0],[0,1,1,0],[0,0,0,0]]` the answer is 2.
+
+**Math first.** Treat land cells as vertices and side-by-side neighbours as edges. The answer is never more than 2, so only two questions matter:
+
+$$
+\text{days} =
+\begin{cases}
+0, & c(G) \ne 1 \\
+1, & \text{some land cell } v \text{ has } c(G - v) \ne 1 \\
+2, & \text{otherwise}
+\end{cases}
+$$
+
+where:
+
+- $c(G)$ is the number of islands;
+- $c(G - v) \ne 1$ means removing cell $v$ splits the island, or removes the last land cell (0 islands also counts as disconnected); that is, $v$ is an articulation point or the only cell;
+- 2 always suffices: the top-most, then left-most land cell has water above it and to its left, so it has at most two land neighbours, and removing them cuts it off (or, if nothing else remains, leaves no island).
+
+Example: the $2 \times 2$ block of land is one island, so the answer is not 0. Removing any one of its four cells leaves an L of three cells, still one island, so no cell is an articulation point and the answer is not 1. The top-left land cell, at row 0 and column 1, has two land neighbours; removing them on days 1 and 2 leaves it alone with one more cell diagonally opposite: two islands. Answer **2**. For the strip `[[1,1,1]]` the middle cell is an articulation point, so the answer is 1.
+
+**Idea.** Count islands with a flood fill. If there is not exactly one, return 0. Otherwise try removing each land cell and recount, which is the Level 1 definition applied to each cell. If none splits the island, return 2.
+
+```java
+static int minDays(int[][] grid) {
+    if (countIslands(grid) != 1) return 0;                  // already disconnected
+    for (int r = 0; r < grid.length; r++) {
+        for (int c = 0; c < grid[0].length; c++) {
+            if (grid[r][c] == 0) continue;
+            grid[r][c] = 0;                                 // try removing this one cell
+            boolean split = countIslands(grid) != 1;
+            grid[r][c] = 1;
+            if (split) return 1;                            // it was a cut vertex of the island
+        }
+    }
+    return 2;                                               // a corner cell has at most two land neighbours
+}
+```
+
+`countIslands` is an ordinary flood fill that marks each island and counts how many times it starts a new one.
+
+**Answer.** 2 for the example, 2 for `[[1,1]]`, 1 for `[[1,1,1]]` and for `[[1]]`, and 0 for `[[1,0,1]]`. Each of up to $mn$ cells triggers a flood fill of $O(mn)$, so $O((mn)^2)$: for the largest $30 \times 30$ grid, $900 \times 900 = 810{,}000$ cell visits, which is fast. Running the Level 4 search on the grid graph instead finds every articulation cell in one $O(mn)$ pass, about 900 visits.
+
+## Mathematical Abstraction
+
+One depth-first search gives each vertex a discovery time and a low value, and two inequalities on tree edges find every weak spot:
+
+$$
+\text{low}[u] = \min\Big(d[u], \min_{(u,w) \text{ back}} d[w], \min_{v \text{ child}} \text{low}[v]\Big), \qquad
+\text{bridge } (u, v) \iff \text{low}[v] > d[u], \qquad
+\text{cut } u \iff \text{low}[v] \ge d[u] \text{ for some child } v
+$$
+
+where:
+
+- $d[u]$ is the order in which the search first reaches $u$;
+- a back edge $(u, w)$ leads to an ancestor $w$ of $u$, and a child $v$ is reached from $u$ along a tree edge;
+- the cut-vertex test is for non-root $u$; the root is a cut vertex exactly when it has at least 2 children.
+
+Example: on the six towns, $d = (0, 1, 2, 3, 4, 5)$ and $\text{low} = (0, 0, 0, 3, 3, 3)$. The tree edge $(1, 3)$ has $3 > 1$, so it is the bridge, and $3 \ge 1$ makes town 1 a cut vertex. The tree edge $(3, 4)$ has $3 \ge 3$, making town 3 a cut vertex, but $3 \not> 3$, so the road $3 - 4$ is not a bridge. The blocks are $\lbrace 0, 1, 2 \rbrace$, $\lbrace 1, 3 \rbrace$ and $\lbrace 3, 4, 5 \rbrace$.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 20 "Elementary Graph Algorithms", Section 20.3 "Depth-first search" (tree and back edges, and why undirected DFS has no cross edges), and the end-of-chapter problem "Articulation points, bridges, and biconnected components" (Problem 22-2 in the 3rd edition). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §4.1 "Undirected Graphs", with Java `Bridge` and `Biconnected`: <https://algs4.cs.princeton.edu/41graph/>.
+- John Hopcroft and Robert Tarjan, "Algorithm 447: Efficient algorithms for graph manipulation", *Communications of the ACM* 16(6), 1973.
+- Robert Tarjan, "Depth-first search and linear graph algorithms", *SIAM Journal on Computing* 1(2), 1972.
+- LeetCode: [1192. Critical Connections in a Network](https://leetcode.com/problems/critical-connections-in-a-network/), [1568. Minimum Number of Days to Disconnect Island](https://leetcode.com/problems/minimum-number-of-days-to-disconnect-island/).
+
+[← Strongly Connected Component](../strongly-connected-component/index.qmd) · [Graph Algorithms and Connectivity](../groups/05-graph-algorithms.qmd) · [Eulerian Circuit →](../eulerian-circuit/index.qmd)

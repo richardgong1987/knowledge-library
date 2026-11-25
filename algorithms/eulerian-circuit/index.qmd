@@ -1,61 +1,377 @@
 ---
 title: "Eulerian Circuit"
-description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
+description: "Using every edge exactly once: Euler's 1736 Königsberg bridges argument, the degree conditions for undirected and directed graphs, Hierholzer's O(E) algorithm traced step by step, de Bruijn sequences, and hard interview problems solved math-first."
 ---
 
-## Begin with an actual graph
+An **Eulerian circuit** is a walk that uses every edge of a graph exactly once and ends where it started; an **Eulerian path** (or trail) does the same but may end somewhere else. Deciding whether one exists takes nothing more than counting edges at each vertex, and Hierholzer's algorithm finds one in a single pass. This lesson starts with the puzzle that founded graph theory and ends with three hard interview problems that are Euler paths in disguise.
 
-**LeetCode 332 — Reconstruct Itinerary (Eulerian trail connection).** A postal worker must traverse every ROAD exactly once and finish where they started. Cities may be revisited; roads may not.
+All code is in [`EulerianCircuitLab.java`](EulerianCircuitLab.java). Run it from this folder with `java EulerianCircuitLab.java`; it checks every number on this page and prints `OK`.
 
-The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
+## The problem
 
-## Why a tempting approach is wrong or wasteful
+The Prussian city of Königsberg sat on the river Pregel, around two islands. Seven bridges joined four pieces of land:
 
-Try to walk greedily along any unused road. A careless early choice can strand unused edges behind you.
+```text
+A  Kneiphof island      A–B twice     A–C twice     A–D once
+B  north bank           B–D once
+C  south bank           C–D once
+D  the eastern island
+```
 
-## The idea that simplifies the problem
+People wondered whether they could take a Sunday walk that crossed **every bridge exactly once**, ideally returning home.
 
-In an undirected connected graph, an Eulerian CIRCUIT exists when every vertex has even degree. Hierholzer's algorithm builds cycles and splices them when unused edges remain.
+- Trying walks by hand gets nowhere: there are $7! = 5040$ orders in which to cross the bridges, and each bridge can be crossed in two directions.
+- For a modern network with thousands of edges, trying orders is hopeless.
+- We want a test that answers "possible or not?" at a glance, and an algorithm that finds the walk in time proportional to the number of edges.
 
-## Formalise it — explain symbols immediately
+## Explain it like I'm ten
+
+::: {.callout-tip}
+In 1735 the mathematician Leonhard Euler showed that the Königsberg walk is impossible, without trying a single route. His idea fits on a postcard.
+
+Each time you walk **through** a piece of land, you arrive on one bridge and leave on another. So the bridges at that piece of land get used up **in pairs**. The only places where a bridge can be left without a partner are where the walk **starts** and where it **ends**.
+
+Now count the bridges touching each piece of land. Kneiphof island has 5, and the other three pieces have 3 each. All four numbers are **odd**. A walk has just one start and one end, so at most two pieces of land can have an odd count. Four is too many. The walk cannot exist.
+
+German children know a happier version: "Das ist das Haus vom Nikolaus", *this is the house of Santa Claus*. You draw a house (a square with a cross inside and a triangular roof) in eight lines, one per syllable, without lifting your pencil. It only works if you start at one of the two bottom corners, and Euler's counting tells you why: those are the only two corners where an odd number of lines meet.
+
+Euler presented his argument to the St Petersburg Academy on 26 August 1735, in a paper dated 1736 and printed in 1741.
+:::
+
+## From simple to advanced
+
+### Level 1: degrees, and the handshake lemma
+
+Turn each piece of land into a **vertex** and each bridge into an **edge**. The **degree** $\deg(v)$ is the number of edge ends at $v$. Every edge has two ends, so adding up all the degrees counts every edge twice:
 
 $$
-\forall v\in V_{\mathrm{nonisolated}},\quad\deg(v)\equiv0\pmod2
+\sum_{v \in V} \deg(v) = 2 \lvert E \rvert
 $$
 
-**Every symbol explained:** V_nonisolated is the set of vertices incident to at least one edge; deg(v) is the number of incident undirected edge ends, counting loops twice; ≡0 mod 2 means the degree is even. The nonisolated part must also be connected.
+where:
 
-**Numbers substituted into the relation:** A triangle A–B–C–A has degree 2 at each vertex and admits A→B→C→A, using all three edges once. A simple chain A–B–C has degrees 1,2,1; no Eulerian CIRCUIT is possible, though an open trail exists.
+- $V$ is the set of vertices and $E$ the set of edges, with $\lvert E \rvert$ the number of edges;
+- $\deg(v)$ counts the edges touching $v$ (a loop from $v$ to itself counts twice).
 
-Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
+Example: Königsberg has degrees $A = 5$, $B = 3$, $C = 3$, $D = 3$, and $5 + 3 + 3 + 3 = 14 = 2 \times 7$, matching the 7 bridges.
 
-## Algorithm progression
+The sum is even, so the odd degrees must come in pairs: **every graph has an even number of odd-degree vertices**. That is why the rule below talks about 0 or 2, never 1.
 
-1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
-2. Start from the concrete example above and perform one legal edge decision.
-3. Record the changed state and check whether the invariant still holds.
-4. Continue until all required edges, vertices, or candidate states have been processed.
+### Level 2: Euler's theorem for undirected graphs
 
-**Proof sketch:** Every arrival at a vertex along an unused edge requires a different unused edge to leave, so circuit vertices require paired edge incidences. Even degrees and connectivity let Hierholzer construct and splice closed trails until all edges are used.
+Ignore vertices with no edges, and assume the rest are connected. Then:
 
-## Run a small implementation
+$$
+\text{Euler walk} =
+\begin{cases}
+\text{a circuit (returns to the start)}, & \text{no vertex has odd degree} \\
+\text{a path from one odd vertex to the other}, & \text{exactly 2 vertices have odd degree} \\
+\text{impossible}, & \text{4 or more vertices have odd degree}
+\end{cases}
+$$
 
-Trace a graph of at most four vertices by hand, then write a short DFS/stack routine that maintains the exact invariant below. The general-purpose [DFS/BFS implementations](../examples/patterns.mjs) give a tested starting point; note where the specialised operation requires additional state.
+where:
 
-The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+- "odd degree" means $\deg(v)$ is odd;
+- the walk must use every edge exactly once, and may visit a vertex many times;
+- a circuit is also a path, so 0 odd vertices allows both.
 
-## Work and limitations
+Example:
 
-**Complexity:** O(V+E) traversal using indexed adjacency and a used-edge record after preprocessing; sorted lexical choices add sorting overhead.
+- Königsberg: 4 odd vertices ($A, B, C, D$), so no Euler walk exists, circuit or path.
+- The house of Santa Claus: the bottom corners have degree 3, the top corners 4 and the roof 2. Exactly 2 odd vertices, so there is a path, and it must start at one bottom corner and end at the other. Eight edges, eight strokes.
 
-**Where this reasoning fails:** A Hamiltonian path visits every VERTEX once; an Eulerian trail visits every EDGE once. LeetCode 332 uses a directed version and lexical ordering, which needs extra conditions beyond the undirected rule stated here.
+Euler proved the "only if" direction: odd vertices other than the two ends are impossible. That the conditions are also *sufficient* was first proved in print by Carl Hierholzer, whose paper appeared in 1873, two years after his death. His proof is the algorithm of Level 4.
 
-As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+```java
+static int countOddDegrees(int n, int[][] edges) {
+    int[] degree = new int[n];
+    for (int[] e : edges) { degree[e[0]]++; degree[e[1]]++; }
+    int odd = 0;
+    for (int d : degree) if (d % 2 == 1) odd++;
+    return odd;
+}
+```
 
-## Connections
+Edges are pairs `{u, v}`. The check costs $O(V + E)$; a separate search confirms that the edges form one connected piece.
 
-- **Textbook:** CLRS Chapter 20 covers Euler tours as graph-traversal-related material; this is an additional application.. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **Practice:** LeetCode 332 — Reconstruct Itinerary (Eulerian trail connection). Treat any online solution as a second explanation to compare, not a script to copy.
-- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+### Level 3: directed graphs, in equals out
 
-[← Algorithms](../index.qmd)
+With one-way edges, "pairs" becomes "every arrival is matched by a departure". Write $\text{out}(v)$ and $\text{in}(v)$ for the number of arrows leaving and entering $v$, and define the **balance** $b(v) = \text{out}(v) - \text{in}(v)$. If the edges are connected (ignoring direction):
+
+$$
+\text{Euler walk} =
+\begin{cases}
+\text{a circuit}, & b(v) = 0 \text{ for every } v \\
+\text{a path from } s \text{ to } t, & b(s) = +1,\; b(t) = -1,\; b(v) = 0 \text{ otherwise} \\
+\text{impossible}, & \text{any other pattern}
+\end{cases}
+$$
+
+where:
+
+- $b(v) = \text{out}(v) - \text{in}(v)$;
+- $s$ is the forced start (one extra departure) and $t$ the forced end (one extra arrival);
+- the balances always add up to 0, because every arrow adds $+1$ at its tail and $-1$ at its head.
+
+Example: our running graph is two loops sharing vertex 1, with arrows $0 \to 1$, $1 \to 2$, $2 \to 0$, $1 \to 3$, $3 \to 4$, $4 \to 1$. Vertex 1 has $\text{out} = 2$ (to 2 and 3) and $\text{in} = 2$ (from 0 and 4), so $b(1) = 0$; every other vertex has one arrow in and one out. All balances are 0, so there is a circuit and it can start anywhere. For the arrows $0 \to 1$ and $1 \to 2$, $b(0) = +1$ and $b(2) = -1$, so the path must run from 0 to 2. For $0 \to 1$ and $0 \to 2$, $b(0) = +2$: impossible.
+
+```java
+static int eulerStart(int[][] edges) {
+    Map<Integer, Integer> balance = new HashMap<>();            // out-degree minus in-degree
+    for (int[] e : edges) { balance.merge(e[0], 1, Integer::sum); balance.merge(e[1], -1, Integer::sum); }
+    int start = edges[0][0], plusOne = 0, minusOne = 0;
+    for (Map.Entry<Integer, Integer> entry : balance.entrySet()) {
+        int b = entry.getValue();
+        if (b == 1) { plusOne++; start = entry.getKey(); }
+        else if (b == -1) minusOne++;
+        else if (b != 0) throw new IllegalArgumentException("vertex " + entry.getKey() + " is unbalanced by " + b);
+    }
+    if (plusOne != minusOne || plusOne > 1) throw new IllegalArgumentException("more than one start or end");
+    return start;
+}
+```
+
+A map instead of an array lets the vertices be any integers, which LeetCode 2097 needs. When every balance is 0, any vertex with an edge can start, and the code uses the tail of the first edge.
+
+### Level 4: Hierholzer's algorithm, walk and splice
+
+Knowing a walk exists is not the same as finding one. Just walking along unused edges can get stuck too early: from 0 in our graph, the walk $0 \to 1 \to 2 \to 0$ returns home with the loop $1 \to 3 \to 4 \to 1$ still unused.
+
+Hierholzer's fix: when you get stuck, **back up** to the last vertex that still has an unused edge, walk a new loop from there, and **splice** that loop into the route. With a stack this needs no explicit splicing: a vertex is written to the answer only when it is stuck, and the answer is read backwards at the end.
+
+$$
+\text{at vertex } u: \quad
+\begin{cases}
+\text{push } v \text{ and remove } u \to v, & u \text{ has an unused edge } u \to v \\
+\text{pop } u \text{ and append it to the path}, & \text{otherwise}
+\end{cases}
+\qquad \text{answer} = \text{reverse}(\text{path})
+$$
+
+where:
+
+- $u$ is the vertex on top of the stack;
+- "unused" means the edge has not been walked yet; each edge is removed the moment it is walked;
+- a popped vertex can never be left again, so it belongs at its final position, counted from the end.
+
+Example: start at 0. Vertex 1's exits are stored in the order 2, then 3.
+
+| Step | Stack (bottom → top) | Action | Path (reversed answer) |
+| --- | --- | --- | --- |
+| 1 | 0 | walk $0 \to 1$ | |
+| 2 | 0 1 | walk $1 \to 2$ | |
+| 3 | 0 1 2 | walk $2 \to 0$ | |
+| 4 | 0 1 2 0 | 0 is stuck: pop | 0 |
+| 5 | 0 1 2 | 2 is stuck: pop | 0 2 |
+| 6 | 0 1 | 1 still has $1 \to 3$: walk it | 0 2 |
+| 7 | 0 1 3 | walk $3 \to 4$ | 0 2 |
+| 8 | 0 1 3 4 | walk $4 \to 1$ | 0 2 |
+| 9–12 | 0 1 3 4 1 | everyone is stuck: pop 1, 4, 3, 1 | 0 2 1 4 3 1 |
+| 13 | 0 | pop 0 | 0 2 1 4 3 1 0 |
+
+Reversed, the circuit is $0 \to 1 \to 3 \to 4 \to 1 \to 2 \to 0$. The detour $1 \to 3 \to 4 \to 1$ has been spliced into $0 \to 1 \to 2 \to 0$ exactly at vertex 1. It visits $E + 1 = 7$ vertices, using each of the 6 edges once.
+
+```java
+static Map<Integer, Deque<Integer>> exitLists(int[][] edges) {
+    Map<Integer, Deque<Integer>> unused = new HashMap<>();
+    for (int[] e : edges) unused.computeIfAbsent(e[0], v -> new ArrayDeque<>()).add(e[1]);
+    return unused;
+}
+
+static List<Integer> hierholzer(Map<Integer, Deque<Integer>> unused, int start) {
+    Deque<Integer> stack = new ArrayDeque<>(List.of(start));
+    List<Integer> path = new ArrayList<>();
+    while (!stack.isEmpty()) {
+        Deque<Integer> exits = unused.get(stack.peek());
+        if (exits != null && !exits.isEmpty()) stack.push(exits.poll());   // walk along an unused edge
+        else path.add(stack.pop());                                       // stuck: this vertex is final
+    }
+    Collections.reverse(path);
+    return path;
+}
+```
+
+Every edge is pushed once and every vertex occurrence popped once, so Hierholzer runs in $O(V + E)$. The older method of Fleury (1883) avoids burning bridges by testing connectivity before each step, which costs $O(E^2)$.
+
+**Undirected graphs** use the same loop, with one extra detail: each edge sits in two exit lists (at both ends), so give each edge an id and a `used[id]` flag, and skip an exit whose edge is already used.
+
+### Level 5: variants you will meet
+
+**Walking every edge at least once (the Chinese postman problem).** When an Euler circuit does not exist, a postman who must walk every street and return home has to repeat some streets. The repeats must pair up the odd vertices, so the cheapest fix is a minimum-weight pairing of the odd vertices by shortest paths. Kwan Mei-Ko posed and solved it in 1962. For Königsberg, the 4 odd vertices pair up as $A - B$ and $C - D$, both joined directly by a bridge, so 2 bridges must be crossed twice: a round walk needs $7 + 2 = 9$ crossings.
+
+**De Bruijn sequences.** Take as vertices all strings of $n - 1$ digits from $\lbrace 0, \dots, k - 1 \rbrace$, and draw an arrow from $x_1 x_2 \dots x_{n-1}$ to $x_2 \dots x_{n-1} d$ for every digit $d$, labelled with the $n$-digit string $x_1 \dots x_{n-1} d$:
+
+$$
+\lvert V \rvert = k^{\,n-1}, \qquad \lvert E \rvert = k^{\,n}, \qquad \text{in}(v) = \text{out}(v) = k
+$$
+
+where $k$ is the number of digit values and $n$ the length of the strings the edges stand for.
+
+Example: with $k = 2$ and $n = 3$ there are $2^2 = 4$ vertices (00, 01, 10, 11) and $2^3 = 8$ edges, one for each 3-bit string. Every vertex has 2 arrows in and 2 out, so by Level 3 an Euler circuit exists; reading off its edge labels gives a string of length $2^3 + 3 - 1 = 10$ that contains every 3-bit string exactly once as a window, such as `0001110100`. Nicolaas de Bruijn counted these sequences in 1946. LeetCode 753 below is exactly this.
+
+**Euler versus Hamilton.** A *Hamiltonian* cycle visits every **vertex** once instead of every edge. It sounds similar, but no degree test decides it: it is NP-complete, while the Euler question takes linear time.
+
+## Why it works and what it costs
+
+**Why the degree conditions are necessary.** Follow an Euler walk and watch any vertex $v$ other than the start and end. Each visit uses one edge in and one edge out, so the edges at $v$ are used in pairs and $\deg(v)$ is even. Only the start and end can have one unpaired edge each; on a circuit they are the same vertex and the two unpaired edges pair with each other.
+
+**Why Hierholzer always succeeds.** Suppose all degrees are even (or, for directed graphs, all balances are 0). A walk from $u$ along unused edges can only get stuck at $u$ itself: at any other vertex, entering it used one of its edges, leaving an odd number unused, so at least one is still free. So each walk is a closed loop. When it gets stuck, the stack backs up vertex by vertex; at the first vertex that still has unused edges, a new closed loop starts, and it ends up spliced into the route at that vertex. No edge is left over: because the edges are connected, an unused edge would touch some vertex of the route, and that vertex would have started another loop before being popped. With two odd vertices (or $b(s) = +1$), starting at $s$ makes the first walk end at the other odd vertex $t$, which is why the start vertex matters.
+
+**Costs, counted on the examples:**
+
+| Task | Time | On our examples |
+| --- | --- | --- |
+| Degree or balance check | $O(V + E)$ | Königsberg: 7 edges, 4 degrees |
+| Connectivity check | $O(V + E)$ | one search |
+| Hierholzer | $O(V + E)$ | 7 pushes (the start and 6 edges) and 7 pops for the two loops |
+| Fleury | $O(E^2)$ | a connectivity check before each of $E$ steps |
+| Trying every order of edges | $O(E!)$ | $7! = 5040$ orders for Königsberg |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Checking degrees but not connectivity | Two separate loops both pass the even-degree test, but no single walk exists | Also check that all edges lie in one connected piece |
+| Starting a directed path at an arbitrary vertex | The walk ends early and some edges are never used | Start at the vertex with $\text{out} - \text{in} = +1$ |
+| Greedy walking without splicing | Gets stuck at home with edges left over ($0 \to 1 \to 2 \to 0$ above) | Hierholzer: record a vertex only when stuck, then reverse |
+| Forgetting to reverse the popped path | The route comes out backwards | `Collections.reverse`, or `addFirst` on a `LinkedList` |
+| Undirected graph without per-edge flags | Each edge is walked twice, once from each end | Store edge ids and mark them used |
+| Deep recursion on a long path | `StackOverflowError` at around $10^4$ nested calls | Use the explicit stack of Level 4 |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 332: Reconstruct Itinerary (Hard)
+
+**Problem.** Given airline tickets `[from, to]`, use every ticket exactly once starting from `"JFK"`. If several itineraries work, return the lexicographically smallest. For `[["JFK","SFO"],["JFK","ATL"],["SFO","ATL"],["ATL","JFK"],["ATL","SFO"]]` the answer is `["JFK","ATL","JFK","SFO","ATL","SFO"]`.
+
+**Math first.** Airports are vertices and tickets are directed edges, so the itinerary is an Euler path starting at JFK. The balances tell us where it ends:
+
+$$
+b(\text{JFK}) = 2 - 1 = +1, \qquad b(\text{SFO}) = 1 - 2 = -1, \qquad b(\text{ATL}) = 2 - 2 = 0
+$$
+
+where $b(v) = \text{out}(v) - \text{in}(v)$ counts tickets leaving minus tickets arriving.
+
+Example: the path must start at JFK, the only $+1$, and end at SFO, the only $-1$. It uses all 5 tickets, so it lists $5 + 1 = 6$ airports.
+
+**Idea.** Run Hierholzer, but always take the **alphabetically smallest** unused ticket first, by storing each airport's exits in a `PriorityQueue`. If the smallest choice leads into a dead end, that dead end is popped first and therefore lands **last** in the answer, while the rest of the route is spliced in before it. That is exactly the lexicographically smallest valid itinerary.
+
+```java
+static List<String> findItinerary(List<List<String>> tickets) {
+    Map<String, PriorityQueue<String>> unused = new HashMap<>();
+    for (List<String> t : tickets) unused.computeIfAbsent(t.get(0), k -> new PriorityQueue<>()).add(t.get(1));
+    Deque<String> stack = new ArrayDeque<>(List.of("JFK"));
+    LinkedList<String> route = new LinkedList<>();
+    while (!stack.isEmpty()) {
+        PriorityQueue<String> exits = unused.get(stack.peek());
+        if (exits != null && !exits.isEmpty()) stack.push(exits.poll());   // smallest unused ticket first
+        else route.addFirst(stack.pop());
+    }
+    return route;
+}
+```
+
+**Answer.** `["JFK","ATL","JFK","SFO","ATL","SFO"]` for the example. With the tickets JFK→KUL, JFK→NRT, NRT→JFK, the greedy walk first flies to KUL and gets stuck, so KUL goes last: `["JFK","NRT","JFK","KUL"]`. Each of $E$ tickets enters and leaves a priority queue once: $O(E \log E)$ time and $O(E)$ space, about $300 \times 9 \approx 2700$ steps at LeetCode's limit of 300 tickets.
+
+### 2. LeetCode 753: Cracking the Safe (Hard)
+
+**Problem.** A safe's password has $n$ digits, each from $0$ to $k - 1$. The safe checks the last $n$ digits typed after every key press. Return a shortest string that is guaranteed to open it. For $n = 2$, $k = 2$, one answer is `"01100"`.
+
+**Math first.** Every one of the $k^n$ passwords must appear as a window of $n$ consecutive digits. A string of length $L$ has $L - n + 1$ windows, so $L \ge k^n + n - 1$. The de Bruijn graph of Level 5 meets this bound exactly: its $k^n$ edges are the passwords, and an Euler circuit uses each once, adding one digit per edge after an initial $n - 1$ digits:
+
+$$
+L = k^{\,n} + n - 1, \qquad \text{vertices} = k^{\,n-1}, \qquad \text{in}(v) = \text{out}(v) = k
+$$
+
+where:
+
+- $L$ is the length of the shortest string;
+- each vertex is an $(n-1)$-digit string, and each edge appends one digit to it;
+- equal in- and out-degrees guarantee the circuit (Level 3).
+
+Example: $n = 2$, $k = 2$ gives $L = 2^2 + 2 - 1 = 5$. The vertices are `0` and `1`; the edges are the passwords `00`, `01`, `10`, `11`. The string `01100` has the windows `01`, `11`, `10`, `00`: each password once.
+
+**Idea.** Run Hierholzer recursively on the implicit graph: from a vertex, try each digit; if that password is new, follow it to the vertex made of its last $n - 1$ digits, and append the digit after returning. Starting at $n - 1$ zeros and appending those zeros at the end closes the string.
+
+```java
+static String crackSafe(int n, int k) {
+    StringBuilder digits = new StringBuilder();
+    visit("0".repeat(n - 1), k, new HashSet<>(), digits);
+    return digits.append("0".repeat(n - 1)).toString();
+}
+
+static void visit(String node, int k, Set<String> used, StringBuilder digits) {
+    for (int d = 0; d < k; d++) {
+        String password = node + d;                     // each edge is one n-digit password
+        if (used.add(password)) {
+            visit(password.substring(1), k, used, digits);   // the next node keeps the last n - 1 digits
+            digits.append(d);                           // record the edge once everything after it is done
+        }
+    }
+}
+```
+
+**Answer.** `"01100"` for $n = 2$, $k = 2$; `"10"` for $n = 1$, $k = 2$; and for the largest case allowed, $k^n = 8^4 = 4096$, a string of $4096 + 3 = 4099$ digits containing all 4096 passwords. $O(n \cdot k^n)$ time for building the password strings and $O(n \cdot k^n)$ space; the recursion goes up to $k^n = 4096$ levels deep, which Java's default stack handles.
+
+### 3. LeetCode 2097: Valid Arrangement of Pairs (Hard)
+
+**Problem.** Rearrange `pairs[i] = [start, end]` so that each pair's end equals the next pair's start. A valid arrangement is guaranteed to exist. For `[[5,1],[4,5],[11,9],[9,4]]` the answer is `[[11,9],[9,4],[4,5],[5,1]]`.
+
+**Math first.** Each pair is a directed edge $\text{start} \to \text{end}$, and a valid arrangement is an Euler path through all of them. Level 3 says where it starts:
+
+$$
+s =
+\begin{cases}
+\text{the vertex with } b(s) = +1, & \text{if one exists} \\
+\text{any vertex with an edge}, & \text{if every } b(v) = 0
+\end{cases}
+$$
+
+where $b(v) = \text{out}(v) - \text{in}(v)$ over all pairs.
+
+Example: $b(11) = 1 - 0 = +1$, $b(1) = 0 - 1 = -1$, and $b(5) = b(4) = b(9) = 0$. So the path runs from 11 to 1: $11 \to 9 \to 4 \to 5 \to 1$, which gives the pairs $[11, 9]$, $[9, 4]$, $[4, 5]$, $[5, 1]$.
+
+**Idea.** This is Level 3 plus Level 4 with no changes: find the start, run Hierholzer, and turn each pair of consecutive vertices on the path back into a pair.
+
+```java
+static int[][] validArrangement(int[][] pairs) {
+    List<Integer> path = hierholzer(exitLists(pairs), eulerStart(pairs));
+    int[][] arrangement = new int[pairs.length][];
+    for (int i = 0; i < pairs.length; i++) arrangement[i] = new int[] {path.get(i), path.get(i + 1)};
+    return arrangement;
+}
+```
+
+**Answer.** `[[11,9],[9,4],[4,5],[5,1]]` for the example; `[[1,3],[3,2],[2,1]]` for the circuit `[[1,3],[3,2],[2,1]]`; and `[[1,2],[2,1],[1,3]]` for `[[1,2],[1,3],[2,1]]`, where vertex 1 has $b = +1$. $O(E)$ time and space with hash maps: about $10^5$ pushes and pops at LeetCode's limit of $10^5$ pairs. A recursive version would need $10^5$ nested calls, so the explicit stack matters here.
+
+## Mathematical Abstraction
+
+Whether every edge can be used exactly once depends only on degrees (plus connectivity), and Hierholzer's stack builds the walk in linear time:
+
+$$
+\text{undirected: } \#\lbrace v : \deg(v) \text{ odd} \rbrace \in \lbrace 0, 2 \rbrace, \qquad
+\text{directed: } b(v) = \text{out}(v) - \text{in}(v) = 0 \;\; \forall v, \text{ or one } b(s) = +1 \text{ and one } b(t) = -1
+$$
+
+where:
+
+- $\deg(v)$ is the number of edge ends at $v$, and $\#\lbrace \dots \rbrace$ counts the odd ones;
+- 0 odd vertices (or all balances 0) gives a circuit; 2 odd vertices (or one $+1$ and one $-1$) gives a path between them;
+- in both cases the edges must form one connected piece, and the walk takes $O(V + E)$ time.
+
+Example: Königsberg has degrees $(5, 3, 3, 3)$, so 4 odd vertices and no walk; adding 2 repeated crossings makes a 9-crossing round walk. The two directed loops have every balance 0, and Hierholzer returns the circuit $0 \to 1 \to 3 \to 4 \to 1 \to 2 \to 0$ through all 6 edges. The de Bruijn graph for $n = 2$, $k = 2$ has every balance 0, giving the 5-digit safe code `01100`.
+
+## References
+
+- Leonhard Euler, "Solutio problematis ad geometriam situs pertinentis", *Commentarii Academiae Scientiarum Petropolitanae* 8 (1741, dated 1736), 128–140; presented on 26 August 1735. An English translation is in Biggs, Lloyd and Wilson, *Graph Theory 1736–1936* (Oxford, 1976).
+- Carl Hierholzer, "Ueber die Möglichkeit, einen Linienzug ohne Wiederholung und ohne Unterbrechung zu umfahren", *Mathematische Annalen* 6 (1873), 30–32, published after his death in 1871.
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 20 "Elementary Graph Algorithms", whose end-of-chapter problem "Euler tour" asks for the in-degree = out-degree condition and an $O(E)$ algorithm (Problem 22-3 in the 3rd edition). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §4.1 and §4.2, with Java `EulerianCycle`, `EulerianPath` and `DirectedEulerianCycle`: <https://algs4.cs.princeton.edu/41graph/> and <https://algs4.cs.princeton.edu/42digraph/>.
+- N. G. de Bruijn, "A combinatorial problem", *Proceedings of the Koninklijke Nederlandse Akademie van Wetenschappen* 49 (1946).
+- Kwan Mei-Ko, "Graphic programming using odd or even points", *Chinese Mathematics* 1 (1962), the Chinese postman problem.
+- LeetCode: [332. Reconstruct Itinerary](https://leetcode.com/problems/reconstruct-itinerary/), [753. Cracking the Safe](https://leetcode.com/problems/cracking-the-safe/), [2097. Valid Arrangement of Pairs](https://leetcode.com/problems/valid-arrangement-of-pairs/).
+
+[← Biconnected Component](../biconnected-component/index.qmd) · [Graph Algorithms and Connectivity](../groups/05-graph-algorithms.qmd)

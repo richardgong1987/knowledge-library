@@ -1,67 +1,371 @@
 ---
 title: "Minimum Spanning Tree"
-description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
+description: "Connecting every vertex as cheaply as possible: what a spanning tree is and why it has V − 1 edges, the cut property with its exchange proof, Kruskal with union-find and Prim with a heap traced on one five-village map, Borůvka, and hard interview problems solved math-first."
 ---
 
-## Begin with an actual graph
+A minimum spanning tree (MST) connects all the vertices of a weighted, undirected graph using the cheapest possible set of edges. It is the answer whenever you must link everything once and pay per link: cables, pipes, roads, or clusters of similar data points. This lesson proves the one rule every MST algorithm relies on, then traces Kruskal's and Prim's algorithms on the same small map.
 
-**LeetCode 1584 — Min Cost to Connect All Points.** You need to connect offices A,B,C with possible cable edges A–B cost 2, B–C cost 3, A–C cost 10. Which links connect everyone at minimum cost?
+All code is in [`MinimumSpanningTreeLab.java`](MinimumSpanningTreeLab.java). Run it from this folder with `java MinimumSpanningTreeLab.java`; it checks every number on this page and prints `OK`.
 
-The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
+## The problem
 
-## Why a tempting approach is wrong or wasteful
+Five villages, A to E, want internet. A cable can be laid along any of seven routes, each with a cost in thousands of pounds:
 
-Picking the globally cheapest edges blindly may create a cycle or fail to connect a component. Trying every possible spanning set is exponential.
+```text
+A – B  4        B – D  1        D – E  3
+A – C  1        C – D  5        C – E  8
+B – C  2
+```
 
-## The idea that simplifies the problem
+Data can flow both ways along a cable and through any village, so we need every village **connected**, directly or indirectly, at the lowest total cost.
 
-Kruskal sorts edges by weight and accepts an edge only when it connects two DIFFERENT components. Union-Find detects whether an edge is safe.
+- Laying all seven cables costs $4 + 1 + 2 + 1 + 5 + 3 + 8 = 24$, but many are redundant.
+- Trying every subset of cables means up to $2^7 = 128$ subsets here, and $2^{1000}$ for a thousand routes.
+- We want an algorithm that looks at each cable about once. The answer turns out to cost **7**.
 
-## Formalise it — explain symbols immediately
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Imagine the villages are islands, and the cables are rope bridges you have to buy. You want to be able to walk from any island to any other, and you want to spend as little as possible.
+
+Here is a rule that always works: **sort the bridges from cheapest to most expensive, and buy them in that order, but skip any bridge that joins two islands you can already walk between.** A skipped bridge would only make a loop, and a loop is wasted money: you could already get across.
+
+The problem is older than computers. In 1926 the Czech mathematician Otakar Borůvka was asked how to plan an electrical network for Moravia with the least wire. His answer is the first published minimum-spanning-tree algorithm. Jeff Erickson's free textbook *Algorithms* (Chapter 7) presents Borůvka's, Jarník's (Prim's) and Kruskal's methods as versions of one generic rule, which is the approach taken here.
+:::
+
+## From simple to advanced
+
+### Level 1: what a spanning tree is
+
+A **spanning tree** of a connected graph is a set of edges that reaches every vertex and contains no cycle. With $V$ vertices it always has exactly $V - 1$ edges:
 
 $$
-T^*=\arg\min_{T\text{ spanning tree}}\sum_{e\in T}w(e)
+\lvert T \rvert = V - 1
 $$
 
-**Every symbol explained:** T is a connected acyclic set of edges touching all vertices; w(e) is cable cost for edge e; T* is a spanning tree of minimum total weight.
+where:
 
-**Numbers substituted into the relation:** Accept A–B at cost 2 and B–C at cost 3, total 5. The remaining A–C edge costs 10 and would create a cycle, so skip it. Any tree using A–C has total at least 12.
+- $T$ is the set of edges in the tree, and $\lvert T \rvert$ how many there are;
+- $V$ is the number of vertices.
 
-Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
+Why: start with $V$ separate vertices, which is $V$ pieces. Each edge that does not close a cycle joins two pieces into one, so it reduces the count by exactly 1. To get down to one piece you need $V - 1$ such edges. One more edge would have to join a piece to itself, which closes a cycle.
 
-## Algorithm progression
+Example: our map has $V = 5$ villages, so every spanning tree has $5 - 1 = 4$ cables. Out of the $\binom{7}{4} = 35$ ways to choose 4 of the 7 cables, 21 are spanning trees; the other 14 contain a cycle and leave a village out. Their costs range from 7 upwards, and exactly one costs 7.
 
-1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
-2. Start from the concrete example above and perform one legal edge decision.
-3. Record the changed state and check whether the invariant still holds.
-4. Continue until all required edges, vertices, or candidate states have been processed.
+The number of spanning trees explodes as graphs grow. For the *complete graph* $K_n$, where every pair of vertices has an edge, Cayley's formula gives
 
-**Proof sketch:** Cut property: the cheapest edge crossing a cut that respects the current forest can be added without excluding every optimum. Kruskal takes such safe edges and avoids cycles.
+$$
+\#\text{spanning trees of } K_n = n^{\,n-2}
+$$
 
-## Run a small implementation
+where $n$ is the number of vertices and every pair of them is joined by an edge.
 
-~~~js
-import { DSU } from '../examples/patterns.mjs';
+Example: $K_5$ has $5^{3} = 125$ spanning trees, and $K_{20}$ has $20^{18} \approx 2.6 \times 10^{23}$. Listing them all is out of the question, so we need a rule that picks the right edges directly.
 
-const d=new DSU(3); console.log(d.union(0,1),d.union(1,2),d.union(0,2));
-~~~
+```java
+static boolean isSpanningTree(int n, List<int[]> chosen) {
+    UnionFind uf = new UnionFind(n);
+    for (int[] e : chosen) if (!uf.union(e[0], e[1])) return false;
+    return chosen.size() == n - 1;
+}
+```
 
-The implementation is in the [small, tested Node.js algorithms lab](../examples/patterns.mjs). Save the snippet beside this `.qmd` as a `.mjs` file and run it with Node.
+Each edge is a triple `{u, v, cost}`. `UnionFind` is the structure from the [Union-Find lesson](../union-find/index.qmd): `union` returns `false` when the two ends are already connected, which means the edge would close a cycle.
 
-The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+### Level 2: the cut property, the one rule behind every algorithm
 
-## Work and limitations
+Split the vertices into two groups, $S$ and the rest. That split is called a **cut**, and an edge with one end on each side **crosses** it.
 
-**Complexity:** O(E log E) time to sort edges, near-constant amortised Union-Find operations, O(V+E) storage.
+$$
+e = \arg\min_{f \text{ crosses } (S,\, V \setminus S)} w(f) \;\;\Longrightarrow\;\; e \text{ belongs to some minimum spanning tree}
+$$
 
-**Where this reasoning fails:** An MST minimises the TOTAL cost of connecting all vertices, not the shortest path from one chosen source to every other vertex. These are different optimisation problems.
+where:
 
-As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+- $(S, V \setminus S)$ is the cut: $S$ is any non-empty proper subset of the vertices and $V \setminus S$ is everything else;
+- $w(f)$ is the weight (cost) of edge $f$;
+- $\arg\min$ picks the edge with the smallest weight among those crossing the cut.
 
-## Connections
+**Proof idea, an exchange.** Take any minimum spanning tree $T$ that does **not** contain $e = (u, v)$. Adding $e$ to $T$ creates exactly one cycle. That cycle goes from $u$'s side to $v$'s side along $e$, so it must come back across the cut along some other edge $e'$. Since $e$ is the lightest crossing edge, $w(e) \le w(e')$. Swap them: $T' = T - e' + e$ is still a spanning tree (still $V - 1$ edges, still connected) and $w(T') = w(T) - w(e') + w(e) \le w(T)$. So $T'$ is also minimum, and it contains $e$.
 
-- **Textbook:** CLRS Chapter 21 (minimum spanning trees: Kruskal and Prim).. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **Practice:** LeetCode 1584 — Min Cost to Connect All Points. Treat any online solution as a second explanation to compare, not a script to copy.
-- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+Example: take $S = \lbrace A \rbrace$. The crossing edges are A–B (4) and A–C (1), so A–C must be in some MST. Suppose someone builds a tree that reaches A through A–B instead, such as $\lbrace$A–B, B–C, B–D, D–E$\rbrace$ with cost $4 + 2 + 1 + 3 = 10$. Adding A–C closes the cycle A–B–C–A; removing A–B gives $\lbrace$A–C, B–C, B–D, D–E$\rbrace$ with cost $10 - 4 + 1 = 7$.
 
-[← Algorithms](../index.qmd)
+The mirror image is the **cycle property**: the strictly heaviest edge on any cycle is in **no** minimum spanning tree. On the cycle A–B–C, the edge A–B (4) is heavier than A–C (1) and B–C (2), so the MST never uses it.
+
+Every MST algorithm is just a different way of choosing cuts. If all weights are different, the MST is unique; our map has two edges of weight 1, but it still has exactly one cheapest tree.
+
+### Level 3: Kruskal, cheapest edges first
+
+Joseph Kruskal published this in 1956. Sort all edges by weight. Go through them in order, and keep an edge exactly when its two ends are not yet connected. The check is a union-find `union`.
+
+$$
+\text{keep } (u, v) \iff \text{find}(u) \ne \text{find}(v)
+$$
+
+where:
+
+- $\text{find}(u)$ names the piece of the growing forest that contains $u$;
+- different pieces mean the edge joins them without a cycle, and by the cut property (with $S$ = $u$'s piece) the cheapest such edge is safe.
+
+Example: sorted, the cables are A–C 1, B–D 1, B–C 2, D–E 3, A–B 4, C–D 5, C–E 8.
+
+| Edge | Weight | Pieces before | Keep? | Total |
+| --- | --- | --- | --- | --- |
+| A–C | 1 | A, B, C, D, E | yes | 1 |
+| B–D | 1 | AC, B, D, E | yes | 2 |
+| B–C | 2 | AC, BD, E | yes, joins AC and BD | 4 |
+| D–E | 3 | ABCD, E | yes, now 4 edges | **7** |
+| A–B, C–D, C–E | 4, 5, 8 | ABCDE | not needed: the loop stops at $V - 1 = 4$ edges | 7 |
+
+```java
+static List<int[]> kruskal(int n, int[][] edges) {
+    int[][] sorted = edges.clone();
+    Arrays.sort(sorted, Comparator.comparingInt(e -> e[2]));
+    UnionFind uf = new UnionFind(n);
+    List<int[]> tree = new ArrayList<>();
+    for (int[] e : sorted) {
+        if (uf.union(e[0], e[1])) tree.add(e);          // joins two pieces, so no cycle: keep it
+        if (tree.size() == n - 1) break;
+    }
+    return tree;
+}
+```
+
+Sorting costs $O(E \log E)$ and the unions cost almost nothing (Level 4 of the Union-Find lesson), so Kruskal runs in $O(E \log E)$. It shines on **sparse** graphs given as an edge list.
+
+### Level 4: Prim, grow one tree outward
+
+Vojtěch Jarník described this in 1930 and Robert Prim rediscovered it in 1957. Start from any vertex. The tree so far is $S$; repeatedly add the cheapest edge leaving $S$. That is the cut property with the cut $(S, V \setminus S)$, every single step.
+
+$$
+S \leftarrow S \cup \lbrace v \rbrace, \qquad (u, v) = \arg\min_{u \in S,\; v \notin S} w(u, v)
+$$
+
+where:
+
+- $S$ is the set of vertices already in the tree;
+- $(u, v)$ is the cheapest edge from inside $S$ to outside it;
+- $\leftarrow$ means "becomes".
+
+Example: start at A.
+
+| $S$ | Edges leaving $S$ (cost) | Cheapest | Total |
+| --- | --- | --- | --- |
+| A | A–B 4, A–C 1 | A–C 1 | 1 |
+| A, C | A–B 4, C–B 2, C–D 5, C–E 8 | C–B 2 | 3 |
+| A, B, C | B–D 1, C–D 5, C–E 8 | B–D 1 | 4 |
+| A, B, C, D | D–E 3, C–E 8 | D–E 3 | **7** |
+
+Prim builds the same tree as Kruskal, in a different order, for the same total of 7.
+
+A min-heap holds the candidate edges. As in Dijkstra's algorithm, Java's `PriorityQueue` cannot lower a key, so a vertex may sit in the heap several times; only its first (cheapest) appearance counts.
+
+```java
+static int prim(List<List<int[]>> adj) {
+    boolean[] inTree = new boolean[adj.size()];
+    PriorityQueue<int[]> heap = new PriorityQueue<>(Comparator.comparingInt(entry -> entry[1]));
+    heap.add(new int[] {0, 0});                         // {vertex, cost of the edge that reaches it}
+    int total = 0;
+    while (!heap.isEmpty()) {
+        int[] top = heap.poll();
+        int u = top[0];
+        if (inTree[u]) continue;                        // a cheaper edge already brought u in
+        inTree[u] = true;
+        total += top[1];
+        for (int[] edge : adj.get(u)) {
+            if (!inTree[edge[0]]) heap.add(new int[] {edge[0], edge[1]});
+        }
+    }
+    return total;
+}
+```
+
+With a binary heap, Prim costs $O(E \log V)$. On a **dense** graph, where $E$ is close to $V^2$, a simpler version is faster: keep an array `best[v]` of the cheapest edge from the tree to each outside vertex, and scan it to pick the next vertex. That is $O(V^2)$ with no heap at all, and LeetCode 1584 below uses it.
+
+Prim and Dijkstra look almost identical. The only difference is the heap key: Prim uses **the weight of one edge** into the tree, Dijkstra uses **the whole distance** from the source.
+
+### Level 5: Borůvka, and other variants
+
+**Borůvka (1926).** Every piece picks its own cheapest outgoing edge, all at once, and all of those edges are added. Each round at least halves the number of pieces, so there are at most $\lceil \log_2 V \rceil$ rounds:
+
+$$
+\text{pieces after round } r \le \frac{V}{2^r}
+$$
+
+where $r$ is the round number, and the bound holds because every piece merges with at least one other piece in each round.
+
+Example: round 1 on our map. A picks A–C (1), C picks A–C (1), B picks B–D (1), D picks B–D (1), E picks D–E (3). The pieces become $\lbrace$A, C$\rbrace$ and $\lbrace$B, D, E$\rbrace$: 2 pieces, below the bound $5 / 2 = 2.5$. Round 2: both pieces pick B–C (2). One piece, total $1 + 1 + 3 + 2 = 7$, after 2 rounds $\le \lceil \log_2 5 \rceil = 3$. Because each piece works independently, Borůvka is the natural choice for parallel and distributed computers. Ties must be broken consistently (for example by edge index), or two pieces could pick two different equal-weight edges between them and close a cycle.
+
+**Other variants you will meet:**
+
+- **Maximum spanning tree:** negate every weight, or sort in descending order. Same algorithms.
+- **Minimum bottleneck tree:** a tree whose heaviest edge is as light as possible. Every MST is one, so Kruskal answers "what is the smallest maximum cable needed?" for free.
+- **Clustering:** run Kruskal but stop when $k$ pieces remain. The pieces are $k$ clusters with the widest possible gaps between them.
+- **Steiner tree:** connect only *some* required vertices, possibly through others. This small change makes the problem NP-hard.
+
+## Why it works and what it costs
+
+**Correctness of Kruskal and Prim.** The invariant is: *the edges chosen so far are contained in some minimum spanning tree.*
+
+- *Initially* no edge is chosen, so it holds.
+- *Kruskal's step:* the next kept edge $(u, v)$ is the cheapest edge joining $u$'s piece to anything outside it (every cheaper edge was either kept or lies inside a piece). By the cut property with $S$ = $u$'s piece, adding it keeps the invariant.
+- *Prim's step:* the added edge is by definition the cheapest edge crossing $(S, V \setminus S)$.
+- *At the end* there are $V - 1$ chosen edges, contained in an MST that also has $V - 1$ edges, so they **are** that MST.
+
+**Costs, counted on our map** ($V = 5$, $E = 7$):
+
+| Method | Time | Best for | On our map |
+| --- | --- | --- | --- |
+| Try every subset | $O(2^E \cdot E)$ | never | 35 four-edge subsets, 21 trees |
+| Kruskal | $O(E \log E)$ | sparse graphs, edge lists | sort 7 edges, 4 successful unions |
+| Prim with a binary heap | $O(E \log V)$ | sparse graphs, adjacency lists | 5 vertices added, 8 heap entries |
+| Prim with an array | $O(V^2)$ | dense graphs, such as all pairs of points | $5 \times 5 = 25$ scans |
+| Borůvka | $O(E \log V)$ | parallel machines | 2 rounds |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Running Kruskal or Prim on a directed graph | Wrong answer: the cut property needs undirected edges | Directed graphs need a different algorithm (minimum arborescence, Chu–Liu/Edmonds) |
+| Forgetting that the graph may be disconnected | Kruskal returns fewer than $V - 1$ edges, a *forest*; Prim stops early | Check the edge count, or report "cannot connect" |
+| Sorting `int` weights with a subtraction comparator | Overflow with large or negative weights | `Comparator.comparingInt(e -> e[2])` |
+| Adding each undirected edge only once to Prim's adjacency list | Some vertices are never reached | Add both directions |
+| Using Kruskal on all pairs of $10^3$ points | Sorting $\approx 5 \times 10^5$ edges is slower than needed | Array-based Prim, $O(V^2)$ |
+| Confusing the MST with shortest paths | The tree path between two vertices is not the shortest path | Use Dijkstra for distances; an MST minimises the total, not each route |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 1584: Min Cost to Connect All Points (Medium)
+
+**Problem.** Connect all points on a grid. Joining two points costs their Manhattan distance. Return the minimum total cost. For `[[0,0],[2,2],[3,10],[5,2],[7,0]]` the answer is 20.
+
+**Math first.** Every pair of points is an edge, so this is an MST on the complete graph $K_n$:
+
+$$
+w(p, q) = \lvert x_p - x_q \rvert + \lvert y_p - y_q \rvert, \qquad \text{answer} = \min_{T} \sum_{(p, q) \in T} w(p, q)
+$$
+
+where:
+
+- $p$ and $q$ are points with coordinates $(x_p, y_p)$ and $(x_q, y_q)$;
+- $w(p, q)$ is the Manhattan distance between them;
+- $T$ ranges over the spanning trees of the complete graph.
+
+Example: start Prim at $P_0 = (0, 0)$. The cheapest edges to the others are $P_1{:}\;2 + 2 = 4$, $P_2{:}\;3 + 10 = 13$, $P_3{:}\;5 + 2 = 7$ and $P_4{:}\;7 + 0 = 7$.
+
+- Add $P_1$ (4). From $(2, 2)$: $P_2$ drops to $1 + 8 = 9$, $P_3$ to $3 + 0 = 3$.
+- Add $P_3$ (3). From $(5, 2)$: $P_4$ drops to $2 + 2 = 4$.
+- Add $P_4$ (4). From $(7, 0)$: $P_2$ would cost $4 + 10 = 14$, so it stays at 9.
+- Add $P_2$ (9). Total $4 + 3 + 4 + 9 = 20$.
+
+**Idea.** The graph has $\frac{n(n-1)}{2}$ edges, almost $n^2$, so use the array version of Prim from Level 4: no edge list, no heap, just `best[v]`.
+
+```java
+static int minCostConnectPoints(int[][] points) {
+    int n = points.length, total = 0;
+    int[] best = new int[n];                            // cheapest known edge from the tree to each point
+    Arrays.fill(best, Integer.MAX_VALUE);
+    best[0] = 0;
+    boolean[] inTree = new boolean[n];
+    for (int round = 0; round < n; round++) {
+        int u = -1;
+        for (int v = 0; v < n; v++) if (!inTree[v] && (u == -1 || best[v] < best[u])) u = v;
+        inTree[u] = true;
+        total += best[u];
+        for (int v = 0; v < n; v++) {
+            int d = Math.abs(points[u][0] - points[v][0]) + Math.abs(points[u][1] - points[v][1]);
+            if (!inTree[v] && d < best[v]) best[v] = d;
+        }
+    }
+    return total;
+}
+```
+
+**Answer.** 20 for the example, 18 for `[[3,12],[-2,5],[-4,1]]`, and 0 for a single point. $O(n^2)$ time and $O(n)$ space: for $n = 1000$, about $2 \times 10^6$ distance checks. Kruskal would first have to build and sort 499,500 edges.
+
+### 2. LeetCode 1489: Find Critical and Pseudo-Critical Edges in Minimum Spanning Tree (Hard)
+
+**Problem.** Given a connected weighted graph, an edge is **critical** if every MST contains it, and **pseudo-critical** if some MSTs contain it but not all. Return both lists of edge indices. For $n = 5$ and `[[0,1,1],[1,2,1],[2,3,2],[0,3,2],[0,4,3],[3,4,3],[1,4,6]]` the answer is `[[0,1],[2,3,4,5]]`.
+
+**Math first.** Let $W$ be the MST weight. Compare it with two modified runs, one without the edge and one that must use it:
+
+$$
+e \text{ is }
+\begin{cases}
+\text{critical}, & W_{-e} > W \\
+\text{pseudo-critical}, & W_{-e} = W \text{ and } W_{+e} = W \\
+\text{in no MST}, & W_{+e} > W
+\end{cases}
+$$
+
+where:
+
+- $W$ is the weight of a minimum spanning tree;
+- $W_{-e}$ is the MST weight with edge $e$ removed ($\infty$ if the graph falls apart);
+- $W_{+e}$ is the cheapest spanning tree forced to contain $e$: put $e$ in first, then run Kruskal.
+
+Example: $W = 1 + 1 + 2 + 3 = 7$.
+
+- Edge 0 (0–1, weight 1): without it the best tree is $1 + 2 + 2 + 3 = 8 > 7$, so it is **critical**. Edge 1 likewise.
+- Edge 2 (2–3, weight 2): without it, edge 3 (0–3, weight 2) takes its place and $W_{-e} = 7$; forcing it gives $W_{+e} = 7$. **Pseudo-critical.** Edges 3, 4 and 5 likewise.
+- Edge 6 (1–4, weight 6): forcing it gives $6 + 1 + 1 + 2 = 10 > 7$. In no MST.
+
+**Idea.** Write one Kruskal that can skip one edge and force another, then run it twice per edge. Kruskal must sort edge **indices**, because the answer reports the original positions.
+
+```java
+static int mstWeight(int n, int[][] edges, int skip, int force) {
+    Integer[] order = new Integer[edges.length];
+    for (int i = 0; i < order.length; i++) order[i] = i;
+    Arrays.sort(order, Comparator.comparingInt(i -> edges[i][2]));
+    UnionFind uf = new UnionFind(n);
+    int total = 0, used = 0;
+    if (force >= 0) { uf.union(edges[force][0], edges[force][1]); total += edges[force][2]; used++; }
+    for (int i : order) {
+        if (i == skip) continue;
+        if (uf.union(edges[i][0], edges[i][1])) { total += edges[i][2]; used++; }
+    }
+    return used == n - 1 ? total : Integer.MAX_VALUE;   // MAX_VALUE: the graph falls apart
+}
+
+static List<List<Integer>> findCriticalAndPseudoCriticalEdges(int n, int[][] edges) {
+    int best = mstWeight(n, edges, -1, -1);
+    List<Integer> critical = new ArrayList<>(), pseudoCritical = new ArrayList<>();
+    for (int i = 0; i < edges.length; i++) {
+        if (mstWeight(n, edges, i, -1) > best) critical.add(i);               // without it, every tree costs more
+        else if (mstWeight(n, edges, -1, i) == best) pseudoCritical.add(i);   // some cheapest tree uses it
+    }
+    return List.of(critical, pseudoCritical);
+}
+```
+
+**Answer.** `[[0,1],[2,3,4,5]]` for the example. For a square of four weight-1 edges, every edge can be left out, so the answer is `[[],[0,1,2,3]]`. Up to $2E + 1$ Kruskal runs of $O(E \log E)$ each: $O(E^2 \log E)$ time and $O(V + E)$ space. For LeetCode's limit of $E = 200$ that is at most 401 runs, roughly $401 \times 200 \times 8 \approx 6 \times 10^5$ steps.
+
+## Mathematical Abstraction
+
+A minimum spanning tree is the cheapest acyclic edge set that connects everything, and the cut property says how to grow it safely:
+
+$$
+T^{*} = \arg\min_{T \text{ spanning tree}} \sum_{e \in T} w(e), \qquad \lvert T^{*} \rvert = V - 1, \qquad e = \arg\min_{f \text{ crosses a cut}} w(f) \Rightarrow e \in \text{some } T^{*}
+$$
+
+where:
+
+- $T$ ranges over the spanning trees of a connected, undirected, weighted graph with $V$ vertices;
+- $w(e)$ is the weight of edge $e$, and $T^{*}$ is a tree of minimum total weight;
+- a cut splits the vertices into two non-empty groups, and $f$ crosses it when its ends lie on different sides.
+
+Example: on the five-village map, $T^{*} = \lbrace$A–C, B–D, B–C, D–E$\rbrace$ with $\lvert T^{*} \rvert = 4 = 5 - 1$ and weight $1 + 1 + 2 + 3 = 7$, the cheapest of the 21 spanning trees. For the cut $\lbrace E \rbrace$ against the rest, the crossing edges are D–E (3) and C–E (8); the lighter one, D–E, is in $T^{*}$, as the cut property promises.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 21, "Minimum Spanning Trees": Section 21.1 "Growing a minimum spanning tree" (the cut property) and Section 21.2 "The algorithms of Kruskal and Prim". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §4.3 "Minimum Spanning Trees", with Java Kruskal and lazy and eager Prim: <https://algs4.cs.princeton.edu/43mst/>.
+- Jeff Erickson, *Algorithms* (2019), Chapter 7 "Minimum Spanning Trees", free at <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- Joseph B. Kruskal, "On the shortest spanning subtree of a graph and the traveling salesman problem", *Proceedings of the American Mathematical Society* 7(1), 1956.
+- Robert C. Prim, "Shortest connection networks and some generalizations", *Bell System Technical Journal* 36(6), 1957.
+- Jaroslav Nešetřil, Eva Milková and Helena Nešetřilová, "Otakar Borůvka on minimum spanning tree problem: translation of both the 1926 papers, comments, history", *Discrete Mathematics* 233, 2001.
+- LeetCode: [1584. Min Cost to Connect All Points](https://leetcode.com/problems/min-cost-to-connect-all-points/), [1489. Find Critical and Pseudo-Critical Edges in Minimum Spanning Tree](https://leetcode.com/problems/find-critical-and-pseudo-critical-edges-in-minimum-spanning-tree/).
+
+[← Topological Sort](../topological-sort/index.qmd) · [Graph Algorithms and Connectivity](../groups/05-graph-algorithms.qmd) · [Strongly Connected Component →](../strongly-connected-component/index.qmd)

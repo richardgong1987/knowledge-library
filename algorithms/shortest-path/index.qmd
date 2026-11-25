@@ -1,101 +1,512 @@
 ---
 title: "Shortest Path"
-description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
+description: "From the relaxation rule to every standard shortest-path algorithm, all traced on one five-town map: BFS for equal steps, Dijkstra with a priority queue, Bellman-Ford and negative cycles, 0-1 BFS, Floyd-Warshall for all pairs, and hard interview problems solved math-first."
 ---
 
-## Begin with an actual graph
+A shortest-path algorithm finds the cheapest way from one place to another when every road has a cost. This lesson starts from one rule, *relaxation*, and builds every standard algorithm from it. Each one is traced on the same small map, so you can compare their numbers directly.
 
-**LeetCode 743 — Network Delay Time.** A message starts at A. Edges carry positive travel times: A→B costs 2, A→C costs 5, and B→C costs 1. We want the earliest arrival time at every node.
+All code is in [`ShortestPathLab.java`](ShortestPathLab.java). Run it from this folder with `java ShortestPathLab.java`; it checks every number on this page and prints `OK`.
 
-The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
+## The problem
 
-## Why a tempting approach is wrong or wasteful
+Five towns, A to E, are joined by one-way roads. Each road shows its travel time in minutes:
 
-A plain BFS counts edge hops, not weighted travel time. It might favour the direct A→C edge (one hop, cost 5) over A→B→C (two hops, cost 3).
+```text
+A → B  4        B → D  1        D → E  3
+A → C  1        C → D  5
+C → B  2        C → E  8
+```
 
-## The idea that simplifies the problem
+What is the quickest way from A to every other town? From A to E there are four routes:
 
-Dijkstra repeatedly settles the nearest not-yet-settled node. Relaxation tests whether going through an already-reached node improves a neighbouring distance.
+| Route | Minutes |
+| --- | --- |
+| A → B → D → E | $4 + 1 + 3 = 8$ |
+| A → C → B → D → E | $1 + 2 + 1 + 3 = \mathbf{7}$ |
+| A → C → D → E | $1 + 5 + 3 = 9$ |
+| A → C → E | $1 + 8 = 9$ |
 
-## Formalise it — explain symbols immediately
+The winner uses the **most** roads. So "fewest roads" and "least time" are different questions.
+
+Listing every route does not scale. A map built from 30 diamond shapes in a row, each offering an upper and a lower road, has $2^{30} \approx 10^9$ routes from one end to the other. We need a method that never lists routes at all.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Pour a bucket of water at town A, and pretend each road is a pipe that the water takes exactly its length in minutes to flow through. Water reaches C after 1 minute. It reaches B after 3 minutes, not 4, because the water that went through C arrives first. **The moment the water first arrives at a town is that town's shortest distance.** Dijkstra's algorithm is a careful way of simulating the water: it always looks next at the town the water will reach soonest.
+
+Edsger Dijkstra invented it in 1956 in about twenty minutes. He later told the story in an interview published in *Communications of the ACM* in 2010. He was shopping in Amsterdam with his fiancée, Ria, they sat down on a café terrace for a coffee, and he worked out the whole algorithm in his head, without pencil and paper. He needed a problem that non-programmers could understand to demonstrate a new Dutch computer, the ARMAC, and chose: *what is the shortest way to drive from Rotterdam to Groningen?* He did not bother to publish it until 1959, when it appeared as a three-page note.
+:::
+
+## From simple to advanced
+
+### Level 1: the one rule, relaxation
+
+Every algorithm on this page keeps a table of **best distances found so far**, $d[v]$. It starts with $d[\text{source}] = 0$ and $d[v] = \infty$ for every other town. Then it repeats one move, called **relaxing** the edge $(u, v)$: *if going through $u$ is cheaper than what we know, remember that.*
 
 $$
-d(v)\leftarrow\min(d(v),d(u)+w(u,v))
+d[v] \leftarrow \min\big(d[v],\; d[u] + w(u, v)\big)
 $$
 
-**Every symbol explained:** d(x) is the best known source-to-x cost; u is the current node, v an outgoing neighbour, and w(u,v) is the edge weight. The minimum keeps the cheaper known route.
+where:
 
-**Numbers substituted into the relation:** Initially d(A)=0, d(B)=∞ and d(C)=∞. Relax A→B and A→C: d(B)=2 and d(C)=5. Settle B (cost 2); relax B→C (cost 1): d(C)=min(5,2+1)=3. The indirect route wins.
+- $d[v]$ is the best known distance from the source to $v$;
+- $w(u, v)$ is the weight (travel time) of the road from $u$ to $v$;
+- $\leftarrow$ means "replace the value with".
 
-Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
+Example: suppose we know $d[B] = 4$ (the direct road) and $d[C] = 1$. Relaxing $C \to B$ with $w = 2$ gives $d[B] = \min(4, 1 + 2) = 3$. The two-road route beats the direct road.
 
-## Algorithm progression
+When no edge can be relaxed any more, the table satisfies the **triangle inequality** for every road, and that is exactly the condition for being finished:
 
-1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
-2. Start from the concrete example above and perform one legal edge decision.
-3. Record the changed state and check whether the invariant still holds.
-4. Continue until all required edges, vertices, or candidate states have been processed.
+$$
+d[v] \le d[u] + w(u, v) \quad \text{for every edge } (u, v)
+$$
 
-**Proof sketch:** For nonnegative edge weights, the currently smallest tentative distance cannot be improved by travelling first through any unsettled node. Therefore marking it final is safe.
+where the symbols are as above, and "for every edge" means no road offers a shortcut.
 
-## Run a small implementation
+Example: at the end, $d = (A{:}\,0, B{:}\,3, C{:}\,1, D{:}\,4, E{:}\,7)$. Check the road $C \to E$: $d[E] = 7 \le d[C] + 8 = 9$. Check $D \to E$: $7 \le 4 + 3 = 7$, with equality, because that road is on the shortest route.
 
-~~~js
-import { dijkstraSimple } from '../examples/patterns.mjs';
+The algorithms below differ only in **which edges they relax, and in what order**.
 
-console.log(dijkstraSimple([[[1,2],[2,5]],[[2,1]],[]],0));
-~~~
+### Level 2: equal steps, breadth-first search
 
-The implementation is in the [small, tested Node.js algorithms lab](../examples/patterns.mjs). Save the snippet beside this `.qmd` as a `.mjs` file and run it with Node.
+If every road costs the same, say 1, then distance just counts roads. A queue processes towns in rounds: first everything 1 road away, then everything 2 roads away, and so on. The first time a town is reached is the shortest.
 
-The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
+$$
+d[v] = d[u] + 1 \quad \text{the first time } v \text{ is reached from } u
+$$
 
-## Study the complete implementation, one line at a time
+where $d[u]$ is the number of roads from the source to $u$, and $u$ is the town being taken off the front of the queue.
 
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
+Example: ignoring the minutes, from A the queue gives A = 0, then B = 1 and C = 1, then D = 2 (from B) and E = 2 (from C). So the fewest roads to E is 2 (A → C → E), even though that route takes 9 minutes.
 
-~~~js
-export function dijkstraSimple(graph, source) {
-  const d = Array(graph.length).fill(Infinity);
-  const settled = Array(graph.length).fill(false);
-  d[source] = 0;
-  for (let step = 0; step < graph.length; step++) {
-    let u = -1;
-    for (let i = 0; i < graph.length; i++)
-      if (!settled[i] && (u < 0 || d[i] < d[u])) u = i;
-    if (u < 0 || d[u] === Infinity) break;
-    settled[u] = true;
-    for (const [v, w] of graph[u]) {
-      if (w < 0) throw Error('Dijkstra needs nonnegative weights');
-      d[v] = Math.min(d[v], d[u] + w);
+```java
+static int[] bfs(List<List<int[]>> adj, int source) {
+    int[] dist = new int[adj.size()];
+    Arrays.fill(dist, INF);
+    dist[source] = 0;
+    Deque<Integer> queue = new ArrayDeque<>(List.of(source));
+    while (!queue.isEmpty()) {
+        int u = queue.poll();
+        for (int[] edge : adj.get(u)) {
+            int v = edge[0];
+            if (dist[v] == INF) { dist[v] = dist[u] + 1; queue.add(v); }   // first visit uses the fewest edges
+        }
     }
-  }
-  return d;
+    return dist;
 }
-~~~
+```
 
-**Walk through the important lines:**
+The graph is stored as an *adjacency list*: `adj.get(u)` holds pairs `{v, w}`, one per road leaving $u$. `INF` is `Integer.MAX_VALUE / 2`, large enough to mean "no path yet" but small enough that adding two of them cannot overflow.
 
-1. `d` stores the cheapest discovered source-to-vertex route so far.
-2. Find the unsettled vertex with the smallest tentative `d` using a plain linear scan. This is easy to inspect, but slower than a heap.
-3. Settle that vertex, then relax each outgoing edge by comparing existing cost with cost through the current vertex.
-4. The **nonnegative-weight assumption** is required for settling a vertex to be safe.
-5. With A→B=2, A→C=5 and B→C=1, the final distances are **[0,2,3]**.
+### Level 3: Dijkstra, a queue sorted by distance
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+With different weights, the plain queue is wrong: B is one road from A, but its true distance is 3, not 4. Dijkstra replaces the queue with a **priority queue** (a min-heap) ordered by $d$. It repeatedly takes the unsettled town with the smallest $d$, declares it **settled**, and relaxes its roads.
 
-## Work and limitations
+```java
+static int[] dijkstra(List<List<int[]>> adj, int source) {
+    int[] dist = new int[adj.size()];
+    Arrays.fill(dist, INF);
+    dist[source] = 0;
+    PriorityQueue<int[]> heap = new PriorityQueue<>(Comparator.comparingInt(entry -> entry[1]));
+    heap.add(new int[] {source, 0});
+    while (!heap.isEmpty()) {
+        int[] top = heap.poll();
+        int u = top[0];
+        if (top[1] > dist[u]) continue;                  // stale entry: u was already settled more cheaply
+        for (int[] edge : adj.get(u)) {
+            int v = edge[0], w = edge[1];
+            if (dist[u] + w < dist[v]) {                 // relax (u, v)
+                dist[v] = dist[u] + w;
+                heap.add(new int[] {v, dist[v]});
+            }
+        }
+    }
+    return dist;
+}
+```
 
-**Complexity:** The simple readable lab uses O(V²+E) time with linear minimum selection. A binary-heap implementation is typically O((V+E) log V). V is vertices, E edges.
+Java's `PriorityQueue` cannot lower a key in place, so an improved town is simply added again. The old, larger entry stays in the heap and is skipped when it comes out: that is the "stale entry" line. This is called *lazy deletion*.
 
-**Where this reasoning fails:** A negative edge weight breaks the greedy finalisation argument. Bellman–Ford handles negative weights and detects reachable negative cycles; Dijkstra does not.
+Trace from A. Each row pops the smallest entry $(\text{town}, d)$:
 
-As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+| Pop | Relaxations | $d$ = (A, B, C, D, E) afterwards |
+| --- | --- | --- |
+| (A, 0) | B: $\min(\infty, 0 + 4) = 4$; C: $\min(\infty, 0 + 1) = 1$ | (0, 4, 1, ∞, ∞) |
+| (C, 1) | B: $\min(4, 1 + 2) = 3$; D: $1 + 5 = 6$; E: $1 + 8 = 9$ | (0, 3, 1, 6, 9) |
+| (B, 3) | D: $\min(6, 3 + 1) = 4$ | (0, 3, 1, 4, 9) |
+| (D, 4) | E: $\min(9, 4 + 3) = 7$ | (0, 3, 1, 4, 7) |
+| (B, 4), (D, 6), (E, 7), (E, 9) | stale entries are skipped; E has no roads out | (0, 3, 1, 4, 7) |
 
-## Connections
+The two entries with key 4, (B, 4) and (D, 4), may come out in either order; the stale (B, 4) changes nothing either way.
 
-- **Textbook:** CLRS Chapter 22 §22.3 (Dijkstra) and §22.1 (Bellman–Ford).. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **Practice:** LeetCode 743 — Network Delay Time. Treat any online solution as a second explanation to compare, not a script to copy.
-- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+**Why settling is safe (the proof idea).** When $u$ comes out with the smallest $d[u]$ among unsettled towns, could some other route to $u$ be cheaper? Any other route must leave the settled towns somewhere, through an unsettled town $x$:
 
-[← Algorithms](../index.qmd)
+$$
+\text{cost of a route through } x \;\ge\; d[x] \;\ge\; d[u], \qquad \text{because every } w \ge 0
+$$
+
+where:
+
+- $x$ is the first unsettled town on the other route;
+- $d[x] \ge d[u]$ because $u$ was the smallest in the heap;
+- the rest of the route from $x$ to $u$ adds weights that are never negative, so it cannot bring the total back down.
+
+Example: when B is popped with $d[B] = 3$, the only other unsettled towns are D ($d = 6$) and E ($d = 9$). Any route to B through them already costs at least 6, which is more than 3. So 3 is final.
+
+**Where it breaks: negative weights.** Take roads A → C = 1, A → B = 4 and B → C = $-4$. Dijkstra settles C at 1, but A → B → C costs $4 - 4 = 0$. The step "the rest of the route cannot bring the total back down" is false when a weight is negative. (The lazy version above would re-add C and repair this small case, but it then loses its running-time guarantee.) Negative weights need Bellman–Ford.
+
+**Cost.** Every successful relaxation adds one heap entry, so there are at most $E + 1$ entries, and each push or pop costs $O(\log E)$. On our map, 7 relaxations plus the source give 8 entries. In general Dijkstra costs $O((V + E) \log V)$.
+
+### Level 4: Bellman–Ford, negative weights and negative cycles
+
+Bellman–Ford is the most patient method: relax **every** edge, and repeat for $V - 1$ rounds. Read only the previous round's values, and each round becomes easy to describe:
+
+$$
+d_k[v] = \min\Big(d_{k-1}[v],\; \min_{(u, v) \in E} \big(d_{k-1}[u] + w(u, v)\big)\Big)
+$$
+
+where:
+
+- $d_k[v]$ is the cheapest route from the source to $v$ that uses **at most $k$ roads**;
+- $d_0$ is 0 at the source and $\infty$ elsewhere;
+- $E$ is the set of edges, and the inner minimum looks at every road ending at $v$.
+
+Example: on our map, round by round:
+
+| After round $k$ | A | B | C | D | E | What changed |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0 | ∞ | ∞ | ∞ | ∞ | start |
+| 1 | 0 | 4 | 1 | ∞ | ∞ | one road from A |
+| 2 | 0 | 3 | 1 | 5 | 9 | B via C: $1 + 2$; D via B: $4 + 1$; E via C: $1 + 8$ |
+| 3 | 0 | 3 | 1 | 4 | 8 | D via B: $3 + 1$; E via D: $5 + 3$ |
+| 4 | 0 | 3 | 1 | 4 | 7 | E via D: $4 + 3$ |
+
+The best route to E, A → C → B → D → E, has 4 roads, and it is found in round 4.
+
+**Why $V - 1$ rounds are enough.** A shortest route never needs to visit a town twice, unless there is a negative cycle, so it has at most $V$ towns and $V - 1$ roads. Here $V = 5$, so 4 rounds.
+
+```java
+static int[] relaxAllEdges(int[] dist, int[][] edges) {
+    int[] next = dist.clone();
+    for (int[] e : edges) {
+        if (dist[e[0]] != INF && dist[e[0]] + e[2] < next[e[1]]) next[e[1]] = dist[e[0]] + e[2];
+    }
+    return next;
+}
+
+static int[] bellmanFord(int n, int[][] edges, int source) {
+    int[] dist = new int[n];
+    Arrays.fill(dist, INF);
+    dist[source] = 0;
+    for (int round = 1; round <= n - 1; round++) dist = relaxAllEdges(dist, edges);
+    if (!Arrays.equals(relaxAllEdges(dist, edges), dist)) {
+        throw new IllegalStateException("negative cycle reachable from the source"); // round V still improves
+    }
+    return dist;
+}
+```
+
+Edges here are triples `{from, to, weight}`. Relaxing in place, without the copy, is also correct and often finishes in fewer rounds; the copy makes "round $k$ means at most $k$ roads" exact, which LeetCode 787 below needs.
+
+**Negative cycles.** Add a road E → B with weight $-6$. The loop B → D → E → B now costs $1 + 3 - 6 = -2$, so driving around it again and again makes the trip cheaper without limit, and "shortest" no longer exists. Bellman–Ford detects this: after $V - 1$ rounds every real shortest route is already found, so if a $V$-th round **still** improves something, a negative cycle must be reachable. The lab checks that the extra round raises the error on this map.
+
+Bellman–Ford costs $V - 1$ rounds of $E$ relaxations: $O(V E)$. On our map that is $4 \times 7 = 28$ relaxations.
+
+**A special case: no cycles at all.** Our map happens to have no cycle (it is a *DAG*). Then relaxing each town's roads once, in topological order (A, C, B, D, E), is enough: $O(V + E)$, and negative weights are fine. CLRS Section 22.2 covers this.
+
+### Level 5: roads that cost 0 or 1, the 0-1 BFS
+
+Sometimes every weight is 0 or 1, for example "a toll road costs 1, a free road costs 0". Dijkstra works, but a **double-ended queue** does the same job without a heap: put a town reached by a free road at the **front** (it is as close as the current town), and one reached by a toll road at the **back** (one step further).
+
+$$
+v \text{ goes to the }
+\begin{cases}
+\text{front}, & w(u, v) = 0 \\
+\text{back}, & w(u, v) = 1
+\end{cases}
+$$
+
+where $u$ is the town just taken from the front and $w(u, v)$ is the cost of the road used.
+
+Example: keep the same arrows but mark tolls: A → B 1, A → C 0, C → B 0, B → D 1, C → D 1, D → E 0, C → E 1.
+
+- Pop A ($d = 0$): B gets $0 + 1 = 1$ (back), C gets $0 + 0 = 0$ (front). Deque: C, B.
+- Pop C ($d = 0$): B improves to $0 + 0 = 0$ (front); D gets 1 and E gets 1 (back). Deque: B, B, D, E.
+- Pop B twice: $0 + 1$ does not beat $d[D] = 1$. Pop D: $1 + 0$ does not beat $d[E] = 1$. Pop E.
+
+Final $d = (0, 0, 0, 1, 1)$, the same as Dijkstra. B was added twice, like a stale heap entry; its second copy changes nothing.
+
+```java
+static int[] zeroOneBfs(List<List<int[]>> adj, int source) {
+    int[] dist = new int[adj.size()];
+    Arrays.fill(dist, INF);
+    dist[source] = 0;
+    Deque<Integer> deque = new ArrayDeque<>(List.of(source));
+    while (!deque.isEmpty()) {
+        int u = deque.pollFirst();
+        for (int[] edge : adj.get(u)) {
+            int v = edge[0], w = edge[1];
+            if (dist[u] + w < dist[v]) {
+                dist[v] = dist[u] + w;
+                if (w == 0) deque.addFirst(v); else deque.addLast(v);
+            }
+        }
+    }
+    return dist;
+}
+```
+
+The deque always holds towns with distance $d$ at the front and $d + 1$ at the back, so it behaves like a priority queue with only two keys. Cost: $O(V + E)$, no $\log$.
+
+### Level 6: every pair at once, Floyd–Warshall
+
+To know the distance between **every** pair of towns, Floyd–Warshall builds a $V \times V$ table and lets the towns become allowed stop-overs one at a time:
+
+$$
+d_k[i][j] = \min\big(d_{k-1}[i][j],\; d_{k-1}[i][k] + d_{k-1}[k][j]\big)
+$$
+
+where:
+
+- $d_k[i][j]$ is the shortest route from $i$ to $j$ whose stop-overs all come from the first $k$ towns;
+- $d_0[i][j]$ is the direct road's weight, 0 when $i = j$, and $\infty$ when there is no road;
+- the second option means "go from $i$ to $k$, then from $k$ to $j$".
+
+Example: when C becomes an allowed stop-over, A to B becomes $\min(4, d[A][C] + d[C][B]) = \min(4, 1 + 2) = 3$. Later, when D is allowed, C to E becomes $\min(8, d[C][D] + d[D][E]) = \min(8, 3 + 3) = 6$, where $d[C][D] = 3$ was itself improved through B. The finished row for A is $(0, 3, 1, 4, 7)$, matching Dijkstra.
+
+```java
+static int[][] floydWarshall(int n, int[][] edges) {
+    int[][] dist = new int[n][n];
+    for (int[] row : dist) Arrays.fill(row, INF);
+    for (int i = 0; i < n; i++) dist[i][i] = 0;
+    for (int[] e : edges) dist[e[0]][e[1]] = Math.min(dist[e[0]][e[1]], e[2]);
+    for (int k = 0; k < n; k++)
+        for (int i = 0; i < n; i++)
+            for (int j = 0; j < n; j++)
+                if (dist[i][k] + dist[k][j] < dist[i][j]) dist[i][j] = dist[i][k] + dist[k][j];
+    return dist;
+}
+```
+
+The loop over the stop-over $k$ must be the **outermost**. Three nested loops make $V^3$ updates, $5^3 = 125$ for our map. It handles negative edges, and a negative number on the diagonal at the end reveals a negative cycle.
+
+Two more names you will meet: **Johnson's algorithm** (CLRS Section 23.3) reweights a sparse graph with Bellman–Ford so that Dijkstra can run from every town, and **A\*** is Dijkstra with a guess of the remaining distance added to the priority, which is what route planners use on real maps.
+
+## Why it works and what it costs
+
+**The shared invariant.** Every algorithm keeps $d[v] \ge \delta(v)$, where $\delta(v)$ is the true shortest distance: $d[v]$ is always the length of some real route, or $\infty$. Relaxation only ever replaces $d[v]$ with the length of another real route, so it can never go below $\delta(v)$. Each algorithm then proves its own reason for stopping at equality:
+
+- **BFS:** towns leave the queue in order of road count, so the first visit is the fewest roads.
+- **Dijkstra:** with non-negative weights, the smallest $d$ in the heap cannot be improved (Level 3).
+- **Bellman–Ford:** after round $k$, every route with at most $k$ roads has been considered; shortest routes have at most $V - 1$ roads.
+- **Floyd–Warshall:** after stage $k$, every route whose stop-overs come from the first $k$ towns has been considered; after stage $V$, every route has.
+
+**Costs, counted on our map** ($V = 5$, $E = 7$):
+
+| Algorithm | Weights allowed | Time | On our map |
+| --- | --- | --- | --- |
+| BFS | all equal | $O(V + E)$ | 5 pops, 7 edge checks |
+| 0-1 BFS | 0 or 1 | $O(V + E)$ | 6 pops (B twice), 7 edge checks |
+| Dijkstra with a binary heap | $\ge 0$ | $O((V + E) \log V)$ | 8 heap entries |
+| DAG relaxation | any, no cycles | $O(V + E)$ | 7 relaxations |
+| Bellman–Ford | any; detects negative cycles | $O(V E)$ | $4 \times 7 = 28$ relaxations |
+| Floyd–Warshall, all pairs | any, no negative cycles | $O(V^3)$ | 125 updates |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Dijkstra with a negative edge | A settled town later turns out to have a cheaper route | Bellman–Ford, or DAG relaxation if there are no cycles |
+| No "stale entry" check with lazy deletion | Correct answers but far slower: old entries relax edges again | Skip a popped entry whose distance is larger than `dist[u]` |
+| `Integer.MAX_VALUE` as infinity | `INF + w` overflows to a negative number and wins every comparison | Use `Integer.MAX_VALUE / 2`, or test `dist[u] != INF` first |
+| BFS on weighted roads | Returns fewest roads, not least time (2 instead of 7 minutes for E) | Dijkstra, or 0-1 BFS for weights 0 and 1 |
+| Bellman–Ford reading the round it is writing, when the round count matters | "At most $k$ roads" is violated, as in LeetCode 787 | Copy the array each round |
+| Floyd–Warshall with $k$ as an inner loop | Some pairs never improve | $k$ must be the outermost loop |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 743: Network Delay Time (Medium)
+
+**Problem.** A signal leaves node $k$; `times[i] = [u, v, w]` means it takes $w$ to travel from $u$ to $v$. Return the time when all $n$ nodes have received it, or $-1$ if some never will. For `times = [[2,1,1],[2,3,1],[3,4,1]]`, $n = 4$, $k = 2$, the answer is 2.
+
+**Math first.** Each node hears the signal at its shortest distance, and everyone has heard it when the **last** node has:
+
+$$
+T = \max_{v} \delta(k, v)
+$$
+
+where:
+
+- $\delta(k, v)$ is the shortest travel time from $k$ to $v$;
+- $T = \infty$ (answer $-1$) if some $\delta(k, v)$ is infinite.
+
+Example: from node 2, $\delta = 1$ for node 1, $1$ for node 3, and $1 + 1 = 2$ for node 4. So $T = \max(0, 1, 1, 2) = 2$.
+
+**Idea.** All weights are non-negative, so run Dijkstra from $k$ and take the largest distance. Nodes are numbered from 1, so shift them to 0 first.
+
+```java
+static int networkDelayTime(int[][] times, int n, int k) {
+    int[][] edges = new int[times.length][];
+    for (int i = 0; i < times.length; i++) edges[i] = new int[] {times[i][0] - 1, times[i][1] - 1, times[i][2]};
+    int[] dist = dijkstra(adjacency(n, edges), k - 1);
+    int latest = Arrays.stream(dist).max().getAsInt();
+    return latest == INF ? -1 : latest;
+}
+```
+
+**Answer.** 2 for the example; $-1$ when a node is unreachable. Dijkstra costs $O((n + E) \log n)$; with LeetCode's limits of $n \le 100$ and $E \le 6000$ that is roughly $6{,}000 \times 7 \approx 4 \times 10^4$ heap steps.
+
+### 2. LeetCode 787: Cheapest Flights Within K Stops (Medium)
+
+**Problem.** Flights `[from, to, price]` connect $n$ cities. Find the cheapest price from `src` to `dst` with **at most $k$ stops**, or $-1$. For $n = 4$, flights `[[0,1,100],[1,2,100],[2,0,100],[1,3,600],[2,3,200]]`, `src = 0`, `dst = 3`, $k = 1$, the answer is 700.
+
+**Math first.** $k$ stops means at most $k + 1$ flights, and that is exactly what Bellman–Ford's round $k + 1$ computes:
+
+$$
+\text{answer} = d_{k+1}[\text{dst}], \qquad d_k[v] = \min\Big(d_{k-1}[v],\; \min_{(u,v)} \big(d_{k-1}[u] + \text{price}(u, v)\big)\Big)
+$$
+
+where:
+
+- $d_k[v]$ is the cheapest price to reach $v$ with at most $k$ flights;
+- the copy of the previous round is essential: relaxing in place could chain two flights inside one round.
+
+Example: $d_1 = (0, 100, \infty, \infty)$. Round 2 reads only $d_1$: city 2 costs $100 + 100 = 200$ and city 3 costs $100 + 600 = 700$, so $d_2[3] = 700$. The cheaper route $0 \to 1 \to 2 \to 3$ costs $100 + 100 + 200 = 400$ but needs 3 flights, which is round 3, allowed only when $k = 2$.
+
+**Idea.** Run exactly $k + 1$ rounds of the `relaxAllEdges` step from Level 4, which already reads the old array and writes a copy.
+
+```java
+static int findCheapestPrice(int n, int[][] flights, int src, int dst, int k) {
+    int[] dist = new int[n];
+    Arrays.fill(dist, INF);
+    dist[src] = 0;
+    for (int round = 1; round <= k + 1; round++) dist = relaxAllEdges(dist, flights);  // k stops = k + 1 flights
+    return dist[dst] == INF ? -1 : dist[dst];
+}
+```
+
+**Answer.** 700 with $k = 1$, 400 with $k = 2$, and $-1$ with $k = 0$ (no direct flight). $O(k \cdot F)$ time for $F$ flights: here $2 \times 5 = 10$ relaxations. Plain Dijkstra is wrong here, because the cheapest partial route may already have used too many stops.
+
+### 3. LeetCode 1368: Minimum Cost to Make at Least One Valid Path in a Grid (Hard)
+
+**Problem.** Each cell of a grid holds an arrow: 1 right, 2 left, 3 down, 4 up. Start at the top-left and follow the arrows. Changing one cell's arrow costs 1. Return the minimum cost so that the arrows lead to the bottom-right cell. For `[[1,1,1,1],[2,2,2,2],[1,1,1,1],[2,2,2,2]]` the answer is 3.
+
+**Math first.** Each cell is a vertex with an edge to each neighbour. Following the arrow is free; any other direction means changing that arrow:
+
+$$
+w\big(c, c'\big) =
+\begin{cases}
+0, & c' \text{ is where the arrow in } c \text{ points} \\
+1, & \text{otherwise}
+\end{cases}
+\qquad \text{answer} = \delta\big((0,0), (m-1, n-1)\big)
+$$
+
+where:
+
+- $c$ and $c'$ are neighbouring cells;
+- $\delta$ is the shortest distance in this 0/1-weighted graph;
+- $m \times n$ is the grid size.
+
+Example: in the 4 × 4 grid, follow row 0 right for free to $(0, 3)$, pay 1 to go down, follow row 1 left for free to $(1, 0)$, pay 1 to go down, follow row 2 right for free to $(2, 3)$, and pay 1 to go down to $(3, 3)$. Total $0 + 1 + 0 + 1 + 0 + 1 = 3$.
+
+**Idea.** Weights are 0 or 1, so this is the 0-1 BFS of Level 5 on the grid.
+
+```java
+static int minCost(int[][] grid) {
+    int rows = grid.length, cols = grid[0].length;
+    int[][] moves = {{0, 1}, {0, -1}, {1, 0}, {-1, 0}};          // signs 1, 2, 3, 4: right, left, down, up
+    int[][] dist = new int[rows][cols];
+    for (int[] row : dist) Arrays.fill(row, INF);
+    dist[0][0] = 0;
+    Deque<int[]> deque = new ArrayDeque<>(List.of(new int[] {0, 0}));
+    while (!deque.isEmpty()) {
+        int[] cell = deque.pollFirst();
+        int r = cell[0], c = cell[1];
+        for (int sign = 1; sign <= 4; sign++) {
+            int nr = r + moves[sign - 1][0], nc = c + moves[sign - 1][1];
+            if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+            int cost = grid[r][c] == sign ? 0 : 1;               // following the arrow is free
+            if (dist[r][c] + cost < dist[nr][nc]) {
+                dist[nr][nc] = dist[r][c] + cost;
+                if (cost == 0) deque.addFirst(new int[] {nr, nc}); else deque.addLast(new int[] {nr, nc});
+            }
+        }
+    }
+    return dist[rows - 1][cols - 1];
+}
+```
+
+**Answer.** 3 for the example, 1 for `[[1,2],[4,3]]`, and 0 for a single cell. Each cell has 4 edges, so $O(mn)$ time and space: for the largest $100 \times 100$ grid, about $4 \times 10^4$ edge checks.
+
+### 4. LeetCode 882: Reachable Nodes In Subdivided Graph (Hard)
+
+**Problem.** An undirected graph on $n$ nodes has edges `[u, v, cnt]`: the edge is split into a chain of `cnt` new nodes. Starting at node 0 with `maxMoves` steps, how many nodes (old and new) can you reach? For edges `[[0,1,10],[0,2,1],[1,2,2]]`, `maxMoves` $= 6$, $n = 3$, the answer is 13.
+
+**Math first.** Do not build the new nodes. An edge with `cnt` new nodes is a road of length $\text{cnt} + 1$. Run Dijkstra on the original nodes, then count what each edge contributes from both ends:
+
+$$
+\text{reached} = \#\lbrace v : \delta(v) \le M \rbrace + \sum_{(u, v, c)} \min\big(c,\; \max(0, M - \delta(u)) + \max(0, M - \delta(v))\big)
+$$
+
+where:
+
+- $M$ is `maxMoves` and $\delta(v)$ is the shortest distance from 0 with edge length $c + 1$;
+- $M - \delta(u)$ is how many steps are left on arriving at $u$, which is how far you can walk into the chain from that side;
+- the $\min$ with $c$ stops the two sides from counting the same new node twice.
+
+Example: edge lengths are $11$, $2$ and $3$. Dijkstra gives $\delta(0) = 0$, $\delta(2) = 2$, $\delta(1) = \min(11, 2 + 3) = 5$, all $\le 6$, so 3 original nodes. The edges add $\min(10, 6 + 1) = 7$, $\min(1, 6 + 4) = 1$ and $\min(2, 1 + 4) = 2$. Total $3 + 7 + 1 + 2 = 13$.
+
+**Idea.** Add each undirected edge in both directions with length $\text{cnt} + 1$, reuse Level 3's Dijkstra, then apply the formula.
+
+```java
+static int reachableNodes(int[][] edges, int maxMoves, int n) {
+    int[][] arcs = new int[2 * edges.length][];
+    for (int i = 0; i < edges.length; i++) {
+        int[] e = edges[i];
+        arcs[2 * i] = new int[] {e[0], e[1], e[2] + 1};         // cnt new nodes means cnt + 1 steps
+        arcs[2 * i + 1] = new int[] {e[1], e[0], e[2] + 1};
+    }
+    int[] dist = dijkstra(adjacency(n, arcs), 0);
+    int reached = 0;
+    for (int d : dist) if (d <= maxMoves) reached++;
+    for (int[] e : edges) {
+        int fromU = Math.max(0, maxMoves - dist[e[0]]), fromV = Math.max(0, maxMoves - dist[e[1]]);
+        reached += Math.min(e[2], fromU + fromV);
+    }
+    return reached;
+}
+```
+
+**Answer.** 13 for the example, 23 for LeetCode's second example, and 1 when node 0 has no edges. Building the new nodes would create up to $10^4 \times 10^4 = 10^8$ of them; this way the cost is one Dijkstra, $O((n + E) \log n)$, plus $O(E)$ for the sum.
+
+## Mathematical Abstraction
+
+A shortest path is a minimum over routes, and every algorithm reaches it by relaxing edges until the triangle inequality holds everywhere:
+
+$$
+\delta(s, v) = \min_{\text{routes } p:\, s \leadsto v} \; \sum_{(x, y) \in p} w(x, y), \qquad \delta(s, v) \le \delta(s, u) + w(u, v) \;\; \forall (u, v) \in E
+$$
+
+where:
+
+- $s$ is the source, $v$ the destination and $p$ a route from $s$ to $v$ ($s \leadsto v$);
+- $w(x, y)$ is the weight of the edge from $x$ to $y$, and $E$ is the set of edges;
+- $\delta(s, v)$ is the true shortest distance, $\infty$ if no route exists and undefined if a negative cycle is reachable on the way.
+
+Example: on the five-town map, $\delta(A, E) = 1 + 2 + 1 + 3 = 7$ along A → C → B → D → E, and the inequality holds for every road, for example $\delta(A, B) = 3 \le \delta(A, C) + 2 = 3$ and $\delta(A, E) = 7 \le \delta(A, C) + 8 = 9$. The algorithm is chosen by the weights: all equal → BFS; 0 or 1 → 0-1 BFS; non-negative → Dijkstra; negative → Bellman–Ford; every pair → Floyd–Warshall.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022): Chapter 20, Section 20.2 "Breadth-first search"; Chapter 22, "Single-Source Shortest Paths" (Bellman–Ford, DAGs, Dijkstra, proofs of the relaxation properties); Chapter 23, "All-Pairs Shortest Paths" (Floyd–Warshall, Johnson). [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §4.4 "Shortest Paths", with Java Dijkstra, acyclic and Bellman–Ford implementations: <https://algs4.cs.princeton.edu/44sp/>.
+- Jeff Erickson, *Algorithms* (2019), Chapter 8 "Shortest Paths" and Chapter 9 "All-Pairs Shortest Paths", free at <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- E. W. Dijkstra, "A note on two problems in connexion with graphs", *Numerische Mathematik* 1 (1959), 269–271.
+- Philip L. Frana and Thomas J. Misa, "An interview with Edsger W. Dijkstra", *Communications of the ACM* 53(8), 2010, 41–47, recorded in Austin in 2001 and the source of the café story; retold by David Gries in "Edsger Dijkstra and the shortest-path algorithm": <https://courses.cs.cornell.edu/cs2110/2017sp/online/shortestPath/01shortestPathHistory.pdf>.
+- Richard Bellman, "On a routing problem", *Quarterly of Applied Mathematics* 16 (1958); Robert W. Floyd, "Algorithm 97: Shortest path", *Communications of the ACM* 5(6), 1962.
+- LeetCode: [743. Network Delay Time](https://leetcode.com/problems/network-delay-time/), [787. Cheapest Flights Within K Stops](https://leetcode.com/problems/cheapest-flights-within-k-stops/), [1368. Minimum Cost to Make at Least One Valid Path in a Grid](https://leetcode.com/problems/minimum-cost-to-make-at-least-one-valid-path-in-a-grid/), [882. Reachable Nodes In Subdivided Graph](https://leetcode.com/problems/reachable-nodes-in-subdivided-graph/).
+
+[← Union-Find](../union-find/index.qmd) · [Graph Algorithms and Connectivity](../groups/05-graph-algorithms.qmd) · [Topological Sort →](../topological-sort/index.qmd)

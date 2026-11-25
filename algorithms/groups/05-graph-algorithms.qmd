@@ -1,42 +1,150 @@
 ---
 title: "Graph Algorithms and Connectivity"
-description: "A connected learning path through 7 worked algorithms topics."
+description: "Seven graph algorithms that turn connections into answers, from union-find and shortest paths to strongly connected components, bridges and Euler circuits, with a reading order, a which-tool-when table and a cheat sheet of formulas with worked numbers."
 ---
 
-## What you are really learning
+## What this group is about
 
-Turn relationships into vertices/edges and make correctness depend on reachability, order or weights.
+Draw your friends as dots and join two dots with a line whenever those two people know each other. Draw the towns near you as dots and the roads between them as lines, with the driving time written on each road. Draw the jobs you must do this morning as dots, with an arrow from "socks" to "shoes". Each picture is a **graph**: dots (*vertices*) and lines or arrows (*edges*).
 
-The goal is not to learn 7 unrelated definitions. Compare the operations needed by each classic problem and notice which invariant survives from one technique to the next.
+Once a problem is drawn as a graph, a handful of questions come up again and again. *Are these two dots connected at all? What is the cheapest way from here to there? In what order can I do the jobs? What is the cheapest set of roads that still connects every town? Which groups can all reach each other? Which single road or town, if it broke, would cut the map in two? Can I travel every road exactly once?* Each lesson in this group answers one of these questions, usually with a single depth-first search, a queue, a heap, or a union-find, and always in time close to the size of the graph, $O(V + E)$ or $O(E \log V)$.
 
-## Begin with a small example
+Every lesson follows the same path: a tiny real problem, a child-level picture, levels from simple to advanced with the math worked out on real numbers, the proof and the costs, common mistakes, and hard interview problems solved math-first. Every lesson's Java lab runs with `java <Name>Lab.java` and checks every number on its page. Where possible the lessons reuse one small map, so you can compare algorithms on the same five or six vertices.
 
-A cheaper route can use more edges.
+## Reading order, from simple to advanced
+
+**Stage 1: are they connected?**
+
+1. [Union-Find](../union-find/index.qmd): groups that only merge; a parent array, union by size, path compression, and the inverse Ackermann bound $\alpha(n) \le 4$.
+
+**Stage 2: cheapest routes and valid orders.**
+
+2. [Shortest Path](../shortest-path/index.qmd): relaxation, BFS, Dijkstra, Bellman–Ford and negative cycles, 0-1 BFS, and Floyd–Warshall, all on one five-town map.
+3. [Topological Sort](../topological-sort/index.qmd): ordering tasks so every dependency comes first; Kahn's in-degrees, the DFS finishing order, and why a cycle makes it impossible.
+
+**Stage 3: the cheapest way to connect everything.**
+
+4. [Minimum Spanning Tree](../minimum-spanning-tree/index.qmd): the cut property, Kruskal (sorting plus union-find), Prim (a heap), and Borůvka.
+
+**Stage 4: the structure hidden in depth-first search.**
+
+5. [Strongly Connected Component](../strongly-connected-component/index.qmd): mutual reachability in directed graphs; Kosaraju–Sharir, Tarjan's low-links, and the condensation DAG.
+6. [Biconnected Component](../biconnected-component/index.qmd): the weak spots of undirected networks; articulation points, bridges, and blocks from $d[u]$ and $\text{low}[u]$.
+
+**Stage 5: every edge exactly once.**
+
+7. [Eulerian Circuit](../eulerian-circuit/index.qmd): Euler's Königsberg argument, the degree conditions, Hierholzer's $O(E)$ algorithm, and de Bruijn sequences.
+
+Before starting, it helps to know how graphs are stored and searched: see [Graph Theory](../graph-theory/index.qmd), [Depth-First Search](../depth-first-search/index.qmd) and [Breadth-First Search](../breadth-first-search/index.qmd).
+
+## Which tool when
+
+| If the problem says… | Reach for… | Because… |
+| --- | --- | --- |
+| "are $a$ and $b$ connected?" while edges keep arriving; "number of groups" | [Union-Find](../union-find/index.qmd) | near-$O(1)$ `union` and `find`, and groups $= n -$ successful unions |
+| "which edge creates a cycle?" in an undirected graph | [Union-Find](../union-find/index.qmd) | `union` fails exactly when both ends are already connected |
+| "fewest steps", every move costs the same | BFS ([Shortest Path](../shortest-path/index.qmd), Level 2) | a queue visits vertices in order of distance |
+| "costs are 0 or 1", "free moves and paid moves" | 0-1 BFS ([Shortest Path](../shortest-path/index.qmd)) | a deque replaces the heap: free moves go to the front |
+| "cheapest route", all costs $\ge 0$ | Dijkstra ([Shortest Path](../shortest-path/index.qmd)) | the closest unsettled vertex can never be improved |
+| "negative costs", "detect an arbitrage loop", "at most $k$ edges" | Bellman–Ford ([Shortest Path](../shortest-path/index.qmd)) | round $k$ knows every route of at most $k$ edges |
+| "distance between every pair", $V \le$ a few hundred | Floyd–Warshall ([Shortest Path](../shortest-path/index.qmd)) | $V^3$ simple updates, one stop-over at a time |
+| "prerequisites", "build order", "is the schedule possible?" | [Topological Sort](../topological-sort/index.qmd) | Kahn's algorithm outputs every task exactly when there is no cycle |
+| "connect all points/cities at minimum total cost" | [Minimum Spanning Tree](../minimum-spanning-tree/index.qmd) | the lightest edge across any cut is always safe to take |
+| "groups that can all reach each other", "circular dependencies", 2-SAT | [Strongly Connected Component](../strongly-connected-component/index.qmd) | contracting components leaves a DAG |
+| "critical connection", "single point of failure" | [Biconnected Component](../biconnected-component/index.qmd) | one DFS: bridge if $\text{low}[v] > d[u]$, cut vertex if $\text{low}[v] \ge d[u]$ |
+| "use every ticket/edge/pair exactly once", "shortest string containing all codes" | [Eulerian Circuit](../eulerian-circuit/index.qmd) | degrees decide existence, Hierholzer builds the walk in $O(E)$ |
+
+## Cost at a glance
+
+| Algorithm | Time | Space | Works on |
+| --- | --- | --- | --- |
+| Union-find, $m$ operations | $O(m \, \alpha(n))$ | $O(n)$ | undirected connectivity, merges only |
+| BFS / 0-1 BFS | $O(V + E)$ | $O(V)$ | weights all equal / 0 or 1 |
+| Dijkstra with a binary heap | $O((V + E) \log V)$ | $O(V + E)$ | weights $\ge 0$ |
+| Bellman–Ford | $O(V E)$ | $O(V)$ | any weights; reports negative cycles |
+| Floyd–Warshall | $O(V^3)$ | $O(V^2)$ | all pairs, no negative cycles |
+| Kahn / DFS topological sort | $O(V + E)$ | $O(V)$ | directed graphs; fails exactly on cycles |
+| Kruskal / Prim (heap) / Prim (array) | $O(E \log E)$ / $O(E \log V)$ / $O(V^2)$ | $O(V + E)$ | connected undirected weighted graphs |
+| Kosaraju–Sharir / Tarjan | $O(V + E)$ | $O(V + E)$ | directed graphs |
+| Bridges and articulation points | $O(V + E)$ | $O(V)$ | undirected graphs |
+| Hierholzer | $O(V + E)$ | $O(V + E)$ | graphs meeting Euler's degree conditions |
+
+## Cheat sheet: the formulas of this group
+
+**Union-find: groups and cost.**
 
 $$
-d(C)=\min(5,2+1)=3
+c = n - u, \qquad \text{cost}(m \text{ operations}) = O\big(m \, \alpha(n)\big)
 $$
 
-**What the symbols mean:** d(C) is minimum cost to city C from source A; direct A→C costs 5; the alternative A→B and B→C costs 2 plus 1.
+where $c$ is the number of groups, $n$ the number of elements, $u$ the number of successful unions, and $\alpha$ the inverse Ackermann function, at most 4 for any practical $n$. Example: six children and five friendships that each join two different groups give $c = 6 - 5 = 1$ group.
 
-**Substitute actual numbers:** The two-hop route costs 3, which is smaller than direct cost 5. This is why a weighted shortest path problem is not merely BFS.
+**Relaxation and the triangle inequality.**
 
-This is how the topic pages below should be read: understand the numbers first, then generalise to the equation.
+$$
+d[v] \leftarrow \min\big(d[v],\; d[u] + w(u, v)\big)
+$$
 
-## The chapters in this family
+where $d[v]$ is the best known distance from the source to $v$ and $w(u, v)$ is the weight of the edge $u \to v$. Example: with $d[B] = 4$, $d[C] = 1$ and an edge $C \to B$ of weight 2, $d[B]$ becomes $\min(4, 1 + 2) = 3$: the route with more edges is cheaper.
 
-1. **[Union-Find](../union-find/index.qmd)** — Maintain disjoint equivalence classes as edges or unions arrive.
-2. **[Shortest Path](../shortest-path/index.qmd)** — Minimise a path's total edge weight between vertices.
-3. **[Topological Sort](../topological-sort/index.qmd)** — Order a directed acyclic graph so dependencies precede consumers.
-4. **[Minimum Spanning Tree](../minimum-spanning-tree/index.qmd)** — Connect all vertices with minimum total edge cost and no cycle.
-5. **[Strongly Connected Component](../strongly-connected-component/index.qmd)** — Partition a directed graph by mutual reachability.
-6. **[Biconnected Component](../biconnected-component/index.qmd)** — Identify undirected graph blocks that cannot be disconnected by one internal articulation vertex.
-7. **[Eulerian Circuit](../eulerian-circuit/index.qmd)** — Traverse every edge exactly once and return to the starting vertex.
+**Bellman–Ford rounds.**
 
-## Practice method
+$$
+d_k[v] = \min\Big(d_{k-1}[v],\; \min_{(u, v)} \big(d_{k-1}[u] + w(u, v)\big)\Big)
+$$
 
-Choose ONE chapter. Reproduce its example with paper and pencil, identify what is cached or discarded, implement the tiny idea, and explain one case in which the algorithm's assumptions fail. Repeat until the invariant feels natural.
+where $d_k[v]$ is the cheapest route to $v$ using at most $k$ edges. Example: on the five-town map the best route to E, $A \to C \to B \to D \to E$, has 4 edges, and $d_4[E] = 7$ appears in round $4 = V - 1$.
 
-The [original executable examples](../examples/README.md) provide code you can run and test. If two topics seem similar, compare them in the [algorithm selection guide](../guides/choose-a-pattern.qmd).
+**Floyd–Warshall stop-overs.**
+
+$$
+d[i][j] \leftarrow \min\big(d[i][j],\; d[i][k] + d[k][j]\big)
+$$
+
+where $k$ is the newly allowed stop-over and $d[i][j]$ the shortest known distance from $i$ to $j$. Example: allowing C as a stop-over turns A to B from 4 into $\min(4, 1 + 2) = 3$.
+
+**Topological order and cycles.**
+
+$$
+(u, v) \in E \Rightarrow \text{pos}(u) < \text{pos}(v), \qquad \text{such an order exists} \iff \text{no directed cycle}
+$$
+
+where $\text{pos}(u)$ is $u$'s position in the order and $E$ the set of arrows. Example: underwear $\to$ trousers $\to$ shoes forces $\text{pos}(0) < \text{pos}(1) < \text{pos}(2)$; adding shoes $\to$ underwear would demand $\text{pos}(0) < \text{pos}(0)$, so Kahn's algorithm stops after 2 of 6 items.
+
+**Spanning trees and the cut property.**
+
+$$
+\lvert T \rvert = V - 1, \qquad e = \arg\min_{f \text{ crosses } (S, V \setminus S)} w(f) \;\Rightarrow\; e \in \text{some MST}
+$$
+
+where $T$ is a spanning tree, $V$ the number of vertices, $(S, V \setminus S)$ any split of the vertices into two groups, and $w(f)$ the weight of edge $f$. Example: five villages need $5 - 1 = 4$ cables; for $S = \lbrace A \rbrace$ the crossing cables cost 4 and 1, so the cable of cost 1 is in the tree, whose total is 7.
+
+**Strongly connected components.**
+
+$$
+u \sim v \iff (u \leadsto v) \land (v \leadsto u)
+$$
+
+where $u \leadsto v$ means a directed path leads from $u$ to $v$, and $\sim$ is an equivalence relation whose classes are the components. Example: with streets $0 \to 1 \to 2 \to 0$, $2 \to 3$, $3 \leftrightarrow 4$ and $4 \to 5$, the components are $\lbrace 0, 1, 2 \rbrace$, $\lbrace 3, 4 \rbrace$ and $\lbrace 5 \rbrace$, because 5 cannot get back.
+
+**Bridges and articulation points.**
+
+$$
+\text{bridge } (u, v) \iff \text{low}[v] > d[u], \qquad \text{cut vertex } u \iff \text{low}[v] \ge d[u] \text{ for some child } v
+$$
+
+where $d[u]$ is the DFS discovery time, $\text{low}[v]$ the earliest discovery time reachable from $v$'s subtree with one back edge, and the root is a cut vertex only with 2 or more children. Example: two triangles joined by road $1 - 3$ give $d[1] = 1$ and $\text{low}[3] = 3$, so $3 > 1$ makes $1 - 3$ a bridge and $3 \ge 1$ makes town 1 a cut vertex.
+
+**Euler's degree conditions.**
+
+$$
+\#\lbrace v : \deg(v) \text{ odd} \rbrace \in \lbrace 0, 2 \rbrace \text{ (undirected)}, \qquad \text{out}(v) - \text{in}(v) = 0 \text{ for all } v \text{, or one } {+1} \text{ and one } {-1} \text{ (directed)}
+$$
+
+where $\deg(v)$ counts the edges at $v$, and $\text{out}(v)$, $\text{in}(v)$ count arrows leaving and entering $v$; the edges must also be connected. Example: Königsberg's land masses have degrees $5, 3, 3, 3$, four odd vertices, so no walk crosses each of the seven bridges exactly once.
+
+## How to study this group
+
+Read the lessons in order: union-find reappears inside Kruskal, Dijkstra's heap reappears inside Prim, and the depth-first search of topological sort is the engine of the strongly connected and biconnected lessons. For each lesson, redraw its small map on paper and redo one trace (a Dijkstra table, a Kahn queue, a column of low values) before running `java <Name>Lab.java` to compare. Then try one interview problem with the code hidden, starting from the **Math first** formula. If two techniques seem to fit, check the weights and the direction of the edges first; the [algorithm selection guide](../guides/choose-a-pattern.qmd) helps when the choice is between whole families of techniques.
 
 [← Algorithms](../index.qmd) · [Mathematical notation](../guides/read-the-math.qmd) · [CLRS reading map](../guides/clrs-roadmap.qmd)

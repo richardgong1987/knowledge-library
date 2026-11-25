@@ -1,97 +1,435 @@
 ---
 title: "Topological Sort"
-description: "Prove a graph algorithm on a small explicit graph with every mathematical symbol explained."
+description: "Putting tasks in an order that respects every dependency: what a valid order is, Kahn's in-degree algorithm and the depth-first finishing order traced on a six-task example, why a cycle makes ordering impossible, counting the valid orders, and hard interview problems solved math-first."
 ---
 
-## Begin with an actual graph
+A topological sort lists the vertices of a directed graph so that every arrow points forward: whenever $u$ must come before $v$, $u$ is listed first. It is how build tools order compilation, how spreadsheets decide which cell to recompute first, and how a course planner checks that a degree can be finished. This lesson builds the two classic algorithms on one small example, proves when an order exists, and counts how many there are.
 
-**LeetCode 207 — Course Schedule.** Course 2 requires 0 and 1; course 3 requires 2. Which course order satisfies prerequisites, and how do we detect an impossible cycle?
+All code is in [`TopologicalSortLab.java`](TopologicalSortLab.java). Run it from this folder with `java TopologicalSortLab.java`; it checks every number on this page and prints `OK`.
 
-The graph should be small enough to draw: label vertices, list edges, write any weights, and specify whether edges are directed. That single decision changes which algorithms are correct.
+## The problem
 
-## Why a tempting approach is wrong or wasteful
+Getting dressed in the morning involves six items, numbered 0 to 5, and five rules:
 
-Sort courses by numeric ID or simply pick an arbitrary unvisited course. Such orders can place a dependency after the course that needs it.
+```text
+0 underwear → 1 trousers        1 trousers → 2 shoes        3 socks → 2 shoes
+1 trousers  → 4 belt            5 shirt    → 4 belt
+```
 
-## The idea that simplifies the problem
+An arrow $u \to v$ means "$u$ must go on before $v$". We want **any** order of the six items that obeys all five rules, and we want to be told if the rules are impossible to obey.
 
-Represent prerequisites as directed edges. A course with indegree zero has no unmet prerequisites and is safe to schedule. Remove it and decrease its dependents' indegrees.
+- Trying every order means checking up to $6! = 720$ orders, and $20! \approx 2.4 \times 10^{18}$ for twenty tasks. Hopeless.
+- Of the 720 orders, only 30 are valid (Level 5 counts them). So guessing does not work either.
+- We want an algorithm that touches each item and each rule about once.
 
-## Formalise it — explain symbols immediately
+## Explain it like I'm ten
+
+::: {.callout-tip}
+Think of the six items lying on your bed, with sticky notes saying what has to go on first: "trousers need underwear", "shoes need trousers and socks", and so on.
+
+Look for anything with **no sticky notes left**, such as underwear, socks or a shirt. Put one of them on. Then tear off every note that mentioned it: once your underwear is on, the trousers' note "needs underwear" is gone, so the trousers are free too. Keep going until the bed is empty.
+
+If you ever get stuck with clothes still on the bed and **every** one still has a note, the notes go round in a circle, like "shoes need trousers, trousers need underwear, underwear needs shoes". Then no order can work.
+
+*Introduction to Algorithms* (CLRS) uses this very example: its topological-sort section shows Professor Bumstead working out which clothes to put on first in the morning (Figure 22.7 in the 3rd edition).
+:::
+
+## From simple to advanced
+
+### Level 1: what a valid order is
+
+Give each item a position in the list: 0 for the first, 1 for the second, and so on. An order is **topological** when every arrow points forward:
 
 $$
-(u,v)\in E\Rightarrow pos(u)<pos(v)
+(u, v) \in E \;\Rightarrow\; \text{pos}(u) < \text{pos}(v)
 $$
 
-**Every symbol explained:** E is the set of directed prerequisite edges, where u→v means finish u before v; pos(x) is the position of course x in the chosen order.
+where:
 
-**Numbers substituted into the relation:** For edges 0→2, 1→2 and 2→3, one valid order is [0,1,2,3] because pos(0)=0<pos(2)=2 and pos(2)=2<pos(3)=3. If edge 3→0 is added, a cycle prevents any full order.
+- $E$ is the set of arrows (dependencies), and $(u, v) \in E$ means "$u$ before $v$";
+- $\text{pos}(u)$ is the position of $u$ in the order;
+- $\Rightarrow$ means "implies": every arrow must satisfy the inequality.
 
-Keep the tiny graph beside the formula. The graph is the meaning of the mathematical objects; the equation is a concise description, not something you should memorise independently.
+Example: the order socks, underwear, trousers, shoes, shirt, belt gives $\text{pos} = (\text{underwear } 1, \text{trousers } 2, \text{shoes } 3, \text{socks } 0, \text{belt } 5, \text{shirt } 4)$. Check all five arrows: $1 < 2$, $2 < 3$, $0 < 3$, $2 < 5$, $4 < 5$. All true, so it is valid. The order underwear, shoes, trousers, ... fails at once: $\text{pos}(\text{trousers}) = 2 > \text{pos}(\text{shoes}) = 1$.
 
-## Algorithm progression
-
-1. Define the state you need to remember: visited set, distance, parent, component representative, or active frontier.
-2. Start from the concrete example above and perform one legal edge decision.
-3. Record the changed state and check whether the invariant still holds.
-4. Continue until all required edges, vertices, or candidate states have been processed.
-
-**Proof sketch:** A DAG always contains at least one zero-indegree vertex. Removing it preserves acyclicity and resolves its outgoing dependencies. If vertices remain but no zero-indegree candidate exists, a directed cycle prevents completion.
-
-## Run a small implementation
-
-~~~js
-import { topologicalOrder } from '../examples/patterns.mjs';
-
-console.log(topologicalOrder(4,[[0,2],[1,2],[2,3]]));
-~~~
-
-The implementation is in the [small, tested Node.js algorithms lab](../examples/patterns.mjs). Save the snippet beside this `.qmd` as a `.mjs` file and run it with Node.
-
-The goal is not to reimplement a whole graph library. A tiny graph, one queue/stack, and an explicit invariant are enough to understand the difficult part.
-
-## Study the complete implementation, one line at a time
-
-Unlike a call-only snippet, this is the **actual small algorithm** used by the tested lab. Read the comments and match each state update to the worked numbers above.
-
-~~~js
-export function topologicalOrder(n, edges) {
-  const graph=Array.from({length:n},()=>[]);
-  const indegree=Array(n).fill(0);
-  for(const [u,v] of edges){graph[u].push(v);indegree[v]++;}
-  const q=[];
-  for(let i=0;i<n;i++)if(indegree[i]===0)q.push(i);
-  const out=[];
-  for(let head=0;head<q.length;head++){
-    const u=q[head]; out.push(u);
-    for(const v of graph[u])if(--indegree[v]===0)q.push(v);
-  }
-  return out.length===n?out:null;
+```java
+static boolean isTopologicalOrder(List<Integer> order, int[][] edges) {
+    int[] position = new int[order.size()];
+    for (int i = 0; i < order.size(); i++) position[order.get(i)] = i;
+    for (int[] e : edges) {
+        if (position[e[0]] >= position[e[1]]) return false;
+    }
+    return true;
 }
-~~~
+```
 
-**Walk through the important lines:**
+Edges are pairs `{u, v}`. The checker is cheap, $O(V + E)$; finding an order is the real problem.
 
-1. `indegree[v]` counts unresolved prerequisites for vertex `v`.
-2. Initially queue exactly the vertices with no prerequisites.
-3. Removing a vertex satisfies each outgoing dependency and decrements the relevant indegrees.
-4. If every vertex is emitted, the ordering is valid. If a cycle remains, its vertices never reach indegree zero.
-5. For dependencies 0→2, 1→2, 2→3, both `[0,1,2,3]` and `[1,0,2,3]` are valid.
+### Level 2: Kahn's algorithm, peel off what is ready
 
-Run the [automated tests](../examples/patterns.test.mjs) after changing a condition to observe what fails.
+This is the sticky-note method, published by Arthur Kahn in 1962. Count each item's prerequisites, its **in-degree**. Items with in-degree 0 are *ready*. Repeatedly output a ready item and remove its arrows, which may make new items ready.
 
-## Work and limitations
+$$
+\text{in}(v) = \#\lbrace u : (u, v) \in E \rbrace, \qquad \text{after outputting } u: \;\; \text{in}(v) \leftarrow \text{in}(v) - 1 \text{ for each arrow } u \to v
+$$
 
-**Complexity:** O(V+E) time and space for adjacency lists, indegree counts and queue.
+where:
 
-**Where this reasoning fails:** Topological order exists only for directed acyclic graphs. A valid order need not be unique. Do not confuse input adjacency direction 'course→prerequisite' with the chosen edge convention.
+- $\text{in}(v)$ is the number of arrows still pointing into $v$, its remaining prerequisites;
+- $\#$ means "how many";
+- $v$ becomes ready the moment $\text{in}(v)$ reaches 0.
 
-As an interview exercise, remove one assumption (for example change edge weights from nonnegative to negative, or change an undirected edge to directed). Identify the first step in the proof that is no longer valid.
+Example: at the start, $\text{in} = (\text{underwear } 0, \text{trousers } 1, \text{shoes } 2, \text{socks } 0, \text{belt } 2, \text{shirt } 0)$, so underwear (0), socks (3) and shirt (5) are ready.
 
-## Connections
+| Output | In-degrees that drop | Newly ready | Ready queue after |
+| --- | --- | --- | --- |
+| 0 underwear | trousers $1 \to 0$ | trousers | 3, 5, 1 |
+| 3 socks | shoes $2 \to 1$ | — | 5, 1 |
+| 5 shirt | belt $2 \to 1$ | — | 1 |
+| 1 trousers | shoes $1 \to 0$, belt $1 \to 0$ | shoes, belt | 2, 4 |
+| 2 shoes | — | — | 4 |
+| 4 belt | — | — | empty |
 
-- **Textbook:** CLRS Chapter 20 §20.4 (topological sort).. [Official CLRS 4e contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf).
-- **Practice:** LeetCode 207 — Course Schedule. Treat any online solution as a second explanation to compare, not a script to copy.
-- [Graph Theory basics](../graph-theory/index.qmd) · [Proof and complexity guide](../guides/prove-and-count.qmd).
+The order is underwear, socks, shirt, trousers, shoes, belt: `[0, 3, 5, 1, 2, 4]`.
 
-[← Algorithms](../index.qmd)
+```java
+static List<Integer> kahn(int n, int[][] edges) {
+    List<List<Integer>> next = adjacency(n, edges);
+    int[] indegree = new int[n];
+    for (int[] e : edges) indegree[e[1]]++;
+    Deque<Integer> ready = new ArrayDeque<>();
+    for (int v = 0; v < n; v++) if (indegree[v] == 0) ready.add(v);
+    List<Integer> order = new ArrayList<>();
+    while (!ready.isEmpty()) {
+        int u = ready.poll();
+        order.add(u);
+        for (int v : next.get(u)) {
+            if (--indegree[v] == 0) ready.add(v);       // v's last prerequisite is done
+        }
+    }
+    return order;                                       // shorter than n exactly when there is a cycle
+}
+```
+
+`adjacency` builds the list `next.get(u)` of arrows leaving $u$. Each item enters the queue once and each arrow is crossed once, so Kahn's algorithm costs $O(V + E)$: here $6 + 5 = 11$ steps.
+
+### Level 3: depth-first search, the finishing order reversed
+
+A depth-first search explores as deep as possible before backing up. An item **finishes** when everything reachable from it has finished. So an item always finishes **after** everything that must come after it, and reversing the finishing order gives a valid order.
+
+$$
+(u, v) \in E \;\Rightarrow\; f(u) > f(v)
+$$
+
+where:
+
+- $f(u)$ is the time at which $u$ finishes;
+- the inequality says "an item finishes after the items its arrows point to", in a graph with no cycle.
+
+Example: start at underwear (0). It leads to trousers (1), which leads to shoes (2), and shoes lead nowhere, so shoes finish first. Back at trousers, try belt (4): it finishes second. Then trousers finish, then underwear. Socks (3) only point at shoes, already finished, so socks finish next, then shirt (5). The finishing order is shoes, belt, trousers, underwear, socks, shirt: `2, 4, 1, 0, 3, 5`. Reversed: `[5, 3, 0, 1, 4, 2]`, which is shirt, socks, underwear, trousers, belt, shoes. Check the arrow trousers → shoes: $f(1) = 3 > f(2) = 1$, where $f$ counts finishes from 1.
+
+```java
+static void visit(int u, List<List<Integer>> next, int[] state, Deque<Integer> finished) {
+    state[u] = 1;
+    for (int v : next.get(u)) {
+        if (state[v] == 1) throw new IllegalStateException("cycle through " + u + " -> " + v);  // back edge
+        if (state[v] == 0) visit(v, next, state, finished);
+    }
+    state[u] = 2;
+    finished.push(u);                                   // push to the front: reverse finishing order
+}
+```
+
+```java
+static List<Integer> dfsOrder(int n, int[][] edges) {
+    List<List<Integer>> next = adjacency(n, edges);
+    int[] state = new int[n];                           // 0 = new, 1 = on the current path, 2 = finished
+    Deque<Integer> finished = new ArrayDeque<>();
+    for (int v = 0; v < n; v++) if (state[v] == 0) visit(v, next, state, finished);
+    return new ArrayList<>(finished);
+}
+```
+
+The three states are often drawn as colours: white (new), grey (on the current path) and black (finished). Pushing each finished item onto the **front** of a deque reverses the order for free. This is also $O(V + E)$. Kahn's and the DFS gave different orders, `[0, 3, 5, 1, 2, 4]` and `[5, 3, 0, 1, 4, 2]`; both are valid.
+
+### Level 4: a cycle means no order exists
+
+$$
+\text{a topological order exists} \iff G \text{ has no directed cycle}
+$$
+
+where:
+
+- $G$ is the directed graph of items and arrows;
+- a *directed cycle* is a path $v_1 \to v_2 \to \dots \to v_k \to v_1$ that returns to its start;
+- a graph with no directed cycle is a *DAG* (directed acyclic graph).
+
+**Why "only if".** A cycle forces $\text{pos}(v_1) < \text{pos}(v_2) < \dots < \text{pos}(v_k) < \text{pos}(v_1)$, so a number would be smaller than itself. **Why "if".** A DAG always has an item with in-degree 0 (otherwise walk backwards along arrows forever, and with finitely many items you would revisit one, which is a cycle). Output it, delete it, and the rest is still a DAG. That is exactly Kahn's algorithm, so it never gets stuck early.
+
+Example: add the silly rule "shoes before underwear", $2 \to 0$. Now $0 \to 1 \to 2 \to 0$ is a cycle, requiring $\text{pos}(0) < \text{pos}(1) < \text{pos}(2) < \text{pos}(0)$. Both algorithms notice:
+
+- **Kahn:** in-degrees become underwear 1, trousers 1, shoes 2, socks 0, belt 2, shirt 0. Only socks and shirt are ever ready, so the output stops at `[3, 5]`: 2 items out of 6. The 4 missing items are the cycle and everything waiting behind it (the belt needs the trousers).
+- **DFS:** walking 0 → 1 → 2, it finds the arrow 2 → 0 pointing at an item still on the current path (state 1). That is a *back edge*, and it reports "cycle through 2 -> 0".
+
+### Level 5: which order, and how many?
+
+**Choosing an order.** Kahn's algorithm may take any ready item. Replacing the queue with a `PriorityQueue` always takes the smallest ready number, which gives the lexicographically smallest valid order in $O((V + E) \log V)$.
+
+**Parallel rounds.** If you had many hands and could put on every ready item at once, the number of rounds is the number of items on the longest chain:
+
+$$
+\text{level}(v) = 1 + \max_{(u, v) \in E} \text{level}(u), \qquad \text{rounds} = \max_v \text{level}(v)
+$$
+
+where $\text{level}(v)$ is the round in which $v$ can go on at the earliest, with $\text{level}(v) = 1$ when $v$ has no prerequisites.
+
+Example: underwear, socks and shirt are level 1; trousers are level $1 + 1 = 2$; shoes are $1 + \max(2, 1) = 3$ and the belt is $1 + \max(2, 1) = 3$. So 3 rounds. The same rule, computed in topological order, gives the length of the longest path in any DAG, which is how project planners find the *critical path*.
+
+**Counting the valid orders.** For two chains that do not interact, choosing an order is choosing which positions belong to which chain:
+
+$$
+\#\text{orders} = \frac{n!}{\ell_1! \, \ell_2! \cdots \ell_k!}
+$$
+
+where:
+
+- $n$ is the number of items, split into $k$ independent chains;
+- $\ell_i$ is the length of chain $i$, so $\ell_1 + \dots + \ell_k = n$;
+- each chain's internal order is fixed, which divides out $\ell_i!$ arrangements.
+
+Example: the chains underwear → trousers → shoes ($\ell_1 = 3$) and socks → belt ($\ell_2 = 2$) can interleave in $\frac{5!}{3! \, 2!} = \frac{120}{6 \times 2} = 10$ ways.
+
+A general DAG needs a computer. Let $W(S)$ be the number of ways to put on exactly the items in the set $S$ first. An item $v$ can come next once all its prerequisites are in $S$:
+
+$$
+W(\varnothing) = 1, \qquad W(S \cup \lbrace v \rbrace) \mathrel{+}= W(S) \quad \text{for each } v \notin S \text{ with } \text{pred}(v) \subseteq S
+$$
+
+where:
+
+- $S$ is the set of items already on, stored as a bitmask (bit $v$ is 1 when $v$ is in $S$);
+- $\text{pred}(v)$ is the set of $v$'s prerequisites;
+- $\mathrel{+}=$ means "add to"; the answer is $W(\text{all items})$.
+
+Example: three tasks where $a$ and $b$ must both come before $c$. $W(\varnothing) = 1$; then $W(\lbrace a \rbrace) = 1$ and $W(\lbrace b \rbrace) = 1$; then $W(\lbrace a, b \rbrace) = W(\lbrace a \rbrace) + W(\lbrace b \rbrace) = 2$; finally $c$ is allowed, so $W(\lbrace a, b, c \rbrace) = 2$: the orders $abc$ and $bac$. With no rules at all the same recurrence gives $3! = 6$. For the six dressing items it gives **30** valid orders out of 720.
+
+```java
+static long countOrders(int n, int[][] edges) {
+    int[] needs = new int[n];                           // bitmask of v's prerequisites
+    for (int[] e : edges) needs[e[1]] |= 1 << e[0];
+    long[] ways = new long[1 << n];
+    ways[0] = 1;
+    for (int done = 0; done < (1 << n); done++) {
+        for (int v = 0; v < n; v++) {
+            boolean canGoNext = (done & (1 << v)) == 0 && (needs[v] & done) == needs[v];
+            if (canGoNext) ways[done | (1 << v)] += ways[done];
+        }
+    }
+    return ways[(1 << n) - 1];
+}
+```
+
+This costs $2^n \cdot n$ steps: $64 \times 6 = 384$ for our six items, and about $2 \times 10^7$ for twenty. Counting the orders of a general DAG is believed to be hard (Brightwell and Winkler proved it #P-complete in 1991), so exponential time is expected here.
+
+## Why it works and what it costs
+
+**Kahn's algorithm.** The invariant is: *every item already output has all of its prerequisites output before it.* An item enters the queue only when its in-degree reaches 0, which means every arrow into it came from an item already output. So each output keeps the invariant, and the final list is valid. Level 4 shows it outputs all $n$ items exactly when the graph is a DAG.
+
+**DFS.** Take any arrow $u \to v$ in a DAG and look at the moment the search examines it. $v$ cannot be grey (on the current path), because then $v \leadsto u \to v$ would be a cycle. If $v$ is white, it is visited and finishes before $u$ does. If $v$ is black, it finished already. In every case $f(v) < f(u)$, so reversing the finishing order puts $u$ before $v$.
+
+**Costs on the example** ($V = 6$, $E = 5$):
+
+| Method | Time | Space | On our example |
+| --- | --- | --- | --- |
+| Try all orders | $O(V! \cdot E)$ | $O(V)$ | up to $720 \times 5 = 3600$ checks |
+| Kahn (queue) | $O(V + E)$ | $O(V)$ | 6 pops, 5 in-degree decrements |
+| Kahn, smallest first (heap) | $O((V + E) \log V)$ | $O(V)$ | same, plus heap work |
+| DFS finishing order | $O(V + E)$ | $O(V)$ recursion | 6 visits, 5 arrows |
+| Count all orders | $O(2^V \cdot V)$ | $O(2^V)$ | 384 steps, answer 30 |
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+| --- | --- | --- |
+| Reading LeetCode's `[a, b]` as $a \to b$ | The order comes out backwards | `[a, b]` means "take $b$ before $a$": the arrow is $b \to a$ |
+| Using the DFS finishing order without reversing it | Dependencies come **after** what they unlock | Reverse it, or push each finished item to the front |
+| Two states (visited or not) in DFS cycle detection | A diamond $a \to b$, $a \to c$, $b \to d$, $c \to d$ is wrongly called a cycle | Three states: an edge into a *grey* vertex is a cycle, into a *black* one is fine |
+| Forgetting to check the output length in Kahn | A cyclic input returns a partial order that looks fine | Compare `order.size()` with $n$ |
+| Starting the DFS only from vertex 0 | Items not reachable from 0 are missing | Loop over every vertex and start where the state is still new |
+| Deep recursion on a long chain | `StackOverflowError` on chains tens of thousands of items long | Use Kahn's algorithm, which needs no recursion |
+
+## Interview problems
+
+Each solution starts with the mathematics. Once the formula is right, the code is short.
+
+### 1. LeetCode 207: Course Schedule (Medium)
+
+**Problem.** There are `numCourses` courses; `[a, b]` means course $b$ must be taken before course $a$. Can every course be finished? For `numCourses = 2` and `[[1,0],[0,1]]` the answer is `false`.
+
+**Math first.** By Level 4, all courses can be finished exactly when the prerequisite graph has no cycle, which is exactly when Kahn's algorithm outputs every course:
+
+$$
+\text{canFinish} \iff \lvert \text{Kahn}(G) \rvert = n
+$$
+
+where:
+
+- $G$ has an arrow $b \to a$ for every pair `[a, b]`;
+- $\lvert \text{Kahn}(G) \rvert$ is the length of the list Kahn's algorithm returns;
+- $n$ is the number of courses.
+
+Example: `[[1,0],[0,1]]` gives arrows $0 \to 1$ and $1 \to 0$. Both in-degrees are 1, nothing is ever ready, and the list has length $0 \ne 2$, so the answer is `false`. With only `[[1,0]]` the list is $[0, 1]$ of length 2, so `true`.
+
+**Idea.** Flip each pair into an arrow and reuse Level 2.
+
+```java
+static int[][] prerequisiteEdges(int[][] prerequisites) {   // [a, b] means "b before a", so the edge is b -> a
+    int[][] edges = new int[prerequisites.length][];
+    for (int i = 0; i < prerequisites.length; i++) edges[i] = new int[] {prerequisites[i][1], prerequisites[i][0]};
+    return edges;
+}
+
+static boolean canFinish(int numCourses, int[][] prerequisites) {
+    return kahn(numCourses, prerequisiteEdges(prerequisites)).size() == numCourses;
+}
+```
+
+**Answer.** `true` for `[[1,0]]` and `false` for `[[1,0],[0,1]]`. $O(V + E)$ time and space: for LeetCode's limits of 2,000 courses and 5,000 pairs, about 7,000 steps.
+
+### 2. LeetCode 210: Course Schedule II (Medium)
+
+**Problem.** The same input, but return one valid order of all courses, or an empty array if none exists. For `numCourses = 4` and `[[1,0],[2,0],[3,1],[3,2]]`, `[0,1,2,3]` is a valid answer.
+
+**Math first.** We want a list with $\text{pos}(b) < \text{pos}(a)$ for every pair `[a, b]`, which is a topological order of the flipped graph:
+
+$$
+\text{answer} =
+\begin{cases}
+\text{Kahn}(G), & \lvert \text{Kahn}(G) \rvert = n \\
+[\,], & \text{otherwise (a cycle)}
+\end{cases}
+$$
+
+where $G$, $\text{Kahn}(G)$ and $n$ are as in problem 1, and $[\,]$ is the empty array.
+
+Example: arrows $0 \to 1$, $0 \to 2$, $1 \to 3$, $2 \to 3$. In-degrees are $(0, 1, 1, 2)$. Output 0, which frees 1 and 2; output 1, so course 3 drops to 1; output 2, so course 3 drops to 0; output 3. The list $[0, 1, 2, 3]$ has length 4, so it is the answer.
+
+**Idea.** Run Kahn's algorithm and return its list unless it is short.
+
+```java
+static int[] findOrder(int numCourses, int[][] prerequisites) {
+    List<Integer> order = kahn(numCourses, prerequisiteEdges(prerequisites));
+    if (order.size() < numCourses) return new int[0];
+    return order.stream().mapToInt(Integer::intValue).toArray();
+}
+```
+
+**Answer.** `[0,1,2,3]` for the example (`[0,2,1,3]` would also be accepted), and `[]` for a cycle. $O(V + E)$ time and space.
+
+### 3. LeetCode 1203: Sort Items by Groups Respecting Dependencies (Hard)
+
+**Problem.** There are $n$ items, each in one of $m$ groups or in none (`group[i] = -1`). Order all items so that items of the same group are **next to each other**, and every item in `beforeItems[i]` comes before item $i$. Return `[]` if impossible. For $n = 8$, $m = 2$, `group = [-1,-1,1,0,0,1,0,-1]` and `beforeItems = [[],[6],[5],[6],[3,6],[],[],[]]`, one answer is `[6,3,4,5,2,0,7,1]`.
+
+**Math first.** Two orders are needed, one inside the other. Give each loner its own new group, write $g(x)$ for the group of item $x$, and build two graphs:
+
+$$
+(u \to v) \in E_{\text{items}} \;\Rightarrow\; \text{pos}(u) < \text{pos}(v), \qquad
+(u \to v) \in E_{\text{items}},\; g(u) \ne g(v) \;\Rightarrow\; g(u) \to g(v) \in E_{\text{groups}}
+$$
+
+where:
+
+- $E_{\text{items}}$ holds an arrow $u \to v$ for each $u$ in `beforeItems[v]`;
+- $E_{\text{groups}}$ holds an arrow between two groups whenever an item arrow crosses from one to the other;
+- the answer is: groups in a topological order of $E_{\text{groups}}$, and inside each group its items in a topological order of $E_{\text{items}}$. If either graph has a cycle, the answer is `[]`.
+
+Example: loners 0, 1 and 7 become groups 2, 3 and 4, so there are 5 groups. The item arrows are $6 \to 1$, $5 \to 2$, $6 \to 3$, $3 \to 4$ and $6 \to 4$. Only $6 \to 1$ crosses groups, from group 0 to group 3. Kahn gives the item order $[0, 5, 6, 7, 2, 1, 3, 4]$ and the group order $[0, 1, 2, 4, 3]$. Reading items group by group: group 0 is $[6, 3, 4]$, group 1 is $[5, 2]$, group 2 is $[0]$, group 4 is $[7]$, group 3 is $[1]$. Answer: $[6, 3, 4, 5, 2, 0, 7, 1]$.
+
+**Idea.** Run Kahn's algorithm twice, once on items and once on groups, then bucket the item order by group and print the buckets in group order. Bucketing keeps the item order inside each group, and the group order handles every arrow that crosses groups.
+
+```java
+static int[] sortItems(int n, int m, int[] group, List<List<Integer>> beforeItems) {
+    int[] groupOf = group.clone();
+    int groups = m;
+    for (int i = 0; i < n; i++) if (groupOf[i] == -1) groupOf[i] = groups++;   // a loner is a group of its own
+    List<int[]> itemEdges = new ArrayList<>(), groupEdges = new ArrayList<>();
+    for (int item = 0; item < n; item++) {
+        for (int before : beforeItems.get(item)) {
+            itemEdges.add(new int[] {before, item});
+            if (groupOf[before] != groupOf[item]) groupEdges.add(new int[] {groupOf[before], groupOf[item]});
+        }
+    }
+    List<Integer> itemOrder = kahn(n, itemEdges.toArray(new int[0][]));
+    List<Integer> groupOrder = kahn(groups, groupEdges.toArray(new int[0][]));
+    if (itemOrder.size() < n || groupOrder.size() < groups) return new int[0];
+    List<List<Integer>> members = new ArrayList<>();
+    for (int g = 0; g < groups; g++) members.add(new ArrayList<>());
+    for (int item : itemOrder) members.get(groupOf[item]).add(item);         // keeps the item order inside a group
+    return groupOrder.stream().flatMap(g -> members.get(g).stream()).mapToInt(Integer::intValue).toArray();
+}
+```
+
+**Answer.** `[6,3,4,5,2,0,7,1]` for the example; LeetCode's own `[6,3,4,1,5,2,0,7]` is another valid order. LeetCode's second example changes item 4's list to `[3]` and gives item 6 the list `[4]`, creating the cycle $3 \to 4 \to 6 \to 3$ inside group 0, so it returns `[]`. Two Kahn runs on at most $n + m$ vertices: $O(n + m + E)$ time and space, where $E$ is the total length of the `beforeItems` lists. That is linear in the size of the input.
+
+### 4. LeetCode 2392: Build a Matrix With Conditions (Hard)
+
+**Problem.** Place the numbers $1 \dots k$ in a $k \times k$ matrix of zeros, each exactly once. `rowConditions` `[a, b]` require $a$ in a row strictly above $b$; `colConditions` `[a, b]` require $a$ in a column strictly left of $b$. Return any such matrix, or an empty one. For $k = 3$, rows `[[1,2],[3,2]]`, columns `[[2,1],[3,2]]`, one answer is `[[0,0,1],[3,0,0],[0,2,0]]`.
+
+**Math first.** Rows and columns do not interact, so solve them separately. Each is a topological order, and the position in that order **is** the row or column:
+
+$$
+\text{row}(x) = \text{pos}_R(x), \qquad \text{col}(x) = \text{pos}_C(x), \qquad M[\text{row}(x)][\text{col}(x)] = x
+$$
+
+where:
+
+- $\text{pos}_R$ is a topological order of the row conditions, and $\text{pos}_C$ of the column conditions;
+- $M$ is the matrix; since each order uses each row (or column) exactly once, two numbers never land in the same cell;
+- if either graph has a cycle, no matrix exists.
+
+Example: the row arrows $1 \to 2$ and $3 \to 2$ give the order $1, 3, 2$, so rows $0, 1, 2$. The column arrows $2 \to 1$ and $3 \to 2$ give the order $3, 2, 1$, so columns $0, 1, 2$. Placing them: 1 goes to row 0, column 2; 3 to row 1, column 0; 2 to row 2, column 1. That is `[[0,0,1],[3,0,0],[0,2,0]]`. Check: 1 (row 0) and 3 (row 1) are above 2 (row 2); 3 (column 0) is left of 2 (column 1), which is left of 1 (column 2).
+
+**Idea.** Shift the numbers to $0 \dots k-1$, run Kahn twice, record each number's column, and write each number into its row.
+
+```java
+static int[][] buildMatrix(int k, int[][] rowConditions, int[][] colConditions) {
+    List<Integer> rows = kahn(k, shiftToZero(rowConditions)), cols = kahn(k, shiftToZero(colConditions));
+    if (rows.size() < k || cols.size() < k) return new int[0][0];
+    int[] colOf = new int[k];
+    for (int i = 0; i < k; i++) colOf[cols.get(i)] = i;
+    int[][] matrix = new int[k][k];
+    for (int i = 0; i < k; i++) matrix[i][colOf[rows.get(i)]] = rows.get(i) + 1;   // number rows[i] + 1 goes in row i
+    return matrix;
+}
+```
+
+`shiftToZero` subtracts 1 from both numbers of every condition.
+
+**Answer.** `[[0,0,1],[3,0,0],[0,2,0]]` for the example (LeetCode's `[[3,0,0],[0,0,1],[0,2,0]]` is also valid), and an empty matrix for LeetCode's second example, whose rows contain the cycle $1 \to 2 \to 3 \to 1$. $O(k^2 + R + C)$ time, dominated by creating the $k \times k$ matrix: $400^2 = 160{,}000$ cells for the largest $k$.
+
+## Mathematical Abstraction
+
+A topological sort is a bijection from the vertices to positions that every arrow respects, and it exists exactly for DAGs:
+
+$$
+\text{pos}: V \to \lbrace 0, \dots, n - 1 \rbrace, \qquad (u, v) \in E \Rightarrow \text{pos}(u) < \text{pos}(v), \qquad \exists\, \text{pos} \iff G \text{ is acyclic}
+$$
+
+where:
+
+- $V$ is the set of $n$ vertices and $E$ the set of arrows;
+- $\text{pos}$ assigns each vertex a different position;
+- $\exists$ means "there exists".
+
+Example: for the dressing graph, Kahn's algorithm gives $\text{pos} = (\text{underwear } 0, \text{socks } 1, \text{shirt } 2, \text{trousers } 3, \text{shoes } 4, \text{belt } 5)$, and every arrow points forward: $0 < 3$, $3 < 4$, $1 < 4$, $3 < 5$, $2 < 5$. It is one of 30 valid orders out of $6! = 720$. Adding the arrow shoes → underwear creates the cycle $0 \to 1 \to 2 \to 0$, and then no $\text{pos}$ exists: Kahn's algorithm stops after 2 of the 6 items.
+
+## References
+
+- Cormen, Leiserson, Rivest and Stein, *Introduction to Algorithms*, 4th edition (MIT Press, 2022), Chapter 20 "Elementary Graph Algorithms", Section 20.3 "Depth-first search" and Section 20.4 "Topological sort". [Table of contents](https://mitp-content-server.mit.edu/books/content/sectbyfn/books_pres_0/11599/4e_toc.pdf). The Professor Bumstead dressing example is Figure 22.7 of the 3rd edition (2009).
+- Robert Sedgewick and Kevin Wayne, *Algorithms*, 4th edition, §4.2 "Directed Graphs", with Java `Topological`, `DirectedCycle` and depth-first orders: <https://algs4.cs.princeton.edu/42digraph/>.
+- Jeff Erickson, *Algorithms* (2019), Chapter 6 "Depth-First Search", free at <https://jeffe.cs.illinois.edu/teaching/algorithms/>.
+- A. B. Kahn, "Topological sorting of large networks", *Communications of the ACM* 5(11), 1962.
+- Graham Brightwell and Peter Winkler, "Counting linear extensions", *Order* 8(3), 1991.
+- LeetCode: [207. Course Schedule](https://leetcode.com/problems/course-schedule/), [210. Course Schedule II](https://leetcode.com/problems/course-schedule-ii/), [1203. Sort Items by Groups Respecting Dependencies](https://leetcode.com/problems/sort-items-by-groups-respecting-dependencies/), [2392. Build a Matrix With Conditions](https://leetcode.com/problems/build-a-matrix-with-conditions/).
+
+[← Shortest Path](../shortest-path/index.qmd) · [Graph Algorithms and Connectivity](../groups/05-graph-algorithms.qmd) · [Minimum Spanning Tree →](../minimum-spanning-tree/index.qmd)
