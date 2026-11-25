@@ -115,6 +115,21 @@ public class EulerianCircuitLab {
         if (!ok) throw new AssertionError(what);
     }
 
+    // The largest LeetCode case recurses 4,096 calls deep. The JVM's default thread stack differs between
+    // machines (it is smaller on Linux than on macOS), so this check runs on a thread with a fixed 64 MB stack.
+    static boolean largestSafeIsCracked() {
+        boolean[] ok = new boolean[1];
+        Thread deep = new Thread(null, () -> ok[0] = crackSafe(4, 8).length() == 4_099
+                && containsEveryPassword(crackSafe(4, 8), 4, 8), "lc753-largest", 64L << 20);
+        deep.start();
+        try {
+            deep.join();
+        } catch (InterruptedException e) {
+            throw new AssertionError("interrupted while checking LC 753", e);
+        }
+        return ok[0];
+    }
+
     public static void main(String[] args) {
         int[] degree = new int[4];
         for (int[] e : KONIGSBERG) { degree[e[0]]++; degree[e[1]]++; }
@@ -150,7 +165,7 @@ public class EulerianCircuitLab {
         check(containsEveryPassword("0001110100", 3, 2), "0001110100 holds all eight 3-bit strings");
         check(7 + 2 == 9, "Chinese postman: Königsberg needs 2 repeated bridges, 9 crossings");
         check(crackSafe(3, 2).length() == 10 && containsEveryPassword(crackSafe(3, 2), 3, 2), "LC 753 n=3 k=2: 2^3 + 2 = 10");
-        check(crackSafe(4, 8).length() == 4_099 && containsEveryPassword(crackSafe(4, 8), 4, 8), "LC 753 largest case 8^4 = 4096");
+        check(largestSafeIsCracked(), "LC 753 largest case 8^4 = 4096");
         check(crackSafe(1, 2).equals("10"), "LC 753 n=1 k=2 gives 10");
 
         check(Arrays.deepEquals(validArrangement(new int[][] {{5, 1}, {4, 5}, {11, 9}, {9, 4}}),
