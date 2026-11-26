@@ -1,0 +1,343 @@
+---
+title: "Concurrency Patterns"
+description: "Generators, pipelines, fan-out and fan-in, worker pools and semaphores for bounded concurrency, a tiny errgroup for errors and cancellation, rate limiting with a ticker, and Little's law for sizing a pool."
+---
+
+## The problem
+
+A service must download 10,000 files, transform each one, and save the results. Each download takes about 50 ms, and requests arrive at about 200 per second.
+
+The naive answers both fail. A plain `for` loop does one file at a time: $10\,000 \times 50$ ms is more than eight minutes. One goroutine per file, all at once, opens 10,000 connections, and the server rate-limits or bans you. You also need answers to questions that [Channels](10-channels.qmd), [Select and Context](11-select-and-context.qmd) and [Sync and the Memory Model](12-sync-and-the-memory-model.qmd) gave you the tools for, but not the shapes:
+
+- How do stages hand work to each other?
+- How do you run **some** of them at once, but **at most** $N$?
+- When file 2 is corrupt, how do the other workers find out and stop?
+- How many workers is "enough"?
+
+This chapter assembles the primitives into the half-dozen patterns that answer those questions.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A sandwich assembly line
+
+- **Generator:** one child takes bread slices out of the bag and hands them on, one at a time.
+- **Pipeline:** the next child adds cheese, the next wraps. Each child does **one job** and passes the sandwich along.
+- **Fan-out / fan-in:** wrapping is slow, so **three** children wrap from the same pile (fan-out), and all wrapped sandwiches go into **one basket** (fan-in).
+- **Semaphore:** the bouncy castle has **two tickets**. You need a ticket to go in and hand it back when you come out, so there are never more than two children bouncing.
+- **errgroup:** if one child drops the tray, the teacher **blows the whistle** and everyone stops.
+- **Rate limit:** the ice-cream van serves one child **per beep**.
+- **Little's law:** if 2 children arrive at the van each minute and each spends 5 minutes queueing and being served, then on average $2 \times 5 = 10$ children are standing there.
+
+Rob Pike's *Go Concurrency Patterns* (Google I/O 2012) named the first pattern *"Generator: function that returns a channel"*. Sameer Ajmani's *Pipelines and cancellation* (2014) defined the second: *"Informally, a pipeline is a series of stages connected by channels, where each stage is a group of goroutines running the same function."* Bryan Mills' *Rethinking Classical Concurrency Patterns* (GopherCon 2018) gave the rule for all of them: *"Start goroutines when you have concurrent work."*
+:::
+
+## From simple to advanced
+
+### Level 1: a generator returns a channel
+
+A generator starts a goroutine that produces values and returns the channel it sends them on. The caller just ranges over the result. Because the caller may stop early, every send also listens for cancellation, as in [Select and Context](11-select-and-context.qmd):
+
+```go
+func gen(ctx context.Context, nums ...int) <-chan int {
+	out := make(chan int)
+	go func() {
+		defer close(out)
+		for _, n := range nums {
+			select {
+			case out <- n:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
+}
+```
+
+`collect(gen(ctx, 1, 2, 3))` is `[1 2 3]`: one channel is first-in, first-out. The return type `<-chan int` means the caller can only receive, so only the generator can close it.
+
+### Level 2: a pipeline is stages connected by channels
+
+A stage receives from an inbound channel, does one thing, and sends to an outbound channel. Ajmani's two rules make pipelines safe: *"stages close their outbound channels when all the send operations are done"*, and *"stages keep receiving values from inbound channels until those channels are closed or the senders are unblocked"*.
+
+```go
+func square(ctx context.Context, in <-chan int) <-chan int {
+	out := make(chan int)
+	go func() {
+		defer close(out)
+		for n := range in {
+			select {
+			case out <- n * n:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out
+}
+```
+
+`sum(square(ctx, gen(ctx, 1, 2, 3, 4)))` is $1 + 4 + 9 + 16 = 30$. Each stage's `defer close(out)` lets the next stage's `range` end, so the whole pipeline shuts down from the front.
+
+When the **consumer** leaves early, cancellation shuts it down from the back:
+
+```go
+func firstSquareThenStop() int {
+	ctx, cancel := context.WithCancel(context.Background())
+	squares := square(ctx, gen(ctx, 1, 2, 3, 4))
+	first := <-squares
+	cancel() // the consumer leaves early: both stages exit through ctx.Done
+	for range squares {
+		// drain until square closes its channel: proof that it exited
+	}
+	return first
+}
+```
+
+It returns 1. Without the `ctx.Done()` cases, `square` would block forever trying to send 4, and `gen` trying to send 3: two leaked goroutines per call.
+
+A pipeline moves only as fast as its slowest stage:
+
+$$
+X = \min_i \frac{c_i}{t_i}
+$$
+
+where
+
+- $i$ numbers the stages;
+- $c_i$ is how many goroutines run stage $i$;
+- $t_i$ is the time one goroutine needs per item in stage $i$;
+- $X$ is the pipeline's throughput in items per second.
+
+Example: `gen` needs about 1 µs per item and `square` (pretend it calls a server) 10 ms, each with one goroutine. Then $X = \min(1/0.000001,\; 1/0.01) = \min(1\,000\,000,\; 100) = 100$ items per second. Running $c = 3$ copies of the slow stage gives $\min(1\,000\,000,\; 3/0.01) = 300$. That is the next pattern.
+
+### Level 3: fan-out and fan-in
+
+**Fan-out:** several goroutines receive from the **same** channel; each value goes to exactly one of them. **Fan-in:** a `merge` function forwards several channels into one, and closes it after all inputs are done, the many-senders-one-closer rule from [Channels](10-channels.qmd):
+
+```go
+func fanOutFanIn(ctx context.Context, workers int, nums ...int) int {
+	in := gen(ctx, nums...)
+	squares := make([]<-chan int, workers)
+	for i := range squares {
+		squares[i] = square(ctx, in) // fan-out: all read the same channel
+	}
+	return sum(merge(ctx, squares...)) // fan-in
+}
+```
+
+`fanOutFanIn(ctx, 3, 1, 2, 3, 4)` is still 30. Which squarer handled which number, and the order they arrive in, change from run to run. Fan-out gives up **order**; if order matters, send `(index, value)` pairs and put each result in its slot.
+
+### Level 4: bounded concurrency with a worker pool or a semaphore
+
+To run at most $N$ tasks at once there are two shapes. A **worker pool** starts $N$ long-lived goroutines that pull task numbers from a channel:
+
+```go
+func workerPool(tasks []int, workers int, work func(int) int) []int {
+	results := make([]int, len(tasks))
+	jobs := make(chan int) // task indexes
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Go(func() {
+			for i := range jobs {
+				results[i] = work(tasks[i]) // each index is written by one worker only
+			}
+		})
+	}
+	for i := range tasks {
+		jobs <- i
+	}
+	close(jobs) // ends every worker's range loop
+	wg.Wait()
+	return results
+}
+```
+
+A **semaphore** starts one goroutine per task, but makes each one hold a token from a buffered channel of capacity $N$ first:
+
+```go
+func withSemaphore(tasks []int, limit int, work func(int) int) []int {
+	results := make([]int, len(tasks))
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for i, task := range tasks {
+		sem <- struct{}{} // acquire: blocks while limit tasks are running
+		wg.Go(func() {
+			defer func() { <-sem }() // release
+			results[i] = work(task)
+		})
+	}
+	wg.Wait()
+	return results
+}
+```
+
+Both double the ten tasks into `[2 4 6 ... 20]`, and the lab measures the peak number of tasks running at once. The bound comes from the buffered-channel rule of the [memory model](https://go.dev/ref/mem):
+
+$$
+r_k \prec s_{k+C}^{\checkmark} \quad\Longrightarrow\quad \text{running} \le C
+$$
+
+where
+
+- $C$ is the capacity of `sem`, the `limit`;
+- $s_j$ is the $j$-th send (acquire) and $r_k$ the $k$-th receive (release);
+- a check mark means "the completion of", and $\prec$ is "happens before";
+- running is the number of tasks between their acquire and their release.
+
+Example, with $C = 2$: the third acquire is $s_3 = s_{1+2}$, so it cannot complete until $r_1$, the first release, has happened. At most two tokens are ever out, and the lab checks that the peak is at most 2. The pool's bound is simpler: only 3 goroutines exist to run tasks, and the lab checks a peak of at most 3.
+
+Mills prefers the semaphore. The pool's workers are idle goroutines with a lifetime you must manage; in his words, *"goroutines are lightweight, not free"*. With the semaphore, *"The semaphore pattern has the same number of lines as the worker pool, but no leaked workers!"* Choose a pool when workers hold expensive state, such as one database connection each.
+
+### Level 5: errors and cancellation across workers
+
+When one of three files is corrupt, the other two workers should stop, and the caller should get **that** error. That needs a `WaitGroup`, a `Once` to keep the first error, and a context to tell the others. Here it is in about 30 lines of standard library:
+
+```go
+type Group struct {
+	wg     sync.WaitGroup
+	once   sync.Once
+	err    error
+	cancel context.CancelCauseFunc
+}
+
+func WithContext(ctx context.Context) (*Group, context.Context) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	return &Group{cancel: cancel}, ctx
+}
+
+func (g *Group) Go(f func() error) {
+	g.wg.Go(func() {
+		if err := f(); err != nil {
+			g.once.Do(func() {
+				g.err = err
+				g.cancel(err) // the first error cancels everyone else
+			})
+		}
+	})
+}
+
+func (g *Group) Wait() error {
+	g.wg.Wait()
+	g.cancel(g.err) // free the context even when nothing failed
+	return g.err
+}
+```
+
+In `processFiles`, worker 2 returns `errBadInput` at once, and workers 0 and 1 wait on `ctx.Done()`. `Wait` returns `bad input in file 2`, and both other workers see `context.Cause(ctx)` equal to that same error. Reading `g.err` after `g.wg.Wait()` is safe because each worker's return happens before `Wait` returns.
+
+This is almost line for line how [`golang.org/x/sync/errgroup`](https://pkg.go.dev/golang.org/x/sync/errgroup) works. That package also has `SetLimit(n)`, which bounds the group with exactly the semaphore channel of Level 4, and `TryGo`. It lives outside the standard library, so the lab uses its own copy. Its documentation states the contract: *"The derived Context is canceled the first time a function passed to Go returns a non-nil error or the first time Wait returns, whichever occurs first."*
+
+### Level 6: rate limiting with a ticker
+
+Bounding concurrency limits how many requests are **in flight**. A rate limit bounds how many **start per second**. A `time.Ticker` releases one request per tick:
+
+```go
+func rateLimited(requests []string, every time.Duration) []string {
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	var served []string
+	for _, r := range requests {
+		<-ticker.C // wait for the next slot
+		served = append(served, r)
+	}
+	return served
+}
+```
+
+$$
+\text{rate} = \frac{1}{d}, \qquad T_n \ge n \cdot d
+$$
+
+where
+
+- $d$ is the tick interval, `every`;
+- rate is the maximum number of requests started per second;
+- $n$ is the number of requests;
+- $T_n$ is the time to serve all of them.
+
+Example: $d = 10$ ms gives $1 / 0.01 = 100$ requests per second, and $n = 5$ requests take $T_5 \ge 5 \times 10 = 50$ ms. The lab checks the 50 ms lower bound. A ticker drops ticks for a slow receiver, so it never allows a burst. For bursts ("up to 10 at once, then 100 per second") use a token bucket such as `golang.org/x/time/rate`.
+
+## How it works underneath
+
+**Sizing a pool with Little's law.** John Little proved in 1961 that, for any stable queueing system, the average number of items inside it is the arrival rate times the average time each spends inside:
+
+$$
+L = \lambda W
+$$
+
+where
+
+- $\lambda$ (lambda) is the average arrival rate, in tasks per second;
+- $W$ is the average time a task spends in the system, in seconds;
+- $L$ is the average number of tasks in the system at once, which is the number of busy workers when nothing queues.
+
+Example, the problem's numbers: $\lambda = 200$ per second and $W = 50$ ms $= 0.05$ s give $L = 200 \times 0.05 = 10$ busy workers on average. If a slow day makes $W = 120$ ms, then $L = 200 \times 0.12 = 24$. The lab's `workersNeeded` computes $\lceil \lambda W \rceil$ and checks both values. A pool of exactly $L$ runs at 100% utilisation, and queues grow without bound at the slightest spike, so add headroom: 13 workers for $L = 10$ keeps each about $10 / 13 \approx 77\%$ busy. Conversely, a fixed pool of $c$ workers caps throughput at $\lambda_{\max} = c / W$: 10 workers at 50 ms each serve at most $10 / 0.05 = 200$ requests per second.
+
+**Why "one goroutine per task" is affordable.** A goroutine starts with a small stack (2 KiB since Go 1.4; since Go 1.19 the runtime picks the starting size from the average stack use) that grows by copying, and the scheduler multiplexes goroutines onto `GOMAXPROCS` threads ([Goroutines and the Scheduler](09-goroutines-and-the-scheduler.qmd)). That is why the semaphore pattern can start 10,000 goroutines and let at most $C$ of them past the token. Mills' slides make the same point: worker pools exist in other languages to reuse expensive threads, and *"That benefit doesn't apply in Go."* The benefit that remains is **flow control**: limiting work in flight.
+
+**How `merge` closes safely.** Each forwarding goroutine is counted by the `WaitGroup`. The closer goroutine runs `wg.Wait()` then `close(out)`. Every forwarder's last send happens before its return, which happens before `Wait` returns, which happens before the close. No send can follow the close, so `send on closed channel` is impossible.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| A stage sends without a `ctx.Done()` case | Leaked goroutines when the consumer stops early | `select` on the send and `ctx.Done()` in every stage |
+| A stage forgets `defer close(out)` | The next stage's `range` never ends: deadlock or leak | Close the outbound channel in the goroutine that sends on it |
+| Each fan-in forwarder closes `out` | `panic: close of closed channel` | One closer after `wg.Wait()` |
+| Unbounded `go` per task against a server | Thousands of connections, timeouts, bans | A semaphore channel, `errgroup.SetLimit`, or a pool |
+| A worker pool whose `jobs` channel is never closed | Idle workers live forever (Mills: leaked workers) | `close(jobs)` after the last task, then `wg.Wait()` |
+| Assuming fan-out keeps order | Results in a different order each run | Carry an index and write `results[i]` |
+| Returning only the last error, or none | The real cause is lost; other workers keep running | Keep the first error with `sync.Once` and cancel a shared context (errgroup) |
+| Sizing a pool by guesswork | Either idle workers or growing queues | Little's law: $L = \lambda W$, plus headroom |
+
+## Interview questions
+
+### 1. Worker pool or semaphore: which do you choose in Go?
+
+**Answer.** Usually the semaphore. Both bound concurrency to $C$ by the same buffered-channel rule, $r_k \prec s_{k+C}^{\checkmark}$. A pool keeps $C$ goroutines alive between tasks, so you must start, stop and wait for them, and idle workers fill goroutine dumps. A semaphore starts a goroutine only when there is work, as Bryan Mills recommends. Pick a pool when each worker owns costly state, such as a connection or a large buffer, that should be reused across tasks.
+
+### 2. How do you stop all workers when one fails, and return its error?
+
+**Answer.** Use `errgroup.WithContext`, or the 30-line `Group` above. Each worker takes the shared `ctx` and checks `ctx.Done()`. The first non-nil error is stored once and cancels the context with that error as the cause. `Wait` waits for every worker and returns the stored error. In `processFiles`, `Wait` returns `bad input in file 2`, and the two other workers observe `context.Cause(ctx) == errBadInput`.
+
+### 3. You get 200 requests per second, each takes 50 ms. How many workers?
+
+**Answer.** By Little's law, $L = \lambda W = 200 \times 0.05 = 10$ requests are in progress on average, so you need at least 10. Add headroom for spikes and variance, for example 13 workers at about 77% utilisation. Then check the other direction: 13 workers at 50 ms can serve $13 / 0.05 = 260$ requests per second, so a burst above that will queue. If $W$ grows to 120 ms during an incident, $L$ jumps to 24 and the fixed pool becomes the bottleneck. A good sizing note states the $W$ it assumed.
+
+### 4. What is the difference between fan-out and a pipeline?
+
+**Answer.** A pipeline connects **different** stages in series: `gen`, then `square`, then `sum`. Its throughput is that of its slowest stage, $X = \min_i c_i / t_i$. Fan-out runs **several copies** of one stage in parallel, all reading the same channel, which raises that stage's $c_i$. Fan-in merges their outputs back into one channel. The patterns combine: `fanOutFanIn` is a pipeline whose middle stage is fanned out three ways, which turns a 100-per-second stage into a 300-per-second one in the Level 2 example.
+
+### 5. Why does each pipeline stage take a `context.Context`?
+
+**Answer.** Downstream stages can stop early: an error, a timeout, or only the first result needed. A stage blocked on `out <- v` would then wait forever. Selecting on `ctx.Done()` gives it a second way out. Closing one `Done` channel is a broadcast that reaches every stage at once. Ajmani's 2014 post used a `done` channel for the same job, before `context` was in the standard library.
+
+## Summary
+
+$$
+L = \lambda W, \qquad \text{running} \le C, \qquad X = \min_i \frac{c_i}{t_i}
+$$
+
+where $L$ is busy workers, $\lambda$ the arrival rate, $W$ the time per task, $C$ the semaphore capacity, and $X$ a pipeline's throughput with $c_i$ goroutines taking $t_i$ per item in stage $i$.
+
+Example: $200 \times 0.05 = 10$ busy workers; a semaphore of capacity 2 never lets a third task in; three copies of a 10 ms stage raise a pipeline from 100 to 300 items per second.
+
+- A generator returns a `<-chan T`; a stage reads one channel and writes another, and closes what it writes.
+- Every send in a stage also selects on `ctx.Done()`.
+- Fan-out for throughput, fan-in with one closer after `wg.Wait()`.
+- Bound concurrency with a semaphore channel (or `errgroup.SetLimit`); use a pool when workers own state.
+- First error wins and cancels the rest: `errgroup`, or `WaitGroup` plus `Once` plus `WithCancelCause`.
+- Rate-limit starts with a `time.Ticker`; size pools with Little's law and headroom.
+
+## References
+
+- Rob Pike, [Go Concurrency Patterns](https://go.dev/talks/2012/concurrency.slide), Google I/O 2012 ([video](https://www.youtube.com/watch?v=f6kdp27TYZs)).
+- Sameer Ajmani, [Go Concurrency Patterns: Pipelines and cancellation](https://go.dev/blog/pipelines) (2014) and [Go Concurrency Patterns: Context](https://go.dev/blog/context) (2014).
+- Bryan C. Mills, *Rethinking Classical Concurrency Patterns*, GopherCon 2018 ([video](https://www.youtube.com/watch?v=5zXAHh5tJqQ), [slides with speaker notes](https://drive.google.com/file/d/1nPdvhB0PutEJzdCq5ms6UI58dp50fcAN/view)).
+- [The Go Memory Model](https://go.dev/ref/mem), section "Channel communication" (the counting-semaphore rule).
+- [golang.org/x/sync/errgroup](https://pkg.go.dev/golang.org/x/sync/errgroup) and its [source](https://github.com/golang/sync/blob/master/errgroup/errgroup.go).
+- John D. C. Little, [A Proof for the Queuing Formula: L = λW](https://doi.org/10.1287/opre.9.3.383), *Operations Research* 9(3), 1961.
+- [Effective Go: Concurrency](https://go.dev/doc/effective_go#concurrency).
+- Lab: [`labs/concurrency-patterns/main.go`](labs/concurrency-patterns/main.go). Run it from `programming-languages/go/labs` with `go run -race ./concurrency-patterns`.

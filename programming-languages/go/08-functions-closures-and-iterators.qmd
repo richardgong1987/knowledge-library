@@ -1,0 +1,396 @@
+---
+title: "Functions, Closures and Iterators"
+description: "Go functions as values: function types, variadic calls, closures that capture variables, the Go 1.22 per-iteration loop variable, method values and expressions, and Go 1.23 range-over-func iterators with iter.Seq, yield, slices.Collect and iter.Pull."
+---
+
+## The problem
+
+You want the first 3 square numbers greater than 10: 16, 25 and 36. The squares 1, 4, 9, 16, ... go on forever, so you cannot build a slice of all of them first. You also want to reuse the parts: the same "squares" source with a different rule ("even", "greater than 100"), or the same "stop after 3" rule with a different source.
+
+Without help, every such task becomes one hand-written loop that mixes **producing** values with **consuming** them, copied and edited for each variation. Go splits the job with three tools from this chapter:
+
+- **function values**, so that behaviour can be passed around like data;
+- **closures**, functions that remember the variables they use;
+- **iterators** (Go 1.23), functions that hand out values one at a time to a `for ... range` loop, and stop the moment the loop says so.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Recipe cards, backpacks and a ticket machine
+
+- **A function value is a recipe card.** You can hand the card to a friend, and they cook from it whenever they like.
+- **A closure is a recipe card with a small backpack.** The backpack holds the actual jars the recipe uses. It does not hold photos of the jars. If the recipe eats a biscuit from the jar, the jar really has one fewer.
+- **An iterator is a ticket machine.** Each time it prints a ticket it asks *"Do you want another?"*. If you say no, it stops printing.
+
+The word *closure* comes from Peter Landin, who in 1964 described one as having an **environment part** and a **control part**: the backpack and the recipe. For Go's iterators, Ian Lance Taylor's blog post *Range Over Function Types* (2024) gives the key sentence: *"A push iterator pushes each value in a sequence to a yield function."*
+:::
+
+## From simple to advanced
+
+### Level 1: a function is a value, and its signature is its type
+
+A function can be stored in a variable, passed as an argument and returned as a result. Its type is its signature:
+
+```go
+type Op func(int, int) int
+
+func add(a, b int) int { return a + b }
+
+func apply(op Op, a, b int) int {
+	return op(a, b)
+}
+```
+
+`apply(add, 3, 4)` is 7. A **function literal** is a function written inline without a name, so `apply(func(a, b int) int { return a * b }, 3, 4)` is 12. Any function with the signature `func(int, int) int` fits the type `Op`.
+
+A **variadic** function takes any number of trailing arguments, which arrive as a slice:
+
+```go
+func sum(nums ...int) int { // variadic: nums is a []int
+	total := 0
+	for _, n := range nums {
+		total += n
+	}
+	return total
+}
+```
+
+`sum()` is 0 and `sum(1, 2, 3)` is 6. To pass an existing slice, spread it with `...`: `sum(xs...)` with `xs := []int{4, 5}` is 9. Writing `sum(xs)` fails with `cannot use xs (variable of type []int) as int value in argument to sum`.
+
+### Level 2: a closure captures variables, not values
+
+A function literal can use variables from the function around it. It keeps them alive even after that function returns:
+
+```go
+func counter() func() int {
+	count := 0
+	return func() int {
+		count++ // the same variable on every call, not a copy
+		return count
+	}
+}
+```
+
+Landin's description, written as a pair:
+
+$$
+f = \langle \text{code}, \rho \rangle, \qquad \rho : \text{name} \mapsto \text{variable}
+$$
+
+where
+
+- $f$ is the closure, the function value that `counter` returns;
+- $\text{code}$ is the function body, the same for every closure made by the same literal;
+- $\rho$ (rho) is the **environment**: for each captured name, *which variable* it means. That is a storage location, not a value copied at creation time;
+- $\mapsto$ reads "maps to".
+
+Example:
+
+1. `next := counter()` creates a variable, call it $v_1$, holding 0, and returns $\langle \text{code}, \lbrace \texttt{count} \mapsto v_1 \rbrace \rangle$.
+2. `next()` three times updates $v_1$ from 0 to 1, then 2, then 3, and returns 1, 2, 3.
+3. `other := counter()` runs `count := 0` again, creating a new variable $v_2$. So `other()` returns 1, while $v_1$ stays at 3.
+
+### Level 3: Go 1.22 gives each loop iteration its own variable
+
+Capturing variables meets loops in the most famous Go bug. Each closure below captures `i`:
+
+```go
+func callAll(funcs []func() int) []int {
+	var got []int
+	for _, f := range funcs {
+		got = append(got, f())
+	}
+	return got
+}
+
+func perIteration() []int {
+	var funcs []func() int
+	for i := 0; i < 3; i++ {
+		funcs = append(funcs, func() int { return i }) // a new i each iteration
+	}
+	return callAll(funcs)
+}
+
+func sharedVariable() []int {
+	var funcs []func() int
+	i := 0 // one variable for the whole loop: what every loop did before Go 1.22
+	for i = 0; i < 3; i++ {
+		funcs = append(funcs, func() int { return i })
+	}
+	return callAll(funcs)
+}
+```
+
+The spec (since Go 1.22) says: *"Each iteration has its own separate declared variable."* Before the next iteration's post statement `i++` runs, a fresh variable is declared and initialised from the old one. So the two loops differ:
+
+$$
+f_k() =
+\begin{cases}
+i_k = k & \text{one variable per iteration (Go 1.22 and later)} \\
+i_{\text{end}} = 3 & \text{one shared variable (before Go 1.22)}
+\end{cases}
+$$
+
+where
+
+- $f_k$ is the closure created in iteration $k$, for $k = 0, 1, 2$;
+- $i_k$ is the variable that belongs to iteration $k$, which nothing changes after the iteration ends;
+- $i_{\text{end}}$ is the single shared variable's value after the loop, when the condition `i < 3` first fails.
+
+Example: `perIteration()` returns `[0 1 2]`, because $f_0, f_1, f_2$ read $i_0 = 0$, $i_1 = 1$ and $i_2 = 2$. `sharedVariable()` returns `[3 3 3]`: all three closures read the same `i`, and by the time they run it has been incremented to 3. Which rule applies depends on the `go` line in `go.mod`. The same per-iteration loop, compiled in a module that says `go 1.21`, also prints `3 3 3`.
+
+### Level 4: method values and method expressions
+
+A method can become a function value in two ways:
+
+```go
+type Counter struct{ n int }
+
+func (c *Counter) Inc() { c.n++ }
+
+type Point struct{ X int }
+
+func (p Point) GetX() int { return p.X }
+```
+
+- A **method value** `c.Inc` binds the receiver now and gives a `func()`. After `inc := c.Inc; inc(); inc()`, `c.n` is 2.
+- A **method expression** `(*Counter).Inc` leaves the receiver open and gives a `func(*Counter)`. After `incFn := (*Counter).Inc; incFn(&c)`, `c.n` is 3.
+
+The spec adds a rule that surprises people: *"The expression x is evaluated and saved during the evaluation of the method value."* With a **value** receiver, the saved receiver is a copy:
+
+```go
+p := Point{X: 1}
+getX := p.GetX // value receiver: p is copied now
+p.X = 2
+check(getX() == 1, "the method value kept the copy with X = 1")
+```
+
+Method values are everywhere in real code: `defer mu.Unlock()`, `http.HandleFunc("/", srv.handle)`, `strings.Map(unicode.ToUpper, s)`.
+
+### Level 5: range-over-func iterators (Go 1.23)
+
+Since Go 1.23, `for ... range` accepts a function. The `iter` package names the two common shapes:
+
+```go
+// sketch: from the iter package documentation
+type Seq[V any] func(yield func(V) bool)
+type Seq2[K, V any] func(yield func(K, V) bool)
+```
+
+The iterator calls `yield` once per value. `yield` runs the loop body and returns `true` to ask for more, or `false` when the loop has ended early:
+
+```go
+func Countdown(n int) iter.Seq[int] {
+	return func(yield func(int) bool) {
+		for i := n; i >= 1; i-- {
+			if !yield(i) {
+				return // the loop body said stop
+			}
+		}
+	}
+}
+```
+
+`for v := range Countdown(3)` sees 3, 2, 1, and `slices.Collect(Countdown(3))` is `[3 2 1]`. Because the consumer can stop the producer, a source can even be infinite:
+
+```go
+func Squares() iter.Seq[int] { // infinite: safe because the loop can stop it
+	return func(yield func(int) bool) {
+		for n := 1; ; n++ {
+			if !yield(n * n) {
+				return
+			}
+		}
+	}
+}
+
+func firstSquaresAbove(limit, count int) []int {
+	var out []int
+	for sq := range Squares() {
+		if sq <= limit {
+			continue
+		}
+		out = append(out, sq)
+		if len(out) == count {
+			break // yield returns false, and Squares returns
+		}
+	}
+	return out
+}
+```
+
+How many times the iterator calls `yield` is one rule:
+
+$$
+\operatorname{calls}(\texttt{yield}) = \min(n, k)
+$$
+
+where
+
+- $n$ is how many values the iterator would produce if never stopped ($n = \infty$ for `Squares`);
+- $k$ is how many values the loop body consumes before it executes `break` ($k = \infty$ if it never breaks);
+- if $k \le n$, the $k$-th call returns `false` and the iterator must return.
+
+Example:
+
+1. `Countdown(5)` with a loop that breaks after 2 values: $\min(5, 2) = 2$ calls, and the body collects `[5 4]`.
+2. `slices.Collect(Countdown(3))` never breaks: $\min(3, \infty) = 3$ calls, giving `[3 2 1]`.
+3. `firstSquaresAbove(10, 3)` consumes 1, 4 and 9 (each `continue` returns `true`), then 16, 25 and 36, and breaks on the sixth: $\min(\infty, 6) = 6$ calls. The result is `[16 25 36]`.
+
+The standard library speaks this protocol. `maps.Keys` returns an `iter.Seq`, so `slices.Sorted(maps.Keys(ages))` on `{"bob": 31, "ann": 29, "cid": 40}` is `[ann bob cid]`, with sorting fixing Go's random map order. `slices.Backward` returns an `iter.Seq2[int, E]`, so `for i, s := range slices.Backward([]string{"a", "b", "c"})` sees `2 c`, `1 b`, `0 a`.
+
+### Level 6: `iter.Pull` turns push into pull
+
+A range loop lets the iterator **push** values. Sometimes the caller must **pull** them at its own pace, for example to walk two sequences in step. `iter.Pull` converts a `Seq` into a `next` function and a `stop` function:
+
+```go
+func Equal(a, b iter.Seq[int]) bool {
+	nextA, stopA := iter.Pull(a)
+	defer stopA()
+	nextB, stopB := iter.Pull(b)
+	defer stopB()
+	for {
+		va, okA := nextA()
+		vb, okB := nextB()
+		if okA != okB || va != vb {
+			return false
+		}
+		if !okA {
+			return true // both ended at the same time
+		}
+	}
+}
+```
+
+`Equal(Countdown(3), slices.Values([]int{3, 2, 1}))` is `true` and `Equal(Countdown(3), Countdown(2))` is `false`. Always call `stop` (here with `defer`): the next section shows that a pulled iterator holds a goroutine until it ends or is stopped.
+
+## How it works underneath
+
+**A function value is a pointer to a `funcval`.** From `src/runtime/runtime2.go`:
+
+```go
+// sketch: from runtime/runtime2.go
+type funcval struct {
+	fn uintptr
+	// variable-size, fn-specific data here
+}
+```
+
+`fn` is the address of the code, and the captured variables follow it. That is the pair $\langle \text{code}, \rho \rangle$ from Level 2. Escape analysis then decides how each variable is captured. The rule in `cmd/compile/internal/escape/escape.go`:
+
+$$
+\text{by value} \iff \lnot\,\text{address taken} \;\land\; \lnot\,\text{reassigned} \;\land\; \operatorname{size} \le 128 \text{ bytes}
+$$
+
+where
+
+- "by value" means the closure stores a copy, which is safe because nobody can change the original afterwards;
+- "address taken" means some code wrote `&v`; "reassigned" means `v` is assigned again after its declaration;
+- $\operatorname{size}$ is the variable's size in bytes, and $\lnot$ means "not".
+
+Otherwise the variable is captured **by reference**, and if the closure outlives the function, the variable moves to the heap. Example: the compiler's `-m=2` report on the lab confirms all three cases from Levels 2 and 3:
+
+```bash
+go build -gcflags='-m=2' -o /dev/null ./functions-closures-and-iterators 2>&1 |
+  grep -E '(counter|perIteration|sharedVariable) capturing|moved to heap: (count|i)$'
+```
+
+```text
+functions-closures-and-iterators/main.go:31:2: counter capturing by ref: count (addr=false assign=true width=8)
+functions-closures-and-iterators/main.go:31:2: moved to heap: count
+functions-closures-and-iterators/main.go:49:6: perIteration capturing by value: i (addr=false assign=false width=8)
+functions-closures-and-iterators/main.go:57:2: sharedVariable capturing by ref: i (addr=false assign=true width=8)
+functions-closures-and-iterators/main.go:57:2: moved to heap: i
+```
+
+`count` is reassigned by `count++`, so it is captured by reference and moved to the heap. In `perIteration`, each iteration's `i` is never changed once its iteration ends ($\text{reassigned} = $ false), so a plain 8-byte copy is enough. That is the Go 1.22 change seen from inside the compiler. In `sharedVariable` the one `i` is reassigned, so it goes to the heap. The unfiltered report also shows `Countdown` and the other iterators capturing `n` by value.
+
+**A range-over-func loop is rewritten into a closure.** The comment at the top of `cmd/compile/internal/rangefunc/rewrite.go` states the idea:
+
+```go
+// sketch: the rewrite described in cmd/compile/internal/rangefunc/rewrite.go
+for x := range f {
+	...
+}
+// becomes
+f(func(x T) bool {
+	...
+	return true
+})
+```
+
+Inside the body, `break` becomes `return false`, and `continue` becomes `return true`. A `return` or `goto` out of the loop sets a hidden `#next` variable and returns `false`; after `f` returns, generated code checks `#next` and carries out the `return`. The rewrite also adds a hidden state variable (the `#state1` that `-m=2` reports in `breakEarly`), so the runtime can detect an iterator that breaks the protocol:
+
+```go
+func badCountdown(n int) iter.Seq[int] {
+	return func(yield func(int) bool) {
+		for i := n; i >= 1; i-- {
+			yield(i) // wrong: keeps going after the loop said stop
+		}
+	}
+}
+```
+
+Ranging over it with an early `break` panics with `runtime error: range function continued iteration after function for loop body returned false`. The lab catches that message with `recover`.
+
+**`iter.Pull` uses a coroutine.** `src/runtime/coro.go` describes a `coro` as *"extra concurrency without extra parallelism"*: the iterator runs on its own goroutine, and `coroswitch` hands control straight to it and back without going through the scheduler's run queues. The lab measures it: after the first `next()`, `runtime.NumGoroutine()` is one higher, and after `stop()` it is back to where it was. A forgotten `stop` on an unfinished sequence leaves that goroutine parked for as long as the program runs.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| A module whose `go.mod` says `go 1.21` or older | Closures created in a loop all see the last value, such as `3 3 3` | Raise the `go` line to 1.22 or later |
+| An iterator that ignores `yield`'s result | `panic: runtime error: range function continued iteration after function for loop body returned false` | `if !yield(v) { return }` |
+| Never calling `stop` after `iter.Pull` | A parked goroutine per abandoned sequence | `next, stop := iter.Pull(seq); defer stop()` |
+| Calling a nil function value | `panic: runtime error: invalid memory address or nil pointer dereference` | Check `f != nil` or always assign a default |
+| Comparing two functions | `invalid operation: f == g (func can only be compared to nil)` | Compare results or identifiers, not functions |
+| Expecting a method value to see later changes to a value receiver | `getX()` still returns 1 after `p.X = 2` | Use a pointer receiver, or take the method value later |
+| Passing a slice to a variadic parameter without `...` | `cannot use xs (variable of type []int) as int value in argument to sum` | `sum(xs...)` |
+
+## Interview questions
+
+### 1. What does a Go closure capture?
+
+**Answer.** **Variables**, not their values at the moment of creation. The closure's environment maps each name to a storage location, so changes made inside the closure are visible outside, and the other way round. In `counter`, three calls return 1, 2, 3 because they share one `count`, while a second `counter()` has its own. As an optimisation, the compiler copies a variable into the closure when the copy cannot be told apart: it is never reassigned, its address is never taken, and it is at most 128 bytes. Otherwise it captures a reference and moves the variable to the heap if needed, as `-m=2` shows.
+
+### 2. What changed about loop variables in Go 1.22?
+
+**Answer.** Before Go 1.22, `for i := 0; i < 3; i++` declared one `i` for the whole loop. Closures or goroutines that captured it all saw its final value, 3. Since Go 1.22 each iteration has its own variable, initialised from the previous one before the post statement runs, so `perIteration` returns `[0 1 2]`. The same applies to `for k, v := range`. The new semantics are chosen by the `go` version in `go.mod`, so old modules keep their old behaviour until they upgrade. David Chase and Russ Cox's post *Fixing For Loops in Go 1.22* describes the change and the tooling used to check it.
+
+### 3. How does `for v := range f` work when `f` is a function, and what does `break` do?
+
+**Answer.** The compiler turns the loop body into a closure `yield` and calls `f(yield)`. Each `yield(v)` call runs the body once. A normal end of the body returns `true`, `continue` returns `true`, and `break` returns `false`. The iterator must then stop calling `yield` and return. With $\min(n, k)$ calls, `Countdown(5)` with a break after two values calls `yield` twice. If the iterator ignores `false`, the runtime panics with *"range function continued iteration after function for loop body returned false"*. `defer` inside such a loop body still belongs to the enclosing function, which the rewrite preserves.
+
+### 4. What is the difference between `c.Inc` and `(*Counter).Inc`?
+
+**Answer.** `c.Inc` is a **method value**: a `func()` with the receiver evaluated and saved now (for a pointer method on an addressable `c`, that is `&c`). `(*Counter).Inc` is a **method expression**: an ordinary `func(*Counter)` whose first parameter is the receiver. In the lab, two calls to `inc` and one to `incFn(&c)` bring `c.n` to 3. With a value receiver, the method value saves a **copy**, which is why `getX` keeps returning 1 after `p.X = 2`.
+
+### 5. What are push and pull iterators, and when do you need `iter.Pull`?
+
+**Answer.** An `iter.Seq` is a **push** iterator: it controls the loop and pushes each value into `yield`. That is ideal for one consumer looping over one sequence. A **pull** iterator is a `next()` function the consumer calls whenever it wants a value. You need pull when the consumer must control the pace, for example to step through **two** sequences together, as `Equal` does. `iter.Pull` builds `next` and `stop` from any `Seq` by running the iterator as a coroutine on its own goroutine. You must call `stop` if you abandon the sequence early.
+
+## Summary
+
+$$
+f = \langle \text{code}, \rho \rangle, \qquad \operatorname{calls}(\texttt{yield}) = \min(n, k)
+$$
+
+where $f$ is a closure, $\rho$ maps each captured name to a variable, $n$ is the number of values an iterator can produce, and $k$ is the number the loop consumes before `break`.
+
+Example: two calls of `counter()` give two environments with separate `count` variables, so one returns 1, 2, 3 while the other returns 1. `Countdown(5)` with a break after 2 values calls `yield` $\min(5, 2) = 2$ times.
+
+- Functions are values whose type is their signature. `...` makes a parameter variadic and spreads a slice into one.
+- A closure captures **variables**. Since Go 1.22 every loop iteration has its own.
+- A method value binds and saves its receiver; a method expression takes the receiver as its first argument.
+- An `iter.Seq` calls `yield` per value and must return as soon as `yield` returns `false`.
+- `slices.Collect`, `slices.Sorted`, `maps.Keys` and `slices.Values` connect iterators to slices and maps. `iter.Pull` turns push into pull, and needs `stop`.
+
+## References
+
+- The Go Programming Language Specification: [Function types](https://go.dev/ref/spec#Function_types), [Function literals](https://go.dev/ref/spec#Function_literals), [Passing arguments to ... parameters](https://go.dev/ref/spec#Passing_arguments_to_..._parameters), [For statements with for clause](https://go.dev/ref/spec#For_clause), [For statements with range clause](https://go.dev/ref/spec#For_range), [Method values](https://go.dev/ref/spec#Method_values), [Method expressions](https://go.dev/ref/spec#Method_expressions).
+- Package documentation: [iter](https://pkg.go.dev/iter), [slices](https://pkg.go.dev/slices), [maps](https://pkg.go.dev/maps).
+- Release notes: [Go 1.22](https://go.dev/doc/go1.22) (per-iteration loop variables) and [Go 1.23](https://go.dev/doc/go1.23) (range over functions, `iter`).
+- David Chase and Russ Cox, [Fixing For Loops in Go 1.22](https://go.dev/blog/loopvar-preview) (2023); Ian Lance Taylor, [Range Over Function Types](https://go.dev/blog/range-functions) (2024).
+- P. J. Landin, [The Mechanical Evaluation of Expressions](https://doi.org/10.1093/comjnl/6.4.308), *The Computer Journal* 6(4), 1964.
+- Source: [cmd/compile/internal/escape/escape.go](https://github.com/golang/go/blob/master/src/cmd/compile/internal/escape/escape.go), [cmd/compile/internal/rangefunc/rewrite.go](https://github.com/golang/go/blob/master/src/cmd/compile/internal/rangefunc/rewrite.go), [src/iter/iter.go](https://github.com/golang/go/blob/master/src/iter/iter.go), [src/runtime/coro.go](https://github.com/golang/go/blob/master/src/runtime/coro.go).
+- Lab: [`labs/functions-closures-and-iterators/main.go`](labs/functions-closures-and-iterators/main.go). Run it from `programming-languages/go/labs` with `go run -race ./functions-closures-and-iterators`.

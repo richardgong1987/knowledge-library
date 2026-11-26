@@ -1,0 +1,341 @@
+---
+title: "Goroutines and the Scheduler"
+description: "Goroutines from the go statement to the runtime: WaitGroup and wg.Go, growable 2 KiB stacks, the G-M-P scheduler with run queues and work stealing, container-aware GOMAXPROCS, asynchronous preemption, goroutine leaks and the Go 1.27 leak profile, and Amdahl's law."
+---
+
+## The problem
+
+A server must call three slow services, and each call waits about 100 ms for the network. Done one after another, a request takes $3 \times 100 = 300$ ms. The calls are independent, so they could all wait **at the same time** and finish in about 100 ms.
+
+The traditional tool is one operating-system thread per task. Threads are expensive, though. Each reserves a large stack (on Linux the default comes from `ulimit -s`, commonly 8 MiB), and every switch between threads goes through the kernel. A server with 10,000 open connections cannot afford 10,000 threads.
+
+Go's answer is the **goroutine**: a function running independently, managed by the Go runtime instead of the kernel. You start one with the word `go`. A goroutine starts with a stack of a few kilobytes, and the runtime's **scheduler** multiplexes many goroutines onto a few threads.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A kitchen with task cards
+
+- A **goroutine (G)** is a task card: *"chop the onions"*. Cards are cheap, so you can write thousands.
+- A **thread (M, for machine)** is a cook. Cooks are expensive, so the kitchen has only a few.
+- A **processor (P)** is a stove. A cook can only cook while standing at a stove, and `GOMAXPROCS` is the number of stoves.
+- Each stove has a **tray of cards** waiting (its local run queue). A cook whose tray is empty walks over and **steals half the cards** from a busy cook's tray.
+- If a cook must wait for a delivery (a slow system call), they step away and another cook takes over their stove, so the stove never sits idle.
+
+Rob Pike's talk *Concurrency is not Parallelism* (Heroku Waza, January 2012) gives the two words their meaning: *"Concurrency is about dealing with lots of things at once. Parallelism is about doing lots of things at once."* Writing many task cards is concurrency. Having several stoves lit at once is parallelism. Dmitry Vyukov's 2012 *Scalable Go Scheduler Design Doc* introduced the stoves, the P.
+:::
+
+## From simple to advanced
+
+### Level 1: `go` starts a goroutine, and a `WaitGroup` waits
+
+`go f()` starts `f` running and returns immediately. The caller does not wait, so it needs a way to know when the goroutines are done. A `sync.WaitGroup` is a counter: `Add(1)` before each goroutine, `Done()` when it finishes, and `Wait()` blocks until the count is back to zero:
+
+```go
+func squares(n int) []int {
+	results := make([]int, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = i * i // each goroutine writes its own slot: no race
+		}()
+	}
+	wg.Wait()
+	return results
+}
+```
+
+`squares(4)` is `[0 1 4 9]`. Each goroutine writes a different element, so there is no data race, and `Wait` guarantees that all writes are visible when it returns ([Sync and the Memory Model](12-sync-and-the-memory-model.qmd)). Go 1.25 added `wg.Go`, which does `Add(1)`, `go` and `defer Done()` in one call:
+
+```go
+func squaresGo(n int) []int {
+	results := make([]int, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() { results[i] = i * i })
+	}
+	wg.Wait()
+	return results
+}
+```
+
+One rule surprises beginners: **when `main` returns, the program exits**, and every other goroutine stops mid-step:
+
+```go
+// sketch: usually prints nothing
+func main() {
+	go fmt.Println("hello")
+}
+```
+
+Nothing waits for the goroutine, so `main` usually returns before it ever runs. `Wait` (or a channel receive) is how `main` waits.
+
+### Level 2: goroutines are cheap because their stacks grow
+
+The lab parks 1,000 goroutines on a channel and counts them with `runtime.NumGoroutine`:
+
+```go
+func parked(n int) (alive int, stackBytes uint64) {
+	var before, during runtime.MemStats
+	runtime.ReadMemStats(&before)
+	release := make(chan struct{})
+	var wg sync.WaitGroup
+	for range n {
+		wg.Go(func() { <-release })
+	}
+	alive = runtime.NumGoroutine()
+	runtime.ReadMemStats(&during)
+	close(release)
+	wg.Wait()
+	return alive, (during.StackInuse - before.StackInuse) / uint64(n)
+}
+```
+
+`alive` is exactly the earlier count plus 1,000. The stack memory per goroutine came out at about 2 KiB with `go run` and about 4–5 KiB with `go run -race`, which enlarges stacks for its own bookkeeping. The lab only checks that it is at most 8 KiB. That matches the runtime source: `stackMin = 2048` in `src/runtime/stack.go`. Since Go 1.19 the runtime may start new goroutines with the **average** stack size it measured during the last garbage collection, rounded up to a power of two, to avoid repeated early growth.
+
+A small stack is safe because it **grows**. When a function needs more room than is left, the runtime allocates a stack twice as big, copies the old one into it and carries on:
+
+$$
+s_g = 2048 \cdot 2^{g} \text{ bytes}
+$$
+
+where
+
+- $g$ is the number of times this goroutine's stack has grown;
+- $s_g$ is its stack size after $g$ growths;
+- 2048 is `stackMin`, and each growth doubles the size (`newsize := oldsize * 2` in `newstack`).
+
+Example: to reach 1 MiB $= 1{,}048{,}576$ bytes, solve $2048 \cdot 2^g \ge 1{,}048{,}576$, so $2^g \ge 512$ and $g = 9$ growths. The bytes copied along the way are at most $2048 + 4096 + \dots + 524{,}288 < 1{,}048{,}576$, less than the final size, so growing is cheap on average. That is why `depth(100_000)`, 100,000 nested calls in one goroutine, just works:
+
+```go
+func depth(n int) int {
+	if n == 0 {
+		return 0
+	}
+	return 1 + depth(n-1)
+}
+```
+
+The limit is 1 GB on 64-bit systems. Infinite recursion ends with `runtime: goroutine stack exceeds 1000000000-byte limit` and `fatal error: stack overflow`.
+
+### Level 3: `GOMAXPROCS` decides how many goroutines run at once
+
+`GOMAXPROCS` is the number of Ps, the number of goroutines that can execute Go code **simultaneously**. `runtime.GOMAXPROCS(0)` reads it without changing it. Before Go 1.25 the default was the number of logical CPUs, `runtime.NumCPU()`. Inside a container limited to 2 CPUs on a 64-core host, that meant 64 Ps competing for 2 CPUs' worth of time, and the kernel throttled the process. Since Go 1.25 the Linux default also reads the cgroup CPU limit (`defaultGOMAXPROCS` in `src/runtime/cgroup_linux.go`):
+
+$$
+P =
+\begin{cases}
+N & \text{if there is no CPU limit} \\
+\min\!\big(N, \max(2, \lceil L \rceil)\big) & \text{if the cgroup limit is } L \text{ CPUs}
+\end{cases}
+$$
+
+where
+
+- $P$ is the default `GOMAXPROCS`;
+- $N$ is the number of logical CPUs the process may use (its CPU affinity);
+- $L$ is the container's CPU limit, quota divided by period, such as 1.5;
+- $\lceil L \rceil$ rounds up, and the floor of 2 keeps a little parallelism even under tiny limits.
+
+Example, with the lab's `defaultProcs` on $N = 8$:
+
+1. No limit: $P = 8$.
+2. $L = 1.5$: $\lceil 1.5 \rceil = 2$, $\max(2, 2) = 2$, $\min(8, 2) = 2$.
+3. $L = 0.5$: $\lceil 0.5 \rceil = 1$, $\max(2, 1) = 2$, $\min(8, 2) = 2$.
+4. $L = 4$: $\min(8, \max(2, 4)) = 4$. And on a single CPU, $\min(1, 2) = 1$.
+
+The runtime also re-checks the limit periodically and adjusts. Setting `GOMAXPROCS` yourself, by environment variable or by calling `runtime.GOMAXPROCS`, turns both behaviours off.
+
+Even `GOMAXPROCS(1)` runs many goroutines **concurrently**. A goroutine that sleeps or waits gives its P back, so another can run. With one P, four goroutines that each sleep 25 ms finish in about 25 ms, not 100 ms:
+
+```go
+func sleepers(n int, d time.Duration) time.Duration {
+	start := time.Now()
+	var wg sync.WaitGroup
+	for range n {
+		wg.Go(func() { time.Sleep(d) })
+	}
+	wg.Wait()
+	return time.Since(start)
+}
+```
+
+That is concurrency without parallelism. The waiting overlaps, while only one goroutine at a time executes code.
+
+### Level 4: the runtime can interrupt a busy loop (Go 1.14)
+
+What if a goroutine never waits? Before Go 1.14, the scheduler could only interrupt a running goroutine when it called a function. A tight loop with no calls could hold its P forever. Go 1.14 made goroutines **asynchronously preemptible**:
+
+```go
+func preemptSpinner() time.Duration {
+	start := time.Now()
+	var stop atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		for !stop.Load() { // a tight loop: no function calls, no yield points
+		}
+		close(done)
+	}()
+	time.Sleep(20 * time.Millisecond) // the spinner now holds the only P
+	stop.Store(true)                  // this line runs only because the spinner was preempted
+	<-done
+	return time.Since(start)
+}
+```
+
+The lab runs this with `GOMAXPROCS(1)`. While `main` sleeps, the spinner takes the only P. When the sleep ends, `main` is ready but has no P. The runtime's monitor thread, `sysmon`, notices that the spinner has run for more than 10 ms (`forcePreemptNS` in `proc.go`). It sends the spinner's thread a signal (`SIGURG` on Unix), and the handler stops the spinner at a safe point. `main` gets the P and sets `stop`. With asynchronous preemption turned off (`GODEBUG=asyncpreemptoff=1`), a standalone copy of this code never lets `main` run again: it was still hung after 2 seconds.
+
+### Level 5: goroutine leaks
+
+A goroutine that blocks forever is never collected. Its stack and everything it references stay in memory. This is a **leak**:
+
+```go
+func firstResult(buffer int) int {
+	results := make(chan int, buffer)
+	for i := 1; i <= 3; i++ {
+		go func() { results <- i * 10 }()
+	}
+	return <-results // with buffer 0, the two slower senders wait forever
+}
+```
+
+`firstResult` returns whichever answer comes first: 10, 20 or 30. With `buffer` 0, the other two senders block on a channel nobody will ever receive from again, and `runtime.NumGoroutine()` settles at the old count plus 2. With `buffer` 3, every send fits in the buffer, each sender exits, and the count returns to where it was. Called on every request, the leaky version grows without bound.
+
+Go 1.27 made the **`goroutineleak` profile** generally available. Writing it triggers a garbage collection that checks which blocked goroutines are waiting on something no running goroutine can reach:
+
+```go
+func leakedGoroutines() int {
+	profile := pprof.Lookup("goroutineleak")
+	if err := profile.WriteTo(io.Discard, 0); err != nil { // runs a leak-detecting GC
+		panic(err)
+	}
+	return profile.Count()
+}
+```
+
+After the leaky call it reports exactly 2. The release notes add a caveat: a goroutine blocked on a channel that a global variable still points to is not detected, because that channel is still reachable. The real fix is design: every goroutine you start needs a guaranteed way to finish, such as a buffered channel, a `done` channel or a `context.Context` ([Select and Context](11-select-and-context.qmd)).
+
+## How it works underneath
+
+The scheduler lives in `src/runtime/proc.go`, whose header comment names the three structures:
+
+```go
+// sketch: from the comment at the top of runtime/proc.go
+// G - goroutine.
+// M - worker thread, or machine.
+// P - processor, a resource that is required to execute Go code.
+//     M must have an associated P to execute Go code, however it can be
+//     blocked or in a syscall w/o an associated P.
+```
+
+- A **G** (`type g` in `runtime2.go`) holds the goroutine's stack bounds, its status (runnable, running, waiting, ...) and a `gobuf` with the saved stack pointer and program counter. Switching goroutines means saving and loading a few registers in user space, with no kernel call.
+- An **M** is an OS thread. The runtime creates them as needed, up to a default limit of 10,000 (`sched.maxmcount`).
+- A **P** owns a **local run queue**, a ring of 256 runnable Gs (`runq [256]guintptr`), plus a `runnext` slot for the goroutine that should run next, such as one just woken by a channel send. There are exactly `GOMAXPROCS` Ps.
+
+When an M needs work, `findRunnable` looks in this order: `runnext` and the local queue; the **global** run queue (checked first once every 61 scheduling ticks, so that two goroutines respawning each other cannot starve it); the network poller; and finally the other Ps' queues, which it **steals** from. `runqgrab` takes half:
+
+$$
+\operatorname{stolen}(n) = n - \left\lfloor \frac{n}{2} \right\rfloor = \left\lceil \frac{n}{2} \right\rceil
+$$
+
+where
+
+- $n$ is the number of goroutines in the victim P's local queue;
+- $\lfloor \cdot \rfloor$ rounds down, as Go's integer division `n/2` does, and $\lceil \cdot \rceil$ rounds up;
+- $\operatorname{stolen}(n)$ is how many move to the thief's queue.
+
+Example: a victim with $n = 7$ queued goroutines loses $7 - \lfloor 3.5 \rfloor = 7 - 3 = 4$ and keeps 3. With $n = 1$, $1 - 0 = 1$, so even a single waiting goroutine can be stolen. Taking half balances two Ps in one step without emptying the victim.
+
+**System calls.** When a goroutine enters a blocking system call, its M blocks in the kernel and keeps the G, but the P must not sit idle. `sysmon` retakes a P whose M has stayed in a system call for at least one of its ticks (20 µs or more) and hands it to another M (`retake` and `handoffp`). Only when that P has nothing queued and other Ps are idle anyway does it wait, for up to 10 ms. When the call returns, the G tries to get a P back, or else goes onto the global queue. Network I/O avoids blocking threads entirely: sockets are non-blocking, and parked goroutines wait in the netpoller (epoll on Linux, kqueue on macOS).
+
+**Preemption.** Every Go function starts with a check of the stack pointer against `g.stackguard0` (the `runtime2.go` comment: *"the stack pointer compared in the Go stack growth prologue"*). If the stack is too small, it calls `morestack`, which grows the stack as in Level 2. The same check implements **cooperative preemption**: to ask a goroutine to yield, the runtime sets `stackguard0` to a special value, and the goroutine traps at its next function call. A loop without calls never reaches that check, which is why Go 1.14 added the signal-based **asynchronous** preemption of Level 4 on top.
+
+**How much does parallelism help?** Gene Amdahl's 1967 argument limits it. If a fraction $p$ of the work can run in parallel and the rest is serial:
+
+$$
+S(N) = \frac{1}{(1 - p) + \dfrac{p}{N}}
+$$
+
+where
+
+- $S(N)$ is the speedup on $N$ processors compared with one;
+- $p$ is the fraction of the running time that can be parallelised, between 0 and 1;
+- $1 - p$ is the serial fraction, which no number of processors shortens;
+- $N$ is the number of processors, here the number of Ps.
+
+Example, from the lab's `amdahl` function:
+
+1. $p = 0.9$, $N = 8$: $(1 - 0.9) + 0.9 / 8 = 0.1 + 0.1125 = 0.2125$, so $S = 1 / 0.2125 \approx 4.71$. Eight CPUs give less than five times the speed.
+2. $p = 0.9$, $N \to \infty$: $S \to 1 / 0.1 = 10$. The 10% serial part caps the speedup at 10, however many cores you add.
+3. $p = 0.5$, $N = 2$: $1 / (0.5 + 0.25) \approx 1.33$.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `main` returns while goroutines are still running | Missing output or unfinished work, with no error | `wg.Wait()`, or receive their results from a channel |
+| Calling `wg.Add(1)` inside the new goroutine | `go vet`: `WaitGroup.Add called from inside new goroutine`; `Wait` may return too early | Call `Add` before `go`, or use `wg.Go` (Go 1.25+) |
+| Several goroutines updating one variable | `go run -race` prints `WARNING: DATA RACE` | Give each its own slot, or use a mutex, atomic or channel |
+| A sender that nobody receives from | `NumGoroutine` keeps growing; the `goroutineleak` profile lists it | A buffered channel of the right size, or a `done` channel or context |
+| Infinite recursion | `runtime: goroutine stack exceeds 1000000000-byte limit`, then `fatal error: stack overflow` | Fix the base case |
+| A panic in a goroutine with no `recover` | The whole program crashes: `panic: boom` | Recover inside that goroutine ([Errors, Defer and Panic](07-errors-defer-and-panic.qmd)) |
+| Assuming more goroutines means more speed | CPU-bound work stops getting faster beyond `GOMAXPROCS` | Measure; apply Amdahl's law; use a bounded worker pool ([Concurrency Patterns](13-concurrency-patterns.qmd)) |
+
+## Interview questions
+
+### 1. How is a goroutine different from an OS thread?
+
+**Answer.** A goroutine is scheduled by the Go runtime in user space; a thread is scheduled by the kernel. A goroutine's stack starts at 2 KiB (`stackMin`) and grows by copying, up to 1 GB, while a thread reserves a fixed stack, typically megabytes. Switching goroutines saves a few registers into `g.sched`, with no system call. Go multiplexes many Gs onto few Ms (M:N scheduling), so a program can hold hundreds of thousands of goroutines: the lab parks 1,000 for a few MiB of stack in total. Goroutines also have no identity you can access, no priority and no thread-local storage, by design.
+
+### 2. Explain the G-M-P model. What happens when a goroutine makes a blocking system call?
+
+**Answer.** G is a goroutine, M an OS thread, and P a scheduling context with a local run queue of up to 256 Gs. An M must hold a P to run Go code, and there are `GOMAXPROCS` Ps. Ms pick work from `runnext`, then the local queue, then the global queue (checked first every 61 ticks for fairness), the netpoller, and finally steal half of another P's queue. In a blocking system call, the M blocks together with its G, and `sysmon` hands the P to another M after at least 20 µs, so the other goroutines keep running. When the call returns, the G needs a P again before it can continue.
+
+### 3. What is `GOMAXPROCS`, and what changed in Go 1.25?
+
+**Answer.** It is the number of Ps: the maximum number of goroutines executing Go code at the same instant. Goroutines blocked in system calls or waiting on channels do not count. It used to default to `runtime.NumCPU()`. Since Go 1.25, on Linux, the default is $\min(N, \max(2, \lceil L \rceil))$ with $L$ the cgroup CPU limit, so a container limited to 1.5 CPUs on an 8-CPU machine gets 2, not 8. The runtime also updates the value when the limit changes. Kubernetes "CPU limits" set $L$; "CPU requests" do not. Setting the variable manually disables both features.
+
+### 4. Does Go preempt goroutines?
+
+**Answer.** Yes, in two ways. **Cooperative** preemption has always existed: the runtime sets `stackguard0` so that the goroutine's next function prologue traps into the scheduler. Since Go 1.14 there is also **asynchronous** preemption: `sysmon` finds a goroutine that has run for more than 10 ms and sends its thread a signal (`SIGURG` on Unix), and the signal handler parks it at a safe point. The lab's `preemptSpinner` relies on this: with one P, a call-free loop would otherwise keep `main` from ever running again, and with `GODEBUG=asyncpreemptoff=1` it hangs.
+
+### 5. How do you find and prevent goroutine leaks?
+
+**Answer.** A leak is a goroutine blocked forever, typically on a channel send or receive that will never happen, as in `firstResult(0)`, where two losers block on an unbuffered channel. Find leaks by watching `runtime.NumGoroutine()` over time, by reading a goroutine dump (`/debug/pprof/goroutine`), and since Go 1.27 with the `goroutineleak` profile, which found exactly the 2 leaked senders in the lab. Prevent them by giving every goroutine a guaranteed exit: buffer the channel for all senders (`firstResult(3)`), close a `done` channel, or cancel a `context.Context`. Every `go` statement should come with an answer to "how does this goroutine end?".
+
+### 6. What is the difference between concurrency and parallelism? Can adding cores always help?
+
+**Answer.** Pike: concurrency is *dealing with* many things at once, which is how a program is structured; parallelism is *doing* many things at once, which is how it executes. `sleepers` with `GOMAXPROCS(1)` is concurrent but not parallel, and its four 25 ms waits overlap in about 25 ms. Adding cores helps only the parallel part. By Amdahl's law, a program that is 90% parallel runs at most $1 / 0.1 = 10$ times faster however many cores it gets, and $1 / (0.1 + 0.9/8) \approx 4.71$ times faster on 8.
+
+## Summary
+
+$$
+S(N) = \frac{1}{(1 - p) + p / N}, \qquad P = \min\!\big(N_{\text{cpu}}, \max(2, \lceil L \rceil)\big)
+$$
+
+where $S(N)$ is the speedup on $N$ processors, $p$ the parallel fraction, $P$ the default `GOMAXPROCS`, $N_{\text{cpu}}$ the usable CPUs, and $L$ the container CPU limit.
+
+Example: $p = 0.9$ on $N = 8$ gives $S = 1 / 0.2125 \approx 4.71$. A container with $L = 1.5$ on $N_{\text{cpu}} = 8$ gets $P = \min(8, \max(2, 2)) = 2$.
+
+- `go f()` starts a goroutine; `main` returning ends the program. Wait with `sync.WaitGroup` (`wg.Go` since Go 1.25) or channels.
+- A goroutine starts with a 2 KiB stack that doubles when needed, up to 1 GB, so thousands are cheap.
+- The scheduler runs Gs on Ms through `GOMAXPROCS` Ps: 256-slot local queues, a global queue checked every 61 ticks, and stealing half.
+- Since Go 1.14 a busy loop is preempted after 10 ms; since Go 1.25 `GOMAXPROCS` respects container CPU limits.
+- Every goroutine needs a way to finish. Since Go 1.27 the `goroutineleak` profile finds the ones that cannot.
+- Concurrency is structure, parallelism is execution, and Amdahl's law bounds the gain.
+
+## References
+
+- The Go Programming Language Specification: [Go statements](https://go.dev/ref/spec#Go_statements) and [Program execution](https://go.dev/ref/spec#Program_execution).
+- Package documentation: [runtime](https://pkg.go.dev/runtime) (`GOMAXPROCS`, `NumGoroutine`), [sync.WaitGroup](https://pkg.go.dev/sync#WaitGroup), [runtime/pprof](https://pkg.go.dev/runtime/pprof).
+- Release notes: [Go 1.14](https://go.dev/doc/go1.14) (asynchronous preemption), [Go 1.19](https://go.dev/doc/go1.19) (average-based initial stacks), [Go 1.25](https://go.dev/doc/go1.25) (container-aware `GOMAXPROCS`, `WaitGroup.Go`), [Go 1.27](https://go.dev/doc/go1.27) (`goroutineleak` profile).
+- Go FAQ: [Why goroutines instead of threads?](https://go.dev/doc/faq#goroutines)
+- Michael Pratt and Carlos Amedee, [Container-aware GOMAXPROCS](https://go.dev/blog/container-aware-gomaxprocs) (2025).
+- Dmitry Vyukov, [Scalable Go Scheduler Design Doc](https://golang.org/s/go11sched) (2012).
+- Rob Pike, [Concurrency is not Parallelism](https://go.dev/talks/2012/waza.slide) (Heroku Waza, 2012), and Andrew Gerrand's [post about the talk](https://go.dev/blog/waza-talk).
+- Gene M. Amdahl, [Validity of the single processor approach to achieving large scale computing capabilities](https://doi.org/10.1145/1465482.1465560), AFIPS Spring Joint Computer Conference, 1967.
+- [pthread_create(3)](https://man7.org/linux/man-pages/man3/pthread_create.3.html), on the default thread stack size.
+- The runtime source: [src/runtime/proc.go](https://github.com/golang/go/blob/master/src/runtime/proc.go), [src/runtime/runtime2.go](https://github.com/golang/go/blob/master/src/runtime/runtime2.go), [src/runtime/stack.go](https://github.com/golang/go/blob/master/src/runtime/stack.go), [src/runtime/cgroup_linux.go](https://github.com/golang/go/blob/master/src/runtime/cgroup_linux.go).
+- Lab: [`labs/goroutines-and-the-scheduler/main.go`](labs/goroutines-and-the-scheduler/main.go). Run it from `programming-languages/go/labs` with `go run -race ./goroutines-and-the-scheduler`.

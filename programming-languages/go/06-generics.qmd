@@ -1,0 +1,346 @@
+---
+title: "Generics"
+description: "Go generics from one type parameter to the compiler: constraints as type sets, ~T, comparable and cmp.Ordered, inference, generic types, Go 1.27 generic methods, generic aliases, and GC-shape stenciling with dictionaries."
+---
+
+## The problem
+
+You need the total of `[]int{1, 2, 3}`, which is 6, and of `[]float64{1.5, 2.5}`, which is 4. Before Go 1.18 you wrote the same loop twice:
+
+```go
+func SumInts(xs []int) int {
+	total := 0
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+
+func SumFloats(xs []float64) float64 {
+	total := 0.0
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+```
+
+The two bodies are identical except for the types. Every fix now has to be made twice, and the copies drift apart. The old escape hatches were worse:
+
+- **`[]any` with a type switch** gives up compile-time checking. A string slipped into the `[]any` compiles and fails only when the program runs, and every number is boxed in an interface.
+- **Code generation** (a tool that writes `SumInt32`, `SumInt64`, ...) works, but it adds a build step and a pile of generated files.
+
+**Generics**, added in Go 1.18 (March 2022), let you write the function once with a **type parameter**. The compiler checks every use, just as it checks `SumInts`.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A recipe with a blank in it
+
+A generic function is a recipe with a blank in it, written `T`: *"Add up a list of `T`."* Before you cook, you fill in the blank: *"Add up a list of **ints**."* That is **instantiation**.
+
+The recipe also says what may go in the blank: *"anything you can add with `+`."* Numbers are allowed and socks are not. That rule is the **constraint**. A `~` in the rule adds *"...or anything that is a number underneath, even if it wears a name tag such as `Celsius`."*
+
+A **generic type** is a lunch box with a label. A `Stack[int]` box only takes ints, and the factory stamps the label when you order the box.
+
+Ian Lance Taylor and Robert Griesemer designed Go's generics in the *Type Parameters Proposal*. Rob Pike's proverb *"interface{} says nothing"* explains why the old `any` approach was weak: a constraint says exactly what a type must be able to do. Taylor's advice in *When To Use Generics* is to start from ordinary code, because *"if you start writing your program by defining type parameter constraints, you are probably on the wrong path."*
+:::
+
+## From simple to advanced
+
+### Level 1: one function with a type parameter
+
+The type parameter list goes in square brackets before the ordinary parameters:
+
+```go
+func Sum[T int | float64](xs []T) T {
+	var total T // the zero value of T: 0 for int, 0.0 for float64
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+```
+
+`T` is the type parameter and `int | float64` is its **constraint**. Each call fills in `T`:
+
+- `Sum([]int{1, 2, 3})` is 6. The compiler sees an argument of type `[]int`, matches it against `[]T`, and **infers** `T = int`.
+- `Sum([]float64{1.5, 2.5})` is 4, with `T = float64`.
+- `Sum[float64](nil)` is 0. Here `nil` has no element type to infer from, so you **instantiate** explicitly with `[float64]`.
+
+`var total T` declares a variable of whatever type `T` turns out to be, set to that type's zero value.
+
+### Level 2: a constraint is a set of types
+
+A constraint is an interface. Since Go 1.18 an interface can list types as well as methods, and the list defines a **type set**:
+
+```go
+type Number interface {
+	~int | ~int64 | ~float64
+}
+
+type Celsius float64
+
+func SumOf[T Number](xs []T) T {
+	var total T
+	for _, x := range xs {
+		total += x
+	}
+	return total
+}
+```
+
+The spec gives each term a type set:
+
+$$
+\operatorname{typeset}(T) = \lbrace T \rbrace, \qquad
+\operatorname{typeset}({\sim}T) = \lbrace U : \operatorname{under}(U) = T \rbrace, \qquad
+\operatorname{typeset}(t_1 \mid \dots \mid t_n) = \bigcup_{i=1}^{n} \operatorname{typeset}(t_i)
+$$
+
+where
+
+- $T$ is a non-interface type, $U$ is any type, and $t_1, \dots, t_n$ are the terms of a union such as `~int | ~int64 | ~float64`;
+- $\operatorname{under}(U)$ is the **underlying type** of $U$: for `type Celsius float64` it is `float64`, and for `float64` it is `float64` itself;
+- ${\sim}T$ is the tilde term, "every type whose underlying type is $T$";
+- $\bigcup$ is set union: a type is in the union if it is in any term's set.
+
+Example, with the two constraints of this chapter:
+
+1. `Sum` uses `int | float64` with no tilde, so its type set is $\lbrace \texttt{int} \rbrace \cup \lbrace \texttt{float64} \rbrace = \lbrace \texttt{int}, \texttt{float64} \rbrace$. `Celsius` is not in it.
+2. `SumOf` uses `Number`. $\operatorname{under}(\texttt{Celsius}) = \texttt{float64}$, so `Celsius` is in $\operatorname{typeset}({\sim}\texttt{float64})$ and therefore in the union.
+3. So `SumOf([]Celsius{20, 21.5})` compiles and returns $20 + 21.5 = 41.5$, while `Sum([]Celsius{20, 21.5})` is rejected:
+
+```go
+// sketch: does not compile
+_ = Sum([]Celsius{20, 21.5})
+// Celsius does not satisfy int | float64 (possibly missing ~ for float64 in int | float64)
+```
+
+The type set also decides **which operations the body may use**. The type checker allows an operator on a value of type `T` only when it works for every type in the set:
+
+$$
+\operatorname{op} \text{ is allowed on } T \iff \forall U \in \operatorname{typeset}(C) : \operatorname{op} \text{ is defined on } U
+$$
+
+where
+
+- $C$ is the constraint of the type parameter $T$;
+- $\operatorname{op}$ is an operator such as `+`, `%` or `<`;
+- $\forall$ means "for every".
+
+Example: for `Number`, `+` is defined on `int`, `int64` and `float64`, so `total += x` compiles. `%` is not defined on `float64`, so `a % b` fails with `invalid operation: operator % not defined on a (variable of type T constrained by Number)`. A type set can mix in methods too: `interface{ ~int; String() string }` means "built on `int` **and** has a `String` method". An interface that lists types can only be used as a constraint, never as the type of a variable.
+
+### Level 3: `comparable`, `any` and `cmp.Ordered`
+
+Three constraints cover most needs:
+
+- `any` is an alias for `interface{}`. Its type set is every type, so the body can do almost nothing with a `T` except store it, copy it and pass it on.
+- `comparable` is the set of types that support `==` and `!=`. Map keys need it.
+- `cmp.Ordered` (package `cmp`, Go 1.21) is every integer, float and string type, written with `~` terms, so `<` and `>` work.
+
+```go
+func Index[T comparable](xs []T, want T) int {
+	for i, x := range xs {
+		if x == want {
+			return i
+		}
+	}
+	return -1
+}
+
+func Largest[T cmp.Ordered](xs []T) T {
+	best := xs[0]
+	for _, x := range xs[1:] {
+		if x > best {
+			best = x
+		}
+	}
+	return best
+}
+```
+
+`Index([]string{"go", "rust", "zig"}, "zig")` is 2 and `Index([]int{4, 5}, 9)` is -1. `Largest([]string{"pear", "apple", "plum"})` is `"plum"`: strings compare byte by byte, and at the second byte `'l'` is greater than `'e'`. `Largest([]float64{2.5, -1, 9})` is 9. For real code, the built-in `max` and `slices.Max` already exist.
+
+`comparable` has one trap. Since Go 1.20, interface types such as `any` satisfy it, because interfaces support `==`. But comparing two interfaces that hold slices panics, since slices are not comparable:
+
+```go
+func compareSlicesInAny() (message string) {
+	defer func() { message = fmt.Sprint(recover()) }()
+	Index([]any{[]int{1}}, any([]int{1}))
+	return "no panic"
+}
+```
+
+The lab checks that this returns `runtime error: comparing uncomparable type []int`.
+
+### Level 4: generic types
+
+A type can have type parameters too. `Stack[T]` is a stack of any one element type:
+
+```go
+type Stack[T any] struct {
+	items []T
+}
+
+func (s *Stack[T]) Push(v T) {
+	s.items = append(s.items, v)
+}
+
+func (s *Stack[T]) Pop() (T, bool) {
+	var zero T
+	if len(s.items) == 0 {
+		return zero, false
+	}
+	top := s.items[len(s.items)-1]
+	s.items = s.items[:len(s.items)-1]
+	return top, true
+}
+```
+
+The receiver `(s *Stack[T])` repeats the type parameter, and methods use `T` freely. After pushing 1, 2 and 3 onto a `Stack[int]`, `Pop` returns `3, true`. Popping an empty `Stack[string]` returns `"", false`. The zero value of `T` is the only sensible thing to return, and the `bool` says it means nothing. `Stack[int]` and `Stack[string]` are **different types**: you cannot assign one to the other.
+
+### Level 5: generic methods (Go 1.27) and generic aliases (Go 1.24)
+
+Until Go 1.26, a method could use its type's parameters but could not declare new ones. Go 1.27 lifts that restriction:
+
+```go
+func (s *Stack[T]) Map[U any](f func(T) U) *Stack[U] {
+	out := &Stack[U]{}
+	for _, v := range s.items {
+		out.Push(f(v))
+	}
+	return out
+}
+```
+
+`s.Map(strconv.Itoa)` infers `U = string` from the function's result type and turns the `Stack[int]` holding 1 and 2 into a `Stack[string]` holding `"1"` and `"2"`. There is one deliberate limit: **a generic method never satisfies an interface**, and an interface method cannot have type parameters. Interview question 3 explains why.
+
+A **type alias** gives an existing type a second name. Since Go 1.24 an alias may have type parameters:
+
+```go
+type Set[T comparable] = map[T]struct{}
+```
+
+`Set[string]` **is** `map[string]struct{}`, so `fmt.Sprintf("%T", Set[string]{})` prints `map[string]struct {}`. A defined type, `type DefinedSet[T comparable] map[T]struct{}`, creates a new type and prints `main.DefinedSet[string]`. Aliases help when a type moves between packages and old code must keep compiling.
+
+## How it works underneath
+
+A compiler can implement generics in two classic ways:
+
+- **Monomorphisation**, as in C++ templates and Rust: compile a separate copy of the function for every type argument. The code is fast, but binaries grow and builds slow down.
+- **Boxing**, as in Java: compile one copy that handles every value through a pointer. Binaries stay small, but every value is boxed and, in Java, the type arguments are erased at run time.
+
+The Go 1.18 design, *Implementation of Generics via Dictionaries and Gcshape Stenciling*, sits between them. The compiler groups type arguments by **GC shape** and compiles one body per shape. Each instantiation gets a **dictionary**, passed as a hidden first argument, that tells the shared body about its real types. In Go 1.27 the shape rule, from `Shapify` in `cmd/compile/internal/noder/reader.go`, is:
+
+$$
+\operatorname{shape}(T) =
+\begin{cases}
+\texttt{*uint8} & \text{if } T \text{ is a pointer and the constraint has only methods} \\
+\operatorname{under}(T) & \text{otherwise}
+\end{cases}
+\qquad
+B = \left| \lbrace \operatorname{shape}(T) : T \in A \rbrace \right|, \quad D = |A|
+$$
+
+where
+
+- $T$ is one type argument and $\operatorname{under}(T)$ its underlying type, as in Level 2;
+- "the constraint has only methods" means a **basic interface** such as `any` or `fmt.Stringer`. Every pointer then looks the same to the generated code;
+- $A$ is the set of type arguments the program uses for one generic function;
+- $B$ is the number of compiled bodies, and $D$ the number of dictionaries;
+- $|\cdot|$ counts the elements of a set.
+
+Example, with the lab's `SumOf`, used with $A = \lbrace \texttt{Celsius}, \texttt{float64}, \texttt{int64} \rbrace$:
+
+1. $\operatorname{shape}(\texttt{Celsius}) = \operatorname{under}(\texttt{Celsius}) = \texttt{float64}$, $\operatorname{shape}(\texttt{float64}) = \texttt{float64}$ and $\operatorname{shape}(\texttt{int64}) = \texttt{int64}$.
+2. $B = |\lbrace \texttt{float64}, \texttt{int64} \rbrace| = 2$ bodies, and $D = |A| = 3$ dictionaries.
+
+The symbol table of the lab binary shows exactly that, with inlining turned off so the bodies stay visible:
+
+```bash
+go build -gcflags=-l -o /tmp/generics ./generics
+go tool nm /tmp/generics | grep SumOf | awk '{print $3}'
+```
+
+```text
+main..dict.SumOf[float64]
+main..dict.SumOf[int64]
+main..dict.SumOf[main.Celsius]
+main.SumOf[go.shape.float64]
+main.SumOf[go.shape.int64]
+```
+
+The design document lists what a dictionary holds: the run-time type descriptors of the type arguments, derived types such as `[]T` and `*T`, sub-dictionaries for generic functions called inside the body, and the method tables (itabs) used when `T` is converted to an interface or has its methods called. This has consequences:
+
+- Code for **value shapes** such as `int` and `float64` is fully specialised. `total += x` compiles to an ordinary machine add.
+- Code for **pointer types under a basic constraint** is shared. A method call on `T` is then an indirect call through a method table taken from the dictionary, much like an interface call. That is one reason generics are not automatically faster than interfaces.
+- Dictionaries are built at compile time, so Go rejects generic code whose instantiations would never end. `F[T]` calling `F[[]T]` fails with `instantiation cycle`.
+
+The type checker's job is the spec's satisfaction rule: a type argument $T$ satisfies constraint $C$ when $T \in \operatorname{typeset}(C)$. The one exception is that a merely comparable type, such as `any`, satisfies `comparable`, which is the trap from Level 3. Go 1.25 removed the spec's older notion of "core types" and states each operation's rule directly, without changing which programs compile.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Forgetting `~` | `Celsius does not satisfy ...`, ending in `(possibly missing ~ for float64 ...)` (Level 2 shows the full message) | Write `~float64` to admit every type built on `float64` |
+| Using a type-set interface as an ordinary type | `cannot use type Number outside a type constraint: interface contains type constraints` | Use it only inside `[...]`; use a method interface for variables |
+| Using `+` or `<` with `any` | `invalid operation: operator + not defined on a (variable of type T constrained by any)` | Constrain `T` with `Number`, `cmp.Ordered` or a custom type set |
+| A type parameter that appears only in the result, as in `func Zero[T any]() T` | `in call to Zero, cannot infer T` | Instantiate explicitly: `Zero[int]()` |
+| Expecting a generic method to satisfy an interface | `*Stack[int] does not implement ... (wrong type for method Map)` | Write a non-generic method with the exact signature, or a top-level generic function |
+| `comparable` with interface type arguments holding slices or maps | `panic: runtime error: comparing uncomparable type []int` | Keep such values out, or compare with a function you pass in |
+| `func Log[T fmt.Stringer](v T)` where `func Log(v fmt.Stringer)` would do | Harder-to-read code with no benefit | If the body only calls methods, take an interface |
+
+## Interview questions
+
+### 1. What does `~` mean in a constraint?
+
+**Answer.** `~T` is the set of all types whose **underlying type** is `T`. Without it, `int | float64` contains exactly two types. With it, `~float64` also contains `type Celsius float64`, any other type defined on `float64`, and `float64` itself. So `SumOf([]Celsius{20, 21.5})` compiles and returns 41.5, while `Sum` with `int | float64` rejects `Celsius` with *"possibly missing ~ for float64"*. `~T` is only allowed when `T` is its own underlying type: `~Celsius` fails with `invalid use of ~ (underlying type of Celsius is float64)`.
+
+### 2. How does Go compile generic code, compared with C++ and Java?
+
+**Answer.** C++ (and Rust) **monomorphise**: one machine-code copy per type argument. Java **erases** types: one copy, with every value boxed. Go 1.18 and later use **GC shape stenciling with dictionaries**: one copy per *shape*, where the shape is the underlying type (and all pointers share the shape `*uint8` when the constraint has only methods). A per-instantiation dictionary, passed as a hidden first argument, supplies the real type descriptors and method tables. In the lab, `SumOf` with `Celsius`, `float64` and `int64` gives 2 bodies and 3 dictionaries, which `go tool nm` confirms. Unlike Java, reflection still sees the full type: `%T` prints `main.DefinedSet[string]`.
+
+### 3. Can a method have its own type parameters? Why did it take until Go 1.27?
+
+**Answer.** Since Go 1.27, yes. `func (s *Stack[T]) Map[U any](f func(T) U) *Stack[U]` compiles. A generic method can never satisfy an interface method, though, and an interface method cannot declare type parameters (`interface method must have no type parameters`). The reason is in the Go FAQ. Suppose a value with a generic method `Nop[T any](T) T` is stored in an `any`, and some code asks whether it implements `interface{ Nop(string) string }`. The compiler would need a body for *every* possible `T`, decided at run time. The options were: recompile at link time (slow, possibly never ending), a JIT compiler (against Go's ahead-of-time design), a slow reflective fallback (unpredictable performance), or "generic methods do not satisfy interfaces". Robert Griesemer's accepted proposal (issue 77273) took the last option, on the grounds that concrete methods are useful on their own: they live in the type's namespace and chain left to right.
+
+### 4. What is the difference between `any` and `comparable`?
+
+**Answer.** `any` allows every type but permits no operators. `comparable` allows only types that support `==`, which map keys require. A function like `func Keys[K comparable, V any](m map[K]V) []K` needs `comparable` for `K`. Since Go 1.20 an interface type such as `any` satisfies `comparable` too, because interfaces support `==`. But `==` on two interfaces that hold the same uncomparable dynamic type panics at run time: `runtime error: comparing uncomparable type []int`. Strictly comparable types, such as `int`, `string` and structs of them, never panic.
+
+### 5. When should you *not* use generics?
+
+**Answer.** Ian Lance Taylor's rule in *When To Use Generics*: use type parameters when you are about to write **the same code several times with only the types changed**. Good fits are functions over slices, maps and channels of any element type (`slices.Index`), general data structures (`Stack[T]`), and identical methods for many types. Bad fits:
+
+- the body only **calls methods**: take an interface such as `io.Reader`;
+- each type needs a **different implementation**: that is what interfaces and methods are for;
+- the operation depends on run-time type information, as in `encoding/json`: that is reflection's job.
+
+## Summary
+
+$$
+T \text{ satisfies } C \iff T \in \operatorname{typeset}(C), \qquad \operatorname{typeset}({\sim}T) = \lbrace U : \operatorname{under}(U) = T \rbrace
+$$
+
+where $T$ is a type argument, $C$ the constraint, $\operatorname{typeset}$ the set of types the constraint allows, and $\operatorname{under}(U)$ the underlying type of $U$.
+
+Example: `Celsius` has $\operatorname{under}(\texttt{Celsius}) = \texttt{float64}$, so it is in $\operatorname{typeset}({\sim}\texttt{float64}) \subseteq \operatorname{typeset}(\texttt{Number})$ and `SumOf` accepts it, giving $20 + 21.5 = 41.5$. It is not in $\lbrace \texttt{int}, \texttt{float64} \rbrace$, so `Sum` rejects it.
+
+- Type parameters go in `[...]`. A constraint is an interface, and it describes a **set of types**.
+- `~T` adds every type built on `T`. Operators are allowed only if every type in the set supports them.
+- `any` allows everything and does nothing, `comparable` gives `==`, and `cmp.Ordered` gives `<`.
+- Generic types (`Stack[T]`), generic aliases (Go 1.24) and generic methods (Go 1.27) all exist, but generic methods never implement interfaces.
+- The compiler emits one body per GC shape and one dictionary per instantiation.
+- Reach for generics when the code repeats with only the types changing. Otherwise use an interface.
+
+## References
+
+- The Go Programming Language Specification: [Type parameter declarations](https://go.dev/ref/spec#Type_parameter_declarations), [Interface types](https://go.dev/ref/spec#Interface_types) (type sets), [Satisfying a type constraint](https://go.dev/ref/spec#Satisfying_a_type_constraint), [Type inference](https://go.dev/ref/spec#Type_inference), [Alias declarations](https://go.dev/ref/spec#Alias_declarations), [Method declarations](https://go.dev/ref/spec#Method_declarations).
+- Release notes: [Go 1.18](https://go.dev/doc/go1.18) (generics, `any`, `comparable`), [Go 1.20](https://go.dev/doc/go1.20) (interfaces satisfy `comparable`), [Go 1.21](https://go.dev/doc/go1.21) (`cmp`, better inference), [Go 1.24](https://go.dev/doc/go1.24) (generic type aliases), [Go 1.25](https://go.dev/doc/go1.25) (core types removed from the spec), [Go 1.27](https://go.dev/doc/go1.27) (generic methods).
+- Ian Lance Taylor and Robert Griesemer, [Type Parameters Proposal](https://go.dev/design/43651-type-parameters) (2021).
+- [Go 1.18 Implementation of Generics via Dictionaries and Gcshape Stenciling](https://github.com/golang/proposal/blob/master/design/generics-implementation-dictionaries-go1.18.md), and the current shape rule in [cmd/compile/internal/noder/reader.go](https://github.com/golang/go/blob/master/src/cmd/compile/internal/noder/reader.go).
+- Go FAQ: [Generics](https://go.dev/doc/faq#generics), [How are generics implemented?](https://go.dev/doc/faq#generics_implementation) and [Why no methods with type parameters?](https://go.dev/doc/faq#generic_methods), and Robert Griesemer, [spec: generic methods for Go](https://github.com/golang/go/issues/77273) (2026).
+- Robert Griesemer and Ian Lance Taylor, [An Introduction To Generics](https://go.dev/blog/intro-generics) (2022); Ian Lance Taylor, [When To Use Generics](https://go.dev/blog/when-generics) (2022); Robert Griesemer, [Goodbye core types](https://go.dev/blog/coretypes) (2025).
+- Rob Pike, [Go Proverbs](https://go-proverbs.github.io/) (Gopherfest 2015).
+- Lab: [`labs/generics/main.go`](labs/generics/main.go). Run it from `programming-languages/go/labs` with `go run -race ./generics`.

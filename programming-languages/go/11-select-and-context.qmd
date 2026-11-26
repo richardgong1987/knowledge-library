@@ -1,0 +1,434 @@
+---
+title: "Select and Context"
+description: "Waiting on several channels at once with select, timeouts with timers and tickers, the for-select loop, nil channels, and context.Context: cancellation trees, deadlines, causes, AfterFunc and stopping goroutine leaks."
+---
+
+## The problem
+
+A search page asks three replica servers the same question. It wants the **first** answer, it gives up after **50 ms**, and when the user closes the tab, all three requests must stop at once.
+
+[Channels](10-channels.qmd) alone cannot do this. A receive `<-ch` waits on exactly one channel, for as long as it takes. That leaves two holes:
+
+1. **You cannot wait for "an answer or the clock", whichever comes first.** Waiting on the result channel means you cannot also watch a timer.
+2. **Losers leak.** When the first replica answers, the other two goroutines are still trying to send their answers. If nobody ever receives, they block forever. Each leaked goroutine keeps its stack and everything it points to, and a server that leaks three goroutines per request runs out of memory after enough requests.
+
+Go's answers are the `select` statement, which waits on several channel operations at once, and the `context` package, which carries one "stop now" signal to every goroutine started for a request.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Listening at two doors, and the teacher's whistle
+
+- **`select`:** you wait for a friend who might knock at the **front door or the back door**, and Mum said "if nobody comes by five o'clock, come to dinner". You listen to all three at once and answer whichever happens first. If both doors are knocked at the same moment, you **flip a coin**, so neither door is always ignored.
+- **`default`:** you glance at both doors **once**; if nobody is there, you go and play instead of waiting.
+- **`context`:** a teacher on a school trip splits the class into groups, and each group into pairs. When the teacher **blows the whistle**, every group and every pair walks back to the bus. A group leader can call back **their own group**, but cannot recall the whole class.
+
+Rob Pike's talk *Go Concurrency Patterns* (Google I/O 2012) introduces it this way: *"The select statement provides another way to handle multiple channels."* Sameer Ajmani's post introducing the `context` package (2014) states the whistle rule: *"These values form a tree: when a `Context` is canceled, all `Contexts` derived from it are also canceled."*
+:::
+
+## From simple to advanced
+
+### Level 1: select waits for whichever case is ready
+
+A `select` looks like a `switch`, but every `case` is a send or a receive. It blocks until **at least one** case can proceed, then runs exactly one.
+
+```go
+func firstOfTwo() string {
+	letters := make(chan string, 1)
+	numbers := make(chan string) // nobody ever sends here
+	letters <- "a"
+	select {
+	case v := <-letters:
+		return v
+	case v := <-numbers:
+		return v
+	}
+}
+```
+
+`firstOfTwo()` returns `"a"`: the `letters` case is ready, the `numbers` case never will be, so `select` takes the ready one. Order in the source does not matter.
+
+When **several** cases are ready, the [specification](https://go.dev/ref/spec#Select_statements) says: *"If one or more of the communications can proceed, a single one that can proceed is chosen via a uniform pseudo-random selection."*
+
+$$
+P(\text{case } i \text{ is chosen}) = \frac{1}{k} \qquad \text{for each of the } k \text{ ready cases}
+$$
+
+where
+
+- $k$ is the number of cases that can proceed at the moment the `select` runs;
+- $i$ is any one of those ready cases;
+- $P(\cdot)$ is the probability, so the chance is split evenly.
+
+Example: a closed channel is always ready to receive, so with two closed channels $k = 2$:
+
+```go
+func countChoices(trials int) (left, right int) {
+	a, b := make(chan int), make(chan int)
+	close(a) // a closed channel is always ready to receive
+	close(b)
+	for range trials {
+		select {
+		case <-a:
+			left++
+		case <-b:
+			right++
+		}
+	}
+	return left, right
+}
+```
+
+Each trial picks `a` with probability $\tfrac{1}{2}$, so over 1000 trials the expected count is $1000 \times \tfrac{1}{2} = 500$ each, with a standard deviation of $\sqrt{1000 \times 0.5 \times 0.5} \approx 15.8$. Three runs gave `484 516`, `516 484` and `512 488`. The lab checks only that each side gets more than 300, which is more than 12 standard deviations below 500. The randomness is deliberate: if `select` always preferred the first case, a busy first channel could **starve** the second forever.
+
+### Level 2: default makes select non-blocking
+
+A `default` case runs when **no** other case is ready, so the `select` never waits. [Channels](10-channels.qmd) used it to test whether a send would block; the same trick turns a receive into a "try":
+
+```go
+func tryReceive(ch <-chan int) (int, bool) {
+	select {
+	case v := <-ch:
+		return v, true
+	default:
+		return 0, false // nothing ready: do not wait
+	}
+}
+```
+
+On an empty buffered channel it returns `0, false` at once; after `empty <- 5` it returns `5, true`. A `select` with a `default` inside a tight loop is a **busy-wait** that burns a CPU core, so use `default` for a single check, not for waiting.
+
+### Level 3: timeouts, timers and tickers
+
+`time.After(d)` returns a channel that receives one value after `d`. Put it in a `select` next to the real work and you have a timeout:
+
+```go
+func fetchWithTimeout(results <-chan string, limit time.Duration) (string, error) {
+	select {
+	case r := <-results:
+		return r, nil
+	case <-time.After(limit):
+		return "", errTimeout
+	}
+}
+```
+
+The call returns at whichever moment comes first:
+
+$$
+T_{\text{return}} = \min(t_{\text{result}},\; d)
+$$
+
+where
+
+- $t_{\text{result}}$ is how long the result takes to arrive (infinite if it never comes);
+- $d$ is the timeout, the `limit` argument;
+- $T_{\text{return}}$ is how long the call waits before returning.
+
+Example: with a channel nobody sends on, $t_{\text{result}} = \infty$ and $d = 20$ ms, so $T_{\text{return}} = \min(\infty, 20) = 20$ ms and the error is `errTimeout`. With a result already waiting, $t_{\text{result}} = 0$ and $\min(0, 3\,600\,000) = 0$: it returns the result immediately, even with a one-hour limit. The lab checks both, and that the timeout case took at least 20 ms.
+
+`time.NewTimer` gives you a timer you can **stop** or **reset**. Since Go 1.23 its channel is unbuffered (for modules that declare `go 1.23` or later), and the release notes promise that *"for any call to a `Reset` or `Stop` method, no stale values prepared before that call will be sent or received after the call"*:
+
+```go
+func stopBeforeFiring() (bool, bool) {
+	t := time.NewTimer(time.Hour)
+	stopped := t.Stop() // true: the timer had not fired yet
+	select {
+	case <-t.C:
+		return stopped, true
+	default:
+		return stopped, false // Go 1.23+: no stale value after Stop
+	}
+}
+```
+
+It returns `true, false`. Go 1.27 removed the `asynctimerchan` setting that could restore the old buffered behaviour, so this is now always true.
+
+A `time.Ticker` sends repeatedly, every `d`. No tick is delivered before its scheduled time, so $n$ ticks take at least $n \times d$:
+
+```go
+func tick(n int, every time.Duration) time.Duration {
+	start := time.Now()
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+	for range n {
+		<-ticker.C
+	}
+	return time.Since(start)
+}
+```
+
+With $n = 3$ and $d = 10$ ms, `tick` returns at least $3 \times 10 = 30$ ms. If the receiver is slow, the ticker **drops** ticks rather than queueing them, so it is a steady beat, not a backlog. [Concurrency Patterns](13-concurrency-patterns.qmd) uses it as a rate limiter.
+
+### Level 4: the for-select loop and nil channels
+
+Long-running goroutines put a `select` inside a `for` loop. To merge two streams until **both** are closed, we need a way to stop listening to the one that has finished. A closed channel is always ready (Level 1), so leaving its case in would spin forever on zero values. The fix uses a rule from [Channels](10-channels.qmd): a receive from a `nil` channel blocks forever, so **a `nil` channel's case can never be chosen**:
+
+```go
+func mergeSum(a, b <-chan int) int {
+	total := 0
+	for a != nil || b != nil {
+		select {
+		case v, ok := <-a:
+			if !ok {
+				a = nil // closed: switch this case off
+				continue
+			}
+			total += v
+		case v, ok := <-b:
+			if !ok {
+				b = nil
+				continue
+			}
+			total += v
+		}
+	}
+	return total
+}
+```
+
+`count(n)` sends $1, \dots, n$ and closes. `mergeSum(count(3), count(4))` returns $(1+2+3) + (1+2+3+4) = 6 + 10 = 16$. When both variables are `nil`, the loop condition is false and the function returns. A `select` whose cases are **all** nil and has no `default` blocks forever.
+
+### Level 5: context.Context carries "stop" to every goroutine
+
+A `context.Context` is a value you pass as the **first parameter** of every function on a request's path. Its `Done()` method returns a channel that is **closed** on cancellation, and a closed channel is ready for every receiver at once, so one `cancel()` reaches any number of goroutines. `Err()` then says why: `context.Canceled` or `context.DeadlineExceeded`.
+
+A producer that also listens to `ctx.Done()` can no longer leak:
+
+```go
+func numbers(ctx context.Context) <-chan int {
+	out := make(chan int)
+	go func() {
+		defer close(out)
+		for i := 1; ; i++ {
+			select {
+			case out <- i:
+			case <-ctx.Done():
+				return // the receiver left: exit instead of leaking
+			}
+		}
+	}()
+	return out
+}
+
+func takeThree() []int {
+	ctx, cancel := context.WithCancel(context.Background())
+	in := numbers(ctx)
+	got := []int{<-in, <-in, <-in}
+	cancel() // tell the producer to stop
+	for range in {
+		// drain until the producer closes out: proof that it exited
+	}
+	return got
+}
+```
+
+`takeThree()` returns `[1 2 3]`. Without the `ctx.Done()` case, the producer would block forever on `out <- 4`. Here the drain loop finishes only because the producer closed `out` on its way out, so the lab would hang if the goroutine leaked.
+
+Every `WithCancel`, `WithTimeout`, `WithDeadline` or `WithValue` call makes a **child** of the context you pass in. Cancellation flows down the tree and never up:
+
+$$
+\operatorname{cancelled}(c) \iff \operatorname{cancel}(c) \text{ was called} \;\lor\; \operatorname{cancelled}(\operatorname{parent}(c))
+$$
+
+where
+
+- $c$ is any context in the tree;
+- $\operatorname{parent}(c)$ is the context it was derived from;
+- $\lor$ means "or", applied all the way up to the root, which is `context.Background()` and is never cancelled.
+
+```go
+func cancelTree() (afterLeft, afterParent []error) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	left, cancelLeft := context.WithCancel(parent)
+	right, cancelRight := context.WithCancel(parent)
+	defer cancelRight()
+
+	cancelLeft() // cancels left only: a child cannot cancel its parent
+	afterLeft = []error{parent.Err(), left.Err(), right.Err()}
+	cancelParent() // cancels parent and everything below it
+	afterParent = []error{parent.Err(), left.Err(), right.Err()}
+	return afterLeft, afterParent
+}
+```
+
+Example: after `cancelLeft()`, only `left` satisfies the left side of the rule, so the errors are `[nil, context canceled, nil]`. After `cancelParent()`, `parent` satisfies it, and `left` and `right` satisfy the right side through their parent, so all three are `context canceled`.
+
+A **deadline** is a cancellation scheduled in advance. `WithTimeout(parent, d)` is `WithDeadline(parent, time.Now().Add(d))`, and a child can never outlive its parent:
+
+$$
+D_{\text{child}} = \min\left(D_{\text{parent}},\; t_{\text{now}} + d\right)
+$$
+
+where
+
+- $D_{\text{parent}}$ is the parent's deadline (infinite for `Background`);
+- $t_{\text{now}}$ is the time of the `WithTimeout` call;
+- $d$ is the timeout the child asks for;
+- $D_{\text{child}}$ is what `child.Deadline()` reports.
+
+Example: the parent has one hour and the child asks for two, so $D_{\text{child}} = \min(t_{\text{now}} + 1\text{ h},\; t_{\text{now}} + 2\text{ h}) = t_{\text{now}} + 1\text{ h}$. The lab's `childCannotOutliveParent` checks that the two deadlines are equal. When a deadline passes, `Err()` returns `context.DeadlineExceeded`, whose message is `context deadline exceeded`:
+
+```go
+func waitForTimeout() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel() // always call cancel: it frees the timer early
+	<-ctx.Done()
+	return ctx.Err()
+}
+```
+
+### Level 6: causes, AfterFunc and values
+
+`Err()` only says *canceled* or *deadline exceeded*. Go 1.20 added `WithCancelCause` and `context.Cause` to record **why**:
+
+```go
+func cancelWithCause() (error, error) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errUserLeft)
+	return ctx.Err(), context.Cause(ctx)
+}
+```
+
+It returns `context canceled` and `user closed the page`. `Err()` keeps its two fixed values so old code still works, and `Cause` carries the detail. Go 1.21 added `WithTimeoutCause` and `WithDeadlineCause` for the same purpose.
+
+`context.AfterFunc(ctx, f)` (Go 1.21) runs `f` in its own goroutine once `ctx` is done, and returns a `stop` function that unregisters it:
+
+```go
+func afterFuncDemo() bool {
+	ctx, cancel := context.WithCancel(context.Background())
+	ran := make(chan struct{})
+	context.AfterFunc(ctx, func() { close(ran) })
+	stop := context.AfterFunc(ctx, func() { panic("never runs") })
+	stopped := stop() // true: the second function will never run
+	cancel()
+	<-ran // the first function runs in its own goroutine after cancel
+	return stopped
+}
+```
+
+It returns `true`. Use it to wake something that does not understand contexts, such as closing a network connection to unblock a read.
+
+`WithValue` attaches **request-scoped** data such as a request ID. The key should be an unexported type of your own, so no other package can collide with it:
+
+```go
+type requestIDKey struct{} // an unexported key type: no other package can collide
+
+func withRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKey{}, id)
+}
+
+func requestID(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
+}
+```
+
+A lookup walks **up** the tree, so a `WithCancel` child of the context still finds `"req-42"`, and `context.Background()` gives `""`. Use values sparingly: the package documentation says *"Use context Values only for request-scoped data that transits processes and APIs"*. Parameters a function needs to do its job belong in its signature, where the compiler checks them.
+
+## How it works underneath
+
+**`select`** compiles to a call to `runtime.selectgo` in [`src/runtime/select.go`](https://github.com/golang/go/blob/master/src/runtime/select.go). It works in three passes:
+
+1. **Shuffle and lock.** Cases on `nil` channels are dropped (*"Omit cases without channels from the poll and lock orders"*). The rest are put in a random **poll order** with an inside-out Fisher–Yates shuffle using `cheaprandn`. Separately, the channels are sorted by address into a **lock order** and all their locks are taken in that order, so two `select`s over the same channels can never deadlock each other.
+2. **Pass 1: look for a ready case** in poll order. The first one that can proceed wins. Because every order of the cases is equally likely, the first ready case is equally likely to be any of the $k$ ready ones. That is the $\tfrac{1}{k}$ rule of Level 1. If none is ready and there is a `default`, take it.
+3. **Pass 2: enqueue and park.** Otherwise the goroutine puts one waiting record (`sudog`) on **every** channel's send or receive queue and parks. The first channel to get a partner wakes it. **Pass 3** then removes the records from all the other channels.
+
+**`context`** is an ordinary library. Trimmed from [`src/context/context.go`](https://github.com/golang/go/blob/master/src/context/context.go):
+
+```go
+// sketch: trimmed from context/context.go, not runnable
+type cancelCtx struct {
+	Context // the parent
+
+	mu       sync.Mutex            // protects following fields
+	done     atomic.Value          // of chan struct{}, created lazily, closed by first cancel call
+	children map[canceler]struct{} // set to nil by the first cancel call
+	err      atomic.Value          // set to non-nil by the first cancel call
+	cause    error                 // set to non-nil by the first cancel call
+}
+```
+
+`WithCancel(parent)` registers the new node in its parent's `children` map. `cancel` takes the lock, stores `err` and `cause`, **closes** `done`, calls `cancel` on every child, and removes itself from its parent's map. That one `close` is what wakes every goroutine waiting on `<-ctx.Done()`. A `timerCtx` adds a `time.AfterFunc` timer that calls the same `cancel` with `DeadlineExceeded`. `WithDeadline` first compares with the parent: if the parent's deadline is already sooner, it returns a plain `WithCancel` child, which is the $\min$ rule of Level 5.
+
+Because `Done` is a channel close, the [memory model](https://go.dev/ref/mem) rule from [Channels](10-channels.qmd), $\operatorname{close}(c) \prec r^{\checkmark}$, applies: whatever the canceller wrote before `cancel()` is visible to a goroutine after `<-ctx.Done()` returns.
+
+Go 1.27 can also **find** leaks. The `goroutineleak` profile in `runtime/pprof`, an experiment in Go 1.26 and generally available in Go 1.27, uses the garbage collector: if a goroutine is blocked on a channel or lock that no runnable goroutine can reach, nothing can ever wake it, so it is reported as leaked.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Discarding the `cancel` function: `ctx, _ := context.WithTimeout(...)` | `go vet`: `the cancel function returned by context.WithTimeout should be called, not discarded, to avoid a context leak` | `defer cancel()` right after the call |
+| `break` inside a `select` that sits in a `for` loop | The loop keeps running: `break` only leaves the `select` | `return`, or a labelled `break loop` |
+| Leaving a closed channel's case in a for-select | The loop spins, receiving zero values forever | Set the variable to `nil` when `ok` is false (Level 4) |
+| A goroutine sends with no way out when the receiver gives up | Goroutines and memory grow per request; `goroutineleak` profile reports them | Add `case <-ctx.Done(): return` next to the send, or buffer the channel for every possible sender |
+| `select` with only nil channels and no `default` | `fatal error: all goroutines are asleep - deadlock!` if nothing else runs | Make sure at least one case can become ready, or loop while any channel is non-nil |
+| `default` in a loop used as "wait" | 100% CPU on one core | Remove `default` so the `select` blocks |
+| `string` as a `WithValue` key | Two packages using `"user"` overwrite each other | An unexported key type, such as `type requestIDKey struct{}` |
+| Storing a `Context` in a struct field | Unclear which call it belongs to; cancellation misses calls | Pass `ctx` as the first parameter of each call, as the package docs say |
+
+## Interview questions
+
+### 1. Two cases of a select are ready. Which one runs?
+
+**Answer.** One of them, chosen uniformly at random, as the specification requires. With $k$ ready cases each has probability $\tfrac{1}{k}$; the lab's `countChoices` sees about 500 of 1000 for each of two always-ready channels. The randomness prevents starvation. If you need **priority**, express it in code: first a `select` on the urgent channel with a `default`, then a second, blocking `select` on everything.
+
+### 2. How do you stop a goroutine that is blocked sending to a channel nobody reads any more?
+
+**Answer.** You cannot stop a goroutine from outside; it must return on its own. Give its blocking operation a second way out: `select` on the send **and** on `ctx.Done()`, as `numbers` does. When the caller cancels, `Done` closes, the `select` takes that case, and the goroutine returns. Alternatively, make the channel buffered with room for every possible send, as `first` does with `make(chan string, len(replicas))`, so a loser's send always completes.
+
+### 3. Implement "ask several replicas, use the first answer".
+
+**Answer.** This is the `First` function from Rob Pike's 2012 talk, plus a context so the losers stop:
+
+```go
+func first(ctx context.Context, replicas ...func(context.Context) string) string {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel() // the losers see ctx.Done and stop
+
+	results := make(chan string, len(replicas)) // buffered: losers never block
+	for _, replica := range replicas {
+		go func() { results <- replica(ctx) }()
+	}
+	return <-results
+}
+```
+
+`first(ctx, slowReplica, fastReplica, slowReplica)` returns `"fast"`. The slow replicas only return after `ctx.Done()`, which closes when `first` returns. The buffer of `len(replicas)` means their late sends never block, so nothing leaks.
+
+### 4. What is the difference between `ctx.Err()` and `context.Cause(ctx)`?
+
+**Answer.** `Err()` returns `nil` before cancellation, and afterwards only one of two sentinel values: `context.Canceled` or `context.DeadlineExceeded`. `Cause` returns the error passed to a `CancelCauseFunc`, or the cause given to `WithTimeoutCause` or `WithDeadlineCause`. If no cause was given, it returns the same value as `Err()`. In `cancelWithCause`, `Err()` is `context canceled` and `Cause` is `user closed the page`. Check `Err()` for control flow, and log or wrap `Cause`.
+
+### 5. Is `time.After` inside a loop a memory leak?
+
+**Answer.** Not since Go 1.23. The release notes say timers *"that are no longer referred to by the program become eligible for garbage collection immediately, even if their `Stop` methods have not been called"*. Before 1.23, an unfired timer stayed in memory until it fired. Two real problems remain. Each iteration still allocates a new timer, and the timeout restarts on every message, so it measures "time since the last message" rather than "time for the whole job". For a whole-job limit, create one `context.WithTimeout` or one `time.NewTimer` before the loop.
+
+## Summary
+
+$$
+P(\text{case } i) = \frac{1}{k}, \qquad D_{\text{child}} = \min\left(D_{\text{parent}},\; t_{\text{now}} + d\right)
+$$
+
+where $k$ is the number of ready cases of a `select`, $D$ is a context's deadline, $t_{\text{now}}$ is when the child is made, and $d$ is the timeout it asks for.
+
+Example: two always-ready channels each win with probability $\tfrac{1}{2}$, about 500 of 1000 times; a two-hour child of a one-hour parent still ends after one hour.
+
+- `select` blocks until one case can proceed; among several ready cases it picks uniformly at random.
+- `default` makes it a single non-blocking check; `time.After`, `time.NewTimer` and `time.Ticker` give it a clock.
+- In a for-select loop, set a finished channel to `nil` to switch its case off.
+- Every goroutine that can block needs a way out: `case <-ctx.Done(): return`.
+- Contexts form a tree: cancellation flows down, never up, and a child's deadline is never later than its parent's.
+- Always call `cancel`. Use `Cause` for the reason and `WithValue` only for request-scoped data.
+
+## References
+
+- The Go Programming Language Specification: [Select statements](https://go.dev/ref/spec#Select_statements).
+- Package documentation: [context](https://pkg.go.dev/context) and [time](https://pkg.go.dev/time).
+- Release notes: [Go 1.20](https://go.dev/doc/go1.20) (`WithCancelCause`, `Cause`), [Go 1.21](https://go.dev/doc/go1.21) (`AfterFunc`, `WithTimeoutCause`, `WithoutCancel`), [Go 1.23](https://go.dev/doc/go1.23) (timer changes), [Go 1.26](https://go.dev/doc/go1.26) and [Go 1.27](https://go.dev/doc/go1.27) (the `goroutineleak` profile; `asynctimerchan` removed).
+- [The Go Memory Model](https://go.dev/ref/mem).
+- Rob Pike, [Go Concurrency Patterns](https://go.dev/talks/2012/concurrency.slide), Google I/O 2012 ([video](https://www.youtube.com/watch?v=f6kdp27TYZs)).
+- Sameer Ajmani, [Go Concurrency Patterns: Context](https://go.dev/blog/context) (2014) and [Pipelines and cancellation](https://go.dev/blog/pipelines) (2014).
+- The runtime and library source: [src/runtime/select.go](https://github.com/golang/go/blob/master/src/runtime/select.go) and [src/context/context.go](https://github.com/golang/go/blob/master/src/context/context.go).
+- Lab: [`labs/select-and-context/main.go`](labs/select-and-context/main.go). Run it from `programming-languages/go/labs` with `go run -race ./select-and-context`.

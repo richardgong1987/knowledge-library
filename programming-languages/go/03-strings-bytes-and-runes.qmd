@@ -1,0 +1,327 @@
+---
+title: "Strings, Bytes and Runes"
+description: "How Go stores text: a string is an immutable byte sequence, UTF-8 takes 1 to 4 bytes per code point, len counts bytes, range decodes runes, conversions copy, strings.Builder avoids quadratic concatenation, and invalid UTF-8 becomes U+FFFD."
+---
+
+## The problem
+
+A word has four characters: `h`, `é`, `世` and `🙂`. Ask Go about it:
+
+```go
+const word = "hé世🙂" // 1 + 2 + 3 + 4 bytes
+```
+
+`len(word)` is **10**, not 4. `word[1]` is **195** (`0xC3`), not `é`. Reversing the string byte by byte produces garbage that is not even valid text. Code that assumes "one character, one byte" works on English test data and then breaks on a customer called José.
+
+The cause is that a Go string is a sequence of **bytes**, and its text is encoded in **UTF-8**, where one character can take 1, 2, 3 or 4 bytes. This chapter explains that encoding with real numbers, and the three ways to look at the same text: as bytes, as runes, and as a string.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A sealed necklace of beads
+
+- **A string is a necklace of beads that has been sealed.** You can count the beads and look at any bead, but you cannot change one; to change it you make a new necklace.
+- **Each letter is made of 1 to 4 beads.** An English letter is one bead. `é` is two beads, `世` is three, and `🙂` is four. The first bead of every letter has a special shape that says how many beads belong to it.
+- **`len` counts beads. `for range` counts letters.** Indexing, `s[i]`, hands you a single bead.
+
+UTF-8 was designed by Ken Thompson and Rob Pike, two of Go's three designers. Pike recalls that it was *"designed, in front of my eyes, on a placemat in a New Jersey diner one night in September or so 1992."* His blog post *Strings, bytes, runes and characters in Go* gives the rule this chapter follows: *"In Go, a string is in effect a read-only slice of bytes."* And Joel Spolsky's classic essay on Unicode has the headline every programmer should remember: *"There Ain't No Such Thing As Plain Text."*
+:::
+
+## From simple to advanced
+
+### Level 1: a string is a read-only sequence of bytes
+
+```go
+func byteBasics() (int, byte, string) {
+	s := "hello"
+	return len(s), s[0], s[1:3]
+}
+```
+
+It returns `5, 104, "el"`. `len` is the number of bytes, `s[0]` is a `byte` (the number 104, which is `'h'` in ASCII), and `s[1:3]` is a new string sharing bytes 1 and 2. A string cannot be changed in place:
+
+```go
+// sketch: does not compile
+s := "hello"
+s[0] = 'H' // cannot assign to s[0] (neither addressable nor a map index expression)
+```
+
+To change it, convert to a `[]byte`, which is a **copy** you may write to, and convert back, which copies again:
+
+```go
+func capitalise(s string) string {
+	b := []byte(s) // a writable copy of the bytes
+	b[0] = 'H'
+	return string(b) // another copy, back into an immutable string
+}
+```
+
+`capitalise("hello")` is `"Hello"`, and the original `"hello"` is untouched.
+
+### Level 2: UTF-8 uses 1 to 4 bytes per code point
+
+Unicode gives every character a number, its **code point**, written `U+` and hexadecimal: `h` is U+0068, `é` is U+00E9, `世` is U+4E16 and `🙂` is U+1F642. Go calls a code point a **rune**; the type `rune` is an alias for `int32`. UTF-8 stores a code point $c$ in this many bytes:
+
+$$
+\operatorname{bytes}(c) =
+\begin{cases}
+1 & \text{if } c \le \texttt{0x7F} \; (127) \\
+2 & \text{if } c \le \texttt{0x7FF} \; (2047) \\
+3 & \text{if } c \le \texttt{0xFFFF} \; (65535) \\
+4 & \text{if } c \le \texttt{0x10FFFF}
+\end{cases}
+$$
+
+where
+
+- $c$ is the code point as a number;
+- the limits are $2^{7} - 1$, $2^{11} - 1$ and $2^{16} - 1$, because 1, 2 and 3 bytes leave 7, 11 and 16 bits for $c$;
+- `0x10FFFF` is the largest code point Unicode defines.
+
+Example with `word`:
+
+1. `h` is $104 \le 127$, so 1 byte.
+2. `é` is `0xE9` $= 233$; $233 > 127$ but $233 \le 2047$, so 2 bytes.
+3. `世` is `0x4E16` $= 19990 \le 65535$, so 3 bytes.
+4. `🙂` is `0x1F642` $= 128578 > 65535$, so 4 bytes.
+
+The total is $1 + 2 + 3 + 4 = 10$, which is `len(word)`. The bit patterns explain where the "special shape" of the first bead comes from:
+
+| Code points | Bytes | Bit pattern (`x` = bits of $c$) |
+|---|---|---|
+| U+0000 to U+007F | 1 | `0xxxxxxx` |
+| U+0080 to U+07FF | 2 | `110xxxxx 10xxxxxx` |
+| U+0800 to U+FFFF | 3 | `1110xxxx 10xxxxxx 10xxxxxx` |
+| U+10000 to U+10FFFF | 4 | `11110xxx 10xxxxxx 10xxxxxx 10xxxxxx` |
+
+The number of leading 1 bits in the first byte is the length, and every following byte starts with `10`. For two bytes the rule is:
+
+$$
+b_1 = \texttt{0xC0} + \left\lfloor \frac{c}{64} \right\rfloor, \qquad b_2 = \texttt{0x80} + (c \bmod 64)
+$$
+
+where
+
+- $b_1$ and $b_2$ are the two bytes;
+- `0xC0` is `11000000` and `0x80` is `10000000`, the fixed marker bits;
+- $\lfloor c / 64 \rfloor$ is the top 5 bits of $c$ and $c \bmod 64$ the low 6 bits, because $64 = 2^{6}$.
+
+Example: for `é`, $c = 233$. Then $\lfloor 233 / 64 \rfloor = 3$, so $b_1 = \texttt{0xC0} + 3 = \texttt{0xC3} = 195$; and $233 \bmod 64 = 41 = \texttt{0x29}$, so $b_2 = \texttt{0x80} + \texttt{0x29} = \texttt{0xA9}$. That 195 is the `word[1]` from the problem. In code:
+
+```go
+func encode2(cp rune) [2]byte {
+	return [2]byte{
+		0xC0 | byte(cp>>6),   // 110xxxxx: the top 5 bits
+		0x80 | byte(cp&0x3F), // 10xxxxxx: the low 6 bits
+	}
+}
+```
+
+The lab checks that `encode2('é')` equals `[]byte("é")`, which is `C3 A9`.
+
+### Level 3: `len` counts bytes, `range` decodes runes
+
+Indexing and `len` see bytes. A `for range` loop over a string is the one place Go decodes UTF-8 for you: each step yields the **byte offset** where a rune starts, and the rune.
+
+```go
+func runeStarts(s string) []int {
+	var starts []int
+	for i := range s { // i is the first byte of each rune
+		starts = append(starts, i)
+	}
+	return starts
+}
+```
+
+`runeStarts(word)` is `[0 1 3 6]`. The offsets jump by the byte lengths of the previous runes: $0$, then $0 + 1 = 1$, then $1 + 2 = 3$, then $3 + 3 = 6$; the last rune occupies bytes 6 to 9. To count characters, use `utf8.RuneCountInString(word)`, which is 4.
+
+### Level 4: conversions decode, encode and copy
+
+There are three views of the same text, and converting between them always builds a new value:
+
+| Conversion | What it does | Cost for `word` |
+|---|---|---|
+| `[]byte(s)` | copies the bytes | 10 bytes |
+| `[]rune(s)` | decodes every rune into an `int32` | $4 \times 4 = 16$ bytes |
+| `string(b)`, `string(r)` | copies bytes, or encodes runes as UTF-8 | 10 bytes |
+
+Reversing shows why the view matters. Reversing bytes tears multi-byte runes apart:
+
+```go
+func reverseBytes(s string) string {
+	b := []byte(s)
+	slices.Reverse(b)
+	return string(b)
+}
+```
+
+`reverseBytes("hé")` is `"\xa9\xc3h"`: the two bytes of `é` are now in the wrong order and the result is not valid UTF-8. Reversing runes keeps each character whole:
+
+```go
+func reverseRunes(s string) string {
+	r := []rune(s) // decode: one 4-byte rune per code point
+	slices.Reverse(r)
+	return string(r) // encode back to UTF-8
+}
+```
+
+`reverseRunes(word)` is `"🙂世éh"`. Even runes are not the whole story: a user-perceived character can be several code points. `"é"` is `e` followed by a combining accent and displays as `é`; reversing `"éx"` by runes gives `"x́e"`, which puts the accent on the `x`. Handling such **grapheme clusters** needs a Unicode segmentation library outside the standard library.
+
+### Level 5: build strings with `strings.Builder`
+
+Because strings are immutable, `s += p` cannot extend `s`. It allocates a new string and copies both parts into it:
+
+```go
+func joinPlus(parts []string) string {
+	s := ""
+	for _, p := range parts {
+		s += p // each += copies everything so far into a new string
+	}
+	return s
+}
+```
+
+Joining $n$ parts of $L$ bytes each builds strings of $L, 2L, \dots, nL$ bytes:
+
+$$
+\text{copied}(n, L) = \sum_{k=1}^{n} kL = L \cdot \frac{n(n + 1)}{2}
+$$
+
+where
+
+- $n$ is the number of parts and $L$ the bytes per part;
+- $k$ counts the `+=` steps; step $k$ builds a string of $kL$ bytes;
+- the closed form is Gauss's sum $1 + 2 + \dots + n = n(n+1)/2$, times $L$.
+
+Example: the lab joins `"abc"`, `"def"`, `"ghi"`, `"jkl"`, so $n = 4$ and $L = 3$: $3 \cdot \frac{4 \cdot 5}{2} = 30$ bytes copied for a 12-byte result. For $n = 1000$ parts of $L = 10$ bytes it is $10 \cdot \frac{1000 \cdot 1001}{2} = 5005000$ bytes for a 10000-byte result: the cost grows with $n^2$. (The runtime skips the very first copy, because `"" + p` is just `p`; that does not change the $n^2$ shape.)
+
+`strings.Builder` keeps one growing `[]byte` and appends to it, with the same amortised growth as `append` ([Slices and Maps](02-slices-and-maps.qmd)), so the total work is proportional to the final length:
+
+```go
+func joinBuilder(parts []string) string {
+	var b strings.Builder // the zero value is ready to use
+	for _, p := range parts {
+		b.WriteString(p) // appends to one growing buffer
+	}
+	return b.String() // no copy: String reuses the buffer
+}
+```
+
+Both functions return `"abcdefghijkl"`. If you know the final size, `b.Grow(n)` allocates once. For a slice of strings, `strings.Join` does the same job in one call.
+
+### Level 6: invalid UTF-8 becomes U+FFFD
+
+A string can hold **any** bytes, not only valid UTF-8. Pike's post: *"Some people think Go strings are always UTF-8, but they are not: only string literals are UTF-8."* A file or a network packet can contain anything. When decoding meets a byte that cannot start a valid sequence, it returns `utf8.RuneError`, which is U+FFFD (the replacement character `�`), and moves on by **one** byte:
+
+```go
+func decodeInvalid() (rune, int, bool) {
+	bad := "a\xffb" // the byte 0xFF never appears in UTF-8
+	r, size := utf8.DecodeRuneInString(bad[1:])
+	return r, size, utf8.ValidString(bad)
+}
+```
+
+It returns `U+FFFD, 1, false`. A `range` over `"a\xffb"` yields `'a'`, `0xFFFD`, `'b'`, and `strings.ToValidUTF8(bad, "?")` gives `"a?b"`. A string can also contain a **real** U+FFFD; `utf8.DecodeRuneInString("�")` also returns `RuneError`, but with size 3. The size is how you tell "invalid byte" from "the replacement character itself".
+
+## How it works underneath
+
+**A string is a two-word header.** From `src/runtime/string.go`:
+
+```go
+// sketch: from runtime/string.go
+type stringStruct struct {
+	str unsafe.Pointer
+	len int
+}
+```
+
+That is 16 bytes on a 64-bit machine, whatever the length of the text. Because the bytes can never change, Go can share them freely: `s[1:]` is a new header pointing one byte further into the **same** bytes, with no copy. The lab proves it with `unsafe.StringData`:
+
+```go
+func substringShares(s string) bool {
+	start := unsafe.StringData(s)
+	sub := unsafe.StringData(s[1:])
+	return sub == (*byte)(unsafe.Add(unsafe.Pointer(start), 1))
+}
+```
+
+Immutability is also why strings are safe map keys and can be read from many goroutines without a lock. The price is that a small substring keeps the whole original alive; `strings.Clone` makes an independent copy.
+
+**Conversions are runtime calls.** `[]byte(s)` calls `runtime.stringtoslicebyte`, and `string(b)` calls `runtime.slicebytetostring`; each allocates and copies, because the `[]byte` side is mutable and the string must not change under anyone's feet. `[]rune(s)` calls `runtime.stringtoslicerune`, which makes two passes: one to count runes, one to decode them. When the result does not escape and fits in 32 bytes (`tmpStringBufSize`), the compiler uses a buffer on the stack instead of the heap. It also skips the copy entirely where it can prove nobody can observe it, such as a map lookup `m[string(b)]`. The lab measures this with `testing.AllocsPerRun` on a 36-byte key:
+
+```go
+func conversionAllocs(b []byte, m map[string]int) (float64, float64) {
+	convert := testing.AllocsPerRun(100, func() { sinkString = string(b) })
+	lookup := testing.AllocsPerRun(100, func() { _ = m[string(b)] }) // no copy for a lookup
+	return convert, lookup
+}
+```
+
+It returns `1, 0`: one allocation for the conversion that is stored, none for the lookup.
+
+**`range` over a string is compiled to a decoding loop.** The compiler (`cmd/compile/internal/walk/range.go`) rewrites it so that an ASCII byte (below `utf8.RuneSelf`, which is `0x80`) advances by one with no call, and any other byte calls `runtime.decoderune`, which returns the rune and the next offset, or U+FFFD and offset + 1 for invalid input.
+
+**`strings.Builder` refuses to be copied.** It stores a pointer to itself; once it holds data, a copy that writes panics with `strings: illegal use of non-zero Builder copied by value`. Its `String` method builds the string header straight over the internal buffer with `unsafe.String`, which is safe only because the Builder never changes bytes it has already handed out.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Using `len(s)` as the number of characters | `len("hé世🙂")` is 10, not 4 | `utf8.RuneCountInString(s)` |
+| Indexing `s[i]` to get a character | You get a byte, such as 195 for half of `é` | `for _, r := range s`, or `utf8.DecodeRuneInString(s[i:])` |
+| Slicing at a byte that is not a rune start | Text ends in `\xc3` or shows `�` | Cut at an offset that `range` produced |
+| Assigning to a byte of a string | `cannot assign to s[0] (neither addressable nor a map index expression)` | Convert to `[]byte`, change, convert back |
+| `s += p` in a long loop | Time grows with $n^2$ | `strings.Builder` or `strings.Join` |
+| `string(65)` to format a number | `"A"`, and `go vet` says `conversion from int to string yields a string of one rune, not a string of digits` | `strconv.Itoa(65)` gives `"65"` |
+| Copying a `strings.Builder` after writing | `panic: strings: illegal use of non-zero Builder copied by value` | Pass `*strings.Builder` |
+| Assuming input is valid UTF-8 | `range` yields U+FFFD for bad bytes | Check `utf8.ValidString`, or clean with `strings.ToValidUTF8` |
+
+## Interview questions
+
+### 1. What is `len("hé世🙂")`, and how do you count its characters?
+
+**Answer.** It is 10, because `len` counts bytes and UTF-8 stores these code points in $1 + 2 + 3 + 4$ bytes. The number of code points is `utf8.RuneCountInString`, which is 4, or `len([]rune(s))`, which allocates. If "character" means what a user sees, as in `"é"` (two code points, one visible letter), you need grapheme segmentation, which the standard library does not provide.
+
+### 2. What is the difference between `s[i]` and the values from `for i, r := range s`?
+
+**Answer.** `s[i]` is the `byte` at byte offset `i`, with no decoding: `word[1]` is `0xC3`. `range` decodes UTF-8: `i` is the offset of the **first byte** of each rune and `r` is the whole `rune`. For `word` the offsets are 0, 1, 3, 6, never 2, 4, 5, 7, 8 or 9. On an invalid byte, `r` is U+FFFD and the loop advances one byte.
+
+### 3. How do you reverse a string correctly?
+
+**Answer.** Convert to `[]rune`, reverse, convert back, as `reverseRunes` does: `"hé世🙂"` becomes `"🙂世éh"`. Reversing bytes produces invalid UTF-8 (`"\xa9\xc3h"` from `"hé"`). Reversing runes still breaks combining sequences, because `"éx"` becomes `"x́e"`; a fully correct version reverses grapheme clusters.
+
+### 4. Why is `s += p` in a loop slow, and what should you use?
+
+**Answer.** Strings are immutable, so every `+=` allocates a new string and copies everything so far. For $n$ parts of $L$ bytes that is $L \cdot n(n+1)/2$ bytes: 30 for the lab's four parts of 3 bytes, about 5 MB to build a 10 KB string from 1000 parts. `strings.Builder` appends into one buffer with amortised doubling, so the work is proportional to the result, and `String()` returns the buffer without copying. `bytes.Buffer` is similar when you also need to read.
+
+### 5. Is converting between `string` and `[]byte` free?
+
+**Answer.** In general no. Both directions allocate and copy, because a `[]byte` can be modified and a string must never change. The compiler removes the copy where it can prove it is unobservable, such as a map lookup `m[string(b)]` or a comparison `string(b) == "x"`, and it uses a 32-byte stack buffer for small results that do not escape. The lab measures 1 allocation for a stored `string(b)` and 0 for the lookup and the comparison. `unsafe.String` and `unsafe.StringData` avoid the copy by hand, and are correct only if nobody ever writes the bytes again.
+
+## Summary
+
+$$
+\operatorname{len}(s) = \sum_{c \in s} \operatorname{bytes}(c), \qquad \operatorname{bytes}(c) \in \lbrace 1, 2, 3, 4 \rbrace
+$$
+
+where $s$ is a string of valid UTF-8, $c$ ranges over its code points, and $\operatorname{bytes}(c)$ is the UTF-8 length from Level 2.
+
+Example: for `"hé世🙂"`, $\operatorname{len} = 1 + 2 + 3 + 4 = 10$ bytes, while the number of code points is 4.
+
+- A string is an immutable byte sequence: a 16-byte header (pointer, length) over bytes that never change.
+- Go source and string literals are UTF-8, but a string may hold any bytes.
+- `len` and `s[i]` see bytes; `for range` sees runes and their starting offsets.
+- `[]byte(s)`, `[]rune(s)` and `string(...)` build new values; reverse and slice text in runes, not bytes.
+- Build long strings with `strings.Builder`, not `+=`.
+- Invalid bytes decode as `utf8.RuneError` (U+FFFD) with width 1.
+
+## References
+
+- The Go Programming Language Specification: [String types](https://go.dev/ref/spec#String_types), [Rune literals](https://go.dev/ref/spec#Rune_literals), [String literals](https://go.dev/ref/spec#String_literals), [Conversions to and from a string type](https://go.dev/ref/spec#Conversions_to_and_from_a_string_type), [For statements with range clause](https://go.dev/ref/spec#For_range).
+- Package documentation: [unicode/utf8](https://pkg.go.dev/unicode/utf8), [strings.Builder](https://pkg.go.dev/strings#Builder).
+- Rob Pike, [Strings, bytes, runes and characters in Go](https://go.dev/blog/strings) (The Go Blog, 2013).
+- Rob Pike, [UTF-8 history](https://www.cl.cam.ac.uk/~mgk25/ucs/utf-8-history.txt) (email to Markus Kuhn, 2003).
+- Russ Cox, [Go Data Structures](https://research.swtch.com/godata) (2009), the section on strings.
+- Joel Spolsky, [The Absolute Minimum Every Software Developer Absolutely, Positively Must Know About Unicode and Character Sets (No Excuses!)](https://www.joelonsoftware.com/2003/10/08/the-absolute-minimum-every-software-developer-absolutely-positively-must-know-about-unicode-and-character-sets-no-excuses/) (2003).
+- The runtime source: [src/runtime/string.go](https://github.com/golang/go/blob/master/src/runtime/string.go) and [src/runtime/utf8.go](https://github.com/golang/go/blob/master/src/runtime/utf8.go).
+- Lab: [`labs/strings-bytes-and-runes/main.go`](labs/strings-bytes-and-runes/main.go). Run it from `programming-languages/go/labs` with `go run -race ./strings-bytes-and-runes`.

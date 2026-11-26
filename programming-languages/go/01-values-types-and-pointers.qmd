@@ -1,0 +1,414 @@
+---
+title: "Values, Types and Pointers"
+description: "Go's value semantics from the first variable to interview level: basic types, zero values, var and :=, constants and iota, copies on assignment, pointers, new, escape analysis and comparability."
+---
+
+## The problem
+
+A child is 10 years old. On her birthday a function should add one year:
+
+```go
+func birthdayCopy(age int) {
+	age++ // changes the copy only
+}
+```
+
+After `age := 10` and `birthdayCopy(age)`, `age` is still **10**. The same happens with an array of scores: `scores := [3]int{90, 80, 70}` passed to a function that sets the first score to 0 comes back as `[90 80 70]`, unchanged.
+
+Programmers from Java or Python expect the array to change, because there an array or list variable holds a reference. In Go, **every assignment and every function call copies the value**. To write correct Go you must know exactly what gets copied, how big the copy is, and how to share one variable on purpose. The tool for sharing is a **pointer**.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A photocopy and a home address
+
+- **A value is a sheet of homework.** When you give it to a friend, you give a **photocopy**. Your friend can scribble all over the copy; your sheet stays clean.
+- **A pointer is a slip of paper with your home address.** If you photocopy the slip, there are now two slips, but they show the **same address**. Whoever walks there finds the same house and can paint the same front door.
+- **A zero value means a new box never holds junk.** Every new box in Go arrives with something sensible inside: 0, an empty string, `false` or `nil`, never leftover rubbish from someone else.
+
+The Go FAQ puts the first rule in one line: *"As in all languages in the C family, everything in Go is passed by value."* Dave Cheney says it more bluntly: *"Go does not have reference variables, so Go does not have pass-by-reference function call semantics."* Rob Pike's Go proverb gives the third rule a goal: *"Make the zero value useful."*
+:::
+
+## From simple to advanced
+
+### Level 1: every variable has a type and a zero value
+
+Go is statically typed: every variable has one type, fixed at compile time. The basic types are `bool`; `string`; the signed integers `int8`, `int16`, `int32`, `int64` and `int`; the unsigned integers `uint8` to `uint64`, `uint` and `uintptr`; `float32` and `float64`; and `complex64` and `complex128`. Two names are aliases: `byte` is `uint8` and `rune` is `int32`. On a 64-bit machine `int` and `uint` are 64 bits wide.
+
+A variable declared without a value gets its type's **zero value**:
+
+```go
+func zeroValues() (int, float64, bool, string, *int) {
+	var i int
+	var f float64
+	var b bool
+	var s string
+	var p *int
+	return i, f, b, s, p
+}
+```
+
+It returns `0, 0, false, "", nil`. The rule for every type is:
+
+$$
+\operatorname{zero}(T) =
+\begin{cases}
+0 & \text{if } T \text{ is a number type} \\
+\texttt{false} & \text{if } T = \texttt{bool} \\
+\texttt{""} & \text{if } T = \texttt{string} \\
+\texttt{nil} & \text{if } T \text{ is a pointer, slice, map, channel, function or interface} \\
+\text{every element or field set to its own zero} & \text{if } T \text{ is an array or struct}
+\end{cases}
+$$
+
+where
+
+- $T$ is any type;
+- $\operatorname{zero}(T)$ is the value a new variable of type $T$ holds before anything is written to it;
+- the last line is recursive: an array of structs gets every field of every element zeroed.
+
+Example: for `type Point struct { X, Y int }`, both fields are `int`, so $\operatorname{zero}(\texttt{Point}) = \lbrace X: 0, Y: 0 \rbrace$, and `var origin Point` equals `Point{X: 0, Y: 0}`. For `[3]int` the zero value is `[0 0 0]`.
+
+An integer type with $n$ bits holds a fixed range, in two's complement:
+
+$$
+-2^{n-1} \le x \le 2^{n-1} - 1 \quad \text{for } \texttt{int}n, \qquad 0 \le x \le 2^{n} - 1 \quad \text{for } \texttt{uint}n
+$$
+
+where
+
+- $n$ is the number of bits: 8, 16, 32 or 64;
+- $x$ is any value the type can hold.
+
+Example with $n = 8$: `int8` holds $-2^{7} = -128$ up to $2^{7} - 1 = 127$, and `uint8` holds $0$ up to $2^{8} - 1 = 255$. With $n = 64$, `math.MaxInt64` is $2^{63} - 1 = 9223372036854775807$. Going past the top **wraps around silently**: the spec says overflow "does not cause a run-time panic".
+
+```go
+func int8Wraps() int8 {
+	var x int8 = 127
+	x++ // wraps around: no error, no panic
+	return x
+}
+```
+
+It returns $-128$: the true sum $127 + 1 = 128$ does not fit, so the result is $128 - 2^{8} = -128$.
+
+### Level 2: `var`, `:=`, constants and `iota`
+
+There are two ways to declare a variable:
+
+```go
+func declare() (int, int, string) {
+	var a int    // no value given: the zero value 0
+	var b = 2    // type inferred from the value: int
+	c := "three" // short form, only inside functions
+	return a, b, c
+}
+```
+
+`var` works everywhere, including at package level. The short form `:=` works only inside functions, always infers the type, and must declare **at least one new name** on its left. That last rule hides a classic bug: `:=` inside an inner block makes a brand-new variable with the same name.
+
+```go
+func shadow(update bool) int {
+	x := 1
+	if update {
+		x := 2 // := declares a NEW x that hides the outer one
+		_ = x
+	}
+	return x
+}
+```
+
+`shadow(true)` returns **1**. The inner `x` lived only inside the `if` block. Writing `x = 2` (plain assignment) would have changed the outer one.
+
+A **constant** is a value the compiler knows. Inside a `const` block, `iota` counts the lines from 0, and a line with no expression repeats the previous one:
+
+```go
+const (
+	_  = iota             // iota is 0 here; the blank name throws it away
+	KB = 1 << (10 * iota) // iota is 1: 1 << 10
+	MB                    // the expression repeats with iota = 2: 1 << 20
+	GB                    // iota = 3: 1 << 30
+)
+```
+
+Each line computes:
+
+$$
+c_k = 2^{10k}, \qquad k = \texttt{iota}
+$$
+
+where
+
+- $k$ is the value of `iota` on that line: 1 for `KB`, 2 for `MB`, 3 for `GB`;
+- $2^{10k}$ is `1 << (10 * iota)`, because shifting 1 left by $m$ places gives $2^{m}$;
+- $c_k$ is the constant's value.
+
+Example: $k = 1$ gives $2^{10} = 1024$; $k = 2$ gives $2^{20} = 1048576$; $k = 3$ gives $2^{30} = 1073741824$. The lab checks all three.
+
+Untyped constants are **exact**, not limited to 64 bits. The spec requires compilers to represent integer constants with at least 256 bits:
+
+```go
+const huge = 1 << 100 // fine: constants are exact, not limited to 64 bits
+const four = huge >> 98
+```
+
+`four` is $2^{100} / 2^{98} = 2^{2} = 4$. Only when a constant is stored in a typed variable must it fit: `var n int = huge` fails with `cannot use huge (untyped int constant 1267650600228229401496703205376) as int value in variable declaration (overflows)`.
+
+### Level 3: assignment copies the value
+
+Assigning one variable to another copies the value. Arrays are values too, so all elements are copied:
+
+```go
+func arrayCopy() ([3]int, [3]int) {
+	a := [3]int{1, 2, 3}
+	b := a // copies all three elements
+	b[0] = 9
+	return a, b
+}
+```
+
+It returns `a = [1 2 3]` and `b = [9 2 3]`. In one line:
+
+$$
+b := a \;\Longrightarrow\; b = a \;\land\; \&b \ne \&a
+$$
+
+where
+
+- $a$ and $b$ are variables of the same type;
+- $b = a$ means they hold equal values right after the assignment;
+- $\&a$ and $\&b$ are their addresses in memory, and $\ne$ says they are different places;
+- $\land$ means "and".
+
+Example: after `b := a`, $b = [1, 2, 3] = a$, but $b$ sits at its own address. So `b[0] = 9` writes only to $b$'s memory: $b = [9, 2, 3]$ while $a$ stays $[1, 2, 3]$.
+
+A function parameter is assigned in exactly the same way, which is why the array from the problem did not change:
+
+```go
+func resetFirst(scores [3]int) {
+	scores[0] = 0 // changes the function's own copy only
+}
+```
+
+Structs copy the same way. Slices, maps and channels look like exceptions, but they are not: their value is a small **header** that contains a pointer, and copying the header still points at the same data. The FAQ: *"Map and slice values behave like pointers: they are descriptors that contain pointers to the underlying map or slice data."* [Slices and Maps](02-slices-and-maps.qmd) opens that header.
+
+### Level 4: a pointer shares one variable
+
+`&x` gives the **address** of `x`, a value of type `*int` when `x` is an `int`. `*p` follows the address back to the variable. Now the birthday works:
+
+```go
+func birthday(age *int) {
+	*age++ // follow the address and change the variable there
+}
+```
+
+`*age++` means `(*age)++`. Called as `birthday(&age)`, it turns 10 into **11**. The built-in `new(T)` makes a fresh variable and returns its address; since Go 1.26 it also accepts an initial value:
+
+```go
+birthday(&age)
+check(age == 11, "a pointer lets the function change age")
+counter := new(int) // a fresh int variable, set to 0
+*counter += 5
+check(*counter == 5, "new(int) points at a usable zero")
+answer := new(42) // Go 1.26+: new with an initial value
+check(*answer == 42, "new(42) points at 42")
+```
+
+A pointer is **also a value**, and it is copied like any other. Changing the pointer inside a function does not change the caller's pointer:
+
+```go
+func repoint(p *int) {
+	other := 100
+	p = &other // changes only this function's copy of the pointer
+}
+```
+
+```go
+ptr := &age
+repoint(ptr)
+check(ptr == &age && *ptr == 11, "the caller's pointer is unchanged")
+```
+
+$$
+q := p \;\Longrightarrow\; q = p \;\Longrightarrow\; {*q} \text{ and } {*p} \text{ are the same variable}
+$$
+
+where
+
+- $p$ and $q$ are pointers; $q := p$ copies the address stored in $p$;
+- $q = p$ means both hold the same address;
+- ${*q}$ and ${*p}$ are the variables found by following each pointer.
+
+Example: `ptr` holds the address of `age`. Calling `repoint(ptr)` does $p := \texttt{ptr}$, so inside the function $p = \&\texttt{age}$, and `*p = 12` would have changed `age`. Instead `p = &other` overwrites only the copy $p$. Back in `main`, `ptr` still equals `&age` and `*ptr` is still 11.
+
+### Level 5: which values can be compared with `==`
+
+`==` is defined for some types and not others. The rule decides what can be a map key, too:
+
+$$
+\operatorname{comparable}(T) =
+\begin{cases}
+\text{yes} & T \text{ a boolean, number, string, pointer, channel or interface} \\
+\operatorname{comparable}(E) & T = [n]E \text{, an array} \\
+\text{yes exactly when every field type is comparable} & T \text{ a struct} \\
+\text{no, except comparison with } \texttt{nil} & T \text{ a slice, map or function}
+\end{cases}
+$$
+
+where
+
+- $T$ is a type; "yes" means `x == y` compiles for two values of type $T$;
+- $[n]E$ is an array of $n$ elements of type $E$;
+- structs and arrays compare element by element, and pointers compare **addresses**, not what they point at.
+
+Example: `Point` has fields `int` and `int`, both comparable, so `Point{1, 2} == Point{1, 2}` is true and `Point` can be a map key. `[2]int` is comparable because `int` is. `[]int` is not: `a == b` on two slices fails with `invalid operation: a == b (slice can only be compared to nil)`. Two different variables `x, y := 1, 1` have equal values, but `&x == &y` is false:
+
+```go
+func compare() (bool, bool, bool) {
+	x, y := 1, 1
+	samePoint := Point{1, 2} == Point{1, 2} // field by field
+	sameArray := [2]int{1, 2} == [2]int{1, 2}
+	sameAddress := &x == &y // two different variables
+	return samePoint, sameArray, sameAddress
+}
+```
+
+It returns `true, true, false`.
+
+## How it works underneath
+
+**A variable is a block of memory with a fixed size.** Copying a value copies that block, so the cost of passing or assigning is its size. `unsafe.Sizeof` reports it; on a 64-bit machine the lab checks these:
+
+| Type | Size | What is inside |
+|---|---|---|
+| `int`, `*int` | 8 bytes | one machine word |
+| `Point` | 16 bytes | two `int` fields |
+| `[3]int` | 24 bytes | three `int`s, stored inline |
+| `string` | 16 bytes | a pointer to the bytes, and a length |
+| `[]int` | 24 bytes | a pointer, a length and a capacity |
+| `[1000]int64` | 8000 bytes | all 1000 elements |
+
+$$
+\text{bytes copied}(\text{pass } x) = \operatorname{Sizeof}(T)
+$$
+
+where
+
+- $x$ is the argument and $T$ its type;
+- $\operatorname{Sizeof}(T)$ is the size in bytes that `unsafe.Sizeof` reports.
+
+Example: calling a function 1000 times with a `[1000]int64` copies $1000 \times 8000 = 8000000$ bytes. Passing a `*[1000]int64` instead copies $1000 \times 8 = 8000$ bytes, a thousand times less. Passing a `string` or a slice copies only 16 or 24 bytes, however long the text or the list, because only the header is copied.
+
+**Stack or heap is the compiler's choice, not yours.** Go has no `free`. Returning the address of a local variable is safe:
+
+```go
+func newCounter() *int {
+	n := 0
+	return &n // safe: the compiler moves n to the heap
+}
+```
+
+The compiler's **escape analysis** sees that `n` outlives the call and allocates it on the garbage-collected heap. You can watch the decision:
+
+```bash
+go build -gcflags=-m ./values-types-and-pointers
+```
+
+```text
+values-types-and-pointers/main.go:96:2: moved to heap: n
+```
+
+Every call makes a new variable, so `newCounter() != newCounter()`. The FAQ: *"From a correctness standpoint, you don't need to know."* A variable that does not escape stays in the function's stack frame and costs the garbage collector nothing. [Memory and Garbage Collection](15-memory-and-garbage-collection.qmd) covers the collector.
+
+**There is no pointer arithmetic.**
+
+```go
+// sketch: does not compile
+p := &x
+q := p + 1 // invalid operation: p + 1 (mismatched types *int and untyped int)
+```
+
+The FAQ's one-word reason is *"Safety"*: without pointer arithmetic a program can never derive an illegal address that happens to work, and the garbage collector is simpler to build. Package `unsafe` can do arithmetic, and Pike's proverb warns: *"With the unsafe package there are no guarantees."*
+
+**`nil` dereference is a panic, not a crash into random memory.** Reading `missing.X` through a `nil` `*Point` stops with `runtime error: invalid memory address or nil pointer dereference`, which the lab catches with `recover`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Expecting a function to change an `int`, array or struct argument | The caller's value is unchanged | Pass a pointer (`*T`), or return the new value |
+| `:=` inside an `if` or `for` block | The outer variable never changes (`shadow(true)` is 1) | Use `=` to assign to the existing variable |
+| Declaring a variable and never reading it | `declared and not used: x` | Use it, or delete it |
+| `:=` at package level | `syntax error: non-declaration statement outside function body` | Use `var x = 1` outside functions |
+| Following a `nil` pointer | `panic: runtime error: invalid memory address or nil pointer dereference` | Check for `nil`, or make the zero value useful so no pointer is needed |
+| Pointer arithmetic, as in C | `invalid operation: p + 1 (mismatched types *int and untyped int)` | Index a slice instead |
+| Counting past a type's maximum | `int8` 127 + 1 silently becomes $-128$ | Use a wider type, or check against `math.MaxInt8` |
+| A literal too big for its type | `cannot use 128 (untyped int constant) as int8 value in variable declaration (overflows)` | Pick a type whose range holds the value |
+| Comparing slices with `==` | `invalid operation: a == b (slice can only be compared to nil)` | `slices.Equal(a, b)` |
+
+## Interview questions
+
+### 1. Is Go pass-by-value or pass-by-reference?
+
+**Answer.** Always by value. A function receives a copy of each argument, made as if by assignment. A pointer argument is a copied address, which is why `birthday(&age)` can change `age` while `repoint(ptr)` cannot change `ptr`. Slices, maps and channels feel like references because their small header contains a pointer to shared data, but the header itself is copied. Go has no reference variables (no second name for the same variable, as `int&` gives in C++), so there is no pass-by-reference.
+
+### 2. What is the difference between `new` and `make`?
+
+**Answer.** `new(T)` allocates a zeroed `T` and returns a `*T`; since Go 1.26, `new(expr)` allocates a variable initialised to `expr`, so `*new(42)` is 42. `make` works only for slices, maps and channels, and returns the initialised value itself (`[]T`, `map[K]V`, `chan T`), not a pointer. The Go FAQ: *"new allocates memory, while make initializes the slice, map, and channel types."* The reason is that those three need internal structure set up before use: `new(map[string]int)` gives a pointer to a `nil` map, which panics on its first write.
+
+### 3. Can a function return a pointer to its local variable?
+
+**Answer.** Yes, and it is idiomatic. Escape analysis sees that `n` in `newCounter` outlives the call and puts it on the heap (`moved to heap: n`); every call returns a different variable. Where a value lives changes only speed, never meaning.
+
+### 4. When should you use a pointer instead of a value?
+
+**Answer.** Use a pointer when one of these holds:
+
+1. The callee must **change** the caller's variable (`birthday`).
+2. The value is **large**, so copying is costly: 8000 bytes for `[1000]int64` against 8 for a pointer.
+3. The value **must not be copied**, such as a struct containing a `sync.Mutex`; `go vet` reports `assignment copies lock value`.
+4. You need **"no value"**: a `nil` `*int` can mean "unknown", distinct from 0.
+
+Otherwise prefer values. They are simpler, cannot be `nil`, and a small value on the stack is cheaper for the garbage collector than a pointer to the heap.
+
+### 5. What does "make the zero value useful" mean?
+
+**Answer.** Design types so that `var x T` is ready to use without a constructor. The standard library does this: a zero `bytes.Buffer` is an empty buffer, a zero `sync.Mutex` is unlocked, and a `nil` slice can be appended to.
+
+```go
+func zeroBuffer() string {
+	var buf bytes.Buffer // no constructor needed
+	buf.WriteString("ready")
+	return buf.String()
+}
+```
+
+It returns `"ready"`. The benefit is that structs containing such fields are usable at zero as well, recursively, because of the zero-value rule in Level 1.
+
+## Summary
+
+$$
+\operatorname{pass}(x) = \operatorname{copy}(x) \quad \text{for every type, and} \quad \operatorname{copy}(\&x) = \&x
+$$
+
+where $x$ is any variable, $\operatorname{pass}(x)$ is what the callee receives, $\operatorname{copy}(x)$ is a new variable holding an equal value, and $\&x$ is the address of $x$. A copied address is the same address, so it reaches the same variable.
+
+Example: `birthdayCopy(age)` receives $\operatorname{copy}(10)$ and changes only that copy; `birthday(&age)` receives $\operatorname{copy}(\&\texttt{age}) = \&\texttt{age}$ and turns `age` from 10 into 11.
+
+- Every type has a zero value: 0, `false`, `""`, `nil`, or all-zero elements and fields.
+- `var` works everywhere; `:=` only in functions, and it can silently shadow an outer name.
+- Constants are exact and untyped until used; `iota` numbers the lines of a `const` block.
+- Assignment and calls copy values; arrays and structs are copied whole.
+- A pointer is a value that holds an address; there is no pointer arithmetic, and escape analysis makes returning `&local` safe.
+- `==` works on booleans, numbers, strings, pointers, channels, interfaces, and arrays and structs built from them, but not on slices, maps or functions.
+
+## References
+
+- The Go Programming Language Specification: [Constants](https://go.dev/ref/spec#Constants), [Iota](https://go.dev/ref/spec#Iota), [Numeric types](https://go.dev/ref/spec#Numeric_types), [Integer overflow](https://go.dev/ref/spec#Integer_overflow), [Short variable declarations](https://go.dev/ref/spec#Short_variable_declarations), [Address operators](https://go.dev/ref/spec#Address_operators), [Allocation](https://go.dev/ref/spec#Allocation), [The zero value](https://go.dev/ref/spec#The_zero_value), [Comparison operators](https://go.dev/ref/spec#Comparison_operators).
+- Go FAQ: [When are function parameters passed by value?](https://go.dev/doc/faq#pass_by_value), [Why is there no pointer arithmetic?](https://go.dev/doc/faq#no_pointer_arithmetic), [How do I know whether a variable is allocated on the heap or the stack?](https://go.dev/doc/faq#stack_or_heap), [What's the difference between new and make?](https://go.dev/doc/faq#new_and_make).
+- [Effective Go: Allocation with new](https://go.dev/doc/effective_go#allocation_new) and [Allocation with make](https://go.dev/doc/effective_go#allocation_make).
+- [Go 1.26 Release Notes](https://go.dev/doc/go1.26), "Changes to the language" (`new` with an expression).
+- Rob Pike, [Constants](https://go.dev/blog/constants) (The Go Blog, 2014) and [Go Proverbs](https://go-proverbs.github.io/) (Gopherfest 2015).
+- Dave Cheney, [There is no pass-by-reference in Go](https://dave.cheney.net/2017/04/29/there-is-no-pass-by-reference-in-go) (2017).
+- Alan A. A. Donovan and Brian W. Kernighan, [*The Go Programming Language*](https://www.gopl.io/) (Addison-Wesley, 2015), chapter 2, "Program Structure".
+- Lab: [`labs/values-types-and-pointers/main.go`](labs/values-types-and-pointers/main.go). Run it from `programming-languages/go/labs` with `go run -race ./values-types-and-pointers`.

@@ -1,0 +1,386 @@
+---
+title: "Interfaces"
+description: "Go interfaces from implicit satisfaction to the runtime's iface, eface and itab: method sets, the (type, value) pair, the nil-error trap, type assertions and switches, small interfaces such as io.Reader and io.Writer, error and fmt.Stringer."
+---
+
+## The problem
+
+A drawing program has rectangles and squares, and needs their total area:
+
+```go
+type Rect struct{ W, H int }
+
+type Square struct{ Side int }
+```
+
+Without a common type, you would write `totalRectArea([]Rect)` and `totalSquareArea([]Square)`, or one function taking `[]any` with a `switch` that must be edited every time a new shape appears. The same problem shows up everywhere: a report should go to a file, a buffer or a network connection, and a function that decodes JSON should read from any of them.
+
+An **interface** names a set of methods. Any type with those methods can be used where the interface is expected, and the call runs that type's own method. Go adds three twists you must know for interviews: types satisfy interfaces **without saying so**, an interface value is a **pair** of a type and a value, and that pair makes `nil` mean two different things.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A job advert and a labelled box
+
+- **An interface is a job advert:** "Wanted: anyone who can tell me their `Area`." Nobody has to apply. If you can do the job, you have it. That is **implicit satisfaction**.
+- **An interface value is a box with a label.** The label says what kind of thing is inside ("a `Rect`"), and the box holds the thing. An empty box has no label at all.
+- **The trap:** a box labelled "a pointer to a `NotFoundError`" with nothing in it is **not** an empty box. It still has a label, so it is not `nil`.
+
+Russ Cox wrote that Go's interfaces *"let you use duck typing like you would in a purely dynamic language like Python but still have the compiler catch obvious mistakes."* Rob Pike's proverbs add the design advice: *"The bigger the interface, the weaker the abstraction"* and *"interface{} says nothing."*
+:::
+
+## From simple to advanced
+
+### Level 1: satisfaction is implicit
+
+Declare the methods you need. A type satisfies the interface by having them; there is no `implements` keyword:
+
+```go
+type Shape interface {
+	Area() int
+}
+```
+
+```go
+func (r Rect) Area() int { return r.W * r.H }
+
+func (s Square) Area() int { return s.Side * s.Side }
+```
+
+```go
+func totalArea(shapes []Shape) int {
+	total := 0
+	for _, s := range shapes {
+		total += s.Area() // each value runs its own Area
+	}
+	return total
+}
+```
+
+`totalArea([]Shape{Rect{3, 4}, Square{2}})` is $3 \cdot 4 + 2 \cdot 2 = 16$. The rule the compiler applies is:
+
+$$
+T \text{ implements } I \iff \operatorname{methods}(I) \subseteq M(T)
+$$
+
+where
+
+- $I$ is an interface type and $T$ a concrete type;
+- $\operatorname{methods}(I)$ is the set of methods $I$ declares, each with its exact signature;
+- $M(T)$ is $T$'s method set ([Structs, Methods and Embedding](04-structs-methods-and-embedding.qmd), Level 3);
+- $\subseteq$ means "every element of the left set is also in the right set".
+
+Example: $\operatorname{methods}(\texttt{Shape}) = \lbrace \texttt{Area() int} \rbrace$, and $M(\texttt{Rect}) = \lbrace \texttt{Area() int}, \texttt{String() string} \rbrace$ (Level 6 adds `String`). The one required method is present, so `Rect` implements `Shape`. A type `Circle` with no `Area` fails with `Circle does not implement Shape (missing method Area)`, and one with `Area() float64` fails with `(wrong type for method Area)`.
+
+Because nothing in `Rect` mentions `Shape`, a typo in a method name would only be noticed where a `Rect` is used as a `Shape`. The FAQ's idiom makes the compiler check it at the declaration:
+
+```go
+var _ Shape = Rect{}
+var _ Shape = Square{}
+```
+
+### Level 2: pointer receivers and method sets
+
+If a method has a pointer receiver, only the pointer type has it, so only the pointer satisfies the interface:
+
+```go
+type Score struct{ points int }
+
+func (s *Score) Reset() { s.points = 0 }
+
+var _ Resetter = (*Score)(nil) // *Score has Reset; Score does not
+```
+
+```go
+// sketch: does not compile
+var r Resetter = Score{} // Score does not implement Resetter (method Reset has pointer receiver)
+```
+
+The full message is `cannot use Score{} (value of struct type Score) as Resetter value in variable declaration: Score does not implement Resetter (method Reset has pointer receiver)`. There is a reason behind the rule. Storing a value in an interface **copies** it, and the copy is not addressable, so a `Reset` called through the interface could only ever reset the copy. With a pointer, the interface holds the address and the change reaches the original:
+
+```go
+score := &Score{points: 7}
+var r Resetter = score // *Score satisfies Resetter
+r.Reset()
+check(score.points == 0, "Reset through the interface changes the original")
+```
+
+### Level 3: an interface value is a pair
+
+An interface variable holds **two** things: the dynamic type of what was stored, and the value itself. Rob Pike, *The Laws of Reflection*: *"A variable of interface type stores a pair: the concrete value assigned to the variable, and that value's type descriptor."*
+
+```go
+func dynamicTypes() []string {
+	var s Shape // (nil, nil)
+	types := []string{fmt.Sprintf("%T", s)}
+	s = Rect{3, 4} // (Rect, {3 4})
+	types = append(types, fmt.Sprintf("%T", s))
+	s = &Square{2} // (*Square, a pointer): *Square has Area too
+	types = append(types, fmt.Sprintf("%T", s))
+	return types
+}
+```
+
+It returns `[<nil> main.Rect *main.Square]`. The pair decides both `nil` and `==`:
+
+$$
+\begin{aligned}
+i &= (T_i, v_i) \\
+i = \texttt{nil} &\iff T_i = \texttt{nil} \\
+i = j &\iff (T_i = T_j \land v_i = v_j) \lor (i = \texttt{nil} \land j = \texttt{nil})
+\end{aligned}
+$$
+
+where
+
+- $i$ and $j$ are interface values;
+- $T_i$ is the dynamic type stored in $i$, or `nil` if nothing was stored;
+- $v_i$ is the dynamic value;
+- $\land$ is "and", $\lor$ is "or".
+
+Example:
+
+1. `Shape(Rect{3, 4}) == Shape(Rect{3, 4})`: $T = \texttt{Rect}$ on both sides and $\lbrace 3, 4 \rbrace = \lbrace 3, 4 \rbrace$, so true.
+2. `Shape(Rect{2, 6}) == Shape(Rect{3, 4})`: the areas are both 12, but $\lbrace 2, 6 \rbrace \ne \lbrace 3, 4 \rbrace$, so false. `==` compares values, not behaviour.
+3. `any(1) == any(int64(1))`: $T_i = \texttt{int} \ne \texttt{int64} = T_j$, so **false**, although both hold 1.
+
+If the types match but are not comparable, the comparison compiles and panics at run time: `any([]int{1}) == any([]int{1})` stops with `runtime error: comparing uncomparable type []int`.
+
+### Level 4: the nil-error trap
+
+The pair explains the most famous Go bug. This function returns a `nil` pointer as an `error`:
+
+```go
+type NotFoundError struct{ Name string }
+
+func (e *NotFoundError) Error() string { return e.Name + " not found" }
+
+func findBad(name string) error {
+	var err *NotFoundError // a nil pointer
+	if name == "" {
+		err = &NotFoundError{Name: "(empty)"}
+	}
+	return err // (*NotFoundError, nil): NOT a nil interface
+}
+```
+
+`findBad("ann")` found nothing wrong, yet `findBad("ann") != nil` is **true**. Using the formula: the returned value is $(T, v) = (\texttt{*NotFoundError}, \texttt{nil})$. The rule $i = \texttt{nil} \iff T_i = \texttt{nil}$ looks only at the type, and $T = \texttt{*NotFoundError} \ne \texttt{nil}$. The caller takes the error branch, and if it calls `err.Error()`, the method dereferences a `nil` pointer and panics. The Go FAQ calls this out by name: *"Why is my nil error value not equal to nil?"*
+
+The fix is to return the literal `nil` on the success path, so that nothing is stored:
+
+```go
+func findGood(name string) error {
+	if name == "" {
+		return &NotFoundError{Name: "(empty)"}
+	}
+	return nil // (nil, nil): a true nil interface
+}
+```
+
+Return the `error` interface type from functions, never a concrete error pointer type, and the trap cannot happen. To get the concrete error back, use `errors.As` ([Errors, Defer and Panic](07-errors-defer-and-panic.qmd)).
+
+### Level 5: type assertions and type switches
+
+A **type assertion** `x.(T)` asks the box what is inside. The one-value form panics on a wrong guess; the **comma-ok** form reports it:
+
+```go
+var v any = "hello"
+n, ok := v.(int) // comma-ok: no panic on a wrong guess
+check(n == 0 && !ok && v.(string) == "hello", "assertions")
+check(panicMessage(func() { _ = v.(int) }) ==
+	"interface conversion: interface {} is string, not int", "a failed assertion panics")
+_, isStringer := v.(fmt.Stringer) // asserting to an interface checks the method set
+check(!isStringer, "string has no String method")
+```
+
+`v.(int)` fails with `interface conversion: interface {} is string, not int`. The target can also be an interface, which asks "does the value inside have these methods?".
+
+A **type switch** does several assertions in order and binds `x` to the matched type in each case:
+
+```go
+func describe(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "nil"
+	case int:
+		return fmt.Sprintf("int %d", x)
+	case string:
+		return fmt.Sprintf("string of %d bytes", len(x))
+	case fmt.Stringer:
+		return "Stringer: " + x.String()
+	default:
+		return fmt.Sprintf("other %T", x)
+	}
+}
+```
+
+`describe(42)` is `"int 42"`, `describe("héllo")` is `"string of 6 bytes"`, `describe(Rect{3, 4})` is `"Stringer: 3x4 rectangle"`, and `describe(3.5)` is `"other float64"`. Cases are tried top to bottom, so an interface case such as `fmt.Stringer` catches every type with a `String` method that an earlier case did not.
+
+`any` is the interface with no methods. Since Go 1.18 it is an alias for `interface{}`, and every type satisfies it. Pike's proverb *"interface{} says nothing"* is the warning: a parameter of type `any` tells the reader and the compiler nothing, and pushes type checks to run time. [Generics](06-generics.qmd) is usually the better tool.
+
+### Level 6: small interfaces
+
+The most used interfaces in Go have **one** method. From package `io`:
+
+```go
+// sketch: from the io package
+type Reader interface {
+	Read(p []byte) (n int, err error)
+}
+
+type Writer interface {
+	Write(p []byte) (n int, err error)
+}
+```
+
+A function that needs only to write should ask only for a `Writer`:
+
+```go
+// report accepts the smallest interface it needs: anything with a Write method.
+func report(w io.Writer, shapes []Shape) error {
+	_, err := fmt.Fprintf(w, "total area %d\n", totalArea(shapes))
+	return err
+}
+```
+
+The lab calls it with a `*bytes.Buffer` and a `*strings.Builder`; both receive `"total area 16\n"`. In a real program the same function writes to an `*os.File` or a network connection. Reading works the same way: `countBytes(strings.NewReader("hello"))` drains any `io.Reader` and returns 5. Small interfaces combine by embedding, as `io.ReadWriter` combines `Reader` and `Writer`:
+
+```go
+var _ io.ReadWriter = (*bytes.Buffer)(nil) // ReadWriter = Reader + Writer
+```
+
+This leads to the guideline often summarised as **"accept interfaces, return structs"**. The Go wiki's review guide says interfaces *"generally belong in the package that uses values of the interface type, not the package that implements those values"*, and that the implementing package *"should return concrete (usually pointer or struct) types"*. The standard library follows it: `strings.NewReader` returns `*strings.Reader`, not `io.Reader`, and `report` declares exactly the one method it uses.
+
+Two interfaces are built into everyday Go. `error` is predeclared as `interface { Error() string }`; `*NotFoundError` implements it in Level 4. `fmt.Stringer` is `interface { String() string }`, and `fmt` calls it when printing:
+
+```go
+func (r Rect) String() string { return fmt.Sprintf("%dx%d rectangle", r.W, r.H) }
+```
+
+`fmt.Sprint(Rect{3, 4})` is `"3x4 rectangle"`.
+
+## How it works underneath
+
+An interface value is two machine words, 16 bytes on a 64-bit machine. The runtime has two layouts, in `src/runtime/runtime2.go`:
+
+```go
+// sketch: from runtime/runtime2.go
+type iface struct { // an interface with methods, such as Shape
+	tab  *itab
+	data unsafe.Pointer
+}
+
+type eface struct { // the empty interface, any
+	_type *_type
+	data  unsafe.Pointer
+}
+```
+
+`data` points at the value. Since Go 1.4 it is **always** a pointer, so storing a non-pointer value means making a copy for `data` to point at, on the heap unless the compiler proves the interface value does not escape. The lab stores into a package variable, so it escapes, and measures with `testing.AllocsPerRun`:
+
+```go
+func allocsToBox[T any](v T) float64 {
+	return testing.AllocsPerRun(100, func() { sink = v })
+}
+```
+
+`allocsToBox(rect)` is 1 and `allocsToBox(&rect)` is 0. The compiler (`cmd/compile/internal/walk/convert.go`) and the runtime skip the allocation for zero-sized values, for single-byte values such as `bool` and `byte`, for read-only constants, and for integers below 256, which point into the static table `staticuint64s` in `runtime/iface.go`.
+
+`any` needs only the type, so `eface` stores `_type` directly. An interface with methods needs the method code as well, so `iface` points to an **itab** (Russ Cox's "itable"), defined in `internal/abi/iface.go`:
+
+```go
+// sketch: from internal/abi/iface.go
+type ITab struct {
+	Inter *InterfaceType
+	Type  *Type
+	Hash  uint32     // copy of Type.Hash. Used for type switches.
+	Fun   [1]uintptr // variable sized. fun[0]==0 means Type does not implement Inter.
+}
+```
+
+`Fun` lists the concrete type's code for the interface's methods, **sorted by name**. A method call through an interface is one indirect call:
+
+$$
+i.m(a) = i.\texttt{tab}.\texttt{Fun}[k](i.\texttt{data}, a)
+$$
+
+where
+
+- $i$ is the interface value and $m$ the method called with arguments $a$;
+- $k$ is the position of $m$ in the interface's method list, sorted by name;
+- $i.\texttt{data}$ is passed as the receiver.
+
+Example: `Shape` has one method, so `s.Area()` calls `Fun[0]` with `data`. For `io.ReadWriter` the sorted list is `Read`, `Write`, so `Read` is $k = 0$ and `Write` is $k = 1$. For a value type such as `Rect`, `Fun[0]` is a compiler-generated wrapper that loads the `Rect` from the pointer in `data` and then runs `Rect.Area`.
+
+**Where itabs come from.** When the compiler sees a conversion it can resolve, such as `Shape(Rect{3, 4})`, it emits the itab as static data. When the concrete type is known only at run time, as in an assertion to an interface type like `v.(fmt.Stringer)`, `runtime.getitab` looks the pair (interface, type) up in a global hash table, `itabTable`. On a miss it builds the itab by walking both method lists in step, which works because both are sorted by name:
+
+$$
+\operatorname{cost}(\text{build itab}) = O(n_I + n_T)
+$$
+
+where $n_I$ is the number of methods in the interface and $n_T$ the number in the concrete type. Example: `Shape` against `Rect` is $n_I = 1$ and $n_T = 2$ (`Area`, `String`), at most $1 + 2 = 3$ steps; the result is cached, so the next conversion of the same pair is a table hit. A failed lookup is cached too, with `Fun[0] == 0`.
+
+**Assertions are cheap.** `x.(Rect)` compares one type pointer (`tab.Type`, or `_type` for `any`) with the descriptor of `Rect`. `x.(fmt.Stringer)` needs an itab, which comes from the cache. **Dynamic dispatch exists only here**: calls on concrete types, including promoted methods, are resolved at compile time.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Returning a typed `nil` pointer as an `error` | `err != nil` although nothing failed; `err.Error()` panics with a nil dereference | Return the literal `nil`; declare results as `error`, not `*MyError` |
+| Using a value where methods have pointer receivers | `Score does not implement Resetter (method Reset has pointer receiver)` | Store `&Score{...}` in the interface |
+| A misspelled or mistyped method | `Circle does not implement Shape (missing method Area)` far from the type | `var _ Shape = Circle{}` next to the type |
+| One-value assertion on a guess | `panic: interface conversion: interface {} is string, not int` | `v, ok := x.(T)` |
+| Comparing interfaces that may hold slices or maps | `panic: runtime error: comparing uncomparable type []int` | Compare the concrete values yourself |
+| Calling a method on a nil interface | `panic: runtime error: invalid memory address or nil pointer dereference` | Check `i != nil` before the call |
+| Defining a large interface next to its only implementation | Every new method breaks callers and fakes | Define small interfaces where they are used; return concrete types |
+| `any` parameters everywhere | Type errors appear at run time instead of compile time | A concrete type, a small interface, or a type parameter |
+
+## Interview questions
+
+### 1. Why can a function that returns `nil` still give a non-nil error?
+
+**Answer.** Because the function returned a **typed** nil. An interface value is a pair $(T, v)$ and is `nil` only when $T$ is `nil`. `findBad` stores a nil `*NotFoundError`, so the error is $(\texttt{*NotFoundError}, \texttt{nil})$ and `findBad("ann") != nil` is true; the lab checks that `%T` prints `*main.NotFoundError`. Return the literal `nil` (as `findGood` does), and never declare a function's result as a concrete error pointer type.
+
+### 2. `Reset` has a pointer receiver. Does `Score` satisfy `Resetter`? Does `*Score`?
+
+**Answer.** Only `*Score`. $M(\texttt{Score}) = \varnothing$ and $M(\texttt{*Score}) = \lbrace \texttt{Reset} \rbrace$, and satisfaction needs $\operatorname{methods}(\texttt{Resetter}) \subseteq M(T)$. The auto-& shorthand that lets you call `s.Reset()` on a variable does not apply, because the value inside an interface is a copy that is not addressable; a `Reset` through the interface could only reset the copy. Storing `&Score{points: 7}` works, and `r.Reset()` sets the original's points to 0.
+
+### 3. How is an interface value laid out in memory, and what does a method call cost?
+
+**Answer.** Two words: `eface{_type, data}` for `any`, and `iface{tab, data}` for an interface with methods, where the itab holds both types and the method code pointers in name order. A call loads `tab.Fun[k]` and calls it with `data` as the receiver: one indirect call, which the compiler usually cannot inline. Itabs are static data when the compiler can build them, and otherwise built once by `getitab` and cached.
+
+### 4. When does converting a value to an interface allocate?
+
+**Answer.** When the value is not pointer-shaped and the compiler cannot avoid it. The `data` word must be a pointer (since Go 1.4), so a `Rect` is copied to the heap: the lab measures 1 allocation for `allocsToBox(rect)` and 0 for `allocsToBox(&rect)`. No allocation is needed for zero-sized values, single bytes, constants, integers below 256, or values that do not escape. Hot loops that box values into `any`, for example to call `fmt.Println`, allocate on every iteration.
+
+### 5. Where should an interface be declared?
+
+**Answer.** In the package that **uses** it, with only the methods it needs; the producer returns a concrete type and can add methods without breaking anyone. `report` needs only `Write`, so it takes `io.Writer`, works with buffers, builders, files and sockets, and is tested with a `bytes.Buffer`. The Go review guide warns against interfaces declared beside their single implementation "for mocking".
+
+## Summary
+
+$$
+T \text{ implements } I \iff \operatorname{methods}(I) \subseteq M(T), \qquad i = (T_i, v_i), \quad i = \texttt{nil} \iff T_i = \texttt{nil}
+$$
+
+where $I$ is an interface, $T$ a concrete type with method set $M(T)$, and $i$ an interface value holding dynamic type $T_i$ and value $v_i$.
+
+Example: $\lbrace \texttt{Area} \rbrace \subseteq M(\texttt{Rect})$, so `Rect` is a `Shape` and `totalArea` gives 16; `findBad("ann")` returns $(\texttt{*NotFoundError}, \texttt{nil})$, whose type is not `nil`, so the error is not `nil`.
+
+- Interfaces are satisfied implicitly; `var _ I = T{}` makes the compiler check it.
+- Pointer-receiver methods belong to `*T` only, so only `*T` satisfies interfaces that need them.
+- An interface value is a (type, value) pair: `nil` only when the type is unset, equal only when both types and values match.
+- Use comma-ok assertions and type switches to look inside; `any` says nothing.
+- Keep interfaces small and on the consumer side: accept `io.Writer`, return `*bytes.Buffer`.
+- Underneath: `eface` and `iface` are two words; an itab is a cached method table; calls through it are dynamic dispatch, the only kind Go has.
+
+## References
+
+- The Go Programming Language Specification: [Interface types](https://go.dev/ref/spec#Interface_types), [Implementing an interface](https://go.dev/ref/spec#Implementing_an_interface), [Method sets](https://go.dev/ref/spec#Method_sets), [Type assertions](https://go.dev/ref/spec#Type_assertions), [Type switches](https://go.dev/ref/spec#Type_switches), [Comparison operators](https://go.dev/ref/spec#Comparison_operators).
+- Go FAQ: [Why is my nil error value not equal to nil?](https://go.dev/doc/faq#nil_error), [Why doesn't Go have "implements" declarations?](https://go.dev/doc/faq#implements_interface), [How can I guarantee my type satisfies an interface?](https://go.dev/doc/faq#guarantee_satisfies_interface)
+- [Effective Go: Interfaces and other types](https://go.dev/doc/effective_go#interfaces_and_types); Go wiki, [Code Review Comments: Interfaces](https://go.dev/wiki/CodeReviewComments#interfaces).
+- Package documentation: [io.Reader](https://pkg.go.dev/io#Reader) and [io.Writer](https://pkg.go.dev/io#Writer), [fmt.Stringer](https://pkg.go.dev/fmt#Stringer); [Go 1.4 Release Notes](https://go.dev/doc/go1.4) (interfaces always hold a pointer) and [Go 1.18 Release Notes](https://go.dev/doc/go1.18) (`any`).
+- Russ Cox, [Go Data Structures: Interfaces](https://research.swtch.com/interfaces) (2009).
+- Rob Pike, [The Laws of Reflection](https://go.dev/blog/laws-of-reflection) (The Go Blog, 2011) and [Go Proverbs](https://go-proverbs.github.io/) (Gopherfest 2015).
+- The runtime source: [src/runtime/runtime2.go](https://github.com/golang/go/blob/master/src/runtime/runtime2.go), [src/runtime/iface.go](https://github.com/golang/go/blob/master/src/runtime/iface.go), [src/internal/abi/iface.go](https://github.com/golang/go/blob/master/src/internal/abi/iface.go).
+- Lab: [`labs/interfaces/main.go`](labs/interfaces/main.go). Run it from `programming-languages/go/labs` with `go run -race ./interfaces`.

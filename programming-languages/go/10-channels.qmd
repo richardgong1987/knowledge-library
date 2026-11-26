@@ -1,0 +1,338 @@
+---
+title: "Channels"
+description: "Go channels from the first handshake to the memory model: unbuffered and buffered channels, close and range, direction types, nil and closed channels, and the runtime's hchan."
+---
+
+## The problem
+
+A baker goroutine makes loaves numbered 1, 2, 3 and 4. A seller goroutine must receive every loaf, in order, and must know when the baker has finished. The obvious way is to share a slice and a `done` flag, but both goroutines then read and write the same memory with nothing ordering those accesses. That is a **data race**: the seller can see `done == true` before it sees the last loaf, and `go run -race` reports it.
+
+A **channel** is Go's built-in answer. It is a typed pipe: `ch <- v` sends a value, `v := <-ch` receives one, and `close(ch)` says "no more values". The channel orders the two goroutines for you.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Passing a ball between two children
+
+- **Unbuffered channel:** two children pass a ball **hand to hand**. The giver stands with the ball held out until the taker grabs it. Neither can walk away until the pass happens.
+- **Buffered channel:** a **basket with two places** sits between them. The giver can drop up to two balls and walk off; the third ball must wait until the taker empties a place.
+- **`close`:** the giver shouts **"No more balls!"**. The taker finishes whatever is still in the basket, then knows to stop.
+
+Tony Hoare described this idea in *Communicating Sequential Processes* (1978): programs made of separate processes that only talk by sending messages. Go's designers built on it, and Rob Pike's Go proverb sums it up: *"Don't communicate by sharing memory, share memory by communicating."*
+:::
+
+## From simple to advanced
+
+### Level 1: an unbuffered channel is a handshake
+
+`make(chan int)` creates a channel with **capacity 0**: it has no place to store a value, so a send and a receive must meet.
+
+```go
+func handshake() int {
+	ch := make(chan int) // unbuffered: capacity 0
+	go func() { ch <- 42 }()
+	return <-ch // waits until the goroutine sends
+}
+```
+
+`handshake()` returns 42. Whichever side arrives first waits for the other. If the receive arrives first, it waits; if the goroutine sends first, it waits. Both continue only after the 42 has moved from one hand to the other.
+
+### Level 2: a buffered channel is a queue with slots
+
+`make(chan string, 2)` creates a channel with two slots. A send can complete with nobody receiving, as long as a slot is free.
+
+```go
+func bufferedLenCap() (int, int) {
+	ch := make(chan string, 2)
+	ch <- "a" // no receiver needed: a slot is free
+	ch <- "b" // the queue is now full
+	return len(ch), cap(ch)
+}
+```
+
+It returns `(2, 2)`: two values are queued, and there are two slots. When a send must wait is one rule:
+
+$$
+\operatorname{send}(c) \text{ waits} \iff \operatorname{len}(c) = \operatorname{cap}(c) \;\land\; R(c) = 0
+$$
+
+where
+
+- $c$ is the channel;
+- $\operatorname{len}(c)$ is the number of values sitting in its buffer right now;
+- $\operatorname{cap}(c)$ is the number of slots, fixed by `make`;
+- $R(c)$ is the number of goroutines already blocked receiving from $c$;
+- $\land$ means "and", and $\iff$ means "exactly when".
+
+Example, with the channel above where $\operatorname{cap}(c) = 2$ and nobody receives, so $R(c) = 0$:
+
+1. The first send sees $\operatorname{len}(c) = 0$, and $0 = 2$ is false, so it completes; now $\operatorname{len}(c) = 1$.
+2. The second send sees $1 = 2$, which is false, so it completes; now $\operatorname{len}(c) = 2$.
+3. A third send would see $2 = 2$ and $R(c) = 0$, both true, so it waits.
+
+For an unbuffered channel $\operatorname{cap}(c) = 0$ and the buffer is always empty, so $\operatorname{len}(c) = \operatorname{cap}(c) = 0$ holds every time. A send therefore waits exactly when $R(c) = 0$: no receiver is waiting yet. That is the handshake of Level 1 written as math. A receive has the mirror rule: it waits when the buffer is empty, the channel is open, and no sender is waiting.
+
+### Level 3: `close` and `range` end a stream
+
+The receiver usually does not know how many values will come. The sender closes the channel when it is done, and `for v := range ch` stops after the last value.
+
+```go
+func produce(n int) <-chan int {
+	out := make(chan int)
+	go func() {
+		defer close(out) // the sender closes, once, when it is done
+		for i := 1; i <= n; i++ {
+			out <- i
+		}
+	}()
+	return out
+}
+
+func sum(in <-chan int) int {
+	total := 0
+	for v := range in { // ends when out is closed and empty
+		total += v
+	}
+	return total
+}
+```
+
+`sum(produce(4))` is 10. One channel is a first-in, first-out queue:
+
+$$
+v^{\text{recv}}_k = v^{\text{sent}}_k \qquad \text{for } k = 1, 2, \dots, n
+$$
+
+where
+
+- $k$ counts communications on one channel: the 1st, 2nd, and so on;
+- $v^{\text{sent}}_k$ is the value of the $k$-th send;
+- $v^{\text{recv}}_k$ is the value the $k$-th receive gets;
+- $n$ is the number of values sent before the close.
+
+Example: `produce(4)` sends $v^{\text{sent}} = (1, 2, 3, 4)$, so the receiver gets $v^{\text{recv}} = (1, 2, 3, 4)$ and the total is $1 + 2 + 3 + 4 = 10$. The lab checks both the order and the sum.
+
+Closing does not throw away buffered values. After a close, receives first drain the buffer, then return immediately with the zero value. The two-value form `v, ok := <-ch` tells the two cases apart:
+
+```go
+func receiveAfterClose() (int, bool, int, bool) {
+	ch := make(chan int, 1)
+	ch <- 7
+	close(ch)
+	first, firstOK := <-ch // the buffered 7 is still delivered
+	later, laterOK := <-ch // now empty and closed: zero value, ok == false
+	return first, firstOK, later, laterOK
+}
+```
+
+It returns `7, true, 0, false`. `ok` is `false` only when the channel is closed **and** empty.
+
+### Level 4: direction types say who may send
+
+`produce` returns `<-chan int`, a **receive-only** channel. The caller can receive, but the compiler refuses a send or a close:
+
+```go
+// sketch: does not compile
+func consume(in <-chan int) {
+	in <- 1   // invalid operation: cannot send to receive-only channel
+	close(in) // invalid operation: cannot close receive-only channel
+}
+```
+
+`chan<- int` is the opposite, a **send-only** channel. A plain `chan int` converts to either direction automatically, which is why `produce` can create `out` as `chan int` and return it as `<-chan int`. The direction is part of the type, so the rule "only the sender closes" is enforced at compile time rather than remembered.
+
+### Level 5: nil and closed channels
+
+A channel variable that was declared but never made is `nil`. Every operation has a fixed result on nil, open and closed channels:
+
+| Operation | nil channel | open channel | closed channel |
+|---|---|---|---|
+| `ch <- v` | blocks forever | completes or waits (Level 2 rule) | **panic: send on closed channel** |
+| `<-ch` | blocks forever | completes or waits | buffered values first, then zero value with `ok == false` |
+| `close(ch)` | **panic: close of nil channel** | succeeds | **panic: close of closed channel** |
+
+```go
+func sendOnClosed() {
+	ch := make(chan int, 1)
+	close(ch)
+	ch <- 1
+}
+```
+
+The lab runs this and the two other panicking cases under `recover` and checks the three exact messages. "Blocks forever" on a nil channel sounds useless, but it is a tool: in a `select`, setting a channel variable to `nil` switches that case off. [Select and Context](11-select-and-context.qmd) uses this.
+
+## How it works underneath
+
+`make(chan T, C)` allocates a runtime structure called `hchan`. Trimmed from the Go runtime's `src/runtime/chan.go`:
+
+```go
+// sketch: trimmed from runtime/chan.go, not runnable
+type hchan struct {
+	qcount   uint           // values in the buffer: len(ch)
+	dataqsiz uint           // buffer size: cap(ch)
+	buf      unsafe.Pointer // the ring buffer
+	closed   uint32
+	sendx    uint  // next slot to write
+	recvx    uint  // next slot to read
+	recvq    waitq // goroutines blocked receiving
+	sendq    waitq // goroutines blocked sending
+	lock     mutex
+}
+```
+
+A send takes `lock`, then tries three things in order:
+
+1. **A receiver is waiting** in `recvq`: copy the value straight to that goroutine and wake it. The buffer is never touched.
+2. **A slot is free** (`qcount < dataqsiz`): copy the value into `buf[sendx]` and move `sendx` forward.
+3. **Otherwise**: put this goroutine on `sendq` and park it. The scheduler runs something else until a receiver wakes it.
+
+The buffer is a ring, so the index wraps around:
+
+$$
+i' = (i + 1) \bmod C
+$$
+
+where
+
+- $i$ is the current `sendx` (or `recvx`) slot;
+- $i'$ is the slot after it;
+- $C$ is `dataqsiz`, the capacity;
+- $\bmod$ is the remainder after division.
+
+Example with $C = 3$: starting at $i = 0$, the writes go to slots $0, 1, 2$, and then $(2 + 1) \bmod 3 = 0$ wraps back to the first slot, which a receiver has emptied by then.
+
+The lock and the wait queues are also why a channel can **order memory**. The [Go memory model](https://go.dev/ref/mem) gives these "happens before" rules, written $\prec$:
+
+$$
+\begin{aligned}
+s_k &\prec r_k^{\checkmark} && \text{on every channel} \\
+r_k &\prec s_{k+C}^{\checkmark} && \text{on a channel of capacity } C \\
+\operatorname{close}(c) &\prec r^{\checkmark} && \text{for a receive that returns because } c \text{ is closed}
+\end{aligned}
+$$
+
+where
+
+- $s_k$ is the $k$-th send and $r_k$ the $k$-th receive on the channel;
+- a check mark, as in $r_k^{\checkmark}$, means "the completion of" that operation;
+- $C$ is the capacity, so $C = 0$ for an unbuffered channel;
+- $a \prec b$ means everything written before $a$ is visible to code after $b$. It chains: $a \prec b$ and $b \prec c$ give $a \prec c$.
+
+Example 1, the `publish` function from the lab:
+
+```go
+func publish() string {
+	var message string
+	done := make(chan struct{})
+	go func() {
+		message = "hello"  // (1) write
+		done <- struct{}{} // (2) send
+	}()
+	<-done         // (3) receive completes
+	return message // (4) read: guaranteed to see "hello"
+}
+```
+
+(1) comes before (2) in the same goroutine; the first rule gives (2) $\prec$ (3); (3) comes before (4) in the main goroutine. Chaining: (1) $\prec$ (4), so the read **must** return `"hello"`, and `go run -race` reports nothing.
+
+Example 2, with $C = 2$ and $k = 1$: $r_1 \prec s_3^{\checkmark}$. The third send cannot complete until the first receive has happened, because only that receive frees a slot. With $C$ slots, at most $C$ sends can run ahead of the receiver. That is why a buffered channel of capacity $C$ works as a semaphore that admits $C$ goroutines at once ([Concurrency Patterns](13-concurrency-patterns.qmd)).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Sending on an unbuffered channel with no other goroutine to receive | `fatal error: all goroutines are asleep - deadlock!` | Receive in another goroutine, or give the channel a buffer |
+| Forgetting to `close` before a `range` loop | The `range` never ends: deadlock, or a leaked goroutine | The sender closes when it is done, usually with `defer close(out)` |
+| Closing on the receiving side | `panic: send on closed channel` in the sender | Only the sender closes; take `<-chan T` parameters so the compiler forbids it |
+| Several senders, each calling `close` | `panic: close of closed channel` | A `sync.WaitGroup` waits for all senders, then **one** goroutine closes (interview question 4) |
+| The receiver stops early and the sender blocks forever | A goroutine leak that grows memory | Give the sender a way out: a `done` channel or a `context.Context` ([Select and Context](11-select-and-context.qmd)) |
+| Using a channel to guard a counter | Slow, convoluted code | A `sync.Mutex` or `atomic.Int64` is simpler for shared state ([Sync and the Memory Model](12-sync-and-the-memory-model.qmd)) |
+
+## Interview questions
+
+### 1. What happens when you receive from a closed channel?
+
+**Answer.** First you get every value still in the buffer, with `ok == true`. After that, every receive returns **immediately** with the element type's zero value and `ok == false`, and it never blocks. In `receiveAfterClose` the buffer holds 7, so the results are `7, true` and then `0, false`. A `range` loop stops at that point.
+
+### 2. What is the difference between `make(chan int)` and `make(chan int, 1)`?
+
+**Answer.** It is a difference in **synchronisation**, not only in storage. With capacity 0, the Level 2 rule says a send waits until $R(c) > 0$. When the send returns, the sender knows a receiver has taken the value. With capacity 1, the send completes into the free slot while nobody is receiving:
+
+```go
+func sendWithoutReceiver(capacity int) bool {
+	ch := make(chan int, capacity)
+	select {
+	case ch <- 1:
+		return true // the send completed although nobody was receiving
+	default:
+		return false // the send would have blocked
+	}
+}
+```
+
+`sendWithoutReceiver(0)` is `false` and `sendWithoutReceiver(1)` is `true`. In memory-model terms, only the unbuffered channel gives $r_k \prec s_k^{\checkmark}$ (the rule with $C = 0$), so only it tells the sender "the receiver has arrived".
+
+### 3. Why does this program crash?
+
+```go
+// sketch: deadlocks
+func main() {
+	ch := make(chan int)
+	ch <- 1
+	fmt.Println(<-ch)
+}
+```
+
+**Answer.** The send is on an unbuffered channel, so it waits for a receiver, as $R(c) = 0$. The only code that would receive is the next line of the **same** goroutine, which never runs. No goroutine can make progress, so the runtime stops the program with `fatal error: all goroutines are asleep - deadlock!`. To fix it, receive in another goroutine, or use `make(chan int, 1)` so the send fits in the buffer.
+
+### 4. Several goroutines send into one channel. Who closes it?
+
+**Answer.** None of the senders, because none of them knows it is the last. Instead, a `sync.WaitGroup` counts the senders, and one extra goroutine closes the channel after `Wait` returns:
+
+```go
+func merge(inputs ...<-chan int) <-chan int {
+	out := make(chan int)
+	var wg sync.WaitGroup
+	for _, in := range inputs {
+		wg.Go(func() {
+			for v := range in {
+				out <- v
+			}
+		})
+	}
+	go func() {
+		wg.Wait()
+		close(out) // the only closer: runs after every sender has finished
+	}()
+	return out
+}
+```
+
+`merge(produce(3), produce(4))` delivers all $3 + 4 = 7$ values exactly once, then closes. The order between the two inputs is not fixed, so the lab sorts before comparing with `1, 1, 2, 2, 3, 3, 4`. `wg.Go` (Go 1.25+) is `wg.Add(1)` plus `go` plus `defer wg.Done()` in one call. This is the "fan-in" pattern from Sameer Ajmani's *Go Concurrency Patterns: Pipelines and cancellation*.
+
+## Summary
+
+$$
+\operatorname{send}(c) \text{ waits} \iff \operatorname{len}(c) = \operatorname{cap}(c) \land R(c) = 0, \qquad s_k \prec r_k^{\checkmark}
+$$
+
+where $c$ is a channel, $\operatorname{len}$ and $\operatorname{cap}$ are its filled and total slots, $R(c)$ is the number of waiting receivers, $s_k$ and $r_k$ are the $k$-th send and receive, and $\prec$ is "happens before".
+
+Example: unbuffered, $0 = 0 \land R(c) = 0$, so the send waits for a receiver. Capacity 2 with one value queued, $1 = 2$ is false, so the send completes. Either way, whatever the sender wrote before $s_k$ is visible after $r_k$ completes.
+
+- `make(chan T)` is a handshake; `make(chan T, C)` is a FIFO queue with $C$ slots.
+- The **sender** closes, once. `range` and `v, ok := <-ch` detect the close after the buffer drains.
+- Direction types (`<-chan T`, `chan<- T`) let the compiler enforce who sends and who closes.
+- Send on closed, close of closed and close of nil **panic**; nil channels block forever.
+- A channel is both a **message pipe** and a **memory barrier**: use it to hand over ownership of data, and a mutex to guard shared state.
+
+## References
+
+- The Go Programming Language Specification: [Channel types](https://go.dev/ref/spec#Channel_types), [Send statements](https://go.dev/ref/spec#Send_statements), [Receive operator](https://go.dev/ref/spec#Receive_operator), [Close](https://go.dev/ref/spec#Close).
+- [The Go Memory Model](https://go.dev/ref/mem), section "Channel communication".
+- [Effective Go: Channels](https://go.dev/doc/effective_go#channels) and [Share Memory By Communicating](https://go.dev/blog/codelab-share) (Andrew Gerrand, 2010).
+- C. A. R. Hoare, [Communicating Sequential Processes](https://dl.acm.org/doi/10.1145/359576.359585), *Communications of the ACM* 21(8), 1978.
+- Rob Pike, [Go Proverbs](https://go-proverbs.github.io/) (Gopherfest 2015) and [Concurrency is not Parallelism](https://go.dev/blog/waza-talk) (2012).
+- Sameer Ajmani, [Go Concurrency Patterns: Pipelines and cancellation](https://go.dev/blog/pipelines) (2014).
+- The runtime source: [src/runtime/chan.go](https://github.com/golang/go/blob/master/src/runtime/chan.go).
+- Lab: [`labs/channels/main.go`](labs/channels/main.go). Run it from `programming-languages/go/labs` with `go run -race ./channels`.

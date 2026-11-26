@@ -1,0 +1,356 @@
+---
+title: "Errors, Defer and Panic"
+description: "Go errors as values: the error interface, sentinels, %w wrapping, errors.Is, errors.As and AsType, errors.Join, defer's LIFO order and argument rule, panic and recover, and how the runtime implements them."
+---
+
+## The problem
+
+A program reads its port from a settings map. Three things can go wrong: the `"port"` key is missing, the text `"80a0"` is not a number, or `70000` is outside the valid range 1–65535. The caller must find out **that** something failed, **which** failure it was, and **where** it happened, with context such as `load config: ...`. Files opened along the way must be closed whether the work succeeds or fails.
+
+Returning a magic value such as `-1` cannot say which of the three failures happened. Exceptions, as in Java or Python, can say which, but they jump invisibly through every caller. The Go FAQ explains why Go avoids them: *"coupling exceptions to a control structure, as in the try-catch-finally idiom, results in convoluted code."* Go's answer has three parts: **errors are ordinary return values**, **`defer`** schedules clean-up, and **`panic`** is kept for truly exceptional failures.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Notes, envelopes, plates and a fire alarm
+
+- **An error is a note in your lunch box**: *"Sorry, the shop had no bread."* It is an ordinary thing you can read, keep or pass on.
+- **Wrapping** puts the note in an envelope labelled *"From Mum:"*. Someone can still open the envelopes, one inside another, to find the original note. That is `errors.Is`.
+- **`defer`** is a stack of plates. Each `defer` puts a plate on top, and when the function ends the plates come off from the top: the **last one in is the first one out**.
+- **`panic`** is the fire alarm. Everyone stops and walks down the stairs, and **`recover`** is a fire marshal who can only stop the evacuation while standing at a deferred door.
+
+Rob Pike's blog post *Errors are values* (2015) puts the first idea in one line: *"Values can be programmed, and since errors are values, errors can be programmed."* Andrew Gerrand's *Defer, Panic, and Recover* (2010) gave the three rules of `defer` used in Level 4. One of Pike's Go proverbs is simply *"Don't panic."*
+:::
+
+## From simple to advanced
+
+### Level 1: an error is a value you return
+
+`error` is a predeclared interface with one method:
+
+```go
+// sketch: the predeclared interface, not lab code
+type error interface {
+	Error() string
+}
+```
+
+Any type with an `Error() string` method is an error. `errors.New` makes the simplest one. By convention a function returns the error **last**, and `nil` means success:
+
+```go
+var ErrMissing = errors.New("missing setting")
+
+func lookup(settings map[string]string, key string) (string, error) {
+	value, ok := settings[key]
+	if !ok {
+		return "", ErrMissing
+	}
+	return value, nil
+}
+```
+
+With `settings := map[string]string{"port": "8080"}`, `lookup(settings, "port")` returns `"8080", nil`, and `lookup(settings, "host")` returns `"", ErrMissing`, whose `Error()` is `"missing setting"`. The caller checks with `if err != nil`. `ErrMissing` is a **sentinel error**: one fixed value, exported so that callers can recognise it, like `io.EOF`.
+
+### Level 2: wrapping with `%w`, and `errors.Is`
+
+A bare `"missing setting"` does not say what was being loaded. `fmt.Errorf` with the `%w` verb (Go 1.13) adds context and keeps the original error inside:
+
+```go
+func parsePort(text string) (int, error) {
+	port, err := strconv.Atoi(text)
+	if err != nil {
+		return 0, fmt.Errorf("parse port %q: %w", text, err)
+	}
+	return port, nil
+}
+```
+
+`parsePort("8080")` is `8080, nil`. `parsePort("80a0")` fails with:
+
+```text
+parse port "80a0": strconv.Atoi: parsing "80a0": invalid syntax
+```
+
+That message is a **chain** of three errors. Each one's `Unwrap` method returns the next, and `errors.Is` walks the chain:
+
+$$
+e_{k+1} = \operatorname{unwrap}(e_k), \qquad
+\operatorname{Is}(e_0, t) \iff \exists k \ge 0 : e_k = t
+$$
+
+where
+
+- $e_0$ is the error you hold, and $e_1, e_2, \dots$ are the errors inside it, outermost first;
+- $\operatorname{unwrap}(e_k)$ is what $e_k$'s `Unwrap()` method returns; the chain ends at an error with no `Unwrap`;
+- $t$ is the target, usually a sentinel such as `strconv.ErrSyntax`;
+- $\exists k$ means "there is some position $k$"; the real `errors.Is` also accepts an error whose own `Is(t)` method returns `true`.
+
+Example, with `err := parsePort("80a0")` and $t$ = `strconv.ErrSyntax`:
+
+1. $k = 0$: $e_0$ is the `%w` wrapper, `parse port "80a0": ...`. Not $t$.
+2. $k = 1$: $e_1$ is the `*strconv.NumError` with `Func == "Atoi"`. Not $t$.
+3. $k = 2$: $e_2$ is `strconv.ErrSyntax`. Equal to $t$, so `errors.Is(err, strconv.ErrSyntax)` is `true`.
+
+Wrapping is why `==` stops working. With `wrapped := fmt.Errorf("load config: %w", ErrMissing)`, the text is `load config: missing setting`, and `wrapped == ErrMissing` is `false`, but `errors.Is(wrapped, ErrMissing)` is `true`. Writing `%v` instead of `%w` produces the **same text** but no chain, so `errors.Is` returns `false`. The lab checks all of this.
+
+### Level 3: typed errors, `errors.As` and `errors.AsType`
+
+A sentinel answers "which error?". When the caller also needs **data**, such as the bad port number, define an error type:
+
+```go
+type RangeError struct {
+	Port int
+}
+
+func (e *RangeError) Error() string {
+	return fmt.Sprintf("port %d is outside 1-65535", e.Port)
+}
+
+func checkPort(port int) error {
+	if port < 1 || port > 65535 {
+		return &RangeError{Port: port}
+	}
+	return nil
+}
+```
+
+To get the typed error back out of a chain, use `errors.AsType`, a generic function added in Go 1.26:
+
+```go
+err = fmt.Errorf("load config: %w", checkPort(70000))
+rangeErr, ok := errors.AsType[*RangeError](err)
+check(ok && rangeErr.Port == 70000, "errors.AsType extracts the typed error")
+var target *RangeError
+check(errors.As(err, &target) && target.Port == 70000, "errors.As is the older form")
+```
+
+`AsType` walks the same chain as `Is`, but it matches by **type** and returns the match. The older `errors.As` (Go 1.13) does the same through a pointer argument; the Go 1.26 documentation now recommends `AsType` for most uses because it is type-safe. The rule of thumb:
+
+- **Sentinel** (`ErrMissing`, `io.EOF`): the caller only needs to know which failure happened. Check with `errors.Is`.
+- **Typed error** (`*RangeError`, `*fs.PathError`): the caller needs details. Check with `errors.AsType`.
+- **Opaque error** (just `fmt.Errorf` text): the caller only logs it. Most errors are like this.
+
+### Level 4: `defer` runs clean-up when the function returns
+
+`defer f(x)` schedules the call `f(x)` to run when the surrounding function returns, whether it returns normally or by panicking. Andrew Gerrand's three rules:
+
+1. The **arguments** are evaluated when the `defer` statement runs, not later.
+2. Deferred calls run in **last in, first out** order.
+3. Deferred functions can read and change **named results**.
+
+```go
+func appendTo(log *[]int, v int) {
+	*log = append(*log, v)
+}
+
+func deferOrder(log *[]int) {
+	for i := 1; i <= 3; i++ {
+		defer appendTo(log, i)
+	}
+}
+```
+
+If a function defers $d_1, d_2, \dots, d_n$ in that order, they run as
+
+$$
+\operatorname{run}(d_1, d_2, \dots, d_n) = d_n, d_{n-1}, \dots, d_1
+$$
+
+where
+
+- $d_i$ is the $i$-th deferred call, with its arguments already evaluated (rule 1);
+- $n$ is the number of `defer` statements executed before the function returned;
+- the right-hand side is the order in which they actually run (rule 2).
+
+Example: `deferOrder` defers $d_1$ = `appendTo(log, 1)`, $d_2$ = `appendTo(log, 2)` and $d_3$ = `appendTo(log, 3)`, so $n = 3$ and they run as $d_3, d_2, d_1$. The log is `[3 2 1]`.
+
+Rule 1 and rule 3 in code:
+
+```go
+func deferArgs(log *[]int) {
+	x := 1
+	defer appendTo(log, x) // x is evaluated now, so 1 is saved
+	x = 2
+	appendTo(log, x)
+}
+
+func doubled() (n int) {
+	defer func() { n *= 2 }()
+	return 21 // sets n = 21; then the deferred call makes it 42
+}
+```
+
+`deferArgs` logs `[2 1]`: the direct call logs 2, then the deferred call logs the saved 1. `doubled()` returns 42, because `return 21` first assigns `n = 21` and the deferred closure runs after that, before the caller sees the result. The everyday use is `defer f.Close()` straight after a successful `os.Open`.
+
+### Level 5: `panic` and `recover`
+
+`panic(v)` stops the normal flow. The goroutine runs its deferred calls, then its caller's, and so on up the stack. If nothing recovers, the program crashes with `panic: ` plus `v` and a stack trace. Runtime errors such as dividing by zero or indexing out of range panic too. `recover()`, called inside a deferred function, stops the panic and returns `v`:
+
+```go
+func safeDivide(a, b int) (q int, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("recovered: %v", r)
+		}
+	}()
+	return a / b, nil
+}
+```
+
+`safeDivide(10, 2)` is `5, nil`. `safeDivide(1, 0)` is `0` and the error `recovered: runtime error: integer divide by zero`. `q` stays 0 because the `return` statement never finished. This is the usual pattern at a **boundary**. The `encoding/json` encoder panics with a private `jsonError` deep inside its recursion, and its top-level `marshal` method recovers it and returns an ordinary error. Any other panic value it re-panics, so real bugs still crash.
+
+`recover` only works when the deferred function calls it **directly**:
+
+```go
+func helper() any { return recover() }
+
+func recoverDepth() (direct, indirect any) {
+	defer func() { direct = recover() }()  // runs second: stops the panic
+	defer func() { indirect = helper() }() // runs first: one call too deep, gets nil
+	panic("boom")
+}
+```
+
+It returns `direct == "boom"` and `indirect == nil`. Since Go 1.21, `panic(nil)` becomes a `*runtime.PanicNilError` whose message is `runtime error: panic called with nil argument`, so a non-nil result from `recover` always means a panic happened.
+
+When should code panic? For **programmer errors and broken invariants**, such as an impossible `switch` case, and in `Must` helpers such as `regexp.MustCompile` that run during start-up with constant input. A failure that can happen in correct code, such as a missing file, bad user input or a network timeout, is an `error`.
+
+## How it works underneath
+
+**An error is an interface value**, so it is two machine words: a pointer to the dynamic type (and its method table) and a pointer to the data. An interface is `nil` only when **both** words are nil:
+
+$$
+\texttt{err} = \texttt{nil} \iff \operatorname{type}(\texttt{err}) = \texttt{nil} \land \operatorname{data}(\texttt{err}) = \texttt{nil}
+$$
+
+where
+
+- $\operatorname{type}(\texttt{err})$ is the dynamic-type word, such as `*RangeError`;
+- $\operatorname{data}(\texttt{err})$ is the data word, the pointer value itself;
+- $\land$ means "and".
+
+Example: `checkPortWrong(80)` returns a `*RangeError` variable that is still nil. The interface holds $\operatorname{type} = \texttt{*RangeError}$ and $\operatorname{data} = \texttt{nil}$. The first condition fails, so `checkPortWrong(80) != nil` is `true` even though "there is no error":
+
+```go
+func checkPortWrong(port int) error {
+	var rangeErr *RangeError
+	if port < 1 || port > 65535 {
+		rangeErr = &RangeError{Port: port}
+	}
+	return rangeErr // never nil: the interface holds the type *RangeError
+}
+```
+
+**`errors.Is` is a loop.** Trimmed from `src/errors/wrap.go`:
+
+```go
+// sketch: trimmed from errors/wrap.go
+func is(err, target error, targetComparable bool) bool {
+	for {
+		if targetComparable && err == target {
+			return true
+		}
+		if x, ok := err.(interface{ Is(error) bool }); ok && x.Is(target) {
+			return true
+		}
+		switch x := err.(type) {
+		case interface{ Unwrap() error }:
+			err = x.Unwrap() // one step down the chain
+		case interface{ Unwrap() []error }:
+			// errors.Join and multiple %w: search each branch, depth first
+		default:
+			return false
+		}
+	}
+}
+```
+
+**`defer` has two implementations.** Since Go 1.14 the compiler usually **open-codes** defers: it stores the deferred function and arguments in stack slots, sets a bit in a one-byte `deferBits` mask, and at every exit calls the functions whose bits are set. The release notes describe this as *"almost zero overhead compared to calling the deferred function directly."* The rules are in `cmd/compile` (`walk/stmt.go` and `ssagen/ssa.go`):
+
+$$
+\text{open-coded} \iff D \le 8 \;\land\; \text{no defer inside a loop} \;\land\; R \cdot D \le 15
+$$
+
+where
+
+- $D$ is the number of `defer` statements in the function; 8 is the number of bits in `deferBits`;
+- $R$ is the number of `return` statements, because the deferred calls are copied to every exit;
+- a defer inside a loop can run an unknown number of times, so it cannot have a fixed bit.
+
+Example: a function with $D = 1$ defer and $R = 3$ returns has $1 \le 8$ and $3 \cdot 1 = 3 \le 15$, so it is open-coded. One with $D = 4$ and $R = 4$ has $4 \cdot 4 = 16 > 15$, so it is not, and neither is `deferOrder`, whose defer is in a loop. Those fall back to `_defer` records: small structs linked into a list on the goroutine (`runtime/runtime2.go`) that `runtime.deferreturn` pops in LIFO order. Building with `-race`, as the lab does, also turns open-coding off.
+
+**`panic` and `recover`.** `runtime.gopanic` walks the goroutine's deferred calls and runs each one. `runtime.gorecover` returns the panic value only if it was called by the deferred function itself. The comment in `src/runtime/panic.go` states the test: *"there must be exactly one non-wrapper frame between gopanic and gorecover."* In `recoverDepth`, `func() { direct = recover() }` has one frame between them and recovers. `helper` called from a deferred closure has two frames, so it gets `nil`. `defer recover()` has none, so it never recovers. After a successful recover, the runtime resumes as if the deferring function had returned normally, with whatever values its named results hold.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Comparing a wrapped error with `==` | `err == ErrMissing` is `false` after `fmt.Errorf("...: %w", err)` | `errors.Is(err, ErrMissing)` |
+| Wrapping with `%v` instead of `%w` | Same text, but `errors.Is` and `errors.AsType` find nothing | Use `%w` when callers may inspect the cause |
+| Passing a pointer whose element type implements `error` to `%w` | `go vet` (Go 1.27): `%w wants operand of error type E, not pointer type *E (defeats errors.Is)` | Pass the error value itself |
+| Returning a typed nil pointer as `error` | `err != nil` although nothing failed | `return nil` explicitly on success |
+| `defer f.Close()` inside a loop over many files | Files stay open until the function returns: `too many open files` | Move the loop body into its own function |
+| Calling `recover` in a helper, not in the deferred function | The panic is not stopped | Call `recover()` directly in the deferred function |
+| A panic in a goroutine with no `recover` there | The whole program crashes, whatever `main` defers | Recover inside that goroutine, or return an error over a channel |
+| Ignoring an error with `v, _ := f()` | Wrong results later, far from the cause | Handle it, or wrap it and return it |
+
+## Interview questions
+
+### 1. What is the difference between `errors.Is` and `errors.AsType`?
+
+**Answer.** Both walk the same chain of `Unwrap` results, depth first. `errors.Is(err, target)` asks **"is this particular value somewhere in the chain?"** It compares with `==` (or the error's own `Is` method), which suits sentinels such as `ErrMissing` or `strconv.ErrSyntax`. `errors.AsType[E](err)` asks **"is there an error of type `E` in the chain?"** and returns it, which suits typed errors carrying data. In the lab, `errors.AsType[*strconv.NumError]` finds the middle link of the `"80a0"` chain with `Func == "Atoi"`, and `errors.AsType[*RangeError]` recovers `Port == 70000`. `errors.As(err, &target)` is the pre-1.26 form of `AsType`.
+
+### 2. Why does `checkPortWrong(80) != nil` report an error?
+
+**Answer.** An interface is nil only when both its type word and its data word are nil. `checkPortWrong` returns a variable of type `*RangeError` whose value is nil. Converting it to `error` stores the type `*RangeError` in the type word, so the interface is not nil. The FAQ entry *"Why is my nil error value not equal to nil?"* describes exactly this. The fix is to return the literal `nil` on success, and to declare results as `error`, not as a concrete pointer type.
+
+### 3. What do `deferArgs` and `doubled` return?
+
+**Answer.** `deferArgs` logs `[2 1]`: `defer appendTo(log, x)` evaluates `x` (1) immediately, the direct call logs 2 first, and the deferred call logs the saved 1 at return. `doubled` returns 42: `return 21` assigns the named result `n = 21`, then the deferred closure runs `n *= 2` before the caller sees `n`. Without a named result, a deferred call has no way to change what is returned. Named results are also how a deferred `Close` error is merged into a function's returned error.
+
+### 4. How do you report several errors at once?
+
+**Answer.** `errors.Join` (Go 1.20) combines errors into one whose `Unwrap() []error` returns them all. `nil` entries are dropped, and if every entry is nil the result is `nil`:
+
+```go
+func checkAll(ports []int) error {
+	var errs []error
+	for _, port := range ports {
+		errs = append(errs, checkPort(port))
+	}
+	return errors.Join(errs...)
+}
+```
+
+`checkAll([]int{80, 0, 70000})` returns an error whose text is the two messages joined by a newline: `port 0 is outside 1-65535` and `port 70000 is outside 1-65535`. `errors.AsType[*RangeError]` on it returns the first match, `Port == 0`. `checkAll([]int{80, 443})` returns `nil`. `fmt.Errorf` with several `%w` verbs builds the same kind of multi-error.
+
+### 5. When is `panic` appropriate, and can `main` recover a panic from another goroutine?
+
+**Answer.** Panic for bugs, meaning states correct code can never reach, and for start-up failures with constant input (`regexp.MustCompile`). A package may also panic internally to unwind deep recursion, as `encoding/json` does, provided it recovers at its API boundary and returns an `error`. Never use panic for expected failures. And no: a panic unwinds only **its own goroutine's** stack. If that goroutine does not recover, the runtime crashes the whole program, and deferred calls in `main` do not help. Every goroutine that might panic must recover itself.
+
+## Summary
+
+$$
+\operatorname{Is}(e_0, t) \iff \exists k : e_k = t, \qquad \operatorname{run}(d_1, \dots, d_n) = d_n, \dots, d_1
+$$
+
+where $e_0$ is an error, $e_{k+1}$ is what $e_k$ unwraps to, $t$ is the target, and $d_1, \dots, d_n$ are deferred calls in the order they were deferred.
+
+Example: `parsePort("80a0")` has the chain wrapper, then `*strconv.NumError`, then `strconv.ErrSyntax`, so $\operatorname{Is}$ finds $t$ at $k = 2$. `deferOrder` defers three calls that run as $d_3, d_2, d_1$, which logs `[3 2 1]`.
+
+- Return errors last, check `if err != nil`, and add context with `fmt.Errorf("...: %w", err)`.
+- Use `errors.Is` for sentinels and `errors.AsType` for typed errors. Never use `==` on wrapped errors.
+- An interface holding a nil pointer is not a nil error.
+- `defer` evaluates its arguments at once, runs last in first out, and can change named results.
+- `panic` is for bugs. `recover` works only directly inside a deferred call, and only in the panicking goroutine.
+
+## References
+
+- The Go Programming Language Specification: [Errors](https://go.dev/ref/spec#Errors), [Defer statements](https://go.dev/ref/spec#Defer_statements), [Handling panics](https://go.dev/ref/spec#Handling_panics), [Run-time panics](https://go.dev/ref/spec#Run_time_panics).
+- Package documentation: [errors](https://pkg.go.dev/errors) (`Is`, `As`, `AsType`, `Join`) and [fmt.Errorf](https://pkg.go.dev/fmt#Errorf).
+- Release notes: [Go 1.13](https://go.dev/doc/go1.13#error_wrapping) (wrapping), [Go 1.14](https://go.dev/doc/go1.14) (cheap defers), [Go 1.20](https://go.dev/doc/go1.20) (`errors.Join`), [Go 1.21](https://go.dev/doc/go1.21) (`PanicNilError`), [Go 1.26](https://go.dev/doc/go1.26) (`errors.AsType`), [Go 1.27](https://go.dev/doc/go1.27) (the new `%w` vet check).
+- Go FAQ: [Why does Go not have exceptions?](https://go.dev/doc/faq#exceptions) and [Why is my nil error value not equal to nil?](https://go.dev/doc/faq#nil_error).
+- Rob Pike, [Errors are values](https://go.dev/blog/errors-are-values) (2015) and [Go Proverbs](https://go-proverbs.github.io/) (Gopherfest 2015).
+- Andrew Gerrand, [Defer, Panic, and Recover](https://go.dev/blog/defer-panic-and-recover) (2010); Damien Neil and Jonathan Amsterdam, [Working with Errors in Go 1.13](https://go.dev/blog/go1.13-errors) (2019).
+- Source: [src/errors/wrap.go](https://github.com/golang/go/blob/master/src/errors/wrap.go), [src/runtime/panic.go](https://github.com/golang/go/blob/master/src/runtime/panic.go), [cmd/compile/internal/walk/walk.go](https://github.com/golang/go/blob/master/src/cmd/compile/internal/walk/walk.go) (`maxOpenDefers`) and [cmd/compile/internal/ssagen/ssa.go](https://github.com/golang/go/blob/master/src/cmd/compile/internal/ssagen/ssa.go).
+- Lab: [`labs/errors-defer-and-panic/main.go`](labs/errors-defer-and-panic/main.go). Run it from `programming-languages/go/labs` with `go run -race ./errors-defer-and-panic`.

@@ -1,0 +1,418 @@
+---
+title: "Sync and the Memory Model"
+description: "Data races and the race detector, sync.Mutex and RWMutex, WaitGroup, Once and OnceValue, typed atomics, sync.Map and sync.Cond, and the Go memory model: happens-before, DRF-SC, and why double-checked locking without synchronisation is wrong."
+---
+
+## The problem
+
+Eight goroutines each count 1000 page views into one shared `count` variable. The answer must be $8 \times 1000 = 8000$. With a plain `count++`, it usually is not: the total comes out short, and it changes from run to run.
+
+`count++` looks like one step but is three: **read** `count`, **add** 1, **write** it back. Two goroutines can both read 41, both write 42, and one view is lost. Worse, the [Go memory model](https://go.dev/ref/mem) does not even promise that one goroutine ever *sees* another's write unless something orders them. [Channels](10-channels.qmd) are one way to order goroutines. This chapter covers the other: the `sync` and `sync/atomic` packages, and the rules that say what a goroutine is guaranteed to see.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## One key, one notebook
+
+- **Data race:** two children write in the **same notebook** at the same moment. One rubs out the other's number, and a third child reading over their shoulders may see half a word.
+- **`sync.Mutex`:** the notebook sits in a room with **one key**. Whoever holds the key goes in, writes, comes out and hands the key on. Everyone else queues.
+- **`sync.RWMutex`:** a museum painting. **Many visitors can look at once**, but the restorer needs the room **empty** before touching it.
+- **`sync.Once`:** the first child into the classroom **switches on the lights**; everyone after finds them already on, and nobody switches them twice.
+- **Atomic:** a clicker counter. Pressing it is one indivisible click; two thumbs cannot half-press it.
+- **Memory model:** if you write in the notebook and **then hand over the key**, the next holder is guaranteed to see what you wrote. If they just glance through the window, nothing is guaranteed.
+
+The Go memory model's own advice is short: *"If you must read the rest of this document to understand the behavior of your program, you are being too clever. Don't be clever."*
+:::
+
+## From simple to advanced
+
+### Level 1: what a data race is, and the race detector
+
+The memory model defines it: *"A data race is defined as a write to a memory location happening concurrently with another read or write to that same location, unless all the accesses involved are atomic data accesses as provided by the sync/atomic package."* Written with "happens before", $\prec$, from [Channels](10-channels.qmd):
+
+$$
+\operatorname{race}(a, b) \iff \operatorname{loc}(a) = \operatorname{loc}(b) \;\land\; (a \text{ or } b \text{ writes}) \;\land\; \lnot(a \prec b) \;\land\; \lnot(b \prec a)
+$$
+
+where
+
+- $a$ and $b$ are two memory accesses in different goroutines, and at least one of them is not atomic;
+- $\operatorname{loc}(a)$ is the variable or memory location that $a$ touches;
+- $a \prec b$ means "$a$ happens before $b$": some synchronisation (a channel, a lock, an atomic) orders them;
+- $\lnot$ means "not", so the last two terms say "nothing orders them".
+
+Example: two goroutines each run `count++`. Both touch `count`, both write, and nothing orders them, so all four terms are true and it is a race. Replay the bad interleaving step by step:
+
+```go
+func lostUpdate() int {
+	count := 0
+	r1 := count    // goroutine 1 reads 0
+	r2 := count    // goroutine 2 reads 0
+	count = r1 + 1 // goroutine 1 writes 1
+	count = r2 + 1 // goroutine 2 writes 1: goroutine 1's increment is lost
+	return count
+}
+```
+
+It returns 1, not 2. With $N$ increments and $L$ lost ones the total is $N - L$, and $L$ depends on timing, which is why the number changes between runs.
+
+`go run -race` (or `go test -race`) finds races while the program runs. It is built on the ThreadSanitizer library from C and C++. On this program:
+
+```go
+// sketch: a data race; the lab cannot contain one, because -race stops it
+func main() {
+	count := 0
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			count++ // two goroutines, no lock
+		})
+	}
+	wg.Wait()
+	fmt.Println(count)
+}
+```
+
+it reports, trimmed:
+
+```text
+==================
+WARNING: DATA RACE
+Read at 0x00c000012188 by goroutine 7:
+  main.main.func1()
+      .../race/main.go:13 +0x2c
+
+Previous write at 0x00c000012188 by goroutine 8:
+  main.main.func1()
+      .../race/main.go:13 +0x3c
+==================
+2
+Found 1 data race(s)
+exit status 66
+```
+
+Notice the program printed the "right" answer, 2, this time, and still has a bug. The detector reports races that **happen** during the run, not ones on code paths that never execute, and costs roughly 2–20 times the run time and 5–10 times the memory, so use it in tests and CI. The lab for this chapter runs under `-race` and reports nothing.
+
+### Level 2: Mutex and RWMutex
+
+A `sync.Mutex` lets one goroutine at a time run the code between `Lock` and `Unlock`, the **critical section**. The read, add and write of `n++` then happen as one step:
+
+```go
+type Counter struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c *Counter) Inc() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.n++
+}
+
+func countWithMutex(goroutines, each int) int {
+	var c Counter
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Go(func() {
+			for range each {
+				c.Inc()
+			}
+		})
+	}
+	wg.Wait() // every Inc happens before Wait returns
+	return c.n
+}
+```
+
+`countWithMutex(8, 1000)` returns 8000, every time. Put the mutex **next to the data it guards**, in the same struct, and keep critical sections short. `defer c.mu.Unlock()` guarantees the unlock even if the code panics.
+
+A `sync.RWMutex` adds a shared **read** lock. Any number of readers may hold `RLock` together; `Lock` waits until there are none:
+
+```go
+func readersShare() (secondReader, writer bool) {
+	var mu sync.RWMutex
+	mu.RLock()
+	secondReader = mu.TryRLock() // true: readers share the lock
+	writer = mu.TryLock()        // false: a writer needs every reader gone
+	mu.RUnlock()
+	if secondReader {
+		mu.RUnlock()
+	}
+	return secondReader, writer
+}
+```
+
+It returns `true, false`. An `RWMutex` pays off only when reads greatly outnumber writes and the critical section is long enough to matter; for a map lookup a plain `Mutex` is often just as fast. Neither lock is **reentrant**: calling `Lock` twice in the same goroutine deadlocks.
+
+### Level 3: WaitGroup and Once
+
+`sync.WaitGroup` waits for a group of goroutines. `wg.Go(f)` (Go 1.25) starts `f` and counts it; `wg.Wait()` returns when every `f` has returned. Its documentation gives the ordering: *"the return from f "synchronizes before" the return of any Wait call that it unblocks"*. That is why `countWithMutex` can read `c.n` after `Wait` without the lock.
+
+`sync.Once` runs a function exactly once. `sync.OnceValue` (Go 1.21) wraps the common case, "compute a value lazily, the first time anyone asks":
+
+```go
+func loadConfigOnce(callers int) (loads int32, region string) {
+	var calls atomic.Int32
+	config := sync.OnceValue(func() map[string]string {
+		calls.Add(1)
+		return map[string]string{"region": "eu-west"}
+	})
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Go(func() { _ = config()["region"] })
+	}
+	wg.Wait()
+	return calls.Load(), config()["region"]
+}
+```
+
+`loadConfigOnce(10)` returns `1, "eu-west"`: ten callers, one load. The memory model rule is:
+
+$$
+\operatorname{ret}\bigl(f()\bigr) \prec \operatorname{ret}\bigl(\texttt{once.Do}(f)\bigr) \qquad \text{for every call of } \texttt{once.Do}(f)
+$$
+
+where
+
+- $f$ is the function passed to `Do` (or to `OnceValue`);
+- $\operatorname{ret}(f())$ is the moment the single real call of $f$ finishes;
+- $\operatorname{ret}(\texttt{once.Do}(f))$ is the moment any caller's `Do` returns, including callers that never ran $f$ themselves.
+
+Example: in `loadConfigOnce(10)`, one of the 10 goroutines runs the loader and the other 9 wait inside `config()`. All 10 return only after the map is fully built, so all 10 see `"eu-west"` and none sees a half-made map. `sync.OnceFunc` and `sync.OnceValues` are the variants for no result and for a `(value, error)` pair. If `f` panics, the returned function *"will panic with the same value on every call"*; the lab checks that both the first and the second call of a panicking `OnceFunc` panic with `config missing`.
+
+### Level 4: typed atomics
+
+`sync/atomic` performs single-word operations that the hardware makes indivisible. Since Go 1.19 there are typed wrappers, `atomic.Int32`, `atomic.Int64`, `atomic.Bool`, `atomic.Pointer[T]` and others, which make it impossible to touch the value non-atomically by accident:
+
+```go
+func countWithAtomic(goroutines, each int) int64 {
+	var n atomic.Int64
+	var wg sync.WaitGroup
+	for range goroutines {
+		wg.Go(func() {
+			for range each {
+				n.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	return n.Load()
+}
+```
+
+`countWithAtomic(8, 1000)` returns 8000. For updates that are not a plain add, use **compare-and-swap** in a loop: read the old value, compute the new one, and store it only if nobody changed it meanwhile.
+
+```go
+func storeMax(m *atomic.Int64, v int64) {
+	for {
+		old := m.Load()
+		if v <= old || m.CompareAndSwap(old, v) {
+			return // already large enough, or we won the race to replace old
+		}
+	}
+}
+```
+
+100 goroutines calling `storeMax` with $1, 2, \dots, 100$ leave 100. An `atomic.Pointer` also **publishes** a whole structure safely: fill in every field, then store the pointer.
+
+```go
+func publishConfig(region string, workers int) {
+	c := &Config{Region: region, Workers: workers} // fill in every field first
+	current.Store(c)                               // then publish the pointer
+}
+```
+
+A goroutine that loads the pointer sees `{eu-west 4}`, both fields, because *"If the effect of an atomic operation A is observed by atomic operation B, then A is synchronized before B."* Atomics are the right tool for counters, flags and pointer swaps. When two variables must change together, an atomic per variable is not enough: use a mutex.
+
+### Level 5: sync.Map and sync.Cond
+
+`sync.Map` is a concurrent map, but its documentation says *"Most code should use a plain Go map instead, with separate locking"*. It is optimised for two cases: keys written once and read many times (a cache that only grows), and goroutines working on **disjoint** sets of keys. `LoadOrStore` lets exactly one writer win:
+
+```go
+func firstWriterWins() (any, bool) {
+	var leaders sync.Map
+	leaders.LoadOrStore("shard-1", "alice")
+	return leaders.LoadOrStore("shard-1", "bob") // "alice", true: already there
+}
+```
+
+It returns `"alice", true`. The values are `any`, so you lose type safety; that is the price.
+
+`sync.Cond` lets goroutines sleep until a condition on mutex-guarded state becomes true. `Wait` unlocks the mutex while asleep and locks it again before returning, so the condition must be re-checked in a loop:
+
+```go
+func (m *Mailbox) Take() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for len(m.letters) == 0 { // a loop, not an if: re-check after waking
+		m.arrived.Wait() // unlocks mu while asleep, relocks before returning
+	}
+	letter := m.letters[0]
+	m.letters = m.letters[1:]
+	return letter
+}
+```
+
+`Put` appends under the lock and calls `Signal`. A goroutine blocked in `Take` wakes and returns `"postcard"`. Bryan Mills' GopherCon 2018 talk *Rethinking Classical Concurrency Patterns* shows how to replace most condition variables with channels, which also work in `select` and with `context` cancellation. Reach for `Cond` rarely.
+
+## How it works underneath
+
+**The memory model.** Go's [memory model](https://go.dev/ref/mem) was revised in 2022 for Go 1.19, following Russ Cox's three essays on hardware, programming-language and Go memory models. It defines **happens before** as the transitive closure of "sequenced before" (program order inside one goroutine) and "synchronized before" (edges created by synchronising operations). The edge for locks is:
+
+$$
+\operatorname{Unlock}_n(l) \prec \operatorname{Lock}_m(l)^{\checkmark} \qquad \text{for every mutex } l \text{ and } n < m
+$$
+
+where
+
+- $l$ is a `sync.Mutex` or `sync.RWMutex`;
+- $\operatorname{Unlock}_n(l)$ is the $n$-th call of `l.Unlock()`;
+- $\operatorname{Lock}_m(l)^{\checkmark}$ is the return of the $m$-th call of `l.Lock()`;
+- $\prec$ is "happens before", and it chains.
+
+Example, the lab's `publishWithMutex`:
+
+```go
+func publishWithMutex() string {
+	var mu sync.Mutex
+	var message string
+	mu.Lock()
+	go func() {
+		message = "hello" // (1) write
+		mu.Unlock()       // (2) unlock number 1
+	}()
+	mu.Lock() // (3) lock number 2 returns only after (2)
+	defer mu.Unlock()
+	return message // (4) guaranteed to see "hello"
+}
+```
+
+With $n = 1$ and $m = 2$: (1) is sequenced before (2), the rule gives (2) $\prec$ (3), and (3) is sequenced before (4). Chaining, (1) $\prec$ (4), so the read must return `"hello"`.
+
+**DRF-SC.** The model's central promise is: *"In the absence of data races, Go programs behave as if all the goroutines were multiplexed onto a single processor."* As a formula:
+
+$$
+\lnot\exists\, a, b : \operatorname{race}(a, b) \;\implies\; \text{every outcome} = \text{some interleaving of the goroutines' steps}
+$$
+
+where
+
+- $\exists$ means "there exist", so the left side reads "there is no pair of accesses that race";
+- $\operatorname{race}(a, b)$ is the Level 1 definition;
+- an **interleaving** is one sequential order of all goroutines' operations, each goroutine's in its own program order. Leslie Lamport (1979) called this **sequential consistency**.
+
+Example: `publishWithMutex` has no race, so its outcome is one of its interleavings, and every interleaving the lock permits runs (1) before (4). `lostUpdate`'s real two-goroutine version **does** race, so DRF-SC promises nothing for it. Go still limits the damage: unlike C and C++, where a race is undefined behaviour, a Go read of a single word must see some value actually written to it. Races on multi-word values such as interfaces, slices, strings and maps can corrupt memory.
+
+**Why the hardware needs this.** Russ Cox's *Hardware Memory Models* uses the "message passing" litmus test. Thread 1 writes `x = 1` then `y = 1`; thread 2 reads `y` then `x`. Can it see `y == 1` and `x == 0`? *"On sequentially consistent hardware: no. On x86 (or other TSO): no. On ARM/POWER: yes!"* Compilers reorder too. Apple silicon and most phones are ARM, so this is not theory.
+
+**Double-checked locking is broken without synchronisation.** The memory model shows this incorrect version:
+
+```go
+// sketch: from the Go memory model, "Incorrect synchronization"; racy
+var a string
+var done bool
+
+func setup() {
+	a = "hello, world"
+	done = true
+}
+
+func doprint() {
+	if !done {
+		once.Do(setup)
+	}
+	print(a)
+}
+```
+
+The plain read of `done` races with the write in `setup`, so nothing orders `a = "hello, world"` before `print(a)`. *"There is no guarantee that, in doprint, observing the write to done implies observing the write to a."* It can print an empty string. `sync.Once` itself is double-checked locking done **correctly**: its fast path is an **atomic** load of a `done` flag, and its slow path takes a mutex, runs `f`, and only then atomically stores `done = true`. A comment in [`sync/once.go`](https://github.com/golang/go/blob/master/src/sync/once.go) explains why a single compare-and-swap is not enough: a second caller would return *"without waiting for the first's call to f to complete"*.
+
+**The mutex itself.** `sync.Mutex` is two 32-bit words, `state` and `sema`. `Lock` first tries one compare-and-swap from 0 to "locked". If that fails it spins briefly, then sleeps on a runtime semaphore. In **normal mode** a woken waiter competes with newly arriving goroutines, which usually win because they are already running. If a waiter has waited more than 1 ms, the mutex switches to **starvation mode** and hands ownership directly to the waiter at the front of the queue.
+
+**Copying a lock breaks it.** A mutex's state lives in its bytes, so a copy is a second, unrelated lock. `sync.Mutex` and `sync.WaitGroup` contain a `noCopy` marker that `go vet`'s `copylocks` check looks for:
+
+```go
+// sketch: go vet rejects this
+type Counter struct {
+	mu sync.Mutex
+	n  int
+}
+
+func (c Counter) Inc() { // value receiver: works on a copy
+	c.mu.Lock()
+	c.n++
+	c.mu.Unlock()
+}
+```
+
+```text
+copylock/main.go:13:9: Inc passes lock by value: exp/copylock.Counter contains sync.Mutex
+```
+
+The fix is a pointer receiver, `func (c *Counter) Inc()`, as in Level 2.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `count++` from several goroutines | Wrong totals; `WARNING: DATA RACE` under `-race` | A mutex or `atomic.Int64` |
+| Writing a map from several goroutines | `fatal error: concurrent map writes` | Guard the map with a mutex, or use `sync.Map` for its two cases |
+| A value receiver or a struct copy holding a mutex | `go vet`: `passes lock by value: ... contains sync.Mutex` | Pointer receivers; never copy after first use |
+| `Unlock` without a matching `Lock` | `fatal error: sync: unlock of unlocked mutex` | Pair every `Lock` with `defer Unlock()` |
+| `Lock` twice in one goroutine | `fatal error: all goroutines are asleep - deadlock!` (`[sync.Mutex.Lock]`) | Go mutexes are not reentrant: split into a locked and an unlocked helper |
+| `wg.Add(1)` inside the new goroutine | `go vet`: `WaitGroup.Add called from inside new goroutine`; `Wait` may return too early | `wg.Go(f)`, or `Add` before the `go` statement |
+| More `Done` calls than `Add` | `panic: sync: negative WaitGroup counter` | Use `wg.Go`, which pairs them for you |
+| A plain `bool` flag as a "ready" signal | Racy; the reader may never see it, or see it before the data | `atomic.Bool`, a channel, or `sync.Once` |
+| Mixing atomic and plain access to one variable | A data race on the plain access | Typed atomics (`atomic.Int64`) make plain access impossible |
+
+## Interview questions
+
+### 1. What is the difference between a data race and a race condition?
+
+**Answer.** A **data race** is a precise memory-model term: two unordered accesses to one location, at least one a write, at least one non-atomic. The race detector finds those. A **race condition** is any bug where the result depends on timing. A program can have one without the other. For example, `if balance.Load() >= 10 { balance.Add(-10) }` with an `atomic.Int64` has no data race, but two goroutines can both pass the check and overdraw. The fix is to make check-and-update one step, with a mutex or a compare-and-swap loop like `storeMax`.
+
+### 2. Is double-checked locking safe in Go?
+
+**Answer.** Only if the first check is a synchronising read. With a plain `bool`, as in the memory model's `doprint` example, the read of `done` races with the write, and seeing `done == true` does not imply seeing the data written before it. On ARM it can print an empty string. Use `sync.Once`, `sync.OnceValue` or an `atomic.Pointer`. `sync.Once` is the correct version of the pattern: an atomic load on the fast path, a mutex on the slow path, and `done` stored atomically only after `f` returns.
+
+### 3. When do you use a mutex, and when a channel?
+
+**Answer.** The Go wiki page [Use a sync.Mutex or a channel?](https://go.dev/wiki/MutexOrChannel) says *"Use whichever is most expressive and/or most simple"*, and as a guide: a **channel** for passing ownership of data, distributing units of work and communicating async results; a **mutex** for caches and state. `Counter` is state that many goroutines touch in place, so it gets a mutex. A pipeline that hands each value to the next stage gets channels ([Concurrency Patterns](13-concurrency-patterns.qmd)). Both create happens-before edges, so both are correct. The question is which makes the code simpler.
+
+### 4. Why must a `sync.Mutex` not be copied?
+
+**Answer.** A mutex is just its bytes: `state`, with the locked bit and waiter count, and `sema`. Copying a locked mutex produces a second mutex that is **already locked** and that no one will unlock, while the copies guard nothing in common. `go vet`'s `copylocks` check flags value receivers, assignments and arguments that copy a `sync.Mutex`, `RWMutex`, `WaitGroup`, `Once`, `Cond` or any struct containing one. The fix is to pass pointers.
+
+### 5. Is `sync.Map` faster than a map with a mutex?
+
+**Answer.** Only in its two target cases: keys written once and then mostly read, or goroutines using disjoint keys. Go 1.24 reimplemented it as a concurrent hash-trie, so that *"modifications of disjoint sets of keys are much less likely to contend on larger maps"*. In general, a plain `map[K]V` plus a `Mutex` keeps type safety and lets you keep other invariants under the same lock, as the package documentation recommends. Measure before switching.
+
+## Summary
+
+$$
+\operatorname{Unlock}_n(l) \prec \operatorname{Lock}_m(l)^{\checkmark} \;(n < m), \qquad \lnot\exists\, \operatorname{race} \implies \text{sequentially consistent}
+$$
+
+where $l$ is a mutex, $n$ and $m$ number its unlock and lock calls, $\prec$ is "happens before", and a race is two unordered accesses to one location with at least one write.
+
+Example: in `publishWithMutex`, unlock number 1 happens before lock number 2 returns, so the write of `"hello"` is visible. The program has no race, so it behaves like some interleaving, and `countWithMutex(8, 1000)` is always 8000.
+
+- Shared state needs synchronisation: a channel, a mutex, a `WaitGroup`, a `Once`, or an atomic.
+- Run tests with `-race`; it finds the races your tests execute.
+- `Mutex` for state, `RWMutex` only for read-heavy long sections, `OnceValue` for lazy initialisation, typed atomics for single words.
+- `sync.Map` and `sync.Cond` are specialised; prefer a plain map with a mutex, and channels.
+- Never copy a lock after first use; `go vet` checks it.
+- Double-checked locking needs an atomic first check; `sync.Once` already does it right.
+
+## References
+
+- [The Go Memory Model](https://go.dev/ref/mem) (version of June 6, 2022).
+- Package documentation: [sync](https://pkg.go.dev/sync) and [sync/atomic](https://pkg.go.dev/sync/atomic).
+- [Data Race Detector](https://go.dev/doc/articles/race_detector) and Dmitry Vyukov and Andrew Gerrand, [Introducing the Go Race Detector](https://go.dev/blog/race-detector) (2013).
+- Release notes: [Go 1.19](https://go.dev/doc/go1.19) (revised memory model, typed atomics), [Go 1.21](https://go.dev/doc/go1.21) (`OnceFunc`, `OnceValue`, `OnceValues`), [Go 1.24](https://go.dev/doc/go1.24) (new `sync.Map`), [Go 1.25](https://go.dev/doc/go1.25) (`WaitGroup.Go`, the `waitgroup` vet check).
+- Russ Cox, *Memory Models* series (2021): [Hardware Memory Models](https://research.swtch.com/hwmm), [Programming Language Memory Models](https://research.swtch.com/plmm), [Updating the Go Memory Model](https://research.swtch.com/gomm).
+- Leslie Lamport, [How to Make a Multiprocessor Computer That Correctly Executes Multiprocess Programs](https://doi.org/10.1109/TC.1979.1675439), *IEEE Transactions on Computers* C-28(9), 1979.
+- Hans-J. Boehm and Sarita V. Adve, [Foundations of the C++ Concurrency Memory Model](https://doi.org/10.1145/1375581.1375591), PLDI 2008.
+- Bryan C. Mills, *Rethinking Classical Concurrency Patterns*, GopherCon 2018 ([video](https://www.youtube.com/watch?v=5zXAHh5tJqQ), [slides](https://drive.google.com/file/d/1nPdvhB0PutEJzdCq5ms6UI58dp50fcAN/view)).
+- The source: [src/sync/once.go](https://github.com/golang/go/blob/master/src/sync/once.go) and [src/internal/sync/mutex.go](https://github.com/golang/go/blob/master/src/internal/sync/mutex.go).
+- Lab: [`labs/sync-and-the-memory-model/main.go`](labs/sync-and-the-memory-model/main.go). Run it from `programming-languages/go/labs` with `go run -race ./sync-and-the-memory-model`.

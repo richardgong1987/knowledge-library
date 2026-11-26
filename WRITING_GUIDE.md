@@ -112,6 +112,44 @@ Sections, in this order and with these exact headings:
 
 **A page consisting of generic definitions, one unexplained formula, a prompt to study, or no actual worked example is not a complete lesson.**
 
+### Standard for Programming Languages chapters
+
+Applies to Go, Python, JavaScript, TypeScript, C# and Prolog (Java and Rust keep their own structure). The model chapter is [`programming-languages/go/10-channels.qmd`](programming-languages/go/10-channels.qmd). `programming-languages/check-languages.test.mjs` holds the chapter list, enforces this standard and runs every lab; `ONLY=go/10-channels` narrows it to some chapters.
+
+**Each language is a folder.** `programming-languages/<language>/index.qmd` introduces the language and links every chapter; chapters are `NN-<slug>.qmd`; labs live in `<language>/labs/`.
+
+**Teach the language's core concepts, like a patient teacher of a ten-year-old, then go all the way to interview level.** A chapter is about what the language guarantees and how it works underneath, not a syntax tour.
+
+Sections, in this order and with these exact headings:
+
+1. `## The problem`: a concrete problem with real values that this concept solves, and what goes wrong without it.
+2. `## Explain it like I'm ten`: a `::: {.callout-tip}` analogy. Cite the language's designers and well-known teachers where they fit, and verify every attribution and quote.
+3. `## From simple to advanced`: `### Level 1`, `### Level 2`, at least three levels. Each level adds one idea: the idea, its math where it fits with numbers, then short code from the lab and its result.
+4. `## How it works underneath`: the runtime or compiler mechanism (data structures, the scheduler, the event loop, the type checker's rule), checked against the official source.
+5. `## Common mistakes`: a table of mistake, symptom (the exact error message where there is one) and fix.
+6. `## Interview questions`: at least three `### N. <question>` entries, each with an **Answer.** that is precise and, where useful, backed by lab code.
+7. `## Summary`: the core idea in one display formula, then a short bullet list of rules.
+8. `## References`: official documentation and specifications first, then the books, talks and articles used, with working links.
+
+**Math.** Every chapter states its core idea in at least one display formula. After every display formula, within a few lines, write a list starting "where" that defines each symbol in plain words, then an "Example" that substitutes the chapter's own values step by step. Use only what both KaTeX and MathJax render.
+
+**Code.**
+
+- **One lab per chapter**, which checks every result the chapter quotes and prints `OK` last.
+
+  | Language | Lab | Run, from `labs/` |
+  |---|---|---|
+  | Go 1.27 | `<slug>/main.go` (one module, `labs/go.mod`) | `go run -race ./<slug>`, plus `go vet ./...` |
+  | Python 3.14 | `<slug>.py` | `python3 -I <slug>.py` |
+  | JavaScript (Node 26) | `<slug>.mjs` | `node <slug>.mjs` |
+  | TypeScript 7 | `<slug>.ts` | `npx tsc -p .` (strict, erasable syntax only), then `node <slug>.ts` |
+  | C# 14 (.NET 10) | `<slug>.cs` | `dotnet run --no-cache <slug>.cs` (`labs/Directory.Build.props` turns off Native AOT) |
+  | SWI-Prolog | `<slug>.pl` | `swipl -q -g main -t halt <slug>.pl` |
+
+- **Lesson code comes from the lab.** Every code block tagged with the language (`go`, `python`, `js`, `ts`, `csharp`, `prolog`) must be an exact excerpt of the chapter's lab, compared line by line after trimming. A block whose first line is a `sketch` comment (`// sketch`, `# sketch`, `% sketch`) is exempt; use it only for code that cannot run in the lab, such as a compile error, a deadlock, or trimmed runtime source. Program output and REPL or Prolog query transcripts go in `text` blocks; commands go in `bash` blocks.
+- **Prove compile-time claims.** TypeScript labs use `// @ts-expect-error` for every type error the chapter shows, so `tsc` fails if the error ever disappears.
+- **No warnings.** A lab that prints a compiler or runtime warning fails.
+- **Short and plain.** One idea per block, usually 5–20 lines, the plainest correct version. Never pile code up.
 
 ## Finance lessons — beginner clarity without sacrificing rigour
 

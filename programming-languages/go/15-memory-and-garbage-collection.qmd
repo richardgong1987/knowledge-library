@@ -1,0 +1,330 @@
+---
+title: "Memory and Garbage Collection"
+description: "Stack and heap, escape analysis with -gcflags=-m, the concurrent tri-colour mark-and-sweep collector and its write barrier, the GOGC heap-target formula, GOMEMLIMIT, the Green Tea collector, sync.Pool, testing.AllocsPerRun, runtime.AddCleanup and weak pointers."
+---
+
+## The problem
+
+A web server handles 10,000 requests per second, and each request builds a 1 KiB response buffer. That is about 10 MB of new memory every second. Someone has to give it back.
+
+In C, you call `free` yourself. Forget it and memory leaks; call it too early and another part of the program reads memory that now belongs to someone else, a **use-after-free** bug. Go removes both mistakes: you never free anything, and a **garbage collector** (GC) finds memory nothing can reach any more and reuses it.
+
+That is not free either. The collector spends CPU, and the heap must be larger than the live data so the program has room to allocate while the GC works. This chapter answers the questions a Go programmer actually faces:
+
+- Which values cost a heap allocation at all, and how do I check?
+- How does the collector run **while** my goroutines keep changing pointers?
+- What do `GOGC` and `GOMEMLIMIT` trade, in numbers?
+- When do `sync.Pool`, weak pointers and cleanups help?
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Your desk, the office fridge and the cleaner
+
+- **Stack:** the papers on **your own desk** while you do one task. When the task ends, you sweep the whole desk clear at once. Nothing to track.
+- **Heap:** the **shared office fridge**. Food put there may be wanted later by someone else, so nobody can just throw it out when they leave.
+- **Garbage collector:** a **cleaner** who starts from the name list on the door (the roots) and follows every note saying "my lunch is on shelf 3". Anything no note leads to is thrown away.
+- **Three colours:** the cleaner uses stickers. **White**: not looked at yet. **Grey**: found, but its own notes not yet followed. **Black**: found and fully checked.
+- **Write barrier:** while the cleaner works, anyone who moves a note must put a **grey sticker** on what it points to, so the cleaner cannot miss it.
+- **`GOGC`:** how full the fridge may get before the cleaner comes. `GOGC=100` means "when the new food equals what was left after the last cleaning".
+- **`sync.Pool`:** a box of spare lunchboxes anyone may borrow; the cleaner may empty it at any time.
+
+Rick Hudson, who led the work on Go's low-latency collector, explained why Go needs less from its GC than other managed languages: *"It isn't that the generational hypothesis isn't true for Go, it's just that the young objects live and die young on the stack."*
+:::
+
+## From simple to advanced
+
+### Level 1: stack or heap, decided by escape analysis
+
+Every goroutine has its own **stack**. A function's local variables live in its stack frame, which disappears when the function returns: no GC work at all. A value goes to the **heap** only when the compiler cannot prove that it dies with the frame. The compiler's **escape analysis** makes that decision, not the syntax: `new` and `&` do not force the heap.
+
+```go
+//go:noinline
+func sumPoint(x, y int) int {
+	p := &point{x, y} // a pointer, but it never leaves the function: stack
+	return p.x + p.y
+}
+
+//go:noinline
+func newPoint(x, y int) *point {
+	return &point{x, y} // the pointer outlives the call: moved to the heap
+}
+```
+
+The rule the compiler enforces, in simplified form:
+
+$$
+\operatorname{heap}(v) \iff \operatorname{lifetime}(v) > \operatorname{lifetime}(\operatorname{frame}(v)) \;\lor\; \operatorname{size}(v) \text{ is unknown or too large}
+$$
+
+where
+
+- $v$ is a value the program creates;
+- $\operatorname{frame}(v)$ is the stack frame of the function that creates it;
+- $\operatorname{lifetime}$ is how long something may still be used, as far as the compiler can prove;
+- $\operatorname{size}(v)$ matters because a frame has a fixed layout: a `make([]byte, n)` with an unknown `n` or a very large size goes to the heap.
+
+Example: in `sumPoint`, `p` is used only before `return`, so $\operatorname{lifetime}(p) \le \operatorname{lifetime}(\text{frame})$ and it stays on the stack. In `newPoint`, the returned pointer is used by the caller after the frame is gone, so the left side holds and the point moves to the heap. Ask the compiler with `-gcflags=-m`:
+
+```bash
+go build -gcflags=-m ./memory-and-garbage-collection
+```
+
+```text
+memory-and-garbage-collection/main.go:23:7: &point{...} does not escape
+memory-and-garbage-collection/main.go:29:9: &point{...} escapes to heap
+```
+
+`-gcflags=-m=2` adds the reason, here `flow: ~r0 ← &{storage for &point{...}}` "from return &point{...}". Then **prove** the cost with `testing.AllocsPerRun`, which works outside tests too:
+
+```go
+func allocsPerCall() (stack, heap float64) {
+	stack = testing.AllocsPerRun(100, func() { _ = sumPoint(1, 2) })
+	heap = testing.AllocsPerRun(100, func() { sink = newPoint(1, 2) })
+	return stack, heap
+}
+```
+
+It returns `0, 1`: no allocation for `sumPoint`, one per call for `newPoint`. The `//go:noinline` lines matter. If `newPoint` were inlined into a caller that does not keep the pointer, the point could stay on the caller's stack and the count would drop to 0. Escape analysis works on the code after inlining. Typical reasons to escape are returning a pointer, storing a pointer in a heap object or a global, sending it on a channel, capturing a variable in a closure that outlives the call, and converting a value to an interface whose callee is unknown.
+
+### Level 2: the collector frees what the roots cannot reach
+
+Go's GC is a **tracing** collector. It starts from the **roots**: every goroutine's stack, the global variables and some runtime structures. It **marks** everything reachable by following pointers, then **sweeps** away the rest. The lab's toy version keeps a grey list (found, not yet scanned) and a black set (scanned):
+
+```go
+func mark(edges map[string][]string, roots ...string) []string {
+	black := map[string]bool{}  // scanned: reachable
+	grey := slices.Clone(roots) // found but not yet scanned
+	for len(grey) > 0 {
+		object := grey[len(grey)-1]
+		grey = grey[:len(grey)-1]
+		if black[object] {
+			continue
+		}
+		black[object] = true
+		grey = append(grey, edges[object]...)
+	}
+	return slices.Sorted(maps.Keys(black)) // everything else is white: garbage
+}
+```
+
+With `root → A → B`, `C → A`, and a cycle `D ↔ E`, `mark(edges, "root")` returns `[A B root]`. C points **to** live data but nothing points to C, so C is garbage. D and E point to each other, so a **reference-counting** collector would keep both forever with counts of 1; a tracing collector frees them because no root reaches them.
+
+While the program keeps running during marking, the collector must keep one invariant, the **strong tri-colour invariant** of Dijkstra, Lamport and colleagues' *On-the-fly garbage collection* (1978):
+
+$$
+\forall\, (x \to y):\; \lnot\bigl(\operatorname{colour}(x) = \text{black} \;\land\; \operatorname{colour}(y) = \text{white}\bigr)
+$$
+
+where
+
+- $x \to y$ is a pointer from object $x$ to object $y$;
+- $\forall$ means "for every";
+- black means scanned (the GC will not look at $x$ again), white means not yet found;
+- the formula says no scanned object may point to an object the GC has not found.
+
+Example: after scanning, A is black and B is black. Now the program runs `A.next = C`, where C is white, and then deletes the only other pointer to C. A is black, so the collector never rescans it; C stays white and is **freed while A still points to it**. That is the broken state $\operatorname{colour}(A) = \text{black} \land \operatorname{colour}(C) = \text{white}$. The **write barrier** of "How it works underneath" prevents it by shading C grey at the moment of the write.
+
+### Level 3: GOGC sets the heap target
+
+When does a cycle start? Go's pacer aims for a **heap target**. From *A Guide to the Go Garbage Collector*:
+
+$$
+\text{Target heap} = \text{Live heap} + (\text{Live heap} + \text{GC roots}) \times \frac{\texttt{GOGC}}{100}
+$$
+
+where
+
+- Live heap is the memory still reachable at the end of the last cycle;
+- GC roots is the size of goroutine stacks and pointer-holding globals, which the GC must also scan;
+- `GOGC` is the tuning knob, 100 by default; `GOGC=off` disables the target;
+- Target heap is the total heap size at which the next cycle should finish.
+
+Example, the guide's numbers: 8 MiB live heap, 1 MiB of stacks and 1 MiB of globals, so roots are 2 MiB.
+
+1. `GOGC=100`: $8 + (8 + 2) \times 1 = 18$ MiB. The program may allocate 10 MiB of new memory before the next cycle.
+2. `GOGC=50`: $8 + 10 \times 0.5 = 13$ MiB, so the GC runs twice as often.
+3. `GOGC=200`: $8 + 10 \times 2 = 28$ MiB, so it runs half as often.
+
+The lab's `heapTarget(8, 2, 100)` returns 18, with 13 and 28 for the other two. The guide's cost model makes the trade-off exact: total GC CPU is proportional to $\text{allocation rate} / (\texttt{GOGC}/100)$, so *"if we double GOGC, we halve total GC CPU cost"*, while the heap headroom doubles. Memory and CPU are traded against each other.
+
+A pure ratio is a poor fit for a container with a hard limit. Go 1.19 added `GOMEMLIMIT`, a **soft** limit on all memory the runtime manages. The effective target is roughly the smaller of the two:
+
+$$
+\text{Target}_{\text{effective}} \approx \min\bigl(\text{Target heap},\; \texttt{GOMEMLIMIT} - \text{non-heap runtime memory}\bigr)
+$$
+
+where
+
+- Target heap is the `GOGC` target above;
+- `GOMEMLIMIT` is the limit, for example `GOMEMLIMIT=16MiB`;
+- non-heap runtime memory is stacks, runtime metadata and freed but not yet returned pages.
+
+Example: with the 8 MiB live heap and `GOGC=100`, the target is 18 MiB. Under `GOMEMLIMIT=16MiB` with about 2 MiB outside the heap, the limit side gives about $16 - 2 = 14$ MiB, so $\min(18, 14) = 14$ and the GC starts earlier. If the live heap itself grows towards the limit, the GC runs almost constantly; the guide calls this **thrashing**. To bound the damage, the runtime caps GC CPU at *"roughly 50%, with a `2 * GOMAXPROCS` CPU-second window"*, so a limit set too low slows the program by at most about 2 times, and the heap may then grow past the limit. Both knobs can be set from code. Each setter returns the previous value, so the lab sets and restores them:
+
+```go
+func setAndRestore() (gogc int, limit int64) {
+	old := debug.SetGCPercent(50) // like GOGC=50
+	gogc = debug.SetGCPercent(old)
+	oldLimit := debug.SetMemoryLimit(64 << 20) // like GOMEMLIMIT=64MiB
+	limit = debug.SetMemoryLimit(oldLimit)
+	return gogc, limit
+}
+```
+
+It returns `50` and $64 \times 2^{20} = 67\,108\,864$. The guide's advice: use the memory limit when you control the whole environment, such as a container, and leave 5–10% headroom; do not use it where memory use grows with inputs you do not control.
+
+### Level 4: allocate less, with sync.Pool
+
+The cheapest allocation is the one you do not make. `sync.Pool` keeps spare objects so a hot path can reuse them instead of allocating:
+
+```go
+var bufferPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+func greet(name string) string {
+	buf := bufferPool.Get().(*bytes.Buffer)
+	defer bufferPool.Put(buf)
+	buf.Reset() // a pooled buffer may still hold an earlier caller's bytes
+	buf.WriteString("hello, ")
+	buf.WriteString(name)
+	return buf.String()
+}
+```
+
+`greet("gopher")` is `"hello, gopher"`, and a second call `greet("Ada")` reuses the buffer and returns `"hello, Ada"`. Three rules keep it correct. **Reset** what you get. **Copy** out what you return: `buf.String()` copies, while returning `buf.Bytes()` would hand the caller memory the next `greet` overwrites. And expect nothing: the documentation says *"Any item stored in the Pool may be removed automatically at any time without notification."* The pool is emptied in stages at each GC; since Go 1.13 a **victim cache** keeps items for one extra cycle. Under the race detector, `Put` deliberately drops some items at random, which is why the lab checks only the results, not the allocation count.
+
+### Level 5: weak pointers and cleanups
+
+Go 1.24 added two tools that let code observe the collector, both meant for libraries such as caches rather than everyday code.
+
+A **weak pointer**, from package `weak`, refers to an object without keeping it alive. `Value()` returns the pointer while the object is reachable and `nil` once it has been collected:
+
+```go
+func newWeakBlob() (weak.Pointer[blob], bool) {
+	strong := &blob{}
+	w := weak.Make(strong)
+	return w, w.Value() == strong // alive: strong still points to it
+}
+
+func weakPointer() (whileHeld, afterGC bool) {
+	w, whileHeld := newWeakBlob()
+	runtime.GC() // no strong pointer to the blob is left anywhere
+	return whileHeld, w.Value() == nil
+}
+```
+
+It returns `true, true`. The only strong pointer dies with `newWeakBlob`'s frame, so the next full cycle reclaims the blob. A cache can hold weak pointers and still let the GC free entries no one else uses.
+
+**`runtime.AddCleanup(ptr, cleanup, arg)`** runs `cleanup(arg)` in a separate goroutine some time after `ptr` becomes unreachable:
+
+```go
+func openAndForget(closed chan<- string) {
+	f := &file{name: "data.csv"}
+	runtime.AddCleanup(f, func(name string) { closed <- name }, f.name)
+} // f is unreachable once this returns
+```
+
+After `runtime.GC()`, `cleanupRuns` receives `"data.csv"`. The argument is `f.name`, not `f`: *"If ptr is reachable from cleanup or arg, ptr will never be collected and the cleanup will never run."* Cleanups replace `runtime.SetFinalizer`, which passes the object itself back to you, resurrecting it, and cannot collect cycles of finalized objects. Use cleanups only as a safety net: the documentation says the call *"is not always guaranteed to run; in particular it is not guaranteed to run before program exit"*, so files and connections still need an explicit `Close`.
+
+## How it works underneath
+
+**The cycle.** The header of [`src/runtime/mgc.go`](https://github.com/golang/go/blob/master/src/runtime/mgc.go) describes the collector as *"a concurrent mark and sweep that uses a write barrier. It is non-generational and non-compacting."* One cycle has four steps:
+
+1. **Sweep termination**: stop the world and finish any leftover sweeping.
+2. **Mark**: while still stopped, turn on the write barrier, then restart the world. Background workers, plus **mark assists** charged to goroutines that allocate quickly, scan stacks and globals and drain the grey work queue. New objects are allocated black.
+3. **Mark termination**: a short stop-the-world to finish marking.
+4. **Sweep**: turn off the write barrier, and reclaim white objects lazily as allocation needs spans, plus in a background goroutine.
+
+The pauses do not grow with the heap size; the guide says they *"are more strongly proportional to GOMAXPROCS algorithmically, but most commonly are dominated by the time it takes to stop running goroutines."* During marking, *"the GC takes 25% of CPU resources"*.
+
+**The write barrier.** While marking, every pointer write into the heap or a global goes through a barrier. Trimmed from [`src/runtime/mbarrier.go`](https://github.com/golang/go/blob/master/src/runtime/mbarrier.go):
+
+```go
+// sketch: pseudocode from the comment in runtime/mbarrier.go
+writePointer(slot, ptr):
+    shade(*slot)
+    if current stack is grey:
+        shade(ptr)
+    *slot = ptr
+```
+
+It is a **hybrid** of a Yuasa deletion barrier, `shade(*slot)`, which stops an object from hiding by moving its only pointer from the heap to a stack, and a Dijkstra insertion barrier, `shade(ptr)`, which stops a stack from installing a pointer to a white object in a black one. In Level 2's example, `A.next = C` shades C grey, so the invariant holds. This design, from Go 1.8, removed the need to re-scan stacks at the end of marking; the Go 1.8 release notes report pauses *"usually under 100 microseconds and often as low as 10 microseconds"* as a result. The implementation shades **both** pointers every time, because checking the stack's colour safely would cost more.
+
+**The allocator.** Allocation is organised like TCMalloc. Small sizes, up to 32 KiB, are rounded to about 70 **size classes**. Each `P` (a scheduler processor) has an `mcache` holding one span per class, so most allocations take a free slot without a lock. Spans come from per-class `mcentral` lists and, ultimately, from the page heap `mheap`. Pointer-free objects under 16 bytes share 16-byte blocks through the **tiny allocator**. Go 1.27 added size-specialised allocation routines that make allocations under 80 bytes up to 30% cheaper.
+
+**Green Tea.** The classic mark phase scans **objects** one at a time from a work stack, jumping all over memory. The **Green Tea** collector (Michael Knyszek and Austin Clements) scans **spans**: when it finds a pointer to a small object, it sets a mark bit and queues the object's whole span on a first-in, first-out queue, so that by the time a span is scanned several of its objects are waiting together. That gives better cache locality. It applies to objects of 16 to 512 bytes on 64-bit systems. Status by release:
+
+- Go 1.25: an experiment, enabled with `GOEXPERIMENT=greenteagc`.
+- Go 1.26: on by default. The release notes promise *"somewhere between a 10–40% reduction in garbage collection overhead in real-world programs that heavily use the garbage collector"*, and say the `nogreenteagc` opt-out *"is expected to be removed in Go 1.27"*.
+- Go 1.27: still the default. Its release notes say nothing more about it; the Go 1.27.2 toolchain used for this lab still accepts `GOEXPERIMENT=nogreenteagc`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Assuming `new` or `&T{}` means a heap allocation | Premature "optimisations" that change nothing | Check with `go build -gcflags=-m` and `testing.AllocsPerRun` |
+| Returning pointers to small values on a hot path | One heap allocation per call, as `newPoint` shows | Return values when they are small; let the caller own the memory |
+| Setting `GOGC` very low to "save memory" | GC CPU rises in proportion: `GOGC=50` doubles GC work compared with 100 | Measure; prefer `GOMEMLIMIT` for a hard ceiling |
+| `GOMEMLIMIT` at or below the live heap | Thrashing: constant GC cycles, little progress | Leave 5–10% headroom above the real working set |
+| Using a pooled object without `Reset` | Data from an earlier request leaks into a response | `Reset` right after `Get` |
+| Returning `buf.Bytes()` from a pooled buffer | Callers see their data overwritten later | Copy out (`buf.String()`, `bytes.Clone`) before `Put` |
+| A cleanup whose argument or closure references the object | The cleanup never runs; the object leaks | Pass only the resource handle, such as `f.name`, as `arg` |
+| Relying on cleanups or finalizers to close files | File descriptors run out | Explicit `Close`, usually with `defer` |
+| `testing.AllocsPerRun` in a test that calls `t.Parallel` | Panics since Go 1.25 | Count allocations in sequential tests |
+
+## Interview questions
+
+### 1. How does Go decide whether a variable lives on the stack or the heap?
+
+**Answer.** By escape analysis at compile time, not by syntax. If the compiler can prove a value is not used after its function returns, and its size is known and not too large, it goes in the stack frame; otherwise on the heap. `sumPoint` takes `&point{...}` and still allocates nothing (`does not escape`); `newPoint` returns the pointer, so `-gcflags=-m` reports `escapes to heap` and `AllocsPerRun` measures 1. Inlining can change the answer, which is why the lab marks both functions `//go:noinline`.
+
+### 2. Describe Go's garbage collector.
+
+**Answer.** A concurrent, non-generational, non-compacting, tri-colour mark-and-sweep collector. It marks from stacks and globals while goroutines run, with two short stop-the-world pauses; a hybrid write barrier keeps the invariant "no black object points to a white one" while the program mutates pointers; sweeping then reclaims white objects lazily. It does not move objects. It is not generational because, in Hudson's words, Go's *"young objects live and die young on the stack"*, thanks to value types and escape analysis. Since Go 1.26 the mark phase uses the span-based Green Tea algorithm by default.
+
+### 3. What does `GOGC=100` mean, and what happens at `GOGC=200`?
+
+**Answer.** The next cycle should finish when the heap reaches $\text{Live} + (\text{Live} + \text{Roots}) \times \texttt{GOGC}/100$. With 8 MiB live and 2 MiB of roots, `GOGC=100` gives 18 MiB, and `GOGC=200` gives 28 MiB. Doubling `GOGC` halves the number of cycles and so roughly halves GC CPU, at the cost of 10 MiB more peak heap.
+
+### 4. When should you set `GOMEMLIMIT`, and what can go wrong?
+
+**Answer.** When the program owns a known amount of memory, such as a container with a 512 MiB limit: set `GOMEMLIMIT` about 5–10% below it, so the runtime collects harder near the limit instead of being killed by the kernel. A common pattern is `GOGC=off` plus `GOMEMLIMIT`, which uses all available memory before collecting. The risk is a live heap close to the limit: the collector then runs almost continuously (thrashing). The runtime caps GC CPU at roughly 50%, so the program slows by at most about 2 times and the heap may exceed the limit. The limit is soft and counts only memory the Go runtime manages.
+
+### 5. What is `sync.Pool` for, and what are its pitfalls?
+
+**Answer.** Reusing short-lived objects, such as `bytes.Buffer`s, on hot paths to reduce allocation and GC pressure; `fmt` uses it for its output buffers. Pitfalls: items can vanish at any GC (with a one-cycle victim cache since Go 1.13), so it is not a cache of valuable data; every object must be reset after `Get`; nothing that refers into the object may escape after `Put`; and objects of very different sizes, such as a buffer that once grew to 1 MiB, waste memory when reused for small jobs.
+
+### 6. Finalizer, cleanup or weak pointer?
+
+**Answer.** All three are low-level, and the GC guide says to *"Avoid using these features directly in typical Go code."* A **cleanup** (`runtime.AddCleanup`, Go 1.24) runs a function after an object becomes unreachable and is the modern replacement for `SetFinalizer`: several cleanups per object, cycles still collected, and the object is not resurrected. A **weak pointer** (`weak.Make`, Go 1.24) lets you look an object up without keeping it alive, for caches and canonicalisation maps. A **finalizer** remains only for old code. None of them is guaranteed to run promptly, or at all before exit.
+
+## Summary
+
+$$
+\text{Target heap} = \text{Live} + (\text{Live} + \text{Roots}) \times \frac{\texttt{GOGC}}{100}, \qquad \forall\, (x \to y): \lnot(\text{black}(x) \land \text{white}(y))
+$$
+
+where Live is the reachable heap after the last cycle, Roots is the size of stacks and pointer-holding globals, `GOGC` defaults to 100, and the second formula is the tri-colour invariant over every pointer $x \to y$.
+
+Example: 8 MiB live and 2 MiB of roots give $8 + 10 \times 1 = 18$ MiB at `GOGC=100`; when the program writes `A.next = C` during marking, the write barrier shades C grey so a black A never points to a white C.
+
+- Escape analysis puts values on the stack unless they outlive their frame; verify with `-gcflags=-m` and `testing.AllocsPerRun`.
+- The GC is concurrent tri-colour mark-and-sweep, non-moving and non-generational, with a hybrid write barrier during marking.
+- `GOGC` trades memory for CPU; `GOMEMLIMIT` adds a soft ceiling; leave headroom.
+- Green Tea is the default marking algorithm since Go 1.26.
+- `sync.Pool` reduces allocations for temporary objects: reset on `Get`, copy out before `Put`.
+- `weak` pointers and `runtime.AddCleanup` (Go 1.24) are for libraries, never for closing resources.
+
+## References
+
+- [A Guide to the Go Garbage Collector](https://go.dev/doc/gc-guide).
+- The runtime source: [src/runtime/mgc.go](https://github.com/golang/go/blob/master/src/runtime/mgc.go), [src/runtime/mbarrier.go](https://github.com/golang/go/blob/master/src/runtime/mbarrier.go), [src/runtime/malloc.go](https://github.com/golang/go/blob/master/src/runtime/malloc.go), [src/runtime/mgcmark_greenteagc.go](https://github.com/golang/go/blob/master/src/runtime/mgcmark_greenteagc.go).
+- Package documentation: [runtime](https://pkg.go.dev/runtime) (`AddCleanup`, `GC`), [runtime/debug](https://pkg.go.dev/runtime/debug), [weak](https://pkg.go.dev/weak), [sync](https://pkg.go.dev/sync#Pool), [testing](https://pkg.go.dev/testing#AllocsPerRun).
+- Release notes: [Go 1.13](https://go.dev/doc/go1.13) (pool victim cache), [Go 1.19](https://go.dev/doc/go1.19) (soft memory limit), [Go 1.24](https://go.dev/doc/go1.24) (`AddCleanup`, `weak`), [Go 1.25](https://go.dev/doc/go1.25) (Green Tea experiment), [Go 1.26](https://go.dev/doc/go1.26) (Green Tea by default), [Go 1.27](https://go.dev/doc/go1.27) (size-specialised allocation).
+- Austin Clements and Rick Hudson, [Proposal: Eliminate STW stack re-scanning](https://github.com/golang/proposal/blob/master/design/17503-eliminate-rescan.md) (the hybrid write barrier, 2016).
+- Rick Hudson, [Getting to Go: The Journey of Go's Garbage Collector](https://go.dev/blog/ismmkeynote) (ISMM keynote, 2018).
+- Michael Knyszek and Austin Clements, [The Green Tea Garbage Collector](https://go.dev/blog/greenteagc) (2025); Michael Knyszek, [From unique to cleanups and weak](https://go.dev/blog/cleanups-and-weak) (2025).
+- Edsger W. Dijkstra, Leslie Lamport, A. J. Martin, C. S. Scholten and E. F. M. Steffens, [On-the-fly garbage collection: an exercise in cooperation](https://doi.org/10.1145/359642.359655), *Communications of the ACM* 21(11), 1978.
+- Lab: [`labs/memory-and-garbage-collection/main.go`](labs/memory-and-garbage-collection/main.go). Run it from `programming-languages/go/labs` with `go run -race ./memory-and-garbage-collection`.

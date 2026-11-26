@@ -1,0 +1,363 @@
+---
+title: "Packages, Modules and Testing"
+description: "Packages as directories, exported names, internal/ directories, initialisation order and init, go.mod and go.sum, semantic import versioning, Minimal Version Selection with a working implementation, and go test: table-driven tests, subtests, t.Parallel, b.Loop benchmarks, fuzzing and examples."
+---
+
+## The problem
+
+You write a small version-comparison helper, `Compare("v1.9.0", "v1.10.0")`, and three other teams start using it. Six months later you want to change it. Questions pile up:
+
+- Which of your functions are they **allowed** to call, and which are private details you may change?
+- Your project depends on library D. Library B wants D **v1.3.0**, library C wants D **v1.4.0**. Which D does the build get, and will it be the same tomorrow?
+- D's author releases **v2** with breaking changes. Do existing users break?
+- How do you **prove** `Compare` still works after your change, and that it did not get slower?
+
+A naive comparison shows why the last question matters: as strings, `"v1.10.0" < "v1.9.0"`, because the character `1` sorts before `9`. Go answers the first three with **packages** and **modules**, and the last with `go test`, which is built into the toolchain.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Rooms, a private wing, sealed boxes and recipes
+
+- **A package is a room** in a house: one directory. Things whose name starts with a **capital letter** sit on the hallway shelf for any visitor. Lower-case things stay inside the room.
+- **`internal/` is the family's private wing.** Only people who live in that part of the house may go in.
+- **A module is a sealed box of rooms** with a label: a name and a version, written in `go.mod`. The seal is `go.sum`: if anyone swaps a part, the seal no longer matches.
+- **Minimal Version Selection:** every recipe in a cookbook says "you need **at least** flour version 1.3". You buy the smallest version that satisfies **every** recipe, not the newest one on the shop shelf. Tomorrow you buy exactly the same.
+- **Tests are the answer key** at the back of the exercise book. Run it after every change.
+
+Russ Cox, who designed Go modules, summed up the algorithm in *Minimal Version Selection* (2018): *"The key to minimal version selection is its preference for the minimum allowed version of a module."* It rests on his **import compatibility rule**: *"If an old package and a new package have the same import path, the new package must be backwards compatible with the old package."*
+:::
+
+## From simple to advanced
+
+### Level 1: a package is a directory, and capital letters export
+
+Every `.go` file in one directory belongs to one package. The lab is laid out like this:
+
+```text
+labs/
+  go.mod                        module knowledge-library/go-labs
+  packages-modules-and-testing/
+    main.go                     package main
+    mvs_test.go                 package main (tests)
+    internal/
+      semver/
+        semver.go               package semver
+```
+
+The **import path** of a package is the module path plus the directory: `knowledge-library/go-labs/packages-modules-and-testing/internal/semver`. Inside it, `semver.go` declares `func Compare(a, b string) int` and a helper `func parse(version string) [3]int`. The specification's rule for visibility is a single test on the name:
+
+$$
+\operatorname{exported}(x) \iff \operatorname{upper}\bigl(\operatorname{first}(x)\bigr) \;\land\; x \text{ is declared at package level, or is a field or method}
+$$
+
+where
+
+- $x$ is an identifier, such as `Compare` or `parse`;
+- $\operatorname{first}(x)$ is its first character;
+- $\operatorname{upper}(c)$ is true when $c$ is a Unicode upper-case letter (category Lu).
+
+Example: `Compare` starts with `C`, which is upper case, and is declared at package level, so it is exported and `main` can call `semver.Compare`. `parse` starts with `p`, so it is not. Calling it from another package does not compile:
+
+```go
+// sketch: does not compile
+func main() { println(semver.parse("v1.0.0")) }
+```
+
+```text
+.../main.go:5:30: undefined: semver.parse
+```
+
+The `internal` directory adds one more boundary, enforced by the `go` command since Go 1.5: a package under `.../X/internal/...` may be imported only by code inside the tree rooted at `.../X`. Here `X` is `packages-modules-and-testing`, so its `main` package may import `semver`. If the sibling lab `channels/main.go` tried, the build would fail with:
+
+```text
+channels/main.go:3:8: use of internal package knowledge-library/go-labs/packages-modules-and-testing/internal/semver not allowed
+```
+
+Use `internal/` for code you want to share **inside** your project while staying free to change it.
+
+### Level 2: package initialisation and init
+
+Before `main` runs, every package is initialised: first the packages it imports, then its own package-level variables, then its `init` functions. Within a package, the specification says initialisation *"proceeds stepwise, with each step selecting the variable earliest in declaration order which has no dependencies on uninitialized variables."*
+
+```go
+var initLog []string
+
+var total = price + tax // declared first, but initialised last: it needs price and tax
+var price = record("price", 100)
+var tax = record("tax", 20)
+
+func record(name string, value int) int {
+	initLog = append(initLog, name)
+	return value
+}
+
+func init() { initLog = append(initLog, "init 1") }
+
+func init() { initLog = append(initLog, "init 2") }
+```
+
+Example, step by step. `initLog` has no initialiser, so it starts as `nil`. `total` is first in the file but needs `price` and `tax`, so it is not ready. `price` is the earliest ready variable and becomes 100, then `tax` becomes 20, then `total` $= 100 + 20 = 120$. Only then do the two `init` functions run, in source order. The lab checks `initLog` is `[price tax init 1 init 2]` and `total` is 120. Two variables that depend on each other are rejected at compile time with `initialization cycle for a`.
+
+Across packages, Go 1.21 made the order exact: sort all packages by import path, then repeatedly initialise the first one whose imports are all done. The [memory model](https://go.dev/ref/mem) adds that all of this happens in one goroutine, and *"The completion of all init functions is synchronized before the start of the function main.main."* Keep `init` small: it cannot return an error, and it runs even in tests that do not need it.
+
+### Level 3: modules, go.mod, go.sum and semantic import versioning
+
+A **module** is a tree of packages released together under one version. Its root holds `go.mod`. The labs' file is two lines: `module knowledge-library/go-labs` and `go 1.27`. A module with dependencies looks like this:
+
+```text
+module example.com/shop
+
+go 1.27
+
+require (
+	example.com/money/v2 v2.3.1
+	example.com/tax v1.4.0
+)
+```
+
+Each `require` line states a **minimum** version. `go.sum` records a cryptographic hash for each module version used, so that a download that changes later is detected. Each line has a module path, a version (or a version ending in `/go.mod` for the `go.mod` file alone), and an `h1:` SHA-256 hash in base64. By default the `go` command also checks these hashes against the public checksum database, `sum.golang.org`.
+
+Versions follow semantic versioning, `vMAJOR.MINOR.PATCH`: a new **major** version may break callers. Go's rule is that a breaking change gets a **new import path**:
+
+$$
+\operatorname{path}(p, M) =
+\begin{cases}
+p & \text{if } M \in \lbrace 0, 1 \rbrace \\
+p/\texttt{v}M & \text{if } M \ge 2
+\end{cases}
+$$
+
+where
+
+- $p$ is the module path chosen by the author, such as `example.com/money`;
+- $M$ is the major version number;
+- $\operatorname{path}(p, M)$ is the path you write in `go.mod` and in `import` statements.
+
+Example: `example.com/money` at `v1.8.0` is imported as `example.com/money`; at `v2.3.1`, $M = 2 \ge 2$, so it is `example.com/money/v2`. Because the two paths differ, one program can use v1 in old code and v2 in new code at the same time, and upgrading one caller never breaks another. This is **semantic import versioning**, and it is what makes the import compatibility rule hold.
+
+### Level 4: Minimal Version Selection
+
+Given everyone's minimum requirements, which version of each module does the build use? Go's answer, **Minimal Version Selection (MVS)**, is: walk the requirement graph from your module, and for each module path take the **highest version that anyone requires**. The [modules reference](https://go.dev/ref/mod#minimal-version-selection) says the result is *"the minimum versions that satisfy all requirements"*.
+
+$$
+\operatorname{sel}(m) = \max \lbrace\, v : (m, v) \in R(\text{root}) \,\rbrace
+$$
+
+where
+
+- $\text{root}$ is your main module;
+- $R(\text{root})$ is the set of module versions reachable from it by following `require` edges;
+- $(m, v)$ is module path $m$ at version $v$;
+- $\max$ compares versions numerically, part by part;
+- $\operatorname{sel}(m)$ is the version of $m$ in the build.
+
+The lab implements it in 20 lines, using `semver.Compare` for $\max$:
+
+```go
+// BuildList visits everything reachable from root and keeps the highest version of each path.
+func BuildList(g Graph, root Version) map[string]string {
+	selected := map[string]string{}
+	seen := map[Version]bool{}
+	var visit func(v Version)
+	visit = func(v Version) {
+		if seen[v] {
+			return // the graph may have cycles: F v1.1.0 and G v1.1.0 require each other
+		}
+		seen[v] = true
+		if old, ok := selected[v.Path]; !ok || semver.Compare(v.Version, old) > 0 {
+			selected[v.Path] = v.Version
+		}
+		for _, required := range g[v] {
+			visit(required)
+		}
+	}
+	visit(root)
+	return selected
+}
+```
+
+Example, on the graph from Cox's post. A requires B v1.2.0 and C v1.2.0; B v1.2.0 requires D v1.3.0; C v1.2.0 requires D v1.4.0; both D versions require E v1.2.0. Older versions such as B v1.1.0 (which requires D v1.1.0) and C v1.3.0 (which requires F) are in the graph but not reachable from A.
+
+1. $R(\text{A})$ contains B v1.2.0, C v1.2.0, D v1.3.0, D v1.4.0 and E v1.2.0.
+2. $\operatorname{sel}(\text{D}) = \max\lbrace \text{v1.3.0}, \text{v1.4.0} \rbrace = \text{v1.4.0}$: the larger minimum wins, so both B and C are satisfied.
+3. $\operatorname{sel}(\text{E}) = \max\lbrace \text{v1.2.0} \rbrace = \text{v1.2.0}$, even though E v1.3.0 exists. Nobody asked for it, so the build does not take it.
+
+The build list is A v1.0.0, B v1.2.0, C v1.2.0, D v1.4.0, E v1.2.0, the same as in the post. The lab also replays Cox's "upgrade one module" step. Upgrading to C v1.3.0 **adds** the edge A → C v1.3.0 and keeps the old ones, so D stays at v1.4.0 and F v1.1.0 and G v1.1.0 join. The cycle between F and G is why `visit` keeps a `seen` set.
+
+Two properties follow from the formula. The result depends only on the `go.mod` files, never on what is newest today, so builds are **reproducible without a lock file**. And no version is ever chosen that nobody tested against.
+
+### Level 5: go test, table-driven tests, subtests and t.Parallel
+
+A file ending in `_test.go` is compiled only by `go test`. A function `TestXxx(t *testing.T)` is a test; `t.Errorf` records a failure and continues, `t.Fatalf` stops this test. Go's idiom is the **table-driven test**: one slice of cases, one loop. `t.Run` makes each case a named **subtest**, and `t.Parallel()` lets the subtests run at the same time:
+
+```go
+func TestCompare(t *testing.T) {
+	tests := []struct {
+		name string
+		a, b string
+		want int
+	}{
+		{"equal", "v1.2.0", "v1.2.0", 0},
+		{"newer patch", "v1.2.1", "v1.2.0", 1},
+		{"minor beats patch", "v1.2.0", "v1.1.9", 1},
+		{"numbers, not text", "v1.9.0", "v1.10.0", -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel() // subtests run at the same time; tt is per-iteration since Go 1.22
+			if got := semver.Compare(tt.a, tt.b); got != tt.want {
+				t.Errorf("Compare(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+```
+
+`go test -race -v ./packages-modules-and-testing` prints, in part:
+
+```text
+--- PASS: TestCompare (0.00s)
+    --- PASS: TestCompare/equal (0.00s)
+    --- PASS: TestCompare/minor_beats_patch (0.00s)
+    --- PASS: TestCompare/newer_patch (0.00s)
+    --- PASS: TestCompare/numbers,_not_text (0.00s)
+```
+
+Spaces in names become underscores, and `go test -run 'TestCompare/numbers'` runs one case. The `"numbers, not text"` case is the problem's bug pinned down for good: `main.go` also checks that `"v1.10.0" < "v1.9.0"` as strings, while `semver.Compare("v1.10.0", "v1.9.0")` is 1. Marcel van Lohuizen's post introducing subtests (2016) notes that *"A parallel test never runs concurrently with a sequential test"*, and that the parent *"will not complete until all parallel tests started by Run have completed"*.
+
+### Level 6: benchmarks with b.Loop, fuzzing and examples
+
+A **benchmark** `BenchmarkXxx(b *testing.B)` measures time per operation. Since Go 1.24 the body goes in `for b.Loop() { ... }`, which replaces the older `for range b.N`. The release notes give two reasons: the function runs *"exactly once per -count, so expensive setup and cleanup steps execute only once"*, and *"Function call parameters and results are kept alive, preventing the compiler from fully optimizing away the loop body"*:
+
+```go
+func BenchmarkBuildList(b *testing.B) {
+	for b.Loop() { // Go 1.24+: runs the body as often as needed and times only the loop
+		BuildList(coxGraph, a1)
+	}
+}
+```
+
+One run of `go test -run '^$' -bench BuildList -benchmem` on an Apple M3 Max printed:
+
+```text
+BenchmarkBuildList-16    	  982981	      1214 ns/op	     512 B/op	       8 allocs/op
+```
+
+$$
+\text{ns/op} = \frac{T_{\text{loop}}}{N}
+$$
+
+where
+
+- $N$ is the number of times the loop body ran, the second column;
+- $T_{\text{loop}}$ is the total time spent inside the `b.Loop` loop;
+- ns/op is the average time per call; `-16` is `GOMAXPROCS`.
+
+Example: $N = 982\,981$ and 1214 ns/op mean $T_{\text{loop}} \approx 982\,981 \times 1214 \text{ ns} \approx 1.19$ s, close to the default one-second target. The `512 B/op` and `8 allocs/op` columns come from `-benchmem` ([Memory and Garbage Collection](15-memory-and-garbage-collection.qmd) shows how to count allocations precisely).
+
+A **fuzz test** (Go 1.18) states a property that must hold for **every** input, and lets the engine search for a counterexample:
+
+```go
+func FuzzCompareIsAntisymmetric(f *testing.F) {
+	f.Add(1, 9, 0, 1, 10, 0) // seed corpus: also run by plain go test
+	f.Fuzz(func(t *testing.T, aMajor, aMinor, aPatch, bMajor, bMinor, bPatch int) {
+		a := fmt.Sprintf("v%d.%d.%d", aMajor, aMinor, aPatch)
+		b := fmt.Sprintf("v%d.%d.%d", bMajor, bMinor, bPatch)
+		if semver.Compare(a, b) != -semver.Compare(b, a) {
+			t.Errorf("Compare(%s, %s) is not minus Compare(%s, %s)", a, b, b, a)
+		}
+	})
+}
+```
+
+Plain `go test` runs only the seed `(1, 9, 0, 1, 10, 0)`. `go test -fuzz FuzzCompareIsAntisymmetric -fuzztime 5s` generated about 2.6 million inputs in five seconds on 16 workers and found no counterexample. A failing input would be saved under `testdata/fuzz/FuzzCompareIsAntisymmetric/` and replayed by every later `go test`.
+
+An **example** `ExampleXxx()` is documentation that is also a test: `go test` compares what it prints with its `// Output:` comment, and pkg.go.dev shows it next to `BuildList`:
+
+```go
+func ExampleBuildList() {
+	list := BuildList(coxGraph, a1)
+	for _, path := range slices.Sorted(maps.Keys(list)) {
+		fmt.Println(path, list[path])
+	}
+	// Output:
+	// A v1.0.0
+	// B v1.2.0
+	// C v1.2.0
+	// D v1.4.0
+	// E v1.2.0
+}
+```
+
+## How it works underneath
+
+**`go test` builds a program.** It compiles the package together with its `_test.go` files, generates a `main` that registers every `Test`, `Benchmark`, `Fuzz` and `Example` function with the `testing` package, links a test binary, and runs it. Before running, it runs a high-confidence subset of `go vet`: `atomic`, `bools`, `buildtag`, `directive`, `errorsas`, `ifaceassert`, `nilfunc`, `printf`, `stdversion`, `stringintconv` and `tests`. A vet failure fails the test. `stdversion` joined the list in Go 1.27. In package-list mode (`go test ./...`), successful results are **cached**: an unchanged package prints `(cached)` instead of running again. `-count=1` forces a rerun. With `-race` the binary is built with ThreadSanitizer, which is why the checker for these chapters runs `go test -race` on this lab.
+
+**`t.Parallel` pauses and resumes.** A subtest that calls `t.Parallel()` is paused (`=== PAUSE`) until its parent's function returns, then all paused siblings continue (`=== CONT`) together, limited by `-parallel`, which defaults to `GOMAXPROCS`. Since Go 1.22, `for _, tt := range tests` makes a **new** `tt` for each iteration, so each paused closure sees its own case. Before Go 1.22, all of them could see the last case.
+
+**Where modules come from.** For a dependency, the `go` command asks the module proxy (`GOPROXY`, by default `proxy.golang.org`) for the version list, the `go.mod` and the zip. It checks the zip's hash against `go.sum` and, for a new version, against `sum.golang.org`. The modules reference describes that database as a transparent log, a Merkle tree that *"independent auditors can verify"*. MVS only needs `go.mod` files, so it computes the build list before downloading any source. Since Go 1.17, **module graph pruning** keeps only the immediate requirements of dependencies that themselves declare `go 1.17` or later. That is safe because such a `go.mod` *"includes a require directive for every dependency needed to build any package or test in that module"*, and it keeps $R(\text{root})$ much smaller.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Calling an unexported function from another package | `undefined: semver.parse` | Export it with a capital letter, or keep the caller in the same package |
+| Importing someone else's `internal` package | `use of internal package ... not allowed` | Use a public API, or move the code |
+| Two package-level variables that depend on each other | `initialization cycle for a` | Break the cycle; compute one in a function or in `init` |
+| Heavy work or failure-prone setup in `init` | Slow start-up; no way to return an error; runs in every test | Explicit setup functions called from `main` |
+| Releasing breaking changes as `v1.x` | Callers break on `go get -u` | New major version with a `/v2` module path |
+| Comparing versions as strings | `"v1.10.0" < "v1.9.0"` is `true` | Parse and compare numerically, as `semver.Compare` does |
+| Benchmark setup inside the timed loop, or an unused result | Wrong numbers; the compiler may delete the work | `for b.Loop()`: setup before it, results kept alive |
+| `t.Fatal` from a goroutine other than the test's | `go vet`: `call to (*testing.T).Fatal from a non-test goroutine` | Report with `t.Error` from goroutines, or send the error back to the test goroutine |
+| `testing.AllocsPerRun` while parallel tests run | Panics since Go 1.25 | Do not call `t.Parallel` in tests that count allocations |
+
+## Interview questions
+
+### 1. How does Go decide which version of a dependency to use?
+
+**Answer.** Minimal Version Selection. Every `go.mod` lists minimum versions; the build uses, for each module, the maximum of the minimums reachable from the main module, $\operatorname{sel}(m) = \max \lbrace v : (m, v) \in R(\text{root}) \rbrace$. In the lab's graph, B needs D v1.3.0 and C needs D v1.4.0, so D v1.4.0 is used; E v1.3.0 exists but nobody requires it, so E stays at v1.2.0. The answer depends only on `go.mod` files, so it does not change when new versions are published, and no lock file is needed.
+
+### 2. Why does a v2 module have `/v2` in its import path?
+
+**Answer.** Because of the import compatibility rule: same import path means backwards compatible. A breaking change therefore needs a different path, $\operatorname{path}(p, 2) = p/\texttt{v2}$. The two major versions are then different modules as far as MVS is concerned, so a program can contain both, and moving one package to v2 never forces every other package in the build to move at the same moment.
+
+### 3. What runs before `main`, and in what order?
+
+**Answer.** Imported packages first, ordered as of Go 1.21 by sorting by import path and repeatedly initialising the first package whose imports are done. Within each package, variables in dependency order (earliest ready declaration first), then `init` functions in source order. All of it runs in one goroutine, and all `init`s complete before `main.main` starts. In the lab, `total` is declared first but initialised after `price` and `tax`, giving `[price tax init 1 init 2]` and 120.
+
+### 4. What is the difference between a unit test, a benchmark, a fuzz test and an example in Go?
+
+**Answer.** All live in `_test.go` files and run under `go test`. A test (`TestXxx`, `*testing.T`) checks chosen cases. A benchmark (`BenchmarkXxx`, `*testing.B`) runs only with `-bench` and reports ns/op, plus B/op and allocs/op with `-benchmem`; since Go 1.24 it uses `for b.Loop()`. A fuzz test (`FuzzXxx`, `*testing.F`) checks a property: its seed corpus runs as a normal test, and `-fuzz` generates new inputs. An example (`ExampleXxx`) compares its printed output with its `// Output:` comment and appears in the documentation.
+
+### 5. Why is `tt` safe to use inside a parallel subtest closure?
+
+**Answer.** Since Go 1.22, each iteration of a `for` loop has its own copy of the loop variable. The closure passed to `t.Run` captures that iteration's `tt`. `t.Parallel()` pauses it until the loop has finished, and it still sees its own case. Before Go 1.22 there was one `tt` shared by all iterations, so every paused subtest saw the last case, and the fix was the line `tt := tt`.
+
+## Summary
+
+$$
+\operatorname{sel}(m) = \max \lbrace\, v : (m, v) \in R(\text{root}) \,\rbrace
+$$
+
+where $m$ is a module path, $R(\text{root})$ is the set of module versions reachable from the main module through `require` lines, and $\max$ compares versions numerically.
+
+Example: B requires D v1.3.0 and C requires D v1.4.0, so $\operatorname{sel}(\text{D}) = \max\lbrace\text{v1.3.0}, \text{v1.4.0}\rbrace = \text{v1.4.0}$, and E stays at v1.2.0 although v1.3.0 exists.
+
+- A package is a directory; a capital first letter exports a name; `internal/` limits importers to the parent's tree.
+- Initialisation: imported packages, then variables in dependency order, then `init` functions; all before `main`.
+- A module is versioned as a whole in `go.mod`; `go.sum` and `sum.golang.org` detect changed downloads.
+- Breaking change, new major version, new path: `example.com/money/v2`.
+- MVS picks the highest minimum: reproducible builds with no lock file.
+- Table-driven tests with `t.Run` and `t.Parallel`; benchmarks with `b.Loop`; fuzz tests for properties; examples as tested documentation.
+
+## References
+
+- The Go Programming Language Specification: [Packages](https://go.dev/ref/spec#Packages), [Exported identifiers](https://go.dev/ref/spec#Exported_identifiers), [Package initialization](https://go.dev/ref/spec#Package_initialization), [Program initialization](https://go.dev/ref/spec#Program_initialization).
+- [Go Modules Reference](https://go.dev/ref/mod), especially "Minimal version selection" and "go.sum files", and [Module version numbering](https://go.dev/doc/modules/version-numbers).
+- Package documentation: [testing](https://pkg.go.dev/testing); [Go Fuzzing](https://go.dev/security/fuzz/).
+- Release notes: [Go 1.4](https://go.dev/doc/go1.4) (internal packages), [Go 1.21](https://go.dev/doc/go1.21) (initialisation order), [Go 1.24](https://go.dev/doc/go1.24) (`b.Loop`), [Go 1.25](https://go.dev/doc/go1.25) (`AllocsPerRun` panics with parallel tests), [Go 1.27](https://go.dev/doc/go1.27) (`stdversion` in `go test`).
+- Russ Cox, *Go & Versioning*: [Semantic Import Versioning](https://research.swtch.com/vgo-import) and [Minimal Version Selection](https://research.swtch.com/vgo-mvs) (2018).
+- Marcel van Lohuizen, [Using Subtests and Sub-benchmarks](https://go.dev/blog/subtests) (2016); Junyang Shao, [More predictable benchmarking with testing.B.Loop](https://go.dev/blog/testing-b-loop) (2025); [TableDrivenTests](https://go.dev/wiki/TableDrivenTests) on the Go wiki.
+- Alan A. A. Donovan and Brian W. Kernighan, [*The Go Programming Language*](https://www.gopl.io/), Addison-Wesley, 2015, chapters 10 (Packages and the Go Tool) and 11 (Testing).
+- Lab: [`labs/packages-modules-and-testing/main.go`](labs/packages-modules-and-testing/main.go), its tests [`mvs_test.go`](labs/packages-modules-and-testing/mvs_test.go) and [`internal/semver/semver.go`](labs/packages-modules-and-testing/internal/semver/semver.go). From `programming-languages/go/labs`, run `go run -race ./packages-modules-and-testing` and `go test -race ./packages-modules-and-testing`.

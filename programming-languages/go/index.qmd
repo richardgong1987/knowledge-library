@@ -1,0 +1,78 @@
+---
+title: "Go — Core Concepts"
+subtitle: "Simple values, explicit errors, cheap concurrency"
+description: "Go 1.27 from values and slices to the scheduler: fifteen chapters on what the language guarantees and how its compiler and runtime work, each with a lab that checks every result."
+aliases: ["../go.html"]
+---
+
+## What Go is for, and where it came from
+
+Go is a compiled, statically typed, garbage-collected language for building **servers, command-line tools and infrastructure software** that large teams can maintain. It compiles quickly to a self-contained native binary, and it has concurrency built into the language.
+
+The Go FAQ records the start: *"Robert Griesemer, Rob Pike and Ken Thompson started sketching the goals for a new language on the white board on September 21, 2007."* Go became a public open-source project on **10 November 2009**, and **Go 1**, with its promise that Go 1 programs keep compiling, followed on **28 March 2012**.
+
+The motivation was practical. The FAQ says *"Go was born out of frustration with existing languages and environments for the work we were doing at Google"*: one *"had to choose either efficient compilation, efficient execution, or ease of programming; all three were not available in the same mainstream language."* Rob Pike's SPLASH 2012 keynote *Go at Google* lists the problems: slow builds, uncontrolled dependencies, each programmer using a different subset of the language, code that is hard to read, and tools that are hard to write. He adds that the origin myth puts Go's conception *"during one of those 45 minute builds"*. As he puts it, *"Go's purpose is therefore not to do research into programming language design; it is to improve the working environment for its designers and their coworkers."*
+
+## The mental model
+
+A handful of ideas explain most of Go:
+
+1. **Everything is a value, and assignment copies it.** A pointer is a value too, so sharing is always explicit. ([Values, Types and Pointers](01-values-types-and-pointers.qmd))
+2. **Slices, maps and strings are small headers over shared data.** Copying the header does not copy the elements, which explains most aliasing surprises. ([Slices and Maps](02-slices-and-maps.qmd), [Strings, Bytes and Runes](03-strings-bytes-and-runes.qmd))
+3. **Composition instead of inheritance.** Structs gain behaviour through methods and embedding. Interfaces are satisfied implicitly, and generics remove code that repeats only in its types. ([Structs](04-structs-methods-and-embedding.qmd), [Interfaces](05-interfaces.qmd), [Generics](06-generics.qmd))
+4. **Errors are values.** A failing function returns an `error`; `defer` cleans up; `panic` is for bugs. ([Errors, Defer and Panic](07-errors-defer-and-panic.qmd))
+5. **Functions are values.** Closures capture variables, and since Go 1.23 iterators are just functions. ([Functions, Closures and Iterators](08-functions-closures-and-iterators.qmd))
+6. **Concurrency is in the language.** Cheap goroutines communicate over channels, following Tony Hoare's CSP, and the memory model says when one goroutine's writes are visible to another. ([Goroutines](09-goroutines-and-the-scheduler.qmd) to [Concurrency Patterns](13-concurrency-patterns.qmd))
+7. **The toolchain is part of the language.** Modules, `go test` and `go vet` are standard, and a concurrent garbage collector manages memory. ([Packages, Modules and Testing](14-packages-modules-and-testing.qmd), [Memory and Garbage Collection](15-memory-and-garbage-collection.qmd))
+
+## The chapters
+
+### Part 1: Data and types
+
+1. [Values, Types and Pointers](01-values-types-and-pointers.qmd): zero values, constants and `iota`, copying on assignment, pointers and escape analysis.
+2. [Slices and Maps](02-slices-and-maps.qmd): slice headers, shared backing arrays, `append` growth, and maps as Swiss tables.
+3. [Strings, Bytes and Runes](03-strings-bytes-and-runes.qmd): immutable UTF-8 bytes, runes, `range` over text, and `strings.Builder`.
+4. [Structs, Methods and Embedding](04-structs-methods-and-embedding.qmd): value and pointer receivers, method sets, and promotion through embedding.
+5. [Interfaces](05-interfaces.qmd): implicit satisfaction, the (type, value) pair, the nil-error trap, and type assertions.
+6. [Generics](06-generics.qmd): type parameters, constraints as type sets, generic types and methods, and GC-shape stenciling.
+
+### Part 2: Functions, errors and concurrency
+
+7. [Errors, Defer and Panic](07-errors-defer-and-panic.qmd): wrapping, `errors.Is` and `AsType`, defer's rules, and recover.
+8. [Functions, Closures and Iterators](08-functions-closures-and-iterators.qmd): closures, the Go 1.22 loop variable, method values, and range-over-func.
+9. [Goroutines and the Scheduler](09-goroutines-and-the-scheduler.qmd): growable stacks, the G-M-P model, `GOMAXPROCS`, preemption and leaks.
+10. [Channels](10-channels.qmd): unbuffered and buffered channels, `close` and `range`, and the runtime's `hchan`.
+11. [Select and Context](11-select-and-context.qmd): waiting on several channels, timeouts, the for-select loop, and context cancellation.
+12. [Sync and the Memory Model](12-sync-and-the-memory-model.qmd): data races, mutexes, `Once`, typed atomics, and happens-before.
+13. [Concurrency Patterns](13-concurrency-patterns.qmd): pipelines, fan-out and fan-in, worker pools, semaphores and Little's law.
+
+### Part 3: Programs and the runtime
+
+14. [Packages, Modules and Testing](14-packages-modules-and-testing.qmd): packages, `go.mod` and Minimal Version Selection, table tests, benchmarks and fuzzing.
+15. [Memory and Garbage Collection](15-memory-and-garbage-collection.qmd): stack or heap via escape analysis, and the concurrent collector.
+
+## How to run the labs
+
+Every chapter has one lab, `labs/<slug>/main.go`, in a single module (`labs/go.mod`). Each lab checks every result its chapter quotes and prints `OK` last. From `programming-languages/go/labs`:
+
+```bash
+go run -race ./channels
+go vet ./...
+```
+
+Replace `channels` with any chapter's slug, such as `generics` or `goroutines-and-the-scheduler`. From the repository root, the checker verifies the chapters and runs every lab:
+
+```bash
+ONLY=go node --test programming-languages/check-languages.test.mjs
+```
+
+## Version and further reading
+
+These pages teach **Go 1.27** (released August 2026) and say when a feature arrived, such as generics in 1.18, per-iteration loop variables in 1.22, iterators in 1.23, `WaitGroup.Go` in 1.25 and generic methods in 1.27.
+
+- [The Go Programming Language Specification](https://go.dev/ref/spec) and [The Go Memory Model](https://go.dev/ref/mem): the definitive rules.
+- [Effective Go](https://go.dev/doc/effective_go) and the [Go FAQ](https://go.dev/doc/faq): idioms, and the designers' reasons.
+- Rob Pike, [Go at Google: Language Design in the Service of Software Engineering](https://go.dev/talks/2012/splash.article) (SPLASH 2012).
+- Alan A. A. Donovan and Brian W. Kernighan, [*The Go Programming Language*](https://www.gopl.io/) (Addison-Wesley, 2015).
+- [The Go Blog](https://go.dev/blog/), especially *Errors are values*, *When To Use Generics* and *Range Over Function Types*.
+- [Release notes](https://go.dev/doc/devel/release) for every version, for what changed and when.

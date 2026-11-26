@@ -1,0 +1,416 @@
+---
+title: "Slices and Maps"
+description: "Go's two workhorse collections from the first literal to the runtime: arrays and slice headers, shared backing arrays, append growth from runtime.growslice, aliasing, copy, full slice expressions, and maps as Swiss tables."
+---
+
+## The problem
+
+A teacher keeps four scores, `scores := []int{90, 80, 70, 60}`, and hands a helper the middle two with `middle := scores[1:3]`. The helper corrects the first of them to 85. Afterwards `scores` is `[90 85 70 60]`: the helper changed the teacher's list. Worse, this program prints `[0 0 0 5]` twice:
+
+```go
+func twoAppends() ([]int, []int) {
+	base := make([]int, 3, 10)
+	a := append(base, 4) // writes slot 3 of the shared array
+	b := append(base, 5) // writes the SAME slot 3
+	return a, b
+}
+```
+
+The `4` has vanished from `a`. And a word counter written as `var counts map[string]int; counts["go"]++` crashes with `panic: assignment to entry in nil map`.
+
+None of these are bugs in Go. They follow from two facts: a slice is a small **view** of an array that may be shared, and a map is a **pointer to a hash table** that must be created first. This chapter builds both from the ground up.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Lockers, sticky notes and a coat check
+
+- **An array is a row of lockers** bolted to the floor. A row of 7 lockers is always 7.
+- **A slice is a sticky note** that says "start at locker 1, you may use 2 lockers, and the row has 3 lockers from your start". Copying the note does not copy the lockers. Two notes can point at the same lockers, so what one child puts in, the other finds.
+- **`append` puts the next thing in the next locker** if the row has one. If the row is full, it rents a **new, longer row**, moves everything across, and gives you a new note. Old notes still point at the old row.
+- **A map is a coat check.** You hand over a ticket (the key) and get back your coat (the value). The attendant decides where coats hang, so you never get to hold the hook itself.
+
+Andrew Gerrand's *Go Slices: usage and internals* says it in one sentence: *"A slice is a descriptor of an array segment."* Rob Pike's *Arrays, slices (and strings): The mechanics of 'append'* adds: *"A slice is not an array. A slice describes a piece of an array."*
+:::
+
+## From simple to advanced
+
+### Level 1: an array has a fixed length; a slice is a view
+
+An array's length is **part of its type**: `[7]string` and `[8]string` are different types, and an array is copied whole on assignment ([Values, Types and Pointers](01-values-types-and-pointers.qmd)). A slice `[]int` has no length in its type. It describes a stretch of some array:
+
+```go
+func arrayVsSlice() (int, int, int) {
+	var week [7]string          // array: the length 7 is part of the type
+	scores := []int{90, 80, 70} // slice: a view of a hidden array
+	return len(week), len(scores), cap(scores)
+}
+```
+
+It returns `7, 3, 3`. A slice has a **length** (how many elements you can index) and a **capacity** (how many elements the underlying array has from the slice's start). The literal `[]int{90, 80, 70}` creates a hidden 3-element array and a slice over all of it.
+
+### Level 2: slicing shares the backing array
+
+`s[i:j]` makes a new slice of the elements from index `i` up to, but not including, `j`. No elements are copied:
+
+```go
+func sliceShares() ([]int, []int) {
+	scores := []int{90, 80, 70, 60}
+	middle := scores[1:3] // a window onto elements 1 and 2
+	middle[0] = 85        // writes into the shared array
+	return scores, middle
+}
+```
+
+It returns `scores = [90 85 70 60]` and `middle = [85 70]`. The new slice's sizes are:
+
+$$
+\operatorname{len}(s[i:j]) = j - i, \qquad \operatorname{cap}(s[i:j]) = \operatorname{cap}(s) - i
+$$
+
+where
+
+- $s$ is the original slice;
+- $i$ is the first index taken and $j$ is one past the last, with $0 \le i \le j \le \operatorname{cap}(s)$;
+- $\operatorname{len}$ and $\operatorname{cap}$ are the length and capacity.
+
+Example: `scores[1:3]` has $i = 1$, $j = 3$ and $\operatorname{cap}(\texttt{scores}) = 4$, so $\operatorname{len} = 3 - 1 = 2$ and $\operatorname{cap} = 4 - 1 = 3$. The capacity counts element 3 (the 60) as well: `middle` cannot index it, but `append` can write there.
+
+### Level 3: `append` writes in place, or moves house
+
+`append(s, v)` checks whether the array has room after the last element. If $\operatorname{len}(s) < \operatorname{cap}(s)$, it writes into the **same** array:
+
+```go
+func appendInPlace() ([]int, []int) {
+	base := make([]int, 3, 4) // len 3, room for 4
+	grown := append(base, 7)  // fits: same backing array
+	grown[0] = 1              // so base sees this too
+	return base, grown
+}
+```
+
+`base` is `[1 0 0]` and `grown` is `[1 0 0 7]`: one array, two views. If the array is full, `append` allocates a bigger array, copies the elements across and returns a slice of the new array:
+
+```go
+func appendCopies() ([]int, []int) {
+	base := []int{1, 2, 3}   // len 3, cap 3: full
+	grown := append(base, 4) // no room: a new, bigger array
+	grown[0] = 99            // base is not affected
+	return base, grown
+}
+```
+
+`base` stays `[1 2 3]` and `grown` is `[99 2 3 4]`. Because `append` may return a different array, you must always write `s = append(s, v)`.
+
+How big is the new array? The runtime function `nextslicecap` in `src/runtime/slice.go` decides. The lab copies it:
+
+```go
+func nextCap(newLen, oldCap int) int {
+	if newLen > 2*oldCap {
+		return newLen
+	}
+	if oldCap < 256 {
+		return 2 * oldCap
+	}
+	newCap := oldCap
+	for newCap < newLen {
+		newCap += (newCap + 3*256) / 4
+	}
+	return newCap
+}
+```
+
+As a formula, for one step of the loop:
+
+$$
+c' =
+\begin{cases}
+\ell & \text{if } \ell > 2c \\
+2c & \text{if } c < 256 \\
+c + \left\lfloor \dfrac{c + 768}{4} \right\rfloor & \text{otherwise, repeated until } c' \ge \ell
+\end{cases}
+$$
+
+where
+
+- $c$ is the old capacity and $\ell$ is the length needed after the append;
+- $c'$ is the new capacity **before rounding**;
+- $\lfloor \cdot \rfloor$ rounds down, as integer division does;
+- $768 = 3 \times 256$, where 256 is the runtime's `threshold` constant.
+
+Example with the lab's numbers:
+
+1. $c = 5$, $\ell = 6$: $6 > 10$ is false and $5 < 256$, so $c' = 10$.
+2. $c = 256$, $\ell = 257$: $c' = 256 + \lfloor 1024 / 4 \rfloor = 256 + 256 = 512$.
+3. $c = 512$, $\ell = 513$: $c' = 512 + \lfloor 1280 / 4 \rfloor = 512 + 320 = 832$.
+4. $c = 2$ and appending 5 values, so $\ell = 7$: $7 > 4$, so $c' = 7$.
+
+Then `growslice` rounds the **bytes** up to the allocator's next size class, and the capacity becomes whatever fits:
+
+$$
+\operatorname{cap} = \left\lfloor \frac{\operatorname{roundupsize}(c' \cdot w)}{w} \right\rfloor
+$$
+
+where
+
+- $w$ is the element size in bytes, 8 for `int` on a 64-bit machine;
+- $\operatorname{roundupsize}(b)$ is the smallest allocator size class of at least $b$ bytes, from the table in the runtime's `sizeclasses.go` (… 48, 64, 80, … 1792, … 4096, … 6784, …).
+
+Example: $c' = 832$ ints need $832 \times 8 = 6656$ bytes, the next class is 6784, so the capacity is $6784 / 8 = 848$. For $c = 100$, $c' = 200$ needs 1600 bytes, rounded to 1792, giving $1792 / 8 = 224$. For $c' = 7$, 56 bytes round to 64, giving 8. The lab measures all of these with real `append` calls on full slices made by `make`.
+
+The growth factor shrinks smoothly from 2 toward 1.25. Dividing $c'$ by $c$ for one step:
+
+$$
+\frac{c'}{c} \approx 1.25 + \frac{192}{c} \qquad (c \ge 256)
+$$
+
+where $c$ is the old capacity and $192 = 768 / 4$. Example: $c = 256$ gives $1.25 + 0.75 = 2$; $c = 512$ gives $1.25 + 0.375 = 1.625$, matching $832 / 512$; $c = 4096$ gives about $1.297$.
+
+The capacities of very small slices are an implementation detail: the compiler may give a slice that does not escape a small stack buffer (the Go 1.25 and 1.26 release notes both extend this), so on Go 1.27 a first `append` to an empty `[]int` can report a capacity of 4 in a normal build and 1 under `-race`. Never write code that depends on an exact capacity.
+
+### Level 4: aliasing, `copy` and the full slice expression
+
+Back to `twoAppends`. `base` has length 3 and capacity 10, so both appends have room and both write **slot 3 of the same array**. The second write replaces the first, and `a` and `b` both read `[0 0 0 5]`.
+
+The **full slice expression** `s[i:j:k]` also sets the capacity, so an append must copy:
+
+$$
+\operatorname{cap}(s[i:j:k]) = k - i
+$$
+
+where $i$ and $j$ are as before and $k$ is the end of the capacity, with $i \le j \le k \le \operatorname{cap}(s)$.
+
+Example: `base[0:3:3]` has $\operatorname{cap} = 3 - 0 = 3 = \operatorname{len}$, so there is no spare room and every append gets its own array:
+
+```go
+func appendSafely() ([]int, []int) {
+	base := make([]int, 3, 10)
+	limited := base[0:3:3]  // cap = 3 - 0: no spare room
+	a := append(limited, 4) // must copy, so it cannot touch base's array
+	b := append(limited, 5)
+	return a, b
+}
+```
+
+Now `a` is `[0 0 0 4]` and `b` is `[0 0 0 5]`. To copy elements yourself, `copy(dst, src)` copies $\min(\operatorname{len}(dst), \operatorname{len}(src))$ elements and returns that count:
+
+```go
+func copyIndependent() ([]int, []int, int) {
+	src := []int{1, 2, 3}
+	dst := make([]int, 2)
+	n := copy(dst, src) // copies min(len(dst), len(src)) = 2 elements
+	dst[0] = 100        // src is not affected
+	return src, dst, n
+}
+```
+
+It returns `[1 2 3]`, `[100 2]` and 2. The `slices` package (Go 1.21+) wraps the everyday loops: `slices.Clone`, `Sort`, `Contains`, `Index`, `Equal`, `Insert` and `Delete`.
+
+```go
+func sortedCopy(nums []int) []int {
+	sorted := slices.Clone(nums) // an independent copy
+	slices.Sort(sorted)
+	return sorted
+}
+```
+
+`sortedCopy([]int{3, 1, 2})` is `[1 2 3]` and leaves the input as `[3 1 2]`.
+
+### Level 5: maps
+
+A map stores key–value pairs and finds a key in constant time on average. The key type must be comparable ([Values, Types and Pointers](01-values-types-and-pointers.qmd), Level 5). Reading a missing key returns the zero value, which makes counting easy:
+
+```go
+func wordCount(words []string) map[string]int {
+	counts := make(map[string]int)
+	for _, w := range words {
+		counts[w]++ // a missing key reads as 0
+	}
+	return counts
+}
+```
+
+For `go is fun go` it gives `go: 2, is: 1, fun: 1`. Because a missing key reads as 0, use the **comma-ok** form to tell "absent" from "stored 0":
+
+```go
+missing, ok := counts["rust"] // comma-ok: tells "absent" from "stored 0"
+check(missing == 0 && !ok, "absent key: (0, false)")
+check(slices.Equal(sortedKeys(counts), []string{"fun", "go", "is"}), "sorted keys")
+delete(counts, "is")
+delete(counts, "nope") // deleting a missing key is a no-op
+check(len(counts) == 2, "delete removes one key")
+clear(counts) // Go 1.21+: remove every key
+check(len(counts) == 0, "clear empties the map")
+```
+
+**Iteration order is not specified**, and the runtime randomises it on purpose so that nobody depends on it. To print in order, sort the keys:
+
+```go
+func sortedKeys(m map[string]int) []string {
+	return slices.Sorted(maps.Keys(m)) // map order is random; sort for stable output
+}
+```
+
+`maps.Keys` returns an iterator (Go 1.23+, see [Functions, Closures and Iterators](08-functions-closures-and-iterators.qmd)), and `slices.Sorted` collects and sorts it.
+
+A map variable that was declared but never made is `nil`. Gerrand: *"A nil map behaves like an empty map when reading, but attempts to write to a nil map will cause a runtime panic."*
+
+```go
+func nilMapWrite() {
+	var m map[string]int
+	m["x"] = 1
+}
+```
+
+The lab catches the panic with `recover` and checks the message, `assignment to entry in nil map`. The fix is `make(map[string]int)` or a literal `map[string]int{}`.
+
+### Level 6: map elements are not addressable
+
+`players["ann"].Score++` does not compile when the map holds structs:
+
+```go
+// sketch: does not compile
+players["ann"].Score = 2 // cannot assign to struct field players["ann"].Score in map
+p := &players["ann"]     // invalid operation: cannot take address of players["ann"] (map index expression of struct type Player)
+```
+
+The map may move its elements when it grows, so a pointer to one would soon point at the wrong place. Read a copy, change it, and write it back:
+
+```go
+func bumpScore(players map[string]Player, name string) {
+	p := players[name] // a copy of the element
+	p.Score++
+	players[name] = p // write the copy back
+}
+```
+
+Or store pointers, `map[string]*Player`, so the element is an address and the struct lives elsewhere.
+
+## How it works underneath
+
+**The slice header.** From `src/runtime/slice.go`:
+
+```go
+// sketch: from runtime/slice.go
+type slice struct {
+	array unsafe.Pointer
+	len   int
+	cap   int
+}
+```
+
+Passing a slice copies these 24 bytes. The callee can change the shared elements, but not the caller's `len` or `cap`, which is why `append` returns the new slice. When there is no room, the compiler calls `runtime.growslice`, which computes `nextslicecap`, rounds up with `roundupsize`, allocates with `mallocgc` and copies the old elements with `memmove`.
+
+**Maps are Swiss tables** since Go 1.24 (Michael Pratt, *Faster Go maps with Swiss Tables*, 2025). The source is `src/internal/runtime/maps`. Slots are grouped in **groups of 8**, and each group has an 8-byte **control word**: one byte per slot saying "empty", "deleted" or "full, and here are 7 bits of the hash". A key's 64-bit hash $h$ is split in two:
+
+$$
+H_1 = \left\lfloor \frac{h}{2^{7}} \right\rfloor, \qquad H_2 = h \bmod 2^{7}
+$$
+
+where
+
+- $h$ is the key's hash, computed with a random seed chosen per map;
+- $H_1$, the upper 57 bits, chooses the group where the search starts;
+- $H_2$, the lower 7 bits, is stored in the control byte of the slot that holds the key;
+- $\bmod$ is the remainder after division.
+
+Example with a small hash $h = 1000$: $1000 = 7 \times 128 + 104$, so $H_1 = 7$ and $H_2 = 104$. A lookup compares 104 against all 8 control bytes of a group **at once** with bit tricks (SIMD on amd64), and does a full key comparison only for bytes that match. A wrong match has probability $1/128$ per slot.
+
+If the group has no match and no empty slot, the search moves on in triangular steps. With $G$ groups (a power of two), the $i$-th group probed is:
+
+$$
+p(i) = \left( H_1 + \frac{i^2 + i}{2} \right) \bmod G
+$$
+
+where $i = 0, 1, 2, \dots$ counts probes and $G$ is the number of groups in the table.
+
+Example with $H_1 = 7$ and $G = 4$: $p(0) = 7 \bmod 4 = 3$, $p(1) = 8 \bmod 4 = 0$, $p(2) = 10 \bmod 4 = 2$, $p(3) = 13 \bmod 4 = 1$. The order $3, 0, 2, 1$ visits every group exactly once; the lab's `probeGroups(1000, 4)` checks it.
+
+A table grows before it fills: it allows at most $\frac{7}{8}$ of its slots to be used (`maxAvgGroupLoad = 7` per 8 slots). A table of 16 slots holds $16 \times \frac{7}{8} = 14$ entries, and the next insert doubles it to 32. No single table grows past 1024 slots; beyond that it **splits** into two tables, and a directory indexed by the top bits of the hash chooses the table (extendible hashing). That bounds the cost of any one insert to moving at most 1024 entries. A map that has only ever held 8 or fewer entries skips all this and is a single group.
+
+This explains three rules from the levels:
+
+- **Elements are not addressable** because growth and splits copy slots into new groups.
+- **Iteration order is random** because each map has a random hash seed and each `range` starts at a random offset.
+- **Concurrent writes crash.** A write sets a `writing` flag in the map header; a second writer that sees it calls `fatal("concurrent map writes")`. That is a fatal error, not a panic, so `recover` cannot catch it:
+
+```go
+// sketch: two goroutines write one map with no lock
+m := map[int]int{}
+for range 2 {
+	go func() {
+		for i := range 1_000_000 {
+			m[i] = i // fatal error: concurrent map writes
+		}
+	}()
+}
+```
+
+Guard a shared map with a `sync.Mutex` or use `sync.Map` ([Sync and the Memory Model](12-sync-and-the-memory-model.qmd)); `go run -race` reports the race even when the crash does not happen.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `append(s, v)` without assigning the result | The new element is lost | Always `s = append(s, v)` |
+| Two appends to one base slice with spare capacity | Both results share a slot (`twoAppends`) | Full slice expression `s[i:j:j]`, or `slices.Clone` first |
+| Keeping a small sub-slice of a huge array | The whole array stays in memory | `slices.Clone(big[a:b])` and drop `big` |
+| Indexing past the length | `panic: runtime error: index out of range [5] with length 3` | Check `len(s)`, or use `range` |
+| Writing to a `nil` map | `panic: assignment to entry in nil map` | `make(map[K]V)` or a literal |
+| Assigning to a field of a map element | `cannot assign to struct field m["a"].x in map` | Copy, change, write back; or store `*T` |
+| Expecting map order | Output changes from run to run | `slices.Sorted(maps.Keys(m))` |
+| Writing a map from two goroutines | `fatal error: concurrent map writes` | `sync.Mutex`, or `sync.Map` |
+| Using a slice as a map key | `invalid map key type []int` | Use an array, a struct or a string |
+
+## Interview questions
+
+### 1. What does `twoAppends` return, and why?
+
+**Answer.** Both `a` and `b` are `[0 0 0 5]`. `base` has $\operatorname{len} = 3 < \operatorname{cap} = 10$, so neither append allocates; both store into index 3 of the one backing array, and the second store wins. Every slice that covers index 3 sees 5. The fix is to remove the spare capacity with `base[0:3:3]`, which forces each append to copy (`appendSafely` returns `[0 0 0 4]` and `[0 0 0 5]`).
+
+### 2. How does `append` grow a slice?
+
+**Answer.** When $\ell > c$ the runtime computes a new capacity with `nextslicecap`: the needed length if it is more than double; double if the old capacity is under 256; otherwise repeat $c \mathrel{+}= \lfloor (c + 768)/4 \rfloor$, a factor that falls smoothly from 2 to 1.25. It then rounds the byte size up to an allocator size class. For `[]int`: 5 → 10, 100 → 224, 256 → 512, 512 → 848. The formula dates from Go 1.18; before that the cut-over was at 1024 elements. Growing by a constant factor makes $n$ appends cost $O(n)$ copies in total, so one append is $O(1)$ amortised.
+
+### 3. What is the difference between a nil slice and an empty slice?
+
+**Answer.** Both have `len` and `cap` 0, both can be ranged over and appended to, and `slices.Equal` treats them as equal. Only `s == nil` differs: `var s []int` is `nil` (the header's pointer is `nil`), while `[]int{}` is not. It matters for `encoding/json`, which writes `null` for a nil slice and `[]` for an empty one, and for APIs that use `nil` to mean "no answer".
+
+### 4. Why is map iteration order random, and how do you get a stable order?
+
+**Answer.** The spec leaves the order unspecified so implementations can change, and the runtime starts every `range` at a random position, with a random per-map hash seed, so programs cannot accidentally rely on an order. For a stable order, collect and sort the keys: `slices.Sorted(maps.Keys(m))`, as `sortedKeys` does, which gives `fun, go, is`.
+
+### 5. Why can't you take the address of a map element?
+
+**Answer.** Because the element does not have a stable address. Inserting can grow a Swiss table (doubling it, or splitting it once it reaches 1024 slots), and growth moves every entry into new groups. A pointer kept from before would point at stale memory. The compiler therefore rejects `&m[k]` and `m[k].f = v`. Store values and write them back (`bumpScore`), or store pointers in the map.
+
+### 6. Is a Go map safe for concurrent use?
+
+**Answer.** Only for concurrent **reads**. A write concurrent with any other access is a data race, which the runtime often turns into the unrecoverable `fatal error: concurrent map writes`. The Go FAQ's reason for not locking every map: it *"would slow down most programs and add safety to few"*. Guard the map with a `sync.Mutex` or `sync.RWMutex`, or use `sync.Map` for caches that are written once and read many times.
+
+## Summary
+
+$$
+\operatorname{append}(s, v) \text{ reuses the array} \iff \operatorname{len}(s) < \operatorname{cap}(s), \qquad \operatorname{cap}(s[i:j:k]) = k - i
+$$
+
+where $s$ is a slice, $v$ a value, $\operatorname{len}$ and $\operatorname{cap}$ its length and capacity, and $i, j, k$ the indices of a full slice expression.
+
+Example: `make([]int, 3, 10)` has $3 < 10$, so appends reuse the array and can collide; `base[0:3:3]` has $\operatorname{cap} = 3 - 0 = 3$, so $3 < 3$ is false and every append copies.
+
+- An array is a value with a fixed length; a slice is a 24-byte header (pointer, length, capacity) over an array.
+- Slicing shares; `append` shares while there is room and moves to a new array when there is not.
+- Growth doubles below 256 elements and tends to 1.25× above, rounded up to an allocator size class.
+- `copy`, `slices.Clone` and `s[i:j:k]` give independence when you need it.
+- A map is a pointer to a Swiss table: `make` it before writing, use comma-ok to detect absence, never rely on its order, never take an element's address, and lock it when goroutines share it.
+
+## References
+
+- The Go Programming Language Specification: [Array types](https://go.dev/ref/spec#Array_types), [Slice types](https://go.dev/ref/spec#Slice_types), [Slice expressions](https://go.dev/ref/spec#Slice_expressions), [Appending and copying slices](https://go.dev/ref/spec#Appending_and_copying_slices), [Map types](https://go.dev/ref/spec#Map_types), [Deletion of map elements](https://go.dev/ref/spec#Deletion_of_map_elements), [Clear](https://go.dev/ref/spec#Clear), [For statements with range clause](https://go.dev/ref/spec#For_range).
+- Package documentation: [slices](https://pkg.go.dev/slices) and [maps](https://pkg.go.dev/maps); [Go 1.21 Release Notes](https://go.dev/doc/go1.21) (`clear`, `slices`, `maps`), [Go 1.24 Release Notes](https://go.dev/doc/go1.24) (Swiss-table maps), [Go 1.25 Release Notes](https://go.dev/doc/go1.25) (stack-allocated slices).
+- Go FAQ: [Why are map operations not defined to be atomic?](https://go.dev/doc/faq#atomic_maps)
+- Andrew Gerrand, [Go Slices: usage and internals](https://go.dev/blog/slices-intro) (2011) and [Go maps in action](https://go.dev/blog/maps) (2013).
+- Rob Pike, [Arrays, slices (and strings): The mechanics of 'append'](https://go.dev/blog/slices) (2013).
+- Michael Pratt, [Faster Go maps with Swiss Tables](https://go.dev/blog/swisstable) (2025), and the Abseil [Swiss Tables design notes](https://abseil.io/about/design/swisstables).
+- The runtime source: [src/runtime/slice.go](https://github.com/golang/go/blob/master/src/runtime/slice.go) and [src/internal/runtime/maps/map.go](https://github.com/golang/go/blob/master/src/internal/runtime/maps/map.go).
+- Lab: [`labs/slices-and-maps/main.go`](labs/slices-and-maps/main.go). Run it from `programming-languages/go/labs` with `go run -race ./slices-and-maps`.
