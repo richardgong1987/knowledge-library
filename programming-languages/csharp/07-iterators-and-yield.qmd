@@ -1,0 +1,487 @@
+---
+title: "Iterators and yield"
+description: "How C# walks a sequence: IEnumerable and IEnumerator, what foreach compiles into, yield return as a compiler-built state machine, deferred execution, yield break and finally, infinite sequences, and IAsyncEnumerable with await foreach."
+---
+
+## The problem
+
+We want the first three **even squares** among the numbers 1 to 1,000,000. The answer is 4, 16 and 36 (from 2, 4 and 6). The obvious code builds a list of a million numbers, filters it into a list of 500,000 even numbers, squares all of those into another list, and finally keeps three. It produces a million numbers and allocates megabytes of lists, only to use the first six.
+
+What we want instead is a sequence that produces numbers **only when somebody asks for the next one**, and stops the moment nobody asks. In C#, a method that uses `yield return` does exactly that:
+
+```csharp
+int examined = 0;
+IEnumerable<int> UpTo(int limit)
+{
+    for (int n = 1; n <= limit; n++)
+    {
+        examined++;
+        yield return n;
+    }
+}
+
+var firstEvenSquares = UpTo(1_000_000).Where(n => n % 2 == 0).Select(n => n * n).Take(3).ToList();
+Check(firstEvenSquares.SequenceEqual([4, 16, 36]), "2*2, 4*4 and 6*6");
+Check(examined == 6, "only 1 to 6 were ever produced");
+```
+
+`UpTo` promised a million numbers but produced only six, because `Take(3)` stopped asking after the third even square. This chapter explains how that works, from the two interfaces underneath `foreach` to the state machine the compiler writes for you.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A storyteller who pauses
+
+- **A list** is a printed book: every page exists before you start reading, even the ones you never reach.
+- **An iterator** is a storyteller. You say "next!", they tell you one sentence, then **pause, remembering exactly where they were**. If you say "next!" again, they carry on from that spot. If you walk away, they never tell the rest, so the rest costs nothing.
+- **`yield return`** is the storyteller's pause. **`yield break`** is "the end". A `finally` block is the storyteller tidying up when you walk away early.
+- **An infinite sequence** is a storyteller who would go on forever, which is fine as long as you eventually stop saying "next!".
+
+C# 2.0 added iterators in 2005. Stephen Toub of the .NET team describes them as "the compiler rewriting developer methods that employ “yield return” statements into state machines", and Jon Skeet's article *Iterator block implementation details* walks through that state machine line by line. Eric Lippert's 2009 blog series *Iterator Blocks* explains the design decisions behind the rules you will meet below.
+:::
+
+## From simple to advanced
+
+### Level 1: `IEnumerable` hands out an `IEnumerator`
+
+Two interfaces split the job. `IEnumerable<T>` is the **sequence**: its only method, `GetEnumerator()`, hands out a fresh cursor. `IEnumerator<T>` is the **cursor**: `MoveNext()` steps forward and says whether there was a next element, and `Current` reads it.
+
+```csharp
+IEnumerable<int> numbers = new List<int> { 10, 20, 30 };
+IEnumerator<int> cursor = numbers.GetEnumerator();
+var walked = new List<int>();
+while (cursor.MoveNext())
+{
+    walked.Add(cursor.Current);
+}
+cursor.Dispose();
+Check(walked.SequenceEqual([10, 20, 30]), "MoveNext steps forward, Current reads the element");
+```
+
+The loop runs three times, then `MoveNext` returns `false`. The cursor starts **before** the first element, so `MoveNext` must come before the first `Current`. Separating the two roles means two loops can walk the same list at the same time, each with its own cursor.
+
+A `List<T>` cursor also notices when the list changes underneath it: adding to a list inside its own `foreach` throws `InvalidOperationException` with the message `Collection was modified; enumeration operation may not execute.`, which the lab checks.
+
+### Level 2: what `foreach` really is
+
+`foreach` is the Level 1 loop written for you. The C# specification (§13.9.5) defines it as roughly this expansion:
+
+```csharp
+// sketch: what foreach (int n in numbers) Use(n); means
+IEnumerator<int> e = numbers.GetEnumerator();
+try
+{
+    while (e.MoveNext())
+    {
+        int n = e.Current; // declared inside the loop: a fresh variable per iteration
+        Use(n);
+    }
+}
+finally
+{
+    e?.Dispose();
+}
+```
+
+Three details matter later. The `finally` calls `Dispose` even if the loop body `break`s or throws (since C# 1.2). The variable `n` is declared **inside** the `while`, which is why lambdas capture a fresh `n` each time ([Delegates, Lambdas and Events](06-delegates-lambdas-and-events.qmd), Level 5). And the specification looks for the methods **by name** first: any type with a public `GetEnumerator()` whose result has `MoveNext()` and `Current` works, with no interface at all.
+
+```csharp
+class Countdown(int start)
+{
+    public CountdownEnumerator GetEnumerator() => new(start);
+}
+
+class CountdownEnumerator(int start)
+{
+    int next = start + 1;
+    public int Current => next;
+    public bool MoveNext() => --next >= 1;
+}
+```
+
+```csharp
+var counted = new List<int>();
+foreach (int n in new Countdown(3))
+{
+    counted.Add(n);
+}
+Check(counted.SequenceEqual([3, 2, 1]), "foreach binds to the pattern by name");
+```
+
+`Countdown(3)` gives 3, 2, 1. This pattern is why `foreach` over a `List<T>` allocates nothing: `List<T>.GetEnumerator()` returns a **struct** enumerator, which `foreach` uses directly without boxing it into an interface.
+
+### Level 3: `yield return` builds the cursor for you
+
+Writing `Countdown` and `CountdownEnumerator` by hand is tedious. An **iterator method** is a method that returns `IEnumerable<T>` (or `IEnumerator<T>`) and contains `yield return`. The compiler turns its body into the cursor. To see when the body runs, the lab's iterator writes to a trace:
+
+```csharp
+static IEnumerable<int> TracedSquares(int count, List<string> trace)
+{
+    trace.Add("start");
+    for (int i = 1; i <= count; i++)
+    {
+        trace.Add($"yield {i * i}");
+        yield return i * i;
+    }
+    trace.Add("end");
+}
+```
+
+```csharp
+var trace = new List<string>();
+IEnumerable<int> squares = TracedSquares(3, trace);
+Check(trace.Count == 0, "calling an iterator method runs none of its body");
+
+foreach (int square in squares)
+{
+    trace.Add($"got {square}");
+}
+Check(trace.SequenceEqual(["start", "yield 1", "got 1", "yield 4", "got 4", "yield 9", "got 9", "end"]),
+    "producer and consumer take turns, one element at a time");
+```
+
+Calling `TracedSquares(3, trace)` ran **nothing**: the trace is empty. Then producer and consumer take turns: the iterator runs up to a `yield return`, pauses, the loop body runs, the iterator resumes after the `yield return`. This is **deferred** (lazy) execution, and it is what made the problem's pipeline cheap:
+
+$$
+W_{\text{lazy}}(k) = 2k \qquad \text{versus} \qquad W_{\text{eager}} = n
+$$
+
+where
+
+- $W$ is the work done by the source, counted as numbers produced by `UpTo`;
+- $k$ is how many even squares the consumer asks for;
+- $n$ is the size of the source, the `limit` passed to `UpTo`;
+- the 2 in $2k$ is because every second number is even, so the $k$-th even number is $2k$.
+
+Example, with the problem's values $k = 3$ and $n = 1{,}000{,}000$:
+
+1. Lazy: $W_{\text{lazy}}(3) = 2 \times 3 = 6$. The lab checks `examined == 6`: `UpTo` produced 1, 2, 3, 4, 5, 6, and `Take(3)` stopped after 36.
+2. Eager: building the list first costs $W_{\text{eager}} = 1{,}000{,}000$, which is $1{,}000{,}000 / 6 \approx 166{,}667$ times more work for the same three answers.
+
+The price of laziness: nothing is stored, so **every enumeration runs the body again**:
+
+```csharp
+squares.ToList();
+Check(trace.Count(line => line == "start") == 2, "every new enumeration runs the body again");
+```
+
+### Level 4: `yield break` and `finally`
+
+`yield break` ends the sequence early, like `return` in an ordinary method. Here it builds a small version of LINQ's `Take`:
+
+```csharp
+static IEnumerable<T> FirstN<T>(IEnumerable<T> source, int n)
+{
+    if (n <= 0) yield break;
+    foreach (T item in source)
+    {
+        yield return item;
+        if (--n == 0) yield break;
+    }
+}
+```
+
+```csharp
+Check(FirstN(new[] { 7, 8, 9 }, 2).SequenceEqual([7, 8]), "yield break stops after two");
+Check(!FirstN(new[] { 7, 8, 9 }, 0).Any(), "yield break before any yield gives an empty sequence");
+```
+
+What if the **consumer** stops early, while the iterator is paused inside a `try`? The paused iterator never resumes, so its `finally` cannot run by itself. That is the job of `Dispose`: the `foreach` expansion calls it, and the generated `Dispose` runs any pending `finally` blocks.
+
+```csharp
+static IEnumerable<int> Guarded(List<string> log)
+{
+    try
+    {
+        yield return 1;
+        yield return 2;
+    }
+    finally
+    {
+        log.Add("finally");
+    }
+}
+```
+
+```csharp
+var guardLog = new List<string>();
+foreach (int n in Guarded(guardLog))
+{
+    guardLog.Add($"got {n}");
+    break; // foreach calls Dispose, and Dispose runs the finally block
+}
+Check(guardLog.SequenceEqual(["got 1", "finally"]), "breaking out still runs finally");
+```
+
+The log is `got 1`, then `finally`; the `2` is never produced. This is why `using` blocks inside iterators (a `using` is a `try`/`finally`) release files and connections correctly, and why you should use `foreach` rather than a hand-written `MoveNext` loop that forgets `Dispose`.
+
+The rules about `try` exist because of this pause-and-resume design. A `yield return` may sit in a `try` that has only a `finally`, but not in one with a `catch`, and never inside `catch` or `finally` themselves:
+
+```csharp
+// sketch: does not compile
+static IEnumerable<int> Bad()
+{
+    try { yield return 1; } catch (Exception) { }
+}
+// error CS1626: Cannot yield a value in the body of a try block with a catch clause
+```
+
+### Level 5: infinite sequences
+
+Because nothing runs until someone asks, a sequence may be **infinite**:
+
+```csharp
+static IEnumerable<long> Fibonacci()
+{
+    long a = 0, b = 1;
+    while (true)
+    {
+        yield return a;
+        (a, b) = (b, a + b);
+    }
+}
+```
+
+```csharp
+Check(FirstN(Fibonacci(), 10).SequenceEqual([0L, 1, 1, 2, 3, 5, 8, 13, 21, 34]), "the first ten Fibonacci numbers");
+```
+
+`while (true)` never ends, yet `FirstN(Fibonacci(), 10)` returns ten numbers and stops: after the tenth, `FirstN` executes `yield break`, its `foreach` disposes the Fibonacci cursor, and the infinite loop is simply abandoned. Calling `Fibonacci().ToList()` would hang until memory ran out, and long before that `long` would overflow silently: $F_{93} = 12{,}200{,}160{,}415{,}121{,}876{,}738$ is larger than `long.MaxValue`.
+
+### Level 6: deferred execution defers exceptions too
+
+The laziness applies to **every** line of the body, including argument checks:
+
+```csharp
+static IEnumerable<int> CountTo(int limit)
+{
+    ArgumentOutOfRangeException.ThrowIfNegative(limit);
+    for (int i = 1; i <= limit; i++)
+    {
+        yield return i;
+    }
+}
+```
+
+```csharp
+IEnumerable<int> lazyError = CountTo(-1); // no exception yet
+string? thrown = null;
+try
+{
+    lazyError.GetEnumerator().MoveNext();
+}
+catch (ArgumentOutOfRangeException e)
+{
+    thrown = e.ParamName;
+}
+Check(thrown == "limit", "the check only ran on the first MoveNext");
+```
+
+`CountTo(-1)` returned normally. The exception appeared only on the first `MoveNext`, which in real code can be far away from the bad call, in another method or another layer. Jon Skeet, reimplementing LINQ in his *Edulinq* series, sums it up: "The problem is deferred execution." The fix is to "split our implementation into two: a normal method for validation, which then calls the iterator method for the deferred processing". Here the inner method is a local function:
+
+```csharp
+static IEnumerable<int> CountToChecked(int limit)
+{
+    ArgumentOutOfRangeException.ThrowIfNegative(limit); // runs at the call
+    return Iterate();
+
+    IEnumerable<int> Iterate()
+    {
+        for (int i = 1; i <= limit; i++)
+        {
+            yield return i;
+        }
+    }
+}
+```
+
+Now `CountToChecked(-1)` throws at the call, and `CountToChecked(3)` still yields 1, 2, 3 lazily. LINQ's own operators are written this way, which is why passing a `null` selector to `Select` throws `ArgumentNullException` at once; the lab checks both.
+
+### Level 7: async iterators and `await foreach`
+
+A slow source, such as a sensor that answers every few milliseconds or a paged web API, should not block a thread while it waits. C# 8 (with .NET Core 3.0) added **async iterators**: a method returning `IAsyncEnumerable<T>` may both `await` and `yield return`, and the consumer uses `await foreach`.
+
+```csharp
+static async IAsyncEnumerable<int> Readings([EnumeratorCancellation] CancellationToken token = default)
+{
+    for (int i = 1; ; i++)
+    {
+        await Task.Delay(10, token); // a slow sensor
+        yield return 20 + i;
+    }
+}
+```
+
+```csharp
+var received = new List<int>();
+await foreach (int celsius in Readings())
+{
+    received.Add(celsius);
+    if (received.Count == 3) break;
+}
+Check(received.SequenceEqual([21, 22, 23]), "await foreach pulls three readings, then stops");
+```
+
+The readings are 21, 22, 23, and the thread is free during each 10 ms wait. The interfaces mirror the synchronous ones: `GetAsyncEnumerator(CancellationToken)`, `MoveNextAsync()` returning `ValueTask<bool>`, and `DisposeAsync()`. `WithCancellation` passes a token to `GetAsyncEnumerator`, and the `[EnumeratorCancellation]` attribute tells the compiler to hand that token to the iterator's parameter:
+
+```csharp
+using var cts = new CancellationTokenSource();
+var beforeCancel = new List<int>();
+bool cancelled = false;
+try
+{
+    await foreach (int celsius in Readings().WithCancellation(cts.Token))
+    {
+        beforeCancel.Add(celsius);
+        if (beforeCancel.Count == 2) cts.Cancel();
+    }
+}
+catch (OperationCanceledException)
+{
+    cancelled = true;
+}
+Check(cancelled && beforeCancel.SequenceEqual([21, 22]), "WithCancellation reaches the iterator's token");
+```
+
+After the second reading the token is cancelled, the next `Task.Delay(10, token)` throws, and the exception surfaces through `await foreach`. [Tasks and async/await](11-tasks-and-async-await.qmd) explains the `await` half of this machine.
+
+## How it works underneath
+
+The C# specification (§15.16.5, *Enumerator objects*) describes an iterator's cursor as an object with "four potential states, before, running, suspended, and after". `MoveNext` moves it between them:
+
+$$
+\text{before} \xrightarrow{\texttt{MoveNext}} \text{running} \to
+\begin{cases}
+\text{suspended} & \text{at a } \texttt{yield return}\text{: } \texttt{MoveNext} \text{ returns true} \\
+\text{after} & \text{at } \texttt{yield break}\text{, the end, or an exception: returns false}
+\end{cases}
+$$
+
+where
+
+- **before** means the body has not started; this is the state right after `GetEnumerator`;
+- **running** means the body is executing inside a `MoveNext` call;
+- **suspended** means the body is paused just after a `yield return`, and `Current` holds the yielded value;
+- **after** means the sequence is finished, and every further `MoveNext` returns `false`;
+- a `MoveNext` from **suspended** goes back to **running** and resumes "immediately following the yield return statement that caused the suspension".
+
+Example, with `TracedSquares(2, ...)`:
+
+1. Before. `MoveNext` runs `start`, `yield 1`, then suspends with `Current = 1`: returns true.
+2. Suspended. `MoveNext` resumes at `i++`, runs `yield 4`, suspends with `Current = 4`: returns true.
+3. Suspended. `MoveNext` resumes, `i` becomes 3, `3 <= 2` is false, it runs `end` and reaches the end: after, returns false.
+
+The compiler makes this concrete with a **generated class**. Roughly, and with simplified names:
+
+```csharp
+// sketch: roughly what Roslyn generates for TracedSquares (names simplified)
+sealed class TracedSquaresIterator : IEnumerable<int>, IEnumerator<int>
+{
+    int state;   // <>1__state
+    int current; // <>2__current, returned by Current
+    int i;       // a field such as <i>5__1: the local i, hoisted so it survives the pause
+    // plus copies of the arguments count and trace, and the creating thread's id
+
+    public bool MoveNext()
+    {
+        switch (state)
+        {
+            case 0: state = -1; trace.Add("start"); i = 1; break;      // before: start the body
+            case 1: state = -1; i++; break;                             // suspended: resume after the yield
+            default: return false;                                      // after
+        }
+        if (i <= count) { trace.Add($"yield {i * i}"); current = i * i; state = 1; return true; }
+        trace.Add("end");
+        return false;
+    }
+}
+```
+
+Every **local variable becomes a field**, because a paused method has no stack frame to keep it in. The `state` integer records where to resume. In the current Roslyn compiler (an implementation detail, checked with reflection in a scratch program, not a language rule), `-2` means "an enumerable whose `GetEnumerator` has not been called", `0` is **before**, `-1` is **running** or **after**, and a positive number names the `yield return` to resume after; `TracedSquares` has one `yield return`, so its suspended state is always 1. Jon Skeet's article describes the same numbering.
+
+The generated class implements **both** interfaces, so the common case needs one allocation. The specification's note says such an object "would return its own instance (to save allocations) from the first call to GetEnumerator. Subsequent invocations of GetEnumerator, if any, would return a new class instance". The lab checks all of this without reflection:
+
+```csharp
+IEnumerable<int> machine = TracedSquares(2, new List<string>());
+Check(machine is IEnumerator<int>, "the generated class implements both interfaces");
+Check(machine.GetType().Name.Contains("TracedSquares"), "it is a compiler-generated class named after the method");
+
+IEnumerator<int> firstCursor = machine.GetEnumerator();
+IEnumerator<int> secondCursor = machine.GetEnumerator();
+Check(ReferenceEquals(firstCursor, machine), "the first GetEnumerator hands out the object itself");
+Check(!ReferenceEquals(secondCursor, machine), "a second one gets a fresh copy with its own state");
+```
+
+The lab then walks the two cursors independently: the first reaches 1, 4 and the end while the second is still at 1. The specification also says generated enumerators "do not support the IEnumerator.Reset method"; calling it throws `NotSupportedException`, which the lab checks too. An `async IAsyncEnumerable<T>` iterator is the same idea with one more ingredient: the class is also an async state machine, so `MoveNextAsync` can pause at an `await` as well as at a `yield return`. Stephen Toub's *Iterating with Async Enumerables in C# 8* shows the generated code, which reuses the same object for the enumerable, the enumerator, and the `ValueTask<bool>` source, so that "no matter how many times an async iterator yields, the most common case is that it incurs at most two allocations of overhead".
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Validating arguments inside the iterator | The exception appears at the first `MoveNext`, far from the bad call | A non-iterator wrapper that checks, then returns a local iterator function (Level 6) |
+| Enumerating the same lazy sequence twice | The work, and its side effects, run twice: `start` appears twice in the trace | Materialise once with `ToList()` or `ToArray()` and reuse the list |
+| Changing a list inside its own `foreach` | `InvalidOperationException: Collection was modified; enumeration operation may not execute.` | Loop over a copy, collect changes and apply them after the loop |
+| `ToList()` or `Count()` on an infinite sequence | The program hangs, then runs out of memory | Bound it first with `Take(n)` or a `yield break` condition |
+| `yield return` inside a `try` with a `catch` | `error CS1626: Cannot yield a value in the body of a try block with a catch clause` | Keep the `try`/`catch` around the code that computes the value, not around the `yield` |
+| An iterator with a `ref`, `in` or `out` parameter | `error CS1623: Iterators cannot have ref, in or out parameters` | Pass values in and yield results out |
+| A manual `MoveNext` loop without `Dispose` | `finally` and `using` blocks inside the iterator never run when you stop early | Use `foreach`, or wrap the enumerator in `using` |
+| Calling `Reset()` to restart | `NotSupportedException` | Call `GetEnumerator()` again (or the iterator method) |
+
+## Interview questions
+
+### 1. When does the body of an iterator method run?
+
+**Answer.** Not at the call. Calling `TracedSquares(3, trace)` only creates the generated object with copies of the arguments; the trace stays empty. The body runs piece by piece inside `MoveNext`: each call runs from where the last `yield return` paused to the next one. The lab's trace proves the interleaving: `start, yield 1, got 1, yield 4, got 4, yield 9, got 9, end`. Each new enumeration (each `GetEnumerator`) runs the body from the start again.
+
+### 2. Why does `CountTo(-1)` not throw, and how do you fix it?
+
+**Answer.** Because the argument check is part of the iterator body, and the body is deferred until the first `MoveNext`. The fix is to split the method: a public, non-iterator method validates and then `return`s a call to a private or local iterator. The outer method runs immediately, so `CountToChecked(-1)` throws at the call site, while the inner one keeps the lazy behaviour.
+
+### 3. A LINQ query is written, then the list changes. Which values does the query see?
+
+**Answer.** The current ones at the time it is enumerated. `Select` and `Where` are iterators, so a query is a recipe, not a result:
+
+```csharp
+var source = new List<int> { 1, 2, 3 };
+IEnumerable<int> doubled = source.Select(n => n * 2);
+source.Add(4);
+Check(doubled.Sum() == 20, "the query saw the 4 added after it was written: 2 + 4 + 6 + 8");
+```
+
+The sum is $2 + 4 + 6 + 8 = 20$, not $2 + 4 + 6 = 12$. Operators that must see everything, such as `ToList`, `Count`, `Sum` and `OrderBy` (on first `MoveNext`), force the evaluation. More in [LINQ](08-linq.qmd).
+
+### 4. What does `await foreach` compile into, and how does it differ from `foreach`?
+
+**Answer.** The same shape with `await` at each step: `var e = source.GetAsyncEnumerator(token); try { while (await e.MoveNextAsync()) { var x = e.Current; ... } } finally { await e.DisposeAsync(); }`. `MoveNextAsync` returns `ValueTask<bool>`, so a step that already has its value completes without allocating, and a step that must wait frees the thread. Cancellation enters through `GetAsyncEnumerator`'s token: `WithCancellation(token)` supplies it, and `[EnumeratorCancellation]` routes it to the iterator's parameter, as the lab's second `Readings` loop shows.
+
+### 5. Why can a `yield return` sit in a `try` with a `finally` but not with a `catch`?
+
+**Answer.** The body is split across many `MoveNext` calls, and while the consumer's loop body runs, the iterator is not on the call stack at all. A `finally` can be honoured anyway: the `foreach` expansion calls `Dispose`, and the generated `Dispose` runs pending `finally` blocks, which is why `Guarded` logs `finally` after a `break` (and would after an exception in the loop body). A `catch` cannot be honoured: if the consumer throws, Eric Lippert explains in *Iterator Blocks, Part Five* (2009), "the catch does not run, because its not on the call stack", so `catch` and `finally` would behave inconsistently. Part Four adds that the compiler cannot jump back into the middle of a catch handler either. So the language forbids the case, with `CS1626`.
+
+## Summary
+
+$$
+\text{before} \xrightarrow{\texttt{MoveNext}} \text{running} \to \text{suspended (true) or after (false)}, \qquad W_{\text{lazy}}(k) = 2k
+$$
+
+where **before**, **running**, **suspended** and **after** are the specification's four states of a generated enumerator, `MoveNext` drives the transitions, and $W_{\text{lazy}}(k)$ is the number of source elements produced when the consumer wants $k$ even squares.
+
+Example: `TracedSquares(2, ...)` goes before → suspended (1) → suspended (4) → after, and `MoveNext` returns true, true, false. For the problem, $k = 3$ gives $W = 6$ numbers produced instead of $n = 1{,}000{,}000$.
+
+- `IEnumerable<T>` hands out cursors; `IEnumerator<T>` has `MoveNext`, `Current` and `Dispose`.
+- `foreach` is `GetEnumerator` + `while (MoveNext)` + `finally Dispose`, bound by name first.
+- An iterator method returns at once; its body runs piece by piece inside `MoveNext`, and again for every enumeration.
+- `yield break` ends early; breaking out of `foreach` disposes the iterator, which runs pending `finally` blocks.
+- Laziness makes infinite sequences possible, and defers exceptions: validate in a non-iterator wrapper.
+- `IAsyncEnumerable<T>` and `await foreach` add `await` between elements; pass cancellation with `WithCancellation` and `[EnumeratorCancellation]`.
+
+## References
+
+- Microsoft Learn: [yield statement](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/statements/yield), [Iterators](https://learn.microsoft.com/en-us/dotnet/csharp/iterators), [Generate and consume async streams](https://learn.microsoft.com/en-us/dotnet/csharp/asynchronous-programming/generate-consume-asynchronous-stream).
+- C# language specification: [The foreach statement (§13.9.5)](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/statements#1395-the-foreach-statement), [Enumerator objects (§15.16.5)](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/classes#15165-enumerator-objects) and [Enumerable objects (§15.16.6)](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/classes#15166-enumerable-objects).
+- [The history of C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-version-history): `foreach` calls `Dispose` from C# 1.2, iterators in C# 2.0, asynchronous streams in C# 8.0.
+- Stephen Toub, [Iterating with Async Enumerables in C# 8](https://learn.microsoft.com/en-us/archive/msdn-magazine/2019/november/csharp-iterating-with-async-enumerables-in-csharp-8), *MSDN Magazine*, November 2019.
+- Jon Skeet, [Iterator block implementation details: auto-generated state machines](https://csharpindepth.com/articles/IteratorBlockImplementation), [Reimplementing LINQ to Objects: Part 2 – "Where"](https://codeblog.jonskeet.uk/2010/09/03/reimplementing-linq-to-objects-part-2-quot-where-quot/) (2010), and [*C# in Depth*, 4th edition](https://www.manning.com/books/c-sharp-in-depth-fourth-edition) (Manning, 2019), section 2.4, "Iterators".
+- Eric Lippert, [Iterator Blocks, Part One](https://learn.microsoft.com/en-us/archive/blogs/ericlippert/iterator-blocks-part-one), [Part Four: Why no yield in catch?](https://learn.microsoft.com/en-us/archive/blogs/ericlippert/iterator-blocks-part-four-why-no-yield-in-catch) and [Part Five: Push vs Pull](https://learn.microsoft.com/en-us/archive/blogs/ericlippert/iterator-blocks-part-five-push-vs-pull) (2009).
+- Joseph Albahari, [*C# 12 in a Nutshell*](https://www.albahari.com/nutshell/) (O'Reilly, 2023), chapter 4, "Enumeration and Iterators".
+- Lab: [`labs/iterators-and-yield.cs`](labs/iterators-and-yield.cs). Run it from `programming-languages/csharp/labs` with `dotnet run iterators-and-yield.cs`.

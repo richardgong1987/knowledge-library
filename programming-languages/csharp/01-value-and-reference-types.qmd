@@ -1,0 +1,413 @@
+---
+title: "Value and Reference Types"
+description: "C# value and reference types from the first assignment to interview level: struct versus class, boxing, ref, out and in, ref locals and returns, readonly struct, default equality, string immutability and interning, and what the runtime really allocates."
+---
+
+## The problem
+
+A game stores a player's position as a point with `X = 1` and `Y = 2`. A "ghost" shows where the player will be after a move, so the code copies the position and moves the copy: `var ghost = position;` and then `ghost.X = 10;`.
+
+What is `position.X` now? In C# the answer depends on **one keyword in a different file**. If the point type is declared with `struct`, `position.X` is still 1: the assignment copied the point. If it is declared with `class`, `position.X` is 10: the assignment copied only a reference, and both variables name the same object. The player teleports, and nothing in the code at the call site says why.
+
+Every C# type is either a **value type** (structs, enums, `int`, `double`, `bool`, `decimal`) or a **reference type** (classes, interfaces, delegates, arrays, `string`, `object`). This chapter is about that one split: what it guarantees, what it costs, and what the runtime does underneath.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A photocopy or a house address
+
+- **Value type:** a drawing on a sheet of paper. When you give your friend a **photocopy**, they can scribble on it all day, and your sheet stays exactly as it was.
+- **Reference type:** a card with a **house address** written on it. Copying the card gives two cards with the same address. If your friend uses their card to go and paint the front door red, you see a red door too, because there was only ever one house.
+- **Boxing:** putting a photocopy of your drawing into a **parcel** so it can travel where only parcels are allowed. The parcel holds its own copy; changing your sheet later does not change what is inside.
+
+Eric Lippert, who worked on the C# compiler at Microsoft, made the key point in *The Stack Is An Implementation Detail* (2009): the most relevant fact about value types is not how they are allocated, but that "they are always copied 'by value'". Photocopy or address: that is the whole idea. Where the paper is kept is a detail.
+:::
+
+## From simple to advanced
+
+### Level 1: assignment copies a struct and shares a class
+
+Two types with the same fields, one of each kind:
+
+```csharp
+struct PointStruct(int x, int y)
+{
+    public int X = x;
+    public int Y = y;
+}
+
+class PointClass(int x, int y)
+{
+    public int X = x;
+    public int Y = y;
+}
+```
+
+The same three lines behave differently:
+
+```csharp
+var a = new PointStruct(1, 2);
+var b = a;      // copies both fields
+b.X = 10;       // a.X is still 1
+
+var c = new PointClass(1, 2);
+var d = c;      // copies the reference only
+d.X = 10;       // c.X is now 10, because c and d name one object
+```
+
+After `b = a` and then a write `b.X = v`, the value read back through `a` is one rule:
+
+$$
+a.X_{\text{after}} =
+\begin{cases}
+a.X_{\text{before}}, & T \in \mathcal{V} \\
+v, & T \in \mathcal{R}
+\end{cases}
+$$
+
+where
+
+- $T$ is the type of `a` and `b`;
+- $\mathcal{V}$ is the set of value types and $\mathcal{R}$ the set of reference types, and every type is in exactly one of them;
+- $a.X_{\text{before}}$ is the field before the write, and $v$ is the value written through `b`.
+
+Example, with the code above:
+
+1. `PointStruct` is in $\mathcal{V}$, $a.X_{\text{before}} = 1$ and $v = 10$, so $a.X_{\text{after}} = 1$: `b` was a separate copy.
+2. `PointClass` is in $\mathcal{R}$, so $c.X_{\text{after}} = v = 10$. The lab also checks `ReferenceEquals(c, d)` is `true`: one object, two names.
+
+The C# specification says it plainly in its chapter on types: with reference types "it is possible for two variables to reference the same object", while with value types "the variables each have their own copy of the data".
+
+### Level 2: boxing puts a copy in a parcel
+
+Some places accept only references: a variable of type `object`, an interface, an old `ArrayList`. Putting a value type there is **boxing**: the runtime allocates a new object and copies the value into it. Casting back is **unboxing**: it checks the type and copies the value out.
+
+```csharp
+int n = 42;
+object box = n;      // boxing: copy n into a new object on the GC heap
+n = 7;               // changes n only, not the copy inside the box
+int back = (int)box; // unboxing: copy the value out again
+```
+
+`back` is 42 and `n` is 7. The box is a separate copy, made at the moment of boxing. Two boxes are two objects, even when they hold the same number:
+
+```csharp
+object first = 42;
+object second = 42;
+bool sameObject = first == second;     // false: == on object compares references
+bool sameValue = first.Equals(second); // true: Int32.Equals compares the numbers
+```
+
+Unboxing is strict. The specification (§10.3.7) says it consists of "first checking that the object instance is a boxed value of the given" type, then copying:
+
+$$
+\operatorname{unbox}_S(o) =
+\begin{cases}
+\text{a copy of the value inside } o, & \operatorname{type}(o) = S \\
+\text{throw } \texttt{InvalidCastException}, & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $o$ is a reference to a box;
+- $S$ is the value type named in the cast, such as `int` in `(int)box`;
+- $\operatorname{type}(o)$ is the runtime type recorded inside the box when it was made.
+
+Example: `box` was made from an `int`, so $\operatorname{type}(o) = \texttt{Int32}$.
+
+1. `(int)box` has $S = \texttt{Int32}$, the types match, and the result is 42.
+2. `(long)box` has $S = \texttt{Int64}$. Although every `int` fits in a `long`, $\texttt{Int32} \ne \texttt{Int64}$, so it throws. The lab catches the exception and checks its message: `Unable to cast object of type 'System.Int32' to type 'System.Int64'.` The fix is to unbox first and convert second: `(long)(int)box`.
+
+### Level 3: by value, `ref`, `out` and `in`
+
+A normal parameter is a **new variable** that starts as a copy of the argument. For a class, the copy is a copy of the reference, so the method can change the object but cannot make the caller's variable point somewhere else:
+
+```csharp
+static void Rename(PointClass p) => p.X = 99;
+
+static void Replace(PointClass p) => p = new PointClass(0, 0);
+
+static void ReplaceRef(ref PointClass p) => p = new PointClass(0, 0);
+```
+
+```csharp
+var shared = new PointClass(10, 2);
+Rename(shared);      // the callee changes the object both variables refer to
+Replace(shared);     // the callee reassigns its own copy of the reference
+Check(shared.X == 99, "a method can mutate the object, but not replace the caller's reference");
+
+ReplaceRef(ref shared); // ref: the parameter is the caller's variable
+Check(shared.X == 0, "with ref, reassignment reaches the caller");
+```
+
+The three modifiers `ref`, `out` and `in` all mean one thing: **the parameter is the caller's variable**, not a copy of it.
+
+$$
+\operatorname{loc}(p) =
+\begin{cases}
+\text{a new location, initialised with a copy of } x, & \text{by value} \\
+\operatorname{loc}(x), & \texttt{ref},\ \texttt{out},\ \texttt{in}
+\end{cases}
+$$
+
+where
+
+- $p$ is the parameter inside the method;
+- $x$ is the variable the caller passed;
+- $\operatorname{loc}(e)$ is the storage location of $e$: the box in memory that a read of $e$ looks into and a write to $e$ changes.
+
+Example, with `shared` referring to an object #1 whose `X` is 10:
+
+1. `Rename(shared)`: $\operatorname{loc}(p)$ is new but holds a copy of the reference to #1. `p.X = 99` changes #1, so `shared.X` is 99.
+2. `Replace(shared)`: `p` now refers to a new object #2, but only $\operatorname{loc}(p)$ changed. `shared` still refers to #1, and `shared.X` is still 99.
+3. `ReplaceRef(ref shared)`: $\operatorname{loc}(p) = \operatorname{loc}(\texttt{shared})$, so the assignment makes `shared` itself refer to #2, and `shared.X` is 0.
+
+The other two modifiers add one rule each. `out` requires the method to assign the parameter before it returns, which makes it a second return value:
+
+```csharp
+bool parsed = int.TryParse("123", out int number); // out: the method must assign it
+```
+
+`in` passes a **read-only** reference: no copy of a large struct, and no writes. `Length(new PointStruct(3, 4))` returns 5:
+
+```csharp
+static double Length(in PointStruct p) => Math.Sqrt(p.X * p.X + p.Y * p.Y);
+```
+
+Writing through an `in` parameter, or returning without assigning an `out` one, is a compile error:
+
+```csharp
+// sketch: does not compile
+static void Move(in PointStruct p) { p.X = 3; }
+// error CS8332: Cannot assign to a member of variable 'p' or use it as the right hand side
+//               of a ref assignment because it is a readonly variable
+static void Set(out int n) { }
+// error CS0177: The out parameter 'n' must be assigned to before control leaves the current method
+```
+
+### Level 4: `ref` locals and `ref` returns
+
+The same aliasing works for local variables and return values. A `ref` local is a second name for an existing location, and a `ref` return hands the caller a location instead of a value:
+
+```csharp
+static ref int LargestElement(int[] values)
+{
+    int best = 0;
+    for (int i = 1; i < values.Length; i++)
+        if (values[i] > values[best]) best = i;
+    return ref values[best]; // a reference to the element, not its value
+}
+```
+
+```csharp
+int[] scores = [10, 20, 30];
+ref int middle = ref scores[1]; // an alias for the array element, not a copy
+middle = 25;                    // scores[1] is now 25
+LargestElement(scores) = 0;     // assign through the returned reference
+```
+
+`middle = 25` makes the array `[10, 25, 30]`. `LargestElement` finds 30 at index 2 and returns that element's location, so assigning 0 to the call makes the array `[10, 25, 0]`. A method may return by reference only a location that outlives it, such as an array element; a local dies when the method returns:
+
+```csharp
+// sketch: does not compile
+static ref int Broken()
+{
+    int local = 5;
+    return ref local; // error CS8168: Cannot return local 'local' by reference because it is not a ref local
+}
+```
+
+### Level 5: `readonly struct`
+
+Copies are only safe and simple if a value cannot change behind your back. A `readonly struct` promises that no member changes the instance after construction, and the compiler enforces it:
+
+```csharp
+readonly struct Money(decimal amount, string currency)
+{
+    public decimal Amount { get; } = amount;
+    public string Currency { get; } = currency;
+
+    public Money Add(decimal extra) => new(Amount + extra, Currency);
+}
+```
+
+```csharp
+var price = new Money(5.00m, "GBP");
+var total = price.Add(2.50m);   // returns a new value; price is unchanged
+```
+
+`price.Amount` stays 5.00 and `total.Amount` is 7.50, like `int` arithmetic, where `2 + 3` does not change the 2. A mutable field is rejected: `readonly struct Bad { public decimal Amount; }` gives `error CS8340: Instance fields of readonly structs must be readonly.` The promise also lets the compiler skip the hidden "defensive copies" it otherwise makes when a struct sits in a `readonly` field or an `in` parameter; [Classes, Structs and Records](03-classes-structs-and-records.qmd) shows that trap.
+
+### Level 6: default equality
+
+Without any code of your own, `Equals` asks a different question for each kind of type:
+
+```csharp
+var p1 = new PointClass(1, 2);
+var p2 = new PointClass(1, 2);
+bool classesEqual = p1.Equals(p2);  // false: Object.Equals compares identity
+
+var s1 = new PointStruct(1, 2);
+var s2 = new PointStruct(1, 2);
+bool structsEqual = s1.Equals(s2);  // true: ValueType.Equals compares every field
+```
+
+$$
+\operatorname{Equals}(x, y) =
+\begin{cases}
+[\,x \text{ and } y \text{ are the same object}\,], & \text{class, by default} \\
+\bigwedge_{i=1}^{k} \operatorname{Equals}(x.f_i,\ y.f_i), & \text{struct, by default}
+\end{cases}
+$$
+
+where
+
+- $x$ and $y$ are the two operands;
+- $[\,P\,]$ is true when the statement $P$ holds;
+- $k$ is the number of instance fields and $f_i$ is the $i$-th field;
+- $\bigwedge$ means "and" over all $k$ fields.
+
+Example:
+
+1. `p1` and `p2` are two objects created by two `new` expressions, so `p1.Equals(p2)` is false, although both hold $(1, 2)$.
+2. `PointStruct` has $k = 2$ fields, so `s1.Equals(s2)` is $\operatorname{Equals}(1, 1) \land \operatorname{Equals}(2, 2) = \text{true} \land \text{true} = \text{true}$.
+
+Two cautions. First, a struct gets `Equals` but **not** `==`: `s1 == s2` gives `error CS0019: Operator '==' cannot be applied to operands of type 'PointStruct' and 'PointStruct'`. Second, `ValueType.Equals(object)` takes an `object`, so the argument is boxed, and the documentation advises overriding it "particularly if your value type contains fields that are reference types". A `record struct` writes a fast, typed `Equals` and `==` for you ([Classes, Structs and Records](03-classes-structs-and-records.qmd)).
+
+### Level 7: strings are immutable references that act like values
+
+`string` is a class, yet it feels like a value, for two reasons. It is **immutable**: no method changes a string; `+=` builds a new one and moves the variable to it.
+
+```csharp
+string greeting = "hello";
+string alias = greeting;
+alias += " world";      // builds a new string; greeting still refers to "hello"
+```
+
+And it **overloads `==`** to compare text. Identity is still there underneath, and **interning** shows it. The specification (§6.4.5.6) says that equal string literals in the same assembly "refer to the same string instance". A string built at run time is a new object until you ask the runtime's pool for its copy:
+
+```csharp
+string literal = "hello";
+string built = "HELLO".ToLowerInvariant();             // a new string, made at run time
+bool equalText = literal == built;                     // true: string overloads ==
+bool sameInstance = ReferenceEquals(literal, built);   // false: two objects
+bool interned = ReferenceEquals(literal, string.Intern(built)); // true: the pooled copy
+```
+
+The lab checks all three, and also that `literal` and `greeting` (two separate `"hello"` literals) are one instance. Interning saves memory for many repeated strings; it is never needed for correctness, because `==` already compares text.
+
+## How it works underneath
+
+**The specification talks about variables, not stacks.** A variable is a storage location. A value-type variable contains the value; a reference-type variable contains a reference, and the object lives in the garbage-collected heap. Where the value-type location lives is the JIT compiler's choice. Lippert's article lists cases where it is not "the stack": an `int` field of a class lives inside the object on the heap, and a local captured by a lambda is "hoisted to be implemented as a field of a hidden class" ([Delegates, Lambdas and Events](06-delegates-lambdas-and-events.qmd)); locals of iterator methods are hoisted the same way ([Iterators and yield](07-iterators-and-yield.qmd)). The reverse also happens: Stephen Toub's *Performance Improvements in .NET 10* shows the JIT's escape analysis stack-allocating arrays that never leave a method. The guarantee is the copy semantics, not the location.
+
+**Every heap object starts with two hidden words.** On 64-bit CoreCLR an object is an 8-byte **object header** (auxiliary data for the runtime, such as `lock` state or a default hash code), an 8-byte pointer to the type's **MethodTable** (the runtime's description of the type, used for virtual calls and casts), then the fields, rounded up to 8 bytes. A box is exactly such an object with the value as its only field. The lab measures it with `GC.GetAllocatedBytesForCurrentThread`:
+
+$$
+\operatorname{size}(s) = \max\!\left(24,\ 8 \left\lceil \frac{16 + s}{8} \right\rceil\right)
+$$
+
+where
+
+- $s$ is the number of bytes of fields (the boxed value's size for a box);
+- $16$ is the header plus the MethodTable pointer;
+- $\lceil \cdot \rceil$ rounds up, so $8 \lceil \cdot / 8 \rceil$ rounds up to a multiple of 8;
+- $24$ is the smallest object the runtime allocates on 64-bit.
+
+Example, all three checked by the lab:
+
+1. A boxed `int`: $s = 4$, so $8 \lceil 20 / 8 \rceil = 8 \cdot 3 = 24$ bytes, six times the 4 bytes of the value.
+2. A boxed `decimal`: $s = 16$, so $8 \lceil 32 / 8 \rceil = 32$ bytes.
+3. `new object()`: $s = 0$, so $8 \lceil 16 / 8 \rceil = 16$, but $\max(24, 16) = 24$ bytes.
+
+An array is one object with an extra 8 bytes for its length, so its overhead is 24 bytes. That makes the difference between struct and class arrays easy to count:
+
+```csharp
+long start = GC.GetAllocatedBytesForCurrentThread();
+var structs = new PointStruct[1000];   // one object: the points sit inside the array
+long structBytes = GC.GetAllocatedBytesForCurrentThread() - start;
+
+start = GC.GetAllocatedBytesForCurrentThread();
+var classes = new PointClass[1000];    // one array of references...
+for (int i = 0; i < classes.Length; i++) classes[i] = new PointClass(i, i); // ...plus 1000 objects
+long classBytes = GC.GetAllocatedBytesForCurrentThread() - start;
+```
+
+`PointStruct[1000]` is $24 + 1000 \cdot 8 = 8024$ bytes, one allocation, the points side by side. `PointClass[1000]` is the same 8024 bytes of references plus $1000 \cdot 24 = 24000$ bytes of objects, 32024 bytes and 1001 allocations. The lab checks both numbers. Those sizes are measurements of 64-bit CoreCLR, not promises of the language.
+
+**Boxing and `ref` in the compiled code.** `object box = n` compiles to the IL instruction `box`, which allocates and copies; `(int)box` compiles to `unbox.any`, which performs the type check of Level 2. A `ref` local or parameter compiles to a **managed pointer** (`int&` in IL): an address the garbage collector understands, even when it points into the middle of an array or object, so the GC can move the object and update the pointer. Because a managed pointer to a dead stack frame would be a dangling pointer, the compiler's ref-safety rules reject `return ref local` (CS8168).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Changing a struct element of a `List<T>` in place: `list[0].X = 5` | `error CS1612: Cannot modify the return value of 'List<PointStruct>.this[int]' because it is not a variable` | Copy out, change, write back (`var p = list[0]; p.X = 5; list[0] = p;`), or use a class |
+| Assigning a new object to a parameter and expecting the caller to see it | Silently, the caller still has the old object (`Replace` above) | Pass it by `ref`, or return the new object |
+| Unboxing to a wider type: `(long)box` when the box holds an `int` | `InvalidCastException: Unable to cast object of type 'System.Int32' to type 'System.Int64'.` | Unbox to the exact type, then convert: `(long)(int)box` |
+| Comparing two `object` variables with `==` | `false` for two boxes of 42 | Call `Equals`, or unbox first |
+| Comparing two structs with `==` | `error CS0019: Operator '==' cannot be applied to operands of type 'PointStruct' and 'PointStruct'` | Use `Equals`, define the operators, or use a `record struct` |
+| Mutating a struct through an interface | Silently, only the box changes (interview question 3) | Keep structs immutable: `readonly struct` |
+| Using `ReferenceEquals` to compare strings | `false` for equal text built at run time | Use `==` or `string.Equals` |
+| Building a long string with `+=` in a loop | Each step copies the whole string so far: slow for big loops | Use `StringBuilder` or `string.Join` |
+
+## Interview questions
+
+### 1. Are value types stored on the stack?
+
+**Answer.** Sometimes, and the language does not promise it. The defining property of a value type is that it is **copied by value**; its storage location is the JIT's choice. Counterexamples: a struct field of a class lives inside the object on the heap; every element of `new PointStruct[1000]` lives inside the heap-allocated array (8024 bytes, measured in the lab); a local captured by a lambda or used across a `yield` is hoisted into a heap object; and a boxed value is a heap object by definition. Lippert's 2009 article makes exactly this point: whether the jitter "happens to allocate memory for a particular local variable" on the stack or the heap makes no difference to the developer "as long as the implementation maintains the semantics guaranteed by the specification". The right answer to "struct or class?" is semantic: does the type represent a value or an identity?
+
+### 2. Are objects passed by reference in C#?
+
+**Answer.** No. By default **every** argument is passed by value; for a class, the value is a reference. That is why `Rename` can change the object (both references lead to it) but `Replace` cannot change the caller's variable (it only overwrites its own copy of the reference). Only `ref`, `out` and `in` pass the variable itself, as `ReplaceRef` shows: afterwards `shared.X` is 0. Jon Skeet's article *Parameter passing in C#* calls the popular phrase "highly confusing" and gives "the correct statement that object references are passed by value by default".
+
+### 3. What does this print?
+
+```csharp
+var counter = new Counter();
+IIncrement boxedCounter = counter;  // boxing copies counter into a new object
+boxedCounter.Increment();           // changes the box, not the local
+```
+
+**Answer.** `Counter` is a struct implementing the interface `IIncrement`. Converting it to the interface type is a boxing conversion, so `boxedCounter` refers to a new heap object holding a **copy** of `counter`. `Increment` runs on that copy. Afterwards `counter.Value` is 0 and `((Counter)boxedCounter).Value` is 1; the lab checks both. This is one reason the framework design guidelines say to avoid a struct unless it "is immutable" and "will not have to be boxed frequently", and to keep it under 16 bytes.
+
+### 4. `string` behaves like a value. Why is it a class?
+
+**Answer.** A struct has a size fixed at compile time, because it is copied inline into variables, fields and arrays. A string's length is only known at run time, so it cannot be a struct without breaking that property. Lippert answered this in the comments of his 2009 article: the designers could abandon fixed-size structs, or "make strings an immutable reference type and overload equality so that they act like value types. We chose (2)." Immutability makes sharing safe, so copying a string variable copies only an 8-byte reference however long the text is, and `==` compares text, so callers rarely see the identity underneath. Interning (Level 7) is the one place it shows.
+
+### 5. Why is `return ref local` illegal, but `return ref values[best]` fine?
+
+**Answer.** A `ref` return gives the caller a managed pointer to a location. A local's location belongs to the method's frame, which is gone once the method returns, so a reference to it would dangle; the compiler rejects it with CS8168. An array element lives inside a heap object that stays alive as long as anything refers to it, including the managed pointer itself, so returning a reference to it is safe. The specification formalises this as each variable's *ref-safe-context* (§9.7.2): a `ref` may be returned only when its target outlives the method, such as an array element, a field of a class instance, or a location that was itself passed in by `ref`.
+
+## Summary
+
+$$
+\texttt{b = a}:\ \
+\begin{cases}
+b \text{ gets a copy of } a\text{'s fields}, & T \in \mathcal{V} \\
+b \text{ and } a \text{ refer to one object}, & T \in \mathcal{R}
+\end{cases}
+\qquad
+\operatorname{loc}(p) = \operatorname{loc}(x) \ \text{ for } \texttt{ref},\ \texttt{out},\ \texttt{in}
+$$
+
+where $T$ is the declared type, $\mathcal{V}$ and $\mathcal{R}$ are the value and reference types, $p$ is a parameter, $x$ is the caller's variable, and $\operatorname{loc}$ is a storage location.
+
+Example: `b.X = 10` after `b = a` leaves `a.X` at 1 for `PointStruct` and makes `c.X` 10 for `PointClass`; `ReplaceRef(ref shared)` changes `shared` itself because $\operatorname{loc}(p) = \operatorname{loc}(\texttt{shared})$.
+
+- A value type is **copied** on assignment, parameter passing and return; a reference type shares one object.
+- Where a value lives (stack, register, inside an object) is an implementation detail; the copy semantics are the guarantee.
+- **Boxing** copies a value into a new 24-byte-or-larger object; unboxing checks the exact type.
+- Arguments are passed **by value** unless marked `ref`, `out` or `in`, which pass the variable itself.
+- Prefer small **immutable** structs (`readonly struct`); a mutable struct silently mutates copies.
+- Classes compare identity by default, structs compare fields; `string` is an immutable class that compares text.
+
+## References
+
+- C# language specification: [Types](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/types), [Variables](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/variables), [Boxing conversions](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/conversions#1029-boxing-conversions) and [Unboxing conversions](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/conversions#1037-unboxing-conversions), [String literals](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/lexical-structure#6456-string-literals).
+- Microsoft Learn: [Value types](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/value-types), [Reference types](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/reference-types), [Boxing and unboxing](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/types/boxing-and-unboxing), [Method parameters](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/method-parameters), [Reference variables](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/statements/declarations#reference-variables) and [ref-safe contexts](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/variables#972-ref-safe-contexts), [readonly struct](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/struct#readonly-struct).
+- .NET API: [ValueType.Equals](https://learn.microsoft.com/en-us/dotnet/api/system.valuetype.equals), [String.Intern](https://learn.microsoft.com/en-us/dotnet/api/system.string.intern); [Choosing between class and struct](https://learn.microsoft.com/en-us/dotnet/standard/design-guidelines/choosing-between-class-and-struct) (Framework Design Guidelines).
+- Eric Lippert, [The Stack Is An Implementation Detail, Part One](https://learn.microsoft.com/en-us/archive/blogs/ericlippert/the-stack-is-an-implementation-detail-part-one) (27 April 2009) and [Part Two](https://learn.microsoft.com/en-us/archive/blogs/ericlippert/the-stack-is-an-implementation-detail-part-two) (4 May 2009).
+- Jon Skeet, [Parameter passing in C#](https://jonskeet.uk/csharp/parameters.html) and [Reference types and value types](https://jonskeet.uk/csharp/references.html); [*C# in Depth*](https://www.manning.com/books/c-sharp-in-depth-fourth-edition), 4th ed., Manning, 2019, chapter 13 ("Ref locals and ref returns", "in parameters", "Declaring structs as readonly"; [contents](https://csharpindepth.com/contents)).
+- Joseph Albahari, *C# 12 in a Nutshell*, O'Reilly, 2023: value types versus reference types, and boxing and unboxing.
+- Sergey Tepliakov, [Managed object internals, Part 1. The layout](https://devblogs.microsoft.com/premier-developer/managed-object-internals-part-1-layout/) (2017); Stephen Toub, [Performance Improvements in .NET 10](https://devblogs.microsoft.com/dotnet/performance-improvements-in-net-10/) (2025), section on stack allocation.
+- Lab: [`labs/value-and-reference-types.cs`](labs/value-and-reference-types.cs). Run it from `programming-languages/csharp/labs` with `dotnet run value-and-reference-types.cs`.

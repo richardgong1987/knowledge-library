@@ -1,0 +1,77 @@
+---
+title: "C# — Core Concepts"
+subtitle: "Types you can trust, sequences you can query, waiting that costs no thread"
+description: "C# 14 on .NET 10 from value types to the garbage collector: thirteen chapters on what the language guarantees and how its compiler and runtime work, each with a lab that checks every result."
+aliases: ["../csharp.html"]
+---
+
+## What C# is for, and where it came from
+
+C# is a statically typed, garbage-collected, object-oriented language with strong functional features. It runs on **.NET**, Microsoft's open-source runtime, and is used for **web services and APIs, desktop and mobile apps, cloud tools and games**. Its compiler, Roslyn, turns C# into an intermediate language that the .NET runtime compiles to machine code just in time, or ahead of time.
+
+C# was designed at Microsoft by a team led by **Anders Hejlsberg**, who had earlier created Turbo Pascal and led the design of Delphi at Borland. In a 2003 interview with Bruce Eckel and Bill Venners he named the team: *"The original C# design team was Scott Wiltamuth, Peter Golde, Peter Sollich, Eric Gunnerson, and myself."* Microsoft's history of the language dates **C# 1.0 to January 2002**, released with Visual Studio .NET 2002. It records that the design goal written down for the ECMA standard was to be a *"simple, modern, general-purpose object-oriented language"*, and that version 1.0 *"was a viable alternative to Java on the Windows platform"*. Ecma published the first C# standard, ECMA-334, in December 2001.
+
+The language has grown with every release since, usually by borrowing proven ideas from functional programming: generics in C# 2.0 (for which Hejlsberg credits Don Syme and Andrew Kennedy of Microsoft Research), LINQ and lambdas in 3.0 (2007), `async` and `await` in 5.0 (2012), pattern matching from 7.0 (2017), nullable reference types in 8.0, records in 9. Hejlsberg's own summary of how such choices are made: *"Ultimately, good language design boils down to assembling a team of people who have good taste."* The language is now led by Mads Torgersen and designed in the open in the `dotnet/csharplang` repository.
+
+## The mental model
+
+A handful of ideas explain most of C#:
+
+1. **Two kinds of type.** A `struct` is copied on assignment; a `class` is shared through references. Knowing which one you hold explains equality, mutation and allocation. ([Value and Reference Types](01-value-and-reference-types.qmd), [Classes, Structs and Records](03-classes-structs-and-records.qmd))
+2. **The compiler tracks null.** `int?` wraps a value type, and nullable reference types let the compiler warn before a `NullReferenceException` can happen. ([Nullable Types](02-nullable-types.qmd))
+3. **Types are real at run time.** Inheritance and interfaces dispatch through method tables, and generics are reified: `List<int>` really is a list of `int`, with no boxing and no erasure. ([Inheritance and Interfaces](04-inheritance-and-interfaces.qmd), [Generics and Variance](05-generics-and-variance.qmd))
+4. **Functions are values, and the compiler writes state machines.** Delegates and lambdas capture variables; `yield return` and `async` methods are rewritten into state machines. ([Delegates, Lambdas and Events](06-delegates-lambdas-and-events.qmd), [Iterators and yield](07-iterators-and-yield.qmd))
+5. **Data is queried and matched, not looped over by hand.** LINQ composes deferred sequences; patterns test the shape of data and the compiler checks that every case is handled. ([LINQ](08-linq.qmd), [Pattern Matching](09-pattern-matching.qmd))
+6. **Memory is automatic, resources are not.** The garbage collector frees memory when it likes; `using` releases files and sockets exactly when you say. ([Exceptions and Disposal](10-exceptions-and-disposal.qmd))
+7. **Waiting is not working.** A `Task` is a promise, and `await` gives the thread back while waiting; threads and locks are for real parallel work. ([Tasks and async/await](11-tasks-and-async-await.qmd), [Threads and Synchronisation](12-threads-and-synchronisation.qmd))
+8. **You can see and avoid allocations.** A generational GC makes short-lived objects cheap, and `Span<T>` lets hot code work on existing memory without allocating at all. ([Memory, GC and Span](13-memory-gc-and-span.qmd))
+
+## The chapters
+
+### Part 1: Types and values
+
+1. [Value and Reference Types](01-value-and-reference-types.qmd): struct versus class, boxing, `ref`, `out` and `in`, equality, and string immutability.
+2. [Nullable Types](02-nullable-types.qmd): `Nullable<T>`, `?.`, `??` and null-conditional assignment, and the compiler's null-state analysis.
+3. [Classes, Structs and Records](03-classes-structs-and-records.qmd): constructors, primary constructors, `init` and `required`, the `field` keyword, and records with value equality.
+4. [Inheritance and Interfaces](04-inheritance-and-interfaces.qmd): `virtual`, `override` and `new`, abstract and sealed types, default and static abstract interface members.
+5. [Generics and Variance](05-generics-and-variance.qmd): constraints, covariance and contravariance, generic math, and how the runtime shares or specialises code.
+
+### Part 2: Functions, sequences and control flow
+
+6. [Delegates, Lambdas and Events](06-delegates-lambdas-and-events.qmd): `Func` and `Action`, closures, multicast delegates, events and subscription leaks.
+7. [Iterators and yield](07-iterators-and-yield.qmd): `IEnumerable`, what `foreach` compiles into, `yield return` state machines, and `IAsyncEnumerable`.
+8. [LINQ](08-linq.qmd): operators as extension methods, C# 14 extension blocks, deferred execution, joins and grouping, and expression trees.
+9. [Pattern Matching](09-pattern-matching.qmd): switch expressions, relational, logical, property and list patterns, and exhaustiveness.
+10. [Exceptions and Disposal](10-exceptions-and-disposal.qmd): the exception hierarchy, filters, `throw;` versus `throw ex;`, `using`, the dispose pattern, and finalizers.
+
+### Part 3: Concurrency and memory
+
+11. [Tasks and async/await](11-tasks-and-async-await.qmd): tasks as promises, `WhenAll` time math, cancellation, `ValueTask`, `ConfigureAwait(false)` and the sync-over-async deadlock.
+12. [Threads and Synchronisation](12-threads-and-synchronisation.qmd): races, `lock` and `System.Threading.Lock`, `Interlocked`, the memory model, channels, and lock ordering.
+13. [Memory, GC and Span](13-memory-gc-and-span.qmd): object sizes, generations, the LOH and POH, `Span<T>`, `stackalloc`, `ArrayPool<T>`, and measuring allocations.
+
+## How to run the labs
+
+Every chapter has one lab, `labs/<slug>.cs`. Each is a **file-based app**: a single C# file with top-level statements, which the .NET 10 SDK compiles and runs directly, with no project file. Each lab checks every result its chapter quotes and prints `OK` last, and it compiles with zero warnings. From `programming-languages/csharp/labs`:
+
+```bash
+dotnet run linq.cs
+dotnet run tasks-and-async-await.cs
+```
+
+Replace the file name with any chapter's slug, such as `pattern-matching.cs` or `memory-gc-and-span.cs`. A `Directory.Build.props` in the folder turns off Native AOT, which file-based apps otherwise enable by default, so the labs run on the JIT like a normal console app. From the repository root, the checker verifies the chapters and runs every lab:
+
+```bash
+ONLY=csharp node --test programming-languages/check-languages.test.mjs
+```
+
+## Version and further reading
+
+These pages teach **C# 14 on .NET 10**. C# 14 shipped in November 2025 with .NET 10, a long-term support release supported until November 2028; the labs were checked with the .NET 10.0.301 SDK. The chapters say when a feature arrived where it matters: LINQ in C# 3.0, `async` in 5.0, list patterns in 11, `System.Threading.Lock` in 13 with .NET 9, and extension blocks and `field` in 14. C# 15 followed with .NET 11 in November 2026; these pages stay on the long-term support release.
+
+- [The C# language reference](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/) and the [C# language specification](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/readme) (standardised as [ECMA-334](https://www.ecma-international.org/publications-and-standards/standards/ecma-334/)): the definitive rules.
+- [The history of C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-version-history) and [What's new in C# 14](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-14): what arrived in each version.
+- Bill Venners and Bruce Eckel, [The C# Design Process: A Conversation with Anders Hejlsberg](https://www.artima.com/intv/csdes.html) (Artima, 2003).
+- Ian Griffiths, *Programming C# 12* (O'Reilly, 2024), and Jon Skeet, *C# in Depth*, 4th edition (Manning, 2019): a full tour, and a deep look at how each version changed the language.
+- Stephen Toub's posts on the [.NET Blog](https://devblogs.microsoft.com/dotnet/), especially *How Async/Await Really Works in C#* and the yearly *Performance Improvements in .NET* series.
+- [File-based apps](https://learn.microsoft.com/en-us/dotnet/core/sdk/file-based-apps): how `dotnet run file.cs` works.

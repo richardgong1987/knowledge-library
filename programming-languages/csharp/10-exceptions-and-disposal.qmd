@@ -1,0 +1,431 @@
+---
+title: "Exceptions and Disposal"
+description: "C# exceptions and resource cleanup from try/catch/finally to the runtime's two-pass unwinding: the exception hierarchy, exception filters, throw versus throw ex, custom exceptions, IDisposable and using declarations, the dispose pattern, IAsyncDisposable, and why finalizers are rare."
+---
+
+## The problem
+
+A program opens a file, parses 1,000 lines and closes the file. Line 412 says `forty-two` instead of `42`, so `int.Parse` throws `FormatException`. Two things must now happen:
+
+1. **Somebody decides what the error means.** Skip the line? Stop the import? Retry? The code that knows is usually several calls up, not inside `int.Parse`.
+2. **The file is closed anyway.** If the `Close()` call sits after the parsing loop, the exception jumps over it. The file handle leaks, and on Windows nobody else can open the file until the process ends.
+
+C# answers the first need with **exceptions** (`throw`, `try`, `catch`, and `when` filters) and the second with **deterministic disposal** (`finally`, `IDisposable` and `using`). Garbage collection does not solve the second problem: the GC frees *memory* whenever it likes, but a file handle, a socket or a database connection must be released *now*.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The fire alarm and the library book
+
+- **`throw` is pulling the fire alarm.** Work stops immediately. Nobody finishes their sentence.
+- **`catch` is the fire marshal.** Each floor of the building, from the room where the alarm went off downwards, has a marshal who handles certain kinds of alarm. The first marshal who says "that's mine" takes charge.
+- **A `when` filter is the marshal looking before anyone moves.** The marshal checks "is this a real fire or a drill?" while everybody is still in their rooms.
+- **`finally` is closing your room's door on the way out.** It happens whether you leave calmly or because of the alarm.
+- **`using` is borrowing a library book.** Whatever happens on your trip, the book goes back on the way home. That is a promise about **when** (at the end of the trip), unlike the garbage collector, who tidies up "some time later".
+
+The C# rule for `using`, the `IDisposable` interface and the dispose pattern were set down by Krzysztof Cwalina and Brad Abrams in *Framework Design Guidelines*, the book that defined the conventions of the .NET class library.
+:::
+
+## From simple to advanced
+
+### Level 1: try, catch, finally, and the hierarchy
+
+```csharp
+static int ParseOrZero(string text, List<string> log)
+{
+    try
+    {
+        log.Add($"try {text}");
+        return int.Parse(text);
+    }
+    catch (FormatException)
+    {
+        log.Add("catch FormatException");
+        return 0;
+    }
+    finally
+    {
+        log.Add("finally"); // runs on the return and after the catch
+    }
+}
+```
+
+`ParseOrZero("42", log)` returns 42 and `ParseOrZero("forty-two", log)` returns 0. The log shows the order:
+
+```text
+try 42, finally, try forty-two, catch FormatException, finally
+```
+
+`finally` runs even though `return int.Parse(text)` has already decided the result: the return value is computed, `finally` runs, and only then does the method return.
+
+Every exception is an object of a class derived from `System.Exception`. The classes form a tree, and a `catch` clause for a class also catches every class below it:
+
+```text
+Exception
+├── SystemException
+│   ├── ArgumentException
+│   │   ├── ArgumentNullException
+│   │   └── ArgumentOutOfRangeException
+│   ├── InvalidOperationException
+│   │   └── ObjectDisposedException
+│   ├── FormatException
+│   └── OperationCanceledException
+│       └── TaskCanceledException
+└── your own exceptions (derive from Exception)
+```
+
+The lab checks each of these parent links with `typeof(...).BaseType`. Catch clauses are tried top to bottom, like the arms of a switch ([Pattern Matching](09-pattern-matching.qmd)):
+
+```csharp
+static string Classify(Exception exception)
+{
+    try
+    {
+        throw exception;
+    }
+    catch (ArgumentNullException) { return "null argument"; }
+    catch (ArgumentException) { return "bad argument"; }
+    catch (Exception) { return "anything else"; }
+}
+```
+
+$$
+\operatorname{handler}(e) = \text{clause } j, \qquad j = \min \lbrace\, i \mid \operatorname{type}(e) \sqsubseteq T_i \land \operatorname{filter}_i(e) \,\rbrace
+$$
+
+where
+
+- $e$ is the thrown exception object and $\operatorname{type}(e)$ its class;
+- $T_i$ is the class named in clause $i$, counting from the top;
+- $A \sqsubseteq B$ means "$A$ is $B$ or derives from $B$";
+- $\operatorname{filter}_i(e)$ is clause $i$'s `when` condition, or true if it has none;
+- if no clause qualifies, the exception leaves this `try` and the search continues in the caller.
+
+Example: for `ArgumentOutOfRangeException`, clause 1 asks whether it derives from `ArgumentNullException`: no. Clause 2 asks about `ArgumentException`: yes, so $j = 2$ and the answer is `"bad argument"`. A `FormatException` fails clauses 1 and 2 and reaches clause 3. Putting a general clause above a specific one is a compile error: `error CS0160: A previous catch clause already catches all exceptions of this or of a super type ('ArgumentException')`.
+
+### Level 2: exception filters and custom exceptions
+
+A **custom exception** carries the facts the handler needs. By convention its name ends in `Exception` and it derives from `Exception`:
+
+```csharp
+class HttpStatusException(int statusCode) : Exception($"HTTP {statusCode}")
+{
+    public int StatusCode { get; } = statusCode;
+}
+```
+
+An **exception filter** (C# 6) is the `when` part of the formula above. It lets one type be handled differently depending on its contents:
+
+```csharp
+static string Handle(int statusCode)
+{
+    try
+    {
+        throw new HttpStatusException(statusCode);
+    }
+    catch (HttpStatusException e) when (e.StatusCode >= 500)
+    {
+        return "retry";
+    }
+    catch (HttpStatusException e) when (e.StatusCode == 404)
+    {
+        return "not found";
+    }
+}
+```
+
+`Handle(503)` is `"retry"` and `Handle(404)` is `"not found"`. For 400 no filter is true, so the exception was **never caught** and leaves `Handle` untouched. The lab catches it outside and finds `StatusCode` 400 and `Message` `"HTTP 400"`. This is better than catching, testing with `if`, and rethrowing, for a reason that Level 3 and the section on the runtime make clear: a filter runs *before* the stack is unwound.
+
+### Level 3: `throw;` versus `throw e;`
+
+An exception records its **stack trace**, the chain of method calls that led to the throw. Rethrowing inside a `catch` can keep that record or wipe it:
+
+```csharp
+[MethodImpl(MethodImplOptions.NoInlining)]
+static void DiskFull() => throw new InvalidOperationException("disk full");
+
+static void RethrowKeepingTrace()
+{
+    try { DiskFull(); }
+    catch (InvalidOperationException) { throw; }
+}
+```
+
+```csharp
+// sketch: compiles with warning CA2200
+static void RethrowLosingTrace()
+{
+    try { DiskFull(); }
+    catch (InvalidOperationException e) { throw e; }
+}
+```
+
+```text
+warning CA2200: Re-throwing caught exception changes stack information (https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca2200)
+```
+
+The lab keeps `RethrowLosingTrace` (with CA2200 suppressed) to measure the damage:
+
+```csharp
+string kept = Catch<InvalidOperationException>(RethrowKeepingTrace).StackTrace!;
+string lost = Catch<InvalidOperationException>(RethrowLosingTrace).StackTrace!;
+Check(kept.Contains("DiskFull") && kept.Contains("RethrowKeepingTrace"), "throw; shows where it started");
+Check(!lost.Contains("DiskFull") && lost.Contains("RethrowLosingTrace"), "throw e; hides the origin");
+```
+
+`throw;` rethrows the same exception and keeps its trace, which still starts in `DiskFull`. `throw e;` throws the object as if it were new, so the trace restarts at the `throw e;` line and `DiskFull` disappears from it. When you really must rethrow later or on another thread, `ExceptionDispatchInfo.Capture(e).Throw()` preserves the original trace; `await` uses exactly this when it rethrows a task's exception. To add context, wrap instead: `throw new ImportException("line 412", e)` keeps the original as `InnerException`.
+
+### Level 4: `IDisposable` and `using`
+
+A type that holds something the GC cannot release on time implements `IDisposable`, whose single method `Dispose()` releases it. The lab's `Resource` writes "open" in its constructor and "close" in `Dispose`:
+
+```csharp
+public Resource(string name, List<string> log)
+{
+    this.name = name;
+    this.log = log;
+    log.Add($"open {name}");
+}
+
+public void Dispose() => log.Add($"close {name}");
+```
+
+A **using declaration** (C# 8) disposes the variable when the enclosing scope ends, in reverse order of declaration:
+
+```csharp
+static void UseThree(List<string> log)
+{
+    using var a = new Resource("a", log);
+    using var b = new Resource("b", log);
+    using var c = new Resource("c", log);
+    log.Add("work");
+} // disposed here, in reverse order: c, b, a
+```
+
+```text
+open a, open b, open c, work, close c, close b, close a
+```
+
+$$
+d_k = r_{n+1-k} \qquad \text{for } k = 1, \dots, n
+$$
+
+where
+
+- $r_1, \dots, r_n$ are the resources in the order they were acquired;
+- $d_k$ is the $k$-th resource to be disposed;
+- $n$ is the number of `using` variables in the scope.
+
+Example: with $n = 3$ and $(r_1, r_2, r_3) = (a, b, c)$: $d_1 = r_{3+1-1} = r_3 = c$, $d_2 = r_2 = b$, $d_3 = r_1 = a$. Reverse order matters because a later resource often depends on an earlier one: a `StreamReader` wraps a `FileStream`, so the reader must be closed before the stream.
+
+`using` is a promise, not a hope. It still runs when the body throws:
+
+```csharp
+static void FailWhileOpen(List<string> log)
+{
+    using var file = new Resource("file", log);
+    throw new InvalidOperationException("parse error");
+}
+```
+
+The log is `open file, close file`, and then the caller receives the exception. The reason is that `using` is only shorthand for `try`/`finally`. The lab writes the expansion by hand and gets the same log as a `using` declaration:
+
+```csharp
+static void UseOneByHand(List<string> log)
+{
+    var a = new Resource("a", log);
+    try
+    {
+        log.Add("work");
+    }
+    finally
+    {
+        a?.Dispose();
+    }
+}
+```
+
+### Level 5: the dispose pattern
+
+A class that others may derive from, or that owns several resources, follows the **dispose pattern** from the .NET design guidelines: a public `Dispose()` that calls a `protected virtual Dispose(bool disposing)`, a flag that makes a second call harmless, and a guard in every method:
+
+```csharp
+class Connection : IDisposable
+{
+    private bool disposed;
+
+    public void Send() => ObjectDisposedException.ThrowIf(disposed, this);
+
+    public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (disposed) return;
+        if (disposing)
+        {
+            // release managed resources here: streams, sockets, other IDisposable fields
+        }
+        // release unmanaged resources here, if this class owned any directly
+        disposed = true;
+    }
+}
+```
+
+The lab calls `Dispose()` twice without harm, then `Send()`, which throws `ObjectDisposedException` with the message `Cannot access a disposed object.` followed by `Object name: 'Connection'.` on a second line. The `disposing` argument says who is calling: `true` from `Dispose()`, where it is safe to touch other objects, and `false` from a **finalizer**, where those other objects may already have been finalized. A derived class overrides `Dispose(bool)` and calls `base.Dispose(disposing)` last.
+
+A finalizer (`~Leaky()`) is a method the GC calls on a background thread some time after the object becomes unreachable:
+
+```csharp
+WeakReference leaky = Abandon();
+GC.Collect();                  // unreachable, but it has a finalizer: queue it instead of freeing it
+GC.WaitForPendingFinalizers(); // the finalizer thread runs ~Leaky
+Check(Leaky.Finalized == 1 && leaky.IsAlive, "finalized, but its memory is not freed yet");
+GC.Collect();                  // now nothing can reach it, not even the finalization queue
+Check(!leaky.IsAlive, "the second collection frees it");
+```
+
+The first collection finds the object dead, but because it has a finalizer it is put on a queue and kept alive. Only after the finalizer has run can the second collection free the memory. So an object with a finalizer needs at least two collections instead of one, and it survives the first one, which promotes it to an older generation ([Memory, GC and Span](13-memory-gc-and-span.qmd)). `GC.SuppressFinalize(this)` in `Dispose()` removes the object from the finalization list, so a disposed object is freed in one collection.
+
+That cost, plus the facts that finalizers run in no particular order, on another thread, and not at all when a .NET 5+ process exits, is why **finalizers are rare**. Microsoft's guidance is that a finalizer is only required if you directly hold an unmanaged resource, and even then you should wrap it in a `SafeHandle`, which already has a correct finalizer. Ordinary classes implement `IDisposable` and have no finalizer at all, so nothing ever calls their `Dispose(false)`.
+
+### Level 6: `IAsyncDisposable` and `await using`
+
+Some cleanup has to wait for I/O, such as flushing a buffer over the network. Blocking a thread inside `Dispose()` for that would waste it ([Tasks and async/await](11-tasks-and-async-await.qmd)), so C# 8 added `IAsyncDisposable` with `ValueTask DisposeAsync()`, and `await using` to call it:
+
+```csharp
+sealed class AsyncWriter(List<string> log) : IAsyncDisposable
+{
+    public async ValueTask DisposeAsync()
+    {
+        await Task.Yield(); // stands for flushing a buffer over the network
+        log.Add("flushed and closed");
+    }
+}
+```
+
+```csharp
+static async Task WriteAsync(List<string> log)
+{
+    await using var writer = new AsyncWriter(log);
+    log.Add("write");
+}
+```
+
+The log is `write, flushed and closed`. The expansion is the same `try`/`finally` as Level 4, with `await writer.DisposeAsync()` in the `finally`.
+
+## How it works underneath
+
+**Two passes.** When an exception is thrown, the runtime does not unwind immediately. The Common Language Infrastructure standard (ECMA-335, Partition I, "Exception handling") specifies two passes over the stack:
+
+1. **Search pass.** Walk up the stack frames, from the throw point outward. For each `catch` clause, test its type and run its `when` filter. Nothing is unwound yet: every frame and its local variables still exist. Stop at the first clause that accepts the exception.
+2. **Unwind pass.** Walk the same frames again, this time running every `finally` (and `Dispose`, which is a `finally`) between the throw point and the chosen handler, then removing the frames. Finally, run the `catch` block.
+
+The lab makes the order visible. `ThrowWithFinally` throws inside a `try` that has only a `finally`, and the caller's filter writes to the log:
+
+```csharp
+static void ThrowWithFinally(List<string> log)
+{
+    try { throw new InvalidOperationException(); }
+    finally { log.Add("inner finally"); }
+}
+```
+
+```csharp
+log.Clear();
+try
+{
+    ThrowWithFinally(log);
+}
+catch (InvalidOperationException) when (Note(log, "filter"))
+{
+    log.Add("catch");
+}
+Check(log.SequenceEqual(["filter", "inner finally", "catch"]), "pass 1 runs filters, pass 2 unwinds");
+```
+
+The log is `filter, inner finally, catch`: the filter ran while `ThrowWithFinally` was still on the stack. This is why a filter is the right place to log an exception (a filter like `when (Log(e))` that returns `false` logs without catching), and why a crash dump taken in a filter shows the original locals. If no handler exists anywhere, the search pass reaches the top of the thread, the runtime reports the exception (raising `AppDomain.UnhandledException`) and terminates the process. The C# specification calls the impact of that termination implementation-defined, so whether `finally` blocks still run is up to the runtime. In a scratch test on .NET 10 for macOS, `Unhandled exception. System.InvalidOperationException: ...` was printed first and the `finally` ran after it, just before the process died.
+
+**What a `throw` costs.** Creating the exception object is cheap. The cost is the two stack walks, which capture the stack trace and look up handler tables for every frame. That makes a throw far slower than returning a value, so exceptions are for exceptional situations. For expected failures, .NET offers the `Try` pattern: `int.TryParse(text, out int value)` returns `false` instead of throwing.
+
+**What `using` compiles to.** The specification defines `using (ResourceType resource = expression) statement` for a class type as the block below. A using declaration is the same, with the rest of the enclosing block as the statement:
+
+```csharp
+// sketch: the expansion of a using statement for a class type, from the C# specification
+{
+    ResourceType resource = expression;
+    try
+    {
+        statement;
+    }
+    finally
+    {
+        if ((object)resource != null) { ((IDisposable)resource).Dispose(); }
+    }
+}
+```
+
+For a non-nullable struct the null test disappears, and the specification requires the cast to `IDisposable` not to box. Since C# 8, a `ref struct`, which cannot implement interfaces, only needs an accessible `Dispose()` method, so `Span`-based types can be used with `using`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `throw e;` to rethrow | `warning CA2200: Re-throwing caught exception changes stack information`, and the trace loses the original frames | `throw;`, or wrap: `throw new XException("context", e)` |
+| `catch (Exception) { }` that swallows everything | Bugs disappear silently, including `OutOfMemoryException` and cancellations | Catch the specific types you can handle; let the rest propagate |
+| General catch clause above a specific one | `error CS0160: A previous catch clause already catches all exceptions of this or of a super type ('ArgumentException')` | Order clauses from most derived to least derived |
+| Forgetting `using` on a stream or connection | Leaked handles, a connection pool that runs dry, locked files | `using var x = ...;` or `await using` |
+| Using an object after `Dispose` | `ObjectDisposedException: Cannot access a disposed object.` | Do not let the object outlive its `using` scope |
+| Writing a finalizer "just in case" | Objects survive an extra collection; work runs on the finalizer thread in no fixed order | No finalizer unless you hold a raw handle; prefer `SafeHandle` |
+| Throwing for an expected outcome (bad user input) | Slow loops, noisy debugger | `TryParse`-style methods that return `bool` |
+
+## Interview questions
+
+### 1. What is the difference between `throw;` and `throw ex;`?
+
+**Answer.** `throw;` (allowed only inside a `catch`) rethrows the current exception with its stack trace intact. `throw ex;` throws the same object as a new throw, so its `StackTrace` is reset to start at that line. The lab checks this: after `throw;` the trace contains `DiskFull`, after `throw e;` it does not, and the .NET analyser reports CA2200. To rethrow later or on another thread without losing the trace, use `ExceptionDispatchInfo.Capture(ex).Throw()`.
+
+### 2. Does `finally` always run?
+
+**Answer.** It runs on normal completion, on `return`, `break` and `continue` out of the `try`, and when an exception passes through, provided the exception is eventually caught. It does **not** run if the process dies first: `Environment.FailFast`, a `StackOverflowException` (which cannot be caught in .NET), the process being killed, or a power cut. It may also not run when an exception is never caught and the runtime terminates the process. That is why external systems must never depend on `finally` alone for correctness: a database transaction, for example, is rolled back by the server if the connection drops.
+
+### 3. Why use an exception filter instead of catching and rethrowing?
+
+**Answer.** A filter runs in the search pass, before any unwinding. If it returns `false`, the exception continues as if the clause did not exist: no catch, no rethrow, no lost trace, and the stack, including local variables, is intact for a debugger or a crash dump. The lab shows the order `filter, inner finally, catch`. Catch-and-rethrow runs the inner `finally` blocks first, then catches, then throws again, which is slower and loses context.
+
+### 4. What is the difference between `Dispose` and a finalizer?
+
+**Answer.** `Dispose` is called by your code, deterministically, at a known point (`using` makes it automatic). A finalizer is called by the runtime on the finalizer thread at an unknown time after a garbage collection, in no guaranteed order, and not at process exit in .NET 5 and later. A finalizable object needs at least two collections to be freed (the lab shows `IsAlive` still true after the first one). The dispose pattern combines them: `Dispose()` does the work and calls `GC.SuppressFinalize(this)`, and the finalizer, if one exists at all, is only a safety net that calls `Dispose(false)`.
+
+### 5. What does `using` compile to, and in which order are several resources disposed?
+
+**Answer.** `try { body } finally { if (r != null) r.Dispose(); }`, one nested `try` per resource. Nesting means the last resource acquired is the first disposed: $d_k = r_{n+1-k}$, so `a, b, c` are disposed as `c, b, a`. A using declaration ends at the end of its enclosing block, while a `using (...) { }` statement ends at its closing brace.
+
+## Summary
+
+$$
+\texttt{using var } r = e;\ S \;\Longrightarrow\; \texttt{try} \lbrace S \rbrace\ \texttt{finally} \lbrace r.\texttt{Dispose}() \rbrace, \qquad d_k = r_{n+1-k}
+$$
+
+where $r$ is the resource, $e$ the expression that creates it, $S$ the rest of the scope, $d_k$ the $k$-th resource disposed and $n$ the number of resources.
+
+Example: three using declarations `a`, `b`, `c` give $d_1 = r_3 = c$, $d_2 = b$, $d_3 = a$, and all three are disposed even if $S$ throws.
+
+- Exceptions form a class tree; a `catch` for a class catches its subclasses; the first matching clause wins.
+- `when` filters run **before** the stack unwinds; use them to select and to log.
+- Rethrow with `throw;`, never `throw ex;`; wrap with an inner exception to add context.
+- Anything that holds a handle implements `IDisposable`; callers use `using` or `await using`.
+- The dispose pattern makes `Dispose` idempotent and calls `GC.SuppressFinalize`.
+- Finalizers are rare: they cost an extra collection and run late, in no order, on another thread. Use `SafeHandle`.
+
+## References
+
+- C# reference: [Exception-handling statements](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/statements/exception-handling-statements) (`throw`, `try`, exception filters), [The `using` statement](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/statements/using), [Finalizers](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/finalizers).
+- .NET guides: [Best practices for exceptions](https://learn.microsoft.com/en-us/dotnet/standard/exceptions/best-practices-for-exceptions), [Implement a Dispose method](https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/implementing-dispose), [Implement a DisposeAsync method](https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/implementing-disposeasync), and the rule [CA2200](https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca2200).
+- [ECMA-335, Common Language Infrastructure](https://www.ecma-international.org/publications-and-standards/standards/ecma-335/), 6th edition (2012), Partition I, "Exception handling".
+- Krzysztof Cwalina and Brad Abrams, *Framework Design Guidelines*, 2nd edition (Addison-Wesley, 2008), reprinted in part as [Dispose Pattern](https://learn.microsoft.com/en-us/dotnet/standard/design-guidelines/dispose-pattern); the 3rd edition (2020) adds Jeremy Barton.
+- Ian Griffiths, *Programming C# 12* (O'Reilly, 2024), chapter 7, "Object Lifetime", and chapter 8, "Exceptions".
+- Lab: [`labs/exceptions-and-disposal.cs`](labs/exceptions-and-disposal.cs). Run it from `programming-languages/csharp/labs` with `dotnet run exceptions-and-disposal.cs`.

@@ -1,0 +1,302 @@
+---
+title: "Memory, GC and Span"
+description: "How .NET manages memory, from the first new to zero-allocation code: the managed heap and object sizes, generational garbage collection (gen 0, 1, 2, LOH and POH), workstation and server GC, Span<T> and ReadOnlySpan<T> as ref structs, stackalloc, Memory<T>, ArrayPool<T>, measuring allocations, and weak references."
+---
+
+## The problem
+
+A service parses one million lines like `12,7,30,5` per second. The obvious code is one line:
+
+```csharp
+static int SumCsvWithSplit(string text) => text.Split(',').Sum(int.Parse);
+```
+
+It is correct, and every call allocates a `string[]` and four new strings: 200 bytes per call in a scratch measurement on .NET 10. A million calls a second is around 200 MB of garbage a second. The garbage collector cleans it up, but collecting costs CPU time and, at its worst moments, pauses the threads. The numbers were already in the input string; copying them into new strings was pure waste.
+
+This chapter explains where .NET puts objects, how the garbage collector (GC) decides what is garbage and why it divides the heap into generations, and the tools that avoid allocating at all: `Span<T>`, `stackalloc`, `Memory<T>` and `ArrayPool<T>`. The lab measures every allocation it claims with `GC.GetAllocatedBytesForCurrentThread`, which, as its documentation says, "gets the total number of bytes allocated to the current thread since the beginning of its lifetime."
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The classroom and the cleaner
+
+- **The managed heap is the classroom floor.** Every `new` puts a toy on the floor, one next to the other, so getting a new toy out is very quick.
+- **The garbage collector is the cleaner.** The cleaner keeps every toy that somebody is still holding, or that is tied to a toy somebody holds, and throws away the rest. Then the cleaner pushes the kept toys together so there is one big free space again.
+- **Generations are where the cleaner looks first.** Most toys are played with for a minute and dropped, so the cleaner checks the pile by the door very often (generation 0), the shelf sometimes (generation 1) and the big cupboard rarely (generation 2). Maoni Stephens, the .NET GC architect, writes about these decisions on her blog and in her *mem-doc* guide.
+- **A `Span` is a paper frame laid over a row of toys.** It shows you toys 2 to 4 without taking them out or buying new ones.
+- **`stackalloc` is scrap paper on your own desk.** It disappears the moment you leave the desk, so the cleaner never has to deal with it.
+- **`ArrayPool` is the class paint-pot.** Borrow a brush, give it back washed, and nobody has to buy a new brush.
+:::
+
+## From simple to advanced
+
+### Level 1: what an object costs
+
+`new` places an object on the **managed heap**. The documentation explains why that is fast: "the runtime allocates memory for an object by adding a value to a pointer, it's almost as fast as allocating memory from the stack." Every heap object also carries a header. The lab measures exact sizes on 64-bit .NET:
+
+```csharp
+static long AllocatedBy(Action action)
+{
+    action(); // warm up, so that JIT compilation is not counted
+    long before = GC.GetAllocatedBytesForCurrentThread();
+    action();
+    return GC.GetAllocatedBytesForCurrentThread() - before;
+}
+```
+
+```csharp
+Check(AllocatedBy(() => Sink.Kept = new object()) == 24, "the smallest object: 24 bytes");
+Check(AllocatedBy(() => Sink.Kept = new byte[1]) == 32, "24 + 1 = 25, rounded up to 32");
+Check(AllocatedBy(() => Sink.Kept = new int[10]) == 64, "24 + 10 x 4 = 64");
+Check(AllocatedBy(() => Sink.Kept = new byte[1000]) == 1024, "24 + 1000 = 1024");
+```
+
+An array starts with 24 bytes of overhead: an 8-byte header word, an 8-byte pointer to its type, and the length padded to 8 bytes. Then come the elements, and the total is rounded up to a multiple of 8:
+
+$$
+S(n) = 8 \left\lceil \frac{24 + n \cdot s}{8} \right\rceil
+$$
+
+where
+
+- $S(n)$ is the size in bytes of an array of $n$ elements;
+- $s$ is the size of one element: 1 for `byte`, 4 for `int`, 8 for a reference;
+- $\lceil x \rceil$ rounds $x$ up to the next whole number.
+
+Example: `new byte[1]` is $8 \lceil 25 / 8 \rceil = 8 \cdot 4 = 32$ bytes, so 31 of its 32 bytes are overhead. `new int[10]` is $8 \lceil (24 + 40) / 8 \rceil = 8 \cdot 8 = 64$. `new byte[1000]` is $8 \lceil 1024 / 8 \rceil = 1024$. Each measurement stores its object in a static field (`Sink.Kept`), so the object escapes and the JIT cannot optimise the allocation away; .NET 10's JIT can place some small, non-escaping arrays on the stack instead.
+
+### Level 2: generations, the LOH and the POH
+
+The GC finds live objects by starting from the **roots**, which the documentation lists as "static fields, local variables on a thread's stack, CPU registers, GC handles, and the finalize queue", and following every reference. Whatever it cannot reach is garbage. It then **compacts** the survivors, sliding them together.
+
+Tracing the whole heap every time would be slow, so the heap is divided into **generations**, based on the observation the documentation states as "newer objects have shorter lifetimes, and older objects have longer lifetimes". This is the **generational hypothesis**, the observation behind Henry Lieberman and Carl Hewitt's lifetime-based collector (1983) and David Ungar's Generation Scavenging (1984). A survivor moves up one generation per collection:
+
+```csharp
+var survivor = new object();
+Check(GC.GetGeneration(survivor) == 0, "new objects start in generation 0");
+GC.Collect();
+Check(GC.GetGeneration(survivor) == 1, "surviving one collection promotes it to generation 1");
+GC.Collect();
+Check(GC.GetGeneration(survivor) == 2, "surviving another promotes it to generation 2");
+GC.Collect();
+Check(GC.GetGeneration(survivor) == 2 && GC.MaxGeneration == 2, "generation 2 is the oldest");
+```
+
+A generation 0 collection only traces and moves the objects in generation 0, so its cost depends on what **survives**, not on what was allocated:
+
+$$
+\operatorname{work}(\text{gen 0 GC}) \propto |\text{live objects in gen 0}|
+$$
+
+where
+
+- $\operatorname{work}$ is the time spent marking and copying;
+- $\propto$ means "grows in proportion to";
+- $|\cdot|$ counts objects, here those in generation 0 still reachable from a root or from an older generation.
+
+Example: since the last collection a request allocated 10,000 temporary objects, and 50 of them are still referenced. A generation 0 collection marks and copies 50 objects; the other 9,950 cost nothing, because the GC never visits dead objects. That is why short-lived garbage is cheap and long-lived garbage (objects that survive to generation 2 and die there) is expensive: only a full, generation 2 collection reclaims it.
+
+Two more heaps sit beside the generations:
+
+```csharp
+Check(GC.GetGeneration(new byte[84_975]) == 0, "24 + 84,975 = 84,999 bytes: small object heap");
+Check(GC.GetGeneration(new byte[84_976]) == 2, "24 + 84,976 = 85,000 bytes: large object heap");
+Check(GC.GetGeneration(GC.AllocateArray<byte>(100, pinned: true)) == 2, "the pinned object heap is also old");
+```
+
+- The **large object heap (LOH)** takes every object of 85,000 bytes or more. Copying such objects would be expensive, so by default the GC sweeps the LOH into a free list instead of compacting it, and it is collected only with generation 2. The lab finds the threshold exactly: $24 + 84{,}976 = 85{,}000$ bytes is large, one byte less is not.
+- The **pinned object heap (POH)**, added in .NET 5, holds arrays allocated with `GC.AllocateArray(..., pinned: true)`. Objects there never move, so native code can keep a pointer to them, and they do not block compaction of the normal heap.
+
+### Level 3: `Span<T>`, a window onto memory
+
+`Span<T>` is a pointer plus a length that describes a run of elements somewhere else: in an array, in a string, on the stack, or in native memory. Making one, or slicing one, copies nothing:
+
+```csharp
+int[] scores = [10, 20, 30, 40, 50];
+Span<int> middle = scores.AsSpan(1, 3); // 20, 30, 40: a view, not a copy
+middle[0] = 99;                          // writes through to the array
+Check(scores[1] == 99 && middle.Length == 3, "the span and the array share memory");
+```
+
+$$
+\texttt{span}[k] \equiv a[o + k] \qquad \text{for } 0 \le k < \ell
+$$
+
+where
+
+- $a$ is the underlying memory (here the array `scores`);
+- $o$ is the span's start offset in $a$, and $\ell$ is its length;
+- $k$ is an index into the span, and $\equiv$ means "is the very same storage location".
+
+Example: `scores.AsSpan(1, 3)` has $o = 1$ and $\ell = 3$, so `middle[0]` is `scores[1 + 0]`; writing 99 through the span changes `scores[1]`. Indexing $k = 3$ would be outside $0 \le k < 3$ and throws `IndexOutOfRangeException`, so a span is as safe as an array. `ReadOnlySpan<char>` does the same for strings, which is what the problem needed:
+
+```csharp
+static int SumCsv(ReadOnlySpan<char> text)
+{
+    int total = 0;
+    while (true)
+    {
+        int comma = text.IndexOf(',');
+        if (comma < 0) return total + int.Parse(text);
+        total += int.Parse(text[..comma]); // a slice of the original characters, not a new string
+        text = text[(comma + 1)..];
+    }
+}
+```
+
+```csharp
+Check(AllocatedBy(() => Sink.Number = SumCsvWithSplit(csv)) > 0, "Split allocates an array and four strings");
+Check(AllocatedBy(() => Sink.Number = SumCsv(csv)) == 0, "slicing a ReadOnlySpan<char> allocates nothing");
+```
+
+Both return $12 + 7 + 30 + 5 = 54$. The `Split` version allocates; the span version allocates **0 bytes**, because `text[..comma]` is a new window onto the same characters and `int.Parse` accepts a span.
+
+### Level 4: `ref struct` rules and `stackalloc`
+
+A span may point into the stack, and a stack frame disappears when its method returns. So the compiler must guarantee that a span never outlives the memory it points to. It does this by making `Span<T>` a **`ref struct`**: a struct that may only live on the stack. That brings rules, each enforced at compile time:
+
+```csharp
+// sketch: three things a ref struct cannot do
+class Holder { Span<int> numbers; }   // error CS8345: Field or auto-implemented property cannot be of type 'Span<int>' unless it is an instance member of a ref struct.
+object boxed = view;                  // error CS0029: Cannot implicitly convert type 'System.Span<int>' to 'object'
+Span<int> view = numbers.AsSpan();    // in an async method, used after an await:
+await Task.Yield();                   // error CS4007: Instance of type 'System.Span<int>' cannot be preserved across 'await' or 'yield' boundary.
+```
+
+Each error message was produced by compiling the line in a scratch program. A field of a class lives on the heap, boxing copies to the heap, and an `await` moves locals into a heap-allocated state machine ([Tasks and async/await](11-tasks-and-async-await.qmd)), so all three would let the span escape its memory.
+
+With those rules in place, C# can let you allocate a buffer **on the stack** with `stackalloc` and use it safely through a span:
+
+```csharp
+static int SumOfSquares(int n)
+{
+    Span<int> squares = stackalloc int[n]; // on this method's stack frame
+    for (int i = 0; i < n; i++)
+        squares[i] = (i + 1) * (i + 1);
+    int total = 0;
+    foreach (int square in squares)
+        total += square;
+    return total;
+}
+```
+
+`SumOfSquares(4)` is $1 + 4 + 9 + 16 = 30$, and the lab measures 0 heap bytes: the buffer vanishes when the method returns, and the GC never sees it. A thread's stack is far smaller than the heap, and overflowing it kills the process, so use `stackalloc` only for small, bounded sizes. The usual guard is `n <= 256 ? stackalloc int[n] : new int[n]`.
+
+### Level 5: `Memory<T>` and `ArrayPool<T>`
+
+When a buffer must be stored in a field or used across an `await`, use **`Memory<T>`**: an ordinary struct that can live on the heap, refers to an array (or other owner) plus an offset and length, and hands out a `Span<T>` through `.Span` when you are ready to work synchronously:
+
+```csharp
+static async Task<int> SumLaterAsync(Memory<int> numbers)
+{
+    await Task.Yield(); // a Span<int> parameter could not be used after this line
+    int total = 0;
+    foreach (int n in numbers.Span)
+        total += n;
+    return total;
+}
+```
+
+`SumLaterAsync(prices.AsMemory(1))` with `prices = [3, 4, 5]` returns $4 + 5 = 9$. Microsoft's usage guidelines start from the same split: "Rule #1: For a synchronous API, use Span\<T\> instead of Memory\<T\> as a parameter if possible."
+
+Sometimes you really need an array, for example to pass to an older API, but not a new one each time. **`ArrayPool<T>.Shared`** lends arrays and takes them back:
+
+```csharp
+var pool = ArrayPool<byte>.Shared;
+byte[] buffer = pool.Rent(1000); // at least 1000 bytes, possibly more
+pool.Return(buffer);
+byte[] again = pool.Rent(1000);
+pool.Return(again);
+Check(buffer.Length >= 1000 && ReferenceEquals(buffer, again), "the pool handed back the same array");
+Check(AllocatedBy(() => pool.Return(pool.Rent(1000))) == 0, "renting from a warm pool allocates nothing");
+```
+
+`Rent` "retrieves a buffer that is at least the requested length"; in this lab it returned a 1,024-byte array, because the shared pool keeps arrays in power-of-two sizes. The second `Rent` returned the very same array, and a warm rent-and-return allocates 0 bytes. Two rules come with it: never use an array after returning it, and do not assume it is zeroed, because it still holds the previous borrower's data.
+
+### Level 6: weak references
+
+A normal reference keeps its target alive. A **weak reference** lets you find an object without keeping it alive, which suits caches of things that can be rebuilt:
+
+```csharp
+var held = new byte[100];
+var weakToHeld = new WeakReference<byte[]>(held);
+WeakReference<byte[]> weakToGarbage = WeakToNewArray();
+GC.Collect();
+Check(weakToHeld.TryGetTarget(out var target) && target == held, "a strongly referenced target survives");
+Check(!weakToGarbage.TryGetTarget(out _), "an unreferenced target is collected");
+GC.KeepAlive(held);
+```
+
+After the collection, the array that `held` still references is found through its weak reference; the array that nothing else referenced is gone, and `TryGetTarget` returns `false`. `ConditionalWeakTable<TKey, TValue>` builds on the same idea to attach data to objects without keeping them alive. A weak reference that tracks resurrection (a "long" weak reference) stays valid until a finalizable object is really freed, as [Exceptions and Disposal](10-exceptions-and-disposal.qmd) shows.
+
+## How it works underneath
+
+**Allocation contexts.** The runtime's design notes ("Book of the Runtime", *Garbage Collection Design*) describe how `new` stays cheap. Each thread owns an **allocation context**, a small region of generation 0 handed out in pieces called allocation quanta, "typically 8k". `new` moves the thread's pointer forward by the object's size and writes the header; no lock is needed, because only one thread ever writes to that region. When the region is used up, the thread asks the GC for another, and when generation 0 has used up its budget, a collection is triggered. Large objects skip this path and are allocated directly. This is also why `GetAllocatedBytesForCurrentThread` is exact: the runtime computes it as `alloc_bytes + alloc_bytes_uoh - (alloc_limit - alloc_ptr)`, the bytes of every region given to the thread plus its large allocations, minus the unused tail of the current region.
+
+**A collection, step by step.** Every managed thread is paused at a safe point. The GC marks everything reachable from the roots. For a generation 0 collection it does not trace the whole old generation. Every store of a reference into an object goes through a small JIT helper, the **write barrier**; when the stored reference points into the young generations, the helper marks a **card** covering the location written. An ephemeral collection then scans only the old objects under marked cards. The survivors are compacted and promoted, the allocation pointer is reset to the start of the free space, and the threads resume. Generation 2 collections normally run as **background GC**: most of the marking happens on a GC thread while your threads keep running, and only short pauses remain. The lab confirms the default, `GCSettings.LatencyMode` is `Interactive`.
+
+**Workstation versus server GC.** A console app uses **workstation GC** by default (the lab checks `GCSettings.IsServerGC` is `false`): one heap, collected on the thread that triggered the collection. **Server GC**, in the documentation's words, provides "a heap and a dedicated thread to perform garbage collection ... for each logical CPU, and the heaps are collected at the same time". It trades memory for throughput. Workstation GC is "the default GC flavor for standalone apps", while for hosted apps such as ASP.NET "the host determines the default GC flavor". Enable it with `<ServerGarbageCollection>true</ServerGarbageCollection>` in the project file or `DOTNET_gcServer=1` in the environment. Since .NET 9, server GC uses DATAS (Dynamic Adaptation To Application Sizes) by default, which grows and shrinks the number of heaps so that the heap size stays roughly proportional to the long-lived data.
+
+**How a span is built.** `Span<T>` is declared `public readonly ref struct Span<T>`, holding a managed reference to the first element (`ref T`, a C# 11 `ref` field) and an `int` length. A managed reference may point into the middle of an array, a string, the stack or native memory, and the GC understands it: if the array moves during compaction, the reference inside the span is updated with it. That is how one type can safely cover every kind of memory, with bounds checks on every index.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Allocating substrings in a hot loop (`Split`, `Substring`) | High allocation rate, frequent generation 0 collections | Parse with `ReadOnlySpan<char>` slices |
+| Keeping a `Span<T>` in a field or across `await` | `error CS8345: Field or auto-implemented property cannot be of type 'Span<int>' ...` or `error CS4007: Instance of type 'System.Span<int>' cannot be preserved across 'await' or 'yield' boundary.` | Store `Memory<T>`; take `.Span` inside synchronous code |
+| `stackalloc` with a large or user-controlled size | Stack overflow, which kills the process | Bound the size: `n <= 256 ? stackalloc int[n] : new int[n]` |
+| Using a pooled array after `Return`, or assuming it is zeroed | Data from another request leaks into this one | Return once, at the end; clear it, or `Return(array, clearArray: true)` |
+| Repeatedly allocating arrays of 85,000 bytes or more | Generation 2 collections and a fragmented LOH | Reuse buffers, or rent them from `ArrayPool<T>` |
+| Calling `GC.Collect()` in production code | Long pauses; objects promoted to old generations too early | Let the GC decide; collect only in tests and measurements |
+| Caches that hold strong references forever | Memory grows until the process is killed | Bounded caches with eviction, or weak references for rebuildable data |
+
+## Interview questions
+
+### 1. Why is .NET's GC generational, and what triggers each generation?
+
+**Answer.** Because most objects die young, a collection that only looks at recently allocated objects frees most of the garbage while touching very little memory: its work is proportional to the survivors, not to the allocations. Generation 0 is collected when its allocation budget is used up; survivors move to generation 1, a buffer for medium-lived objects; generation 1 survivors move to generation 2, which is collected only when its own budget runs out, usually in the background. The lab watches one object go from generation 0 to 1 to 2 over two `GC.Collect()` calls, and finds an 85,000-byte array already reported as generation 2 because it lives on the LOH.
+
+### 2. What is `Span<T>`, and why can it not be a field of a class?
+
+**Answer.** It is a `ref struct` holding a managed reference to a first element and a length, giving safe, bounds-checked, copy-free access to arrays, strings, stack memory and native memory. Because it may point into a stack frame, the compiler guarantees it never lives longer than that frame: no fields outside other `ref struct` types (CS8345), no boxing, no capture across `await` or `yield` (CS4007). `Memory<T>` is the heap-friendly counterpart, and `.Span` converts it back when needed. The lab's `SumCsv` uses `ReadOnlySpan<char>` slices to parse `12,7,30,5` with 0 bytes allocated.
+
+### 3. How do you prove that a piece of code does not allocate?
+
+**Answer.** Run it once to warm it up, so that JIT compilation and one-time static initialisation are excluded, then read `GC.GetAllocatedBytesForCurrentThread()` before and after a second run. The difference is exact, down to the byte: the lab measures 24 bytes for `new object()`, 1,024 for `new byte[1000]`, and 0 for `SumCsv`, `SumOfSquares` and a warm `ArrayPool` rent. For whole programs, BenchmarkDotNet's `[MemoryDiagnoser]` reports allocated bytes per operation, and `dotnet-counters` shows the allocation rate of a live process.
+
+### 4. What is the difference between workstation and server GC?
+
+**Answer.** Workstation GC uses one heap and does the collection on the thread that triggered it, which keeps memory use and CPU usage low; it is the default for console and desktop apps. Server GC creates a heap and a dedicated GC thread per logical CPU and collects them in parallel, giving more throughput at the cost of more memory; hosts such as ASP.NET choose their own default, and since .NET 9 DATAS adapts the number of heaps to the application's size. Both normally run generation 2 collections in the background. Choose with `ServerGarbageCollection` in the project file or `DOTNET_gcServer`.
+
+### 5. When are the LOH and the POH used, and why do they exist?
+
+**Answer.** Any object of 85,000 bytes or more goes to the LOH: $24 + 84{,}976 = 85{,}000$ bytes is large, one byte less is not, as the lab shows. Large objects are expensive to copy, so the LOH is swept into a free list rather than compacted (unless you request it with `GCSettings.LargeObjectHeapCompactionMode`) and is collected only with generation 2. The POH, added in .NET 5, holds objects allocated with `GC.AllocateArray(length, pinned: true)`. They never move, so native code can keep pointers to them, without the pinning that used to block compaction of the normal heap.
+
+## Summary
+
+$$
+S(n) = 8 \left\lceil \frac{24 + n \cdot s}{8} \right\rceil, \qquad \operatorname{work}(\text{gen 0 GC}) \propto |\text{survivors}|, \qquad \texttt{span}[k] \equiv a[o + k]
+$$
+
+where $S(n)$ is the size of an array of $n$ elements of size $s$, a generation 0 collection's work grows with the number of survivors, and a span with offset $o$ shares storage with the array $a$.
+
+Example: `new byte[1000]` costs $8 \lceil 1024 / 8 \rceil = 1024$ bytes; `SumCsv("12,7,30,5")` costs 0, because each `text[..comma]` is a window $a[o + k]$ onto the original characters.
+
+- `new` is a cheap pointer bump; the cost of the GC is in the objects that **survive**.
+- Generations 0, 1 and 2 exploit "most objects die young"; objects of 85,000 bytes or more go to the LOH; pinned arrays go to the POH.
+- Console apps use workstation GC; servers use server GC; both collect generation 2 in the background.
+- `Span<T>` and `ReadOnlySpan<T>` are stack-only `ref struct` windows: slice instead of copying.
+- `stackalloc` for small temporary buffers, `Memory<T>` across `await`, `ArrayPool<T>` to reuse arrays.
+- Prove "zero allocations" with `GC.GetAllocatedBytesForCurrentThread` after a warm-up run.
+
+## References
+
+- .NET garbage collection documentation: [Fundamentals of garbage collection](https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/fundamentals), [The large object heap on Windows systems](https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/large-object-heap), [Workstation and server garbage collection](https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/workstation-server-gc), [Runtime configuration options for garbage collection](https://learn.microsoft.com/en-us/dotnet/core/runtime-config/garbage-collector) (server GC, background GC, DATAS), [Weak references](https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/weak-references).
+- API reference: [`GC.GetAllocatedBytesForCurrentThread`](https://learn.microsoft.com/en-us/dotnet/api/system.gc.getallocatedbytesforcurrentthread), [`GC.AllocateArray`](https://learn.microsoft.com/en-us/dotnet/api/system.gc.allocatearray), [`Span<T>`](https://learn.microsoft.com/en-us/dotnet/api/system.span-1), [`ArrayPool<T>`](https://learn.microsoft.com/en-us/dotnet/api/system.buffers.arraypool-1); C# reference: [ref structure types](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/ref-struct).
+- [Memory\<T\> and Span\<T\> usage guidelines](https://learn.microsoft.com/en-us/dotnet/standard/memory-and-spans/memory-t-usage-guidelines).
+- The .NET runtime team, [Garbage Collection Design](https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/botr/garbage-collection.md) in the Book of the Runtime (allocation contexts, cards), and [comutilnative.cpp](https://github.com/dotnet/runtime/blob/main/src/coreclr/vm/comutilnative.cpp) (`GC_GetAllocatedBytesForCurrentThread`).
+- Maoni Stephens (.NET GC architect), [Internals of the POH](https://devblogs.microsoft.com/dotnet/internals-of-the-poh/) (.NET Blog, 2021) and [mem-doc](https://github.com/Maoni0/mem-doc), a guide to .NET memory analysis.
+- Henry Lieberman and Carl Hewitt, *A real-time garbage collector based on the lifetimes of objects*, Communications of the ACM 26(6), 1983, [doi:10.1145/358141.358147](https://doi.org/10.1145/358141.358147); David Ungar, *Generation Scavenging*, ACM SIGSOFT/SIGPLAN Symposium on Practical Software Development Environments, 1984, [doi:10.1145/800020.808261](https://doi.org/10.1145/800020.808261).
+- Ian Griffiths, *Programming C# 12* (O'Reilly, 2024), chapter 7, "Object Lifetime", and chapter 18, "Memory Efficiency".
+- Lab: [`labs/memory-gc-and-span.cs`](labs/memory-gc-and-span.cs). Run it from `programming-languages/csharp/labs` with `dotnet run memory-gc-and-span.cs`.

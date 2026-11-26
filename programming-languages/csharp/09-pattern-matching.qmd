@@ -1,0 +1,328 @@
+---
+title: "Pattern Matching"
+description: "C# pattern matching from the first is test to the compiler's decision tree: type, constant, relational, logical, property, positional, tuple and list patterns, switch expressions, first-match order, exhaustiveness (CS8509) and deconstruction."
+---
+
+## The problem
+
+A cinema charges by age: under 5 free, under 18 pays 6, 65 and over pays 7, everybody else 12, and a negative age is a bug. A drawing program must compute the area of a circle, a rectangle or a triangle that arrives as a plain `Shape`. Written with `if`, `else if`, casts and `GetType()`, both turn into ladders where the order of the tests is easy to get wrong, a cast can fail at run time, and nothing tells you that you forgot a case.
+
+**Pattern matching** lets you write the *shape* of the data you expect, and the compiler does the testing, the casting and the naming:
+
+```csharp
+static int TicketPrice(int age) => age switch
+{
+    < 0 => throw new ArgumentOutOfRangeException(nameof(age)),
+    < 5 => 0,
+    < 18 => 6,
+    >= 65 => 7,
+    _ => 12,
+};
+```
+
+The compiler also checks that every possible input is handled, and it reports arms that can never be reached. C# grew this feature over five versions: type patterns in C# 7.0 (2017), switch expressions with property, tuple and positional patterns in C# 8.0, relational and logical patterns in C# 9, and list patterns in C# 11.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A coin-sorting machine
+
+Picture a coin-sorting machine with a row of holes. A coin rolls along and drops into the **first hole it fits**: the small hole comes first, so a small coin never reaches the big one. A pattern is a hole: "an `int` bigger than 0", "a `Circle`", "a list that starts with 1, 2".
+
+- **The order of the holes matters.** The first match wins, just as the coin drops into the first hole it fits.
+- **The machine needs a last bucket.** If a coin fits no hole, it falls on the floor. The C# compiler checks your machine before you run it and warns you that the floor is reachable (warning CS8509).
+- **The machine reads the coin for you.** When a coin drops into "a `Rectangle` with width `w` and height `h`", you are handed `w` and `h` already measured. No casting, no guessing.
+
+The idea comes from functional languages such as ML and Haskell. C#'s version was designed in the open by the language team of Mads Torgersen, the lead designer of C#, and every step is recorded as a feature proposal in the `dotnet/csharplang` repository. In *C# 9.0 on the record* (2020) he introduced relational and logical patterns with a toll-booth price table much like the cinema's.
+:::
+
+## From simple to advanced
+
+### Level 1: `is` tests a type and names the value
+
+Before patterns, you checked a type with `is` and then cast. A **type pattern with a declaration** does both in one step, and the new variable only exists where the test succeeded:
+
+```csharp
+static string Describe(object? value)
+{
+    if (value is int n && n > 0) return $"positive int {n}";
+    if (value is string s) return $"string of length {s.Length}";
+    if (value is null) return "null";
+    return "something else";
+}
+```
+
+`Describe(42)` is `"positive int 42"`, `Describe("hi")` is `"string of length 2"`, `Describe(null)` is `"null"`, and `Describe(3.5)` is `"something else"`. Three kinds of pattern appear here: the **type pattern** `int n`, the **constant pattern** `null`, and, in the `&& n > 0`, ordinary code that can use `n` because the compiler knows the pattern matched. A type pattern never matches `null`, so `s` is never null inside the second `if`.
+
+### Level 2: switch expressions and relational patterns
+
+A `switch` **expression** (C# 8) produces a value. Its arms are tried from top to bottom, and the first one that matches wins. The `< 5` and `>= 65` arms are **relational patterns** (C# 9), and `_` is the **discard pattern**, which matches anything. `TicketPrice` from the problem is a piecewise function:
+
+$$
+\operatorname{price}(a) =
+\begin{cases}
+\text{error} & a < 0 \\
+0 & 0 \le a < 5 \\
+6 & 5 \le a < 18 \\
+7 & a \ge 65 \\
+12 & \text{otherwise, that is } 18 \le a < 65
+\end{cases}
+$$
+
+where
+
+- $a$ is the age passed in;
+- each line is one arm: the value on the left is returned when the condition on the right holds;
+- "error" means the arm throws `ArgumentOutOfRangeException`.
+
+Example: $\operatorname{price}(4)$: $4 < 0$ is false, $4 < 5$ is true, so the result is 0. $\operatorname{price}(10)$: $10 < 5$ is false, $10 < 18$ is true, so 6. $\operatorname{price}(70)$: $70 < 18$ is false, $70 \ge 65$ is true, so 7. $\operatorname{price}(30)$ fails every test except `_`, so 12. The math writes $0 \le a < 5$ in full, but the code only says `< 5`, because by the time the second arm runs, the first has already ruled out $a < 0$. That is **first-match** semantics:
+
+$$
+\operatorname{result}(x) = e_j, \qquad j = \min \lbrace\, i \mid x \text{ matches } p_i \text{ and } g_i(x) \text{ is true} \,\rbrace
+$$
+
+where
+
+- $x$ is the input;
+- $p_1, p_2, \dots$ are the arms' patterns in source order, and $g_i$ is arm $i$'s `when` guard (true if it has none);
+- $e_j$ is the expression of the winning arm $j$;
+- $\min$ picks the smallest index, the arm nearest the top.
+
+Example: for $x = -1$, arm 1 (`< 0`) and arm 2 (`< 5`) both match, so $j = \min \lbrace 1, 2, 5 \rbrace = 1$ and the call throws. The lab checks this, plus 0, 6, 12 and 7 for ages 4, 10, 30 and 70.
+
+### Level 3: type, property and positional patterns
+
+A pattern can look inside an object. The shapes are positional records ([Classes, Structs and Records](03-classes-structs-and-records.qmd)):
+
+```csharp
+abstract record Shape;
+record Circle(double Radius) : Shape;
+record Rectangle(double Width, double Height) : Shape;
+record Triangle(double Base, double Height) : Shape;
+```
+
+```csharp
+static double Area(Shape shape) => shape switch
+{
+    Circle(var r) => Math.PI * r * r,
+    Rectangle { Width: var w, Height: var h } => w * h,
+    Triangle t => 0.5 * t.Base * t.Height,
+    _ => throw new ArgumentException("unknown shape", nameof(shape)),
+};
+```
+
+Three styles reach the same goal:
+
+- `Circle(var r)` is a **positional pattern**: it checks the type, calls the record's generated `Deconstruct`, and binds the first value to `r`.
+- `Rectangle { Width: var w, Height: var h }` is a **property pattern**: it checks the type and reads the named properties.
+- `Triangle t` is a plain type pattern that names the whole object.
+
+`Area(new Rectangle(3, 4))` is $3 \cdot 4 = 12$ and `Area(new Triangle(6, 2))` is $0.5 \cdot 6 \cdot 2 = 6$. Patterns nest, take constants, and can add a `when` guard for a condition that a pattern cannot express, such as "two properties are equal":
+
+```csharp
+static string Name(Shape shape) => shape switch
+{
+    Circle { Radius: 0 } => "point",
+    Rectangle(var w, var h) when w == h => "square",
+    Rectangle => "rectangle",
+    _ => "other",
+};
+```
+
+The same `Deconstruct` powers **deconstruction** outside patterns:
+
+```csharp
+var (width, height) = new Rectangle(3, 4); // deconstruction calls the generated Deconstruct
+Check(width == 3 && height == 4, "a positional record deconstructs");
+```
+
+A **tuple pattern** matches several values at once. Rock, paper, scissors in four lines:
+
+```csharp
+static string Winner(string first, string second) => (first, second) switch
+{
+    _ when first == second => "draw",
+    ("rock", "scissors") or ("scissors", "paper") or ("paper", "rock") => "first",
+    _ => "second",
+};
+```
+
+### Level 4: `and`, `or`, `not`
+
+C# 9 added **logical patterns**, which combine patterns the way `&&`, `||` and `!` combine conditions. Parentheses group them:
+
+```csharp
+static bool IsLetter(char c) => c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z');
+
+static bool IsVowelOrDigit(char c) => c is 'a' or 'e' or 'i' or 'o' or 'u' or (>= '0' and <= '9');
+```
+
+In logic, with each character standing for its code number:
+
+$$
+\operatorname{IsLetter}(c) \iff (97 \le c \le 122) \lor (65 \le c \le 90)
+$$
+
+where
+
+- $c$ is the character's UTF-16 code: `'a'` is 97, `'z'` is 122, `'A'` is 65 and `'Z'` is 90;
+- $\lor$ is `or`, $\land$ (inside each range) is `and`, and $\iff$ means "exactly when".
+
+Example: `'q'` is 113, and $97 \le 113 \le 122$ holds, so it is a letter. `'Q'` is 81: the first range fails, but $65 \le 81 \le 90$ holds. `'5'` is 53, which is in neither range, so `IsLetter('5')` is false. The pattern `not null` is the logical `not` applied to the constant pattern `null`, and it is the idiomatic null check.
+
+### Level 5: list patterns
+
+C# 11 added **list patterns** in square brackets. Each element is itself a pattern, and `..` (the **slice pattern**) matches zero or more elements:
+
+```csharp
+static string DescribeList(int[] numbers) => numbers switch
+{
+    [] => "empty",
+    [var only] => $"one: {only}",
+    [1, 2, ..] => "starts 1, 2",
+    [var first, .., var last] => $"from {first} to {last}",
+};
+```
+
+`[]` gives `"empty"`, `[7]` gives `"one: 7"`, `[1, 2, 9]` gives `"starts 1, 2"`, and `[5, 6, 8]` gives `"from 5 to 8"`. The four arms cover lengths 0, 1 and "2 or more", so the switch is exhaustive without `_`. A slice can capture what it skipped. On a span, that capture is another span over the same memory, so this recursion copies nothing:
+
+```csharp
+static int Sum(ReadOnlySpan<int> numbers) => numbers switch
+{
+    [] => 0,
+    [var head, .. var tail] => head + Sum(tail),
+};
+```
+
+`Sum([1, 2, 3, 4])` is $1 + (2 + (3 + (4 + 0))) = 10$.
+
+## How it works underneath
+
+**Exhaustiveness.** The compiler computes which inputs no arm matches. If that set is not empty, it reports warning CS8509 and generates a final hidden arm that throws. Leave out the last two arms of the ticket switch:
+
+```csharp
+// sketch: compiles with warning CS8509
+static int ChildPrice(int age) => age switch
+{
+    < 5 => 0,
+    < 18 => 6,
+};
+```
+
+```text
+warning CS8509: The switch expression does not handle all possible values of its input type (it is not exhaustive). For example, the pattern '18' is not covered.
+```
+
+The rule the compiler checks:
+
+$$
+\bigcup_{i} M(p_i) = D
+$$
+
+where
+
+- $D$ is the set of all values of the input type (for `int`, every integer from $-2^{31}$ to $2^{31} - 1$, and for a reference type, `null` too when it is nullable);
+- $M(p_i)$ is the set of values that pattern $p_i$ matches, ignoring `when` guards, which the compiler cannot evaluate;
+- $\bigcup$ is the union of all the arms' sets.
+
+Example: for `ChildPrice`, $M(\texttt{< 5}) \cup M(\texttt{< 18})$ is every integer below 18. The smallest missing value is 18, which is exactly the example the warning names. The lab suppresses the warning for this one method and calls `ChildPrice(30)`. The hidden arm throws `SwitchExpressionException` with the message `Non-exhaustive switch expression failed to match its input.` and `UnmatchedValue` 30. For `Area`, the `_` arm is required because `Shape` is an open hierarchy: any assembly may add a subclass. Without it the compiler says `For example, the pattern '_' is not covered.` C# 15 (November 2026, with .NET 11) adds union types and closed hierarchies, which let the compiler know every case; this guide stays on C# 14.
+
+**Unreachable arms are errors.** If an arm can only match values that earlier arms already took, the compiler refuses the program. Swap `< 18` and `< 5` and you get `error CS8510: The pattern is unreachable. It has already been handled by a previous arm of the switch expression or it is impossible to match.`
+
+**The decision tree.** The compiler does not test the arms one after another. Roslyn's `DecisionDagBuilder` turns all the arms into one decision graph in which every test (a type check, a comparison, a property read) runs at most once and in the order that best shares work. For `TicketPrice` that is a small tree of comparisons, equivalent to this hand-written version, which the lab compares with `TicketPrice` for every age from 0 to 120:
+
+```csharp
+static int TicketPriceByHand(int age)
+{
+    if (age < 5)
+    {
+        if (age < 0) throw new ArgumentOutOfRangeException(nameof(age));
+        return 0;
+    }
+    if (age < 18) return 6;
+    if (age < 65) return 12;
+    return 7;
+}
+```
+
+What each pattern turns into:
+
+| Pattern | Compiled to |
+|---|---|
+| `int n`, `Circle c` | a runtime type test (`isinst` in IL) and a cast |
+| `null`, `0`, `"rock"` | an equality test that **never** calls a user-defined `==` |
+| `< 5`, `>= 'a'` | a comparison instruction; works on numbers, `char` and enums |
+| `Circle(var r)` | a type test, then a call to `Deconstruct(out r)` |
+| `{ Width: var w }` | a null check, then a property read |
+| `[1, .. var s, 3]` | a `Length` or `Count` test, then indexer reads (and a slice for `s`) |
+
+The list pattern specification gives the expansion of the last row. It applies to any type that is **countable** (`Length` or `Count`) and **indexable** (an indexer taking `Index` or `int`). A slice with a subpattern also needs a `Range` indexer or a `Slice(int, int)` method:
+
+```csharp
+// sketch: the expansion of expr is [1, .. var s, 3], from the C# 11 list patterns specification
+expr.Length is >= 2
+&& expr[new Index(0, fromEnd: false)] is 1
+&& expr[new Range(new Index(1, fromEnd: false), new Index(1, fromEnd: true))] is var s
+&& expr[new Index(1, fromEnd: true)] is 3
+```
+
+For arrays, the slice uses `RuntimeHelpers.GetSubArray`, which **allocates a new array**. For spans it is a free view ([Memory, GC and Span](13-memory-gc-and-span.qmd)), which is why `Sum` takes a `ReadOnlySpan<int>`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Leaving out a case in a switch expression | `warning CS8509: ... For example, the pattern '18' is not covered.`, then `SwitchExpressionException` at run time | Add the missing arm, or a `_` arm that throws a meaningful exception |
+| A general arm above a specific one | `error CS8510: The pattern is unreachable. It has already been handled by a previous arm ...` | Order arms from specific to general |
+| Writing `x == null` on a type that overloads `==` | The overload decides, and may lie | Use `x is null` and `x is not null` |
+| `is not A or B` meaning "neither A nor B" | It parses as `(not A) or B`, which is true for almost everything | Write `is not (A or B)` |
+| Trying to say "both parts equal" inside the pattern, as in `Rectangle(var w, var w)` | `error CS0128: A local variable or function named 'w' is already defined in this scope` | Use a `when` guard: `Rectangle(var w, var h) when w == h` |
+| Using a slice capture on an array in a hot loop | A new array per match | Match on a `ReadOnlySpan<T>` instead |
+
+## Interview questions
+
+### 1. What is the difference between `x is null` and `x == null`?
+
+**Answer.** `x is null` is the constant pattern `null`. The compiler guarantees it never calls a user-defined `==` operator, so it always tests the reference itself. `x == null` calls `operator ==` if the type defines one. The lab's `AlwaysEqual` class overloads `==` to return `true`, so `weird == null` is true even though `weird` is a real object, while `weird is not null` is also true. For types without an overload, the two compile to the same check.
+
+### 2. What happens when no arm of a switch expression matches?
+
+**Answer.** At compile time, the compiler proves the arms do not cover the input type and reports warning CS8509 with an example value it found ($\bigcup_i M(p_i) \ne D$). If the program is run anyway, the compiler-generated default arm throws `System.Runtime.CompilerServices.SwitchExpressionException`, whose `UnmatchedValue` holds the input: 30 for `ChildPrice(30)` in the lab. A `switch` **statement** is different: a value that matches no `case` simply skips the statement, with no exception.
+
+### 3. Does the order of switch arms matter?
+
+**Answer.** Yes, for meaning: the first matching arm wins ($j = \min \lbrace i \mid \dots \rbrace$), so `TicketPrice(-1)` throws rather than returning 0, although `< 5` also matches. An arm that is completely covered by earlier ones is a compile-time error, CS8510. For speed the order matters little, because the compiler builds a single decision graph and reorders the type tests and comparisons internally, as long as the result is the one first-match semantics demands. A `when` guard runs only after its own arm's pattern has matched.
+
+### 4. Which types can a list pattern match?
+
+**Answer.** Any type that is *countable* (an accessible `Length` or `Count` property) and *indexable* (an indexer taking `System.Index`, or else a single `int`). Arrays, `string`, `List<T>`, `Span<T>` and `ReadOnlySpan<T>` all qualify. A slice that captures (`.. var tail`) also needs the type to be *sliceable*: an indexer taking `System.Range` or a `Slice(int, int)` method. `List<T>` has neither, so `[var head, .. var tail]` does not compile on a list, while a plain `..` does. Arrays slice with `RuntimeHelpers.GetSubArray` (a copy) and spans with `Slice` (no copy).
+
+### 5. What is the difference between a positional and a property pattern?
+
+**Answer.** A positional pattern `Circle(var r)` calls a `Deconstruct` method and matches its out values by position. Records with a primary constructor generate one automatically, and any type can add its own. A property pattern `{ Radius: var r }` reads properties or fields by name, needs no `Deconstruct`, and stays correct if the positional order ever changes. Property patterns also check for `null` first, so `x is { }` is a common way to write "not null". C# 10 allows nested properties in one step: `{ Address.City: "York" }`.
+
+## Summary
+
+$$
+\operatorname{result}(x) = e_j, \quad j = \min \lbrace i \mid x \text{ matches } p_i \land g_i(x) \rbrace, \qquad \bigcup_i M(p_i) = D \text{ or warning CS8509}
+$$
+
+where $x$ is the input, $p_i$, $g_i$ and $e_i$ are arm $i$'s pattern, guard and result, $M(p_i)$ is the set of inputs $p_i$ matches, and $D$ is the set of all possible inputs.
+
+Example: `TicketPrice(10)`: arm 1 (`< 0`) fails, arm 2 (`< 5`) fails, arm 3 (`< 18`) matches, so $j = 3$ and the result is 6. For `ChildPrice`, $M(\texttt{< 5}) \cup M(\texttt{< 18})$ misses 18, so the compiler warns.
+
+- `is T name` tests and converts in one step; the variable exists only where the test succeeded.
+- A switch expression returns a value; **the first matching arm wins**; unreachable arms are errors.
+- Relational (`< 5`), logical (`and`, `or`, `not`), property (`{ W: var w }`), positional (`Circle(var r)`), tuple and list (`[a, .., z]`) patterns all nest.
+- The compiler proves **exhaustiveness** and warns with CS8509; ignoring it means `SwitchExpressionException` at run time.
+- `is null` and `is not null` never call a user-defined `==`.
+- Arms compile into one decision graph; list slices allocate on arrays and are free on spans.
+
+## References
+
+- Microsoft Learn, C# reference: [Pattern matching: the `is` and `switch` expressions, and the `and`, `or` and `not` patterns](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/patterns), and [The history of C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-version-history) (C# 7.0, 8.0, 9, 11 and 15 entries).
+- The C# 11 feature specification [List patterns](https://github.com/dotnet/csharplang/blob/main/proposals/csharp-11.0/list-patterns.md), sections "Pattern compatibility" and "Semantics", in the `dotnet/csharplang` repository.
+- Roslyn source: [DecisionDagBuilder.cs](https://github.com/dotnet/roslyn/blob/main/src/Compilers/CSharp/Portable/Binder/DecisionDagBuilder.cs), which builds the decision graph for `is` and `switch`.
+- Mads Torgersen, [C# 9.0 on the record](https://devblogs.microsoft.com/dotnet/c-9-0-on-the-record/) (.NET Blog, 2020), sections "Relational patterns" and "Logical patterns".
+- Ian Griffiths, *Programming C# 12* (O'Reilly, 2024), chapter 2, "Basic Coding in C#", section "Patterns".
+- Lab: [`labs/pattern-matching.cs`](labs/pattern-matching.cs). Run it from `programming-languages/csharp/labs` with `dotnet run pattern-matching.cs`.

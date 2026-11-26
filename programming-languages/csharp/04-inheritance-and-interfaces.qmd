@@ -1,0 +1,390 @@
+---
+title: "Inheritance and Interfaces"
+description: "C# inheritance from base calls to the method table: virtual, override and new, abstract and sealed, interfaces with explicit, default and static abstract members, and the Liskov substitution principle."
+---
+
+## The problem
+
+A drawing program holds a circle of radius 1 and a square of side 2. It must add up their areas: $\pi \cdot 1^2 \approx 3.14$ plus $2^2 = 4$, about 7.14. Without a common type, every function that touches shapes needs a `switch` on a "kind" string, and adding a triangle means finding and editing every one of those switches.
+
+Inheritance and interfaces let one loop treat all shapes alike while each shape keeps its own formula:
+
+```csharp
+Shape[] shapes = [new Circle(1), new Square(2)];
+double total = 0;
+foreach (Shape shape in shapes)
+{
+    total += shape.Area(); // runs Circle.Area or Square.Area
+}
+```
+
+`total` is $\pi + 4 \approx 7.14$. The loop only knows `Shape`, yet each call runs the right formula. This chapter explains how C# picks the method, when it does **not** pick the one you expect (`new`), and the promise a subclass must keep so that loops like this stay correct.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A universal remote and a new TV
+
+- **Inheritance:** a new TV model is "the old model plus extras". It gets every button the old one had.
+- **`virtual` and `override`:** the maker lets the new model rewire the Play button. Whoever presses Play, with any remote, gets the new behaviour, because the TV itself decides.
+- **`new`:** the maker glues a *second* Play button beside the old one. People holding the old remote still press the old button.
+- **Interface:** a universal remote's list of buttons. Any TV that has those buttons works with it, whatever its family tree.
+
+Anders Hejlsberg, C#'s lead designer, explained why C# methods are not virtual unless you say so: *"There's just performance overhead associated with being a virtual method"*, but *"A more important issue is versioning"*, and *"to override an existing virtual method, you must say override."* Barbara Liskov added the rule for swapping TVs: whoever used the old model must not be surprised by the new one.
+:::
+
+## From simple to advanced
+
+### Level 1: a derived class inherits, and can call its base
+
+`class LabelledSquare : Square` means a labelled square **is a** square: it inherits `Side`, `Area` and `Describe`, and adds a label. `base.Describe()` calls the version it inherited, so the override extends the base behaviour instead of copying it.
+
+```csharp
+class LabelledSquare(double side, string label) : Square(side)
+{
+    public override string Describe() => $"{base.Describe()} [{label}]";
+}
+```
+
+`new LabelledSquare(2, "tile").Describe()` is `"square: area 4.00 [tile]"`: `Square`'s description, then the label. The `: Square(side)` part passes `side` to the base constructor, which always runs before the derived one. A C# class has **exactly one** base class; when you write none, it is `object`.
+
+### Level 2: `override` follows the object, `new` follows the variable
+
+Every expression has two types. The **static type** is what the compiler sees, the declared type of the variable. The **runtime type** is the class of the object actually there. `virtual` and `override` choose by the runtime type; a plain method, including one hidden with `new`, chooses by the static type.
+
+```csharp
+class Animal
+{
+    public virtual string Sound() => "...";
+    public string Kind() => "animal";
+}
+
+class Dog : Animal
+{
+    public override string Sound() => "Woof"; // replaces Animal's slot
+    public new string Kind() => "dog";        // a second method that hides the first
+}
+```
+
+```csharp
+Dog rex = new Dog();
+Animal sameDog = rex; // same object, static type Animal
+Check(sameDog.Sound() == "Woof", "virtual + override: the runtime type decides");
+Check(sameDog.Kind() == "animal", "new: the static type decides");
+Check(rex.Kind() == "dog", "the hiding method is visible through Dog");
+```
+
+The rule, for a call `e.m()`:
+
+$$
+\operatorname{run}(e.m()) =
+\begin{cases}
+\operatorname{impl}(\operatorname{runtime}(e),\, m) & \text{if } m \text{ is virtual} \\
+\operatorname{impl}(\operatorname{static}(e),\, m) & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $e$ is the expression before the dot, such as `sameDog`;
+- $m$ is the method being called;
+- $\operatorname{static}(e)$ is the type the compiler knows for $e$: its declared type;
+- $\operatorname{runtime}(e)$ is the class of the object $e$ refers to when the program runs;
+- $\operatorname{impl}(T, m)$ is the body of $m$ that type $T$ ends up with: its own override if it has one, otherwise the nearest base class's.
+
+Example with the lab's dog. $\operatorname{static}(\texttt{sameDog}) = \texttt{Animal}$ and $\operatorname{runtime}(\texttt{sameDog}) = \texttt{Dog}$.
+
+1. `Sound` is virtual, so the first case applies: $\operatorname{impl}(\texttt{Dog}, \texttt{Sound})$ is `Dog`'s override, `"Woof"`.
+2. `Kind` is not virtual, so the second case applies: $\operatorname{impl}(\texttt{Animal}, \texttt{Kind}) = $ `"animal"`, even though the object is a dog.
+3. Through `rex`, $\operatorname{static}(\texttt{rex}) = \texttt{Dog}$, so `rex.Kind()` finds the hiding method: `"dog"`.
+
+If you forget both keywords, the compiler guesses `new` and warns you. Compiled in a scratch folder:
+
+```csharp
+// sketch: compiles, with the warnings shown
+class Cat : Animal
+{
+    public string Sound() => "Meow"; // CS0114
+    public string Kind() => "cat";   // CS0108
+}
+```
+
+```text
+warning CS0114: 'Cat.Sound()' hides inherited member 'Animal.Sound()'. To make the current member override that implementation, add the override keyword. Otherwise add the new keyword.
+warning CS0108: 'Cat.Kind()' hides inherited member 'Animal.Kind()'. Use the new keyword if hiding was intended.
+```
+
+This is the versioning protection Hejlsberg described. If a library later adds a method your subclass already has, your method does not silently become an override.
+
+### Level 3: `abstract` must be finished, `sealed` cannot be extended
+
+An `abstract` class is a half-built type. It may declare `abstract` members with no body, and it cannot be created. Every concrete subclass must supply the missing bodies.
+
+```csharp
+abstract class Shape
+{
+    public abstract double Area(); // no body: every concrete shape must supply one
+    public virtual string Name => "shape";
+    public virtual string Describe() => $"{Name}: area {Area():F2}";
+}
+```
+
+`sealed` is the opposite: nothing may derive from the class. On a member, `sealed override` stops further overriding of that one member.
+
+```csharp
+sealed class Circle(double radius) : Shape
+{
+    public override double Area() => Math.PI * radius * radius;
+    public override string Name => "circle";
+}
+```
+
+The compiler enforces both. Each line, compiled on its own against the lab's types, fails:
+
+```csharp
+// sketch: does not compile
+var s = new Shape();             // CS0144
+class Ring : Circle { }          // CS0509
+class Triangle : Shape { }       // CS0534
+```
+
+```text
+error CS0144: Cannot create an instance of the abstract type or interface 'Shape'
+error CS0509: 'Ring': cannot derive from sealed type 'Circle'
+error CS0534: 'Triangle' does not implement inherited abstract member 'Shape.Area()'
+```
+
+Note that `Describe` in `Shape` already calls `Area()`, which has no body there. That is fine: the call is virtual, so it runs whichever override the real object has. A base class can define the *steps* of an algorithm and leave some steps to subclasses. That is the **Template Method** pattern from Gamma, Helm, Johnson and Vlissides' *Design Patterns* (1994).
+
+### Level 4: an interface is a contract; explicit implementation hides a member
+
+An interface lists members with no state. A class has one base class but can implement **many** interfaces, and a `struct` can implement interfaces too. When two interfaces need the same member name with different meanings, implement them **explicitly**:
+
+```csharp
+interface ICentimetres
+{
+    double Length { get; }
+}
+
+interface IInches
+{
+    double Length { get; }
+}
+
+class Ruler : ICentimetres, IInches
+{
+    double ICentimetres.Length => 30;
+    double IInches.Length => 30 / 2.54;
+}
+```
+
+```csharp
+var ruler = new Ruler();
+Check(((ICentimetres)ruler).Length == 30, "the centimetre view");
+Check(Math.Round(((IInches)ruler).Length, 2) == 11.81, "the inch view");
+```
+
+The same ruler reports 30 through one interface and $30 / 2.54 \approx 11.81$ through the other. An explicit member has no access modifier and is **not** a member of `Ruler`'s public surface; `ruler.Length` fails with `error CS1061: 'Ruler' does not contain a definition for 'Length' ...`. Explicit implementation is also how a type keeps an interface member out of its everyday API, as `List<T>` does with `ICollection<T>.IsReadOnly`.
+
+### Level 5: default interface methods (C# 8)
+
+Before C# 8, adding a method to a published interface broke every class that implemented it. Since C# 8 (which needs the runtime support added in .NET Core 3.0), an interface member may have a **default body**:
+
+```csharp
+interface IGreeter
+{
+    string Name { get; }
+    string Greet() => $"Hello, I am {Name}"; // default body: implementers may skip it
+}
+
+class Robot : IGreeter
+{
+    public string Name => "R2";
+}
+
+class Butler : IGreeter
+{
+    public string Name => "Jeeves";
+    public string Greet() => $"Good evening, I am {Name}";
+}
+```
+
+Through `IGreeter`, a `Robot` says `"Hello, I am R2"` (the default) and a `Butler` says `"Good evening, I am Jeeves"` (its own body wins). The default belongs to the interface, not the class: `new Robot().Greet()` fails with `error CS1061: 'Robot' does not contain a definition for 'Greet' ...`. Interfaces still cannot hold instance state; `int count;` in an interface is `error CS0525: Interfaces cannot contain instance fields`.
+
+### Level 6: static abstract members (C# 11)
+
+Ordinary interface members are called on an **object**. A `static abstract` member is called on a **type**, through a type parameter. That lets generic code ask "make me one of these" without having an instance yet:
+
+```csharp
+interface IFromSize<TSelf> where TSelf : IFromSize<TSelf>
+{
+    static abstract TSelf FromSize(double size); // each type supplies its own factory
+}
+```
+
+```csharp
+static T[] MakeThree<T>() where T : IFromSize<T> => [T.FromSize(1), T.FromSize(2), T.FromSize(3)];
+```
+
+`Square` implements it with `public static Square FromSize(double size) => new(size);`. The call is resolved by the type argument rather than by an object:
+
+$$
+\operatorname{run}(T.m()) = \operatorname{impl}(A,\, m) \quad \text{when the call is instantiated with } T = A
+$$
+
+where
+
+- $T$ is the type parameter in the generic method;
+- $m$ is the static abstract member, here `FromSize`;
+- $A$ is the type argument the caller chose, written inside `<...>`;
+- $\operatorname{impl}(A, m)$ is $A$'s own static implementation of $m$.
+
+Example: `MakeThree<Square>()` sets $A = \texttt{Square}$, so the three calls build squares of side 1, 2 and 3. Their areas are $1^2 + 2^2 + 3^2 = 1 + 4 + 9 = 14$, which the lab checks. The `TSelf` pattern, where an interface names its own implementer, is how .NET's generic math (`INumber<T>`, `T.Zero`, the `+` operator) is built; [Generics and Variance](05-generics-and-variance.qmd) uses it.
+
+### Level 7: Liskov. A subclass must keep its base class's promises
+
+The compiler checks that a subclass has the right *shapes* of methods. It cannot check that they *behave* as callers expect. Barbara Liskov and Jeannette Wing stated the behavioural rule in *A Behavioral Notion of Subtyping* (1994), as their "Subtype Requirement": *"Let φ(x) be a property provable about objects x of type T. Then φ(y) should be true for objects y of type S where S is a subtype of T."*
+
+$$
+\big(\forall x : T.\ \varphi(x)\big) \;\Rightarrow\; \big(\forall y : S.\ \varphi(y)\big)
+$$
+
+where
+
+- $T$ is the base type and $S$ a subtype of it;
+- $x : T$ means "$x$ is an object of type $T$", and $\forall$ means "for every";
+- $\varphi$ (phi) is a property callers rely on, here "after setting Width to $w$ and Height to $h$, Area is $w \cdot h$";
+- $\Rightarrow$ means "implies": whatever holds for every $T$ must hold for every $S$.
+
+The classic broken example is a square that inherits from a rectangle:
+
+```csharp
+static double Stretch(Rectangle r)
+{
+    r.Width = 2;
+    r.Height = 3;
+    return r.Area; // every caller of a Rectangle expects 2 * 3 = 6
+}
+
+Check(Stretch(new Rectangle()) == 6, "a rectangle keeps both sides");
+Check(Stretch(new SquareRectangle()) == 9, "the square broke the promise");
+```
+
+Example with $w = 2$ and $h = 3$: for a `Rectangle`, $\varphi$ says Area $= 2 \cdot 3 = 6$, and it is 6. `SquareRectangle` keeps its sides equal, so setting Height to 3 also sets Width to 3, and Area $= 3 \cdot 3 = 9 \ne 6$. $\varphi$ fails for $S$, so `SquareRectangle` compiles as a subclass but is **not** a behavioural subtype. The fix is in the design, not the code: make shapes immutable (a square is then simply a rectangle with equal sides), or do not derive one from the other.
+
+## How it works underneath
+
+Every object on the heap starts with a pointer to its type's **MethodTable**, the runtime's description of the type. The .NET *Book of the Runtime* explains that every type has a vtable for virtual instance methods, laid out as virtual slots followed by non-virtual ones, and that `System.Object` contributes four virtual methods of its own (`ToString`, `Equals`, `GetHashCode`, `Finalize`).
+
+1. A derived type's vtable starts as a copy of its parent's.
+2. `virtual` (and `new virtual`) asks for a **new slot**, appended after the inherited ones.
+3. `override` **reuses** the inherited slot and writes its own code address into it.
+4. A non-virtual method, including one marked `new`, has no vtable slot to look up. The compiler binds the call directly from the static type.
+
+A virtual call is then a fixed lookup:
+
+$$
+\operatorname{target}(o.m()) = \operatorname{vtable}\big(\operatorname{MT}(o)\big)\big[\operatorname{slot}(m)\big]
+$$
+
+where
+
+- $o$ is the object the call is made on;
+- $\operatorname{MT}(o)$ is the MethodTable pointer stored at the start of the object;
+- $\operatorname{slot}(m)$ is the slot index of $m$, fixed when the base class introduced $m$;
+- $\operatorname{vtable}(\cdot)[k]$ is the code address stored in slot $k$.
+
+Example with the lab's dog, in the classic layout the Book of the Runtime describes. `Object` fills slots 0 to 3, so `Animal.Sound`, the first virtual method `Animal` introduces, gets slot 4. `Dog`'s vtable copies slots 0 to 4 and overwrites slot 4 with `Dog.Sound`. The call `sameDog.Sound()` compiles to "call slot 4 of the object's MethodTable". The object is a `Dog`, so slot 4 holds `Dog.Sound` and the result is `"Woof"`. The cost is two memory loads and an indirect call, however deep the hierarchy is.
+
+The lab reads the slot flags straight from the compiled metadata:
+
+```csharp
+MethodInfo introduced = typeof(Animal).GetMethod("Sound")!;
+MethodInfo overriding = typeof(Dog).GetMethod("Sound")!;
+Check(introduced.Attributes.HasFlag(MethodAttributes.NewSlot), "virtual gets a new slot");
+Check(!overriding.Attributes.HasFlag(MethodAttributes.NewSlot), "override reuses the slot");
+Check(overriding.GetBaseDefinition().DeclaringType == typeof(Animal), "the slot belongs to Animal");
+Check(!typeof(Dog).GetMethod("Kind")!.IsVirtual, "new Kind() is a separate, non-virtual method");
+```
+
+`MethodAttributes.NewSlot` is documented as "the method always gets a new slot in the vtable", and its absence, `ReuseSlot`, as "the method will reuse an existing slot in the vtable".
+
+**Interface calls** cannot use one fixed slot number, because unrelated classes implement the same interface at different places in their vtables. CoreCLR uses **virtual stub dispatch**. Each interface call site starts with a *lookup stub*. After the first call it is patched to a *dispatch stub* that compares the object's MethodTable with the one it saw last and, on a match, jumps straight to the cached target. Call sites that see many types fall back to a *resolve stub* backed by a global cache.
+
+**Devirtualization.** When the JIT can prove the exact runtime type, it calls the target directly and may inline it. `sealed` helps it prove that. As Stephen Toub wrote about the .NET 6 work that sealed over 2,300 internal and private classes in dotnet/runtime: *"One reason sealing helps is that virtual methods on a sealed type are more likely to be devirtualized by the runtime."* Code analysis rule CA1852 suggests sealing internal types for the same reason.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Writing a method with the base's name but without `override` | `warning CS0114: ... hides inherited member ...`; calls through the base type run the base version | Write `override`, or `new` if hiding is really intended |
+| Using `new` to "change" behaviour | Code holding a base-typed reference still gets the old method | Make the base method `virtual` and `override` it |
+| Instantiating an abstract class | `error CS0144: Cannot create an instance of the abstract type or interface 'Shape'` | Create a concrete subclass |
+| Calling a virtual method from a base constructor | The override runs before the derived constructor body, so fields that body sets are still `null` or `0` (field initializers have already run) | Do not call overridable members from constructors |
+| Calling an explicit or default interface member on the class | `error CS1061: 'Ruler' does not contain a definition for 'Length' ...` | Call it through the interface type: `((IInches)ruler).Length` |
+| Mutating a struct through an interface variable | The original struct does not change (interview question 3) | Keep structs immutable, or use a generic constraint `where T : ICounter` |
+| `Square : Rectangle` with mutable sides | Code written for rectangles computes 9 instead of 6 | Obey Liskov: immutable shapes, or no inheritance between them |
+
+## Interview questions
+
+### 1. What is the difference between `override` and `new`?
+
+**Answer.** `override` replaces the body in the **same vtable slot** the base method introduced, so every call, through any static type, runs the override: `sameDog.Sound()` is `"Woof"`. `new` declares an **unrelated** member that happens to share the name. Calls bound through the base type still run the base member, so `sameDog.Kind()` is `"animal"` while `rex.Kind()` is `"dog"`. In metadata, the override lacks the `NewSlot` flag and its `GetBaseDefinition()` is `Animal.Sound`; `Dog.Kind` is not virtual at all.
+
+### 2. Abstract class or interface?
+
+**Answer.** An **abstract class** can hold instance fields, constructors and protected members, and it shares implementation down **one** inheritance chain. An **interface** holds no instance state (`CS0525`), but a type can implement **many** of them, and structs can implement them too. Since C# 8, interfaces can carry default method bodies, and since C# 11, static abstract members. Those features narrow the gap, but state still settles it. Use an abstract class for "is a kind of, and shares this code and data", and an interface for "can do this", especially across unrelated types.
+
+### 3. A struct implements an interface. What happens here?
+
+```csharp
+var counter = new Counter();
+ICounter boxed = counter; // boxing copies the struct onto the heap
+boxed.Increment();
+Check(counter.Count == 0 && boxed.Count == 1, "the box changed, the original did not");
+```
+
+**Answer.** An unboxed struct is just its fields, with no header and no MethodTable pointer, so converting it to an interface **boxes** it: the runtime copies it into a new heap object that does have one ([Value and Reference Types](01-value-and-reference-types.qmd)). `Increment` runs on that copy, so `counter.Count` stays 0 while `boxed.Count` becomes 1. A generic method `void Bump<T>(ref T c) where T : ICounter` avoids the box, because the JIT compiles a specialised body for each struct type and calls the method on the struct directly.
+
+### 4. Why does `sealed` matter for performance?
+
+**Answer.** A virtual call costs a load of the MethodTable, a load of the slot and an indirect call, and it blocks inlining. If the static type is `sealed`, no subclass can exist, so $\operatorname{runtime}(e) = \operatorname{static}(e)$ and the JIT can call the one possible target directly and then inline it. The same knowledge makes type checks such as `obj is Circle` a single MethodTable comparison. That is why dotnet/runtime sealed its internal classes in .NET 6 and why analyzer CA1852 suggests sealing.
+
+### 5. Two interfaces give different default bodies for the same member. What happens?
+
+**Answer.** This is the "diamond" problem. If `IRound : IShape` and `IPointy : IShape` both provide a default for `IShape.Name()`, a class implementing both has no single most specific body. The compiler refuses it. Compiled in a scratch folder:
+
+```text
+error CS8705: Interface member 'IShape.Name()' does not have a most specific implementation. Neither 'IRound.IShape.Name()', nor 'IPointy.IShape.Name()' are most specific.
+```
+
+The class must implement `Name()` itself and pick a behaviour, so the ambiguity is settled at compile time, never at run time. Classes avoid the problem entirely by having only one base class.
+
+## Summary
+
+$$
+\operatorname{target}(o.m()) = \operatorname{vtable}\big(\operatorname{MT}(o)\big)\big[\operatorname{slot}(m)\big], \qquad \big(\forall x : T.\ \varphi(x)\big) \Rightarrow \big(\forall y : S.\ \varphi(y)\big)
+$$
+
+where $o$ is the object, $\operatorname{MT}(o)$ its MethodTable, $\operatorname{slot}(m)$ the slot index the base class gave $m$, $T$ a base type, $S$ a subtype, and $\varphi$ a property callers rely on.
+
+Example: `sameDog.Sound()` loads the `Dog` MethodTable and slot 4, and runs `Dog.Sound`, giving `"Woof"`. `Stretch` relies on $\varphi$: Area $= 2 \cdot 3 = 6$. `SquareRectangle` returns $9$, so it breaks the right-hand side.
+
+- `virtual` plus `override` dispatches on the **runtime** type; a non-virtual method, including `new`, binds on the **static** type.
+- `abstract` types cannot be created and must be completed; `sealed` types cannot be extended, which also helps the JIT devirtualize.
+- A class has one base class and any number of interfaces. Explicit and default interface members are reachable only through the interface.
+- `static abstract` interface members dispatch on a **type argument**, which is the basis of generic math.
+- Inheritance must preserve behaviour, not only signatures (Liskov).
+
+## References
+
+- Microsoft Learn: [Inheritance](https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/object-oriented/inheritance), [Knowing when to use override and new](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/knowing-when-to-use-override-and-new-keywords), [abstract](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/abstract), [sealed](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/sealed), [interface](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/interface).
+- Microsoft Learn: [Explicit interface implementation](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/interfaces/explicit-interface-implementation), [Default interface methods](https://learn.microsoft.com/en-us/dotnet/csharp/advanced-topics/interface-implementation/default-interface-methods-versions), [Static virtual members in interfaces](https://learn.microsoft.com/en-us/dotnet/csharp/advanced-topics/interface-implementation/static-virtual-interface-members), [The history of C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-version-history).
+- C# language specification: [Classes](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/classes) (virtual, override, sealed and abstract methods).
+- [MethodAttributes](https://learn.microsoft.com/en-us/dotnet/api/system.reflection.methodattributes) (`NewSlot`, `ReuseSlot`) and [CA1852: Seal internal types](https://learn.microsoft.com/en-us/dotnet/fundamentals/code-analysis/quality-rules/ca1852).
+- Book of the Runtime: [Virtual Stub Dispatch](https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/botr/virtual-stub-dispatch.md) and [Method Descriptor](https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/botr/method-descriptor.md).
+- Bill Venners and Bruce Eckel, [Versioning, Virtual, and Override: A Conversation with Anders Hejlsberg, Part IV](https://www.artima.com/articles/versioning-virtual-and-override), Artima, 2003.
+- Barbara Liskov and Jeannette Wing, [A Behavioral Notion of Subtyping](https://www.cs.columbia.edu/~wing/publications/LiskovWing94.pdf), *ACM TOPLAS* 16(6), 1994, [doi:10.1145/197320.197383](https://doi.org/10.1145/197320.197383).
+- Stephen Toub, [Performance Improvements in .NET 6](https://devblogs.microsoft.com/dotnet/performance-improvements-in-net-6/) (2021), section on sealing and devirtualization.
+- Jon Skeet, [*C# in Depth*, 4th ed.](https://www.manning.com/books/c-sharp-in-depth-fourth-edition) (Manning, 2019); Joseph Albahari, [*C# 12 in a Nutshell*](https://www.albahari.com/nutshell/) (O'Reilly, 2023), chapter 3.
+- Lab: [`labs/inheritance-and-interfaces.cs`](labs/inheritance-and-interfaces.cs). Run it from `programming-languages/csharp/labs` with `dotnet run inheritance-and-interfaces.cs`.

@@ -1,0 +1,360 @@
+---
+title: "Nullable Types"
+description: "Null in C# from the first int? to interview level: Nullable<T>, lifted operators, ?. ?? ??= and C# 14 null-conditional assignment, nullable reference types and the compiler's null-state analysis, the ! operator, and the nullability attributes."
+---
+
+## The problem
+
+A sign-up form asks for a name, an optional middle name and an optional age. Ada fills in only her name. The program must store "no age" and "no middle name", and must never crash because one is missing.
+
+Two different things go wrong without help from the language:
+
+- `int` has no spare value. Every bit pattern is a real number, so "no age" ends up as a made-up value such as 0 or -1, and one day someone computes an average age with those zeros in it.
+- `string` is a reference, so it **can** be `null`, but nothing says whether a given `string` might be. `middleName.Length` compiles, then throws `NullReferenceException` at run time for Ada.
+
+C# answers each problem with a different mechanism that happens to share the `?` spelling. `int?` is a real runtime type, `Nullable<int>`, with a flag for "has a value". `string?` is a **compile-time annotation**: at run time it is the same `System.String`, and the compiler's flow analysis warns you before you dereference something that might be null. Knowing which `?` you are looking at is most of this chapter.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Lunchboxes with labels
+
+- **`int?`** is a lunchbox with a little **flag** on the lid. Flag down: the box is empty. Flag up: there is a sandwich inside. Before you grab the sandwich (`.Value`), you look at the flag (`.HasValue`). Grab from an empty box and you get told off: an exception.
+- **`string?`** is a lunchbox with a **sticker** that says "might be empty". A plain `string` has a sticker that says "always has a sandwich".
+- **The compiler** is a teacher who reads your homework and writes a red note whenever you bite into a "might be empty" box without looking first. The teacher only reads homework. Nobody watches you at lunch: at run time the stickers are gone.
+
+Tony Hoare introduced the null reference in ALGOL W in 1965. The abstract of his QCon London 2009 talk begins: "I call it my billion-dollar mistake." He wrote that he put it in "simply because it was so easy to implement", and that languages declaring non-null references, such as Microsoft's Spec#, offer "the solution, which I rejected in 1965". C# 8's nullable reference types are that solution, brought into a language that already had null everywhere.
+:::
+
+## From simple to advanced
+
+### Level 1: `Nullable<T>` gives a value type an extra value
+
+`int?` is shorthand for the struct `Nullable<int>`. It holds an `int` plus a `bool` that says whether the `int` means anything:
+
+```csharp
+int? age = null;                     // short for Nullable<int>
+bool known = age.HasValue;           // false
+int shown = age.GetValueOrDefault(); // 0, the default of int
+age = 36;
+int certain = age.Value;             // 36: Value is safe only when HasValue is true
+```
+
+Reading `.Value` of an empty `int?` throws. The lab catches it: `InvalidOperationException` with the message `Nullable object must have a value.`
+
+Operators on `int` also work on `int?`. They are **lifted**: if either operand is null, the result is "unknown".
+
+```csharp
+int? five = 5;
+int? nothing = null;
+int? sum = five + nothing;          // null: 5 plus "unknown" is unknown
+bool greater = five > nothing;      // false
+bool lessOrEqual = five <= nothing; // also false: every ordering with null is false
+bool bothEmpty = nothing == null;   // true: == treats two nulls as equal
+```
+
+$$
+x \oplus y =
+\begin{cases}
+\text{null}, & x = \text{null} \lor y = \text{null} \\
+x.\texttt{Value} \oplus y.\texttt{Value}, & \text{otherwise}
+\end{cases}
+\qquad
+x \bowtie y = \text{false} \ \text{ when } x = \text{null} \lor y = \text{null}
+$$
+
+where
+
+- $x$ and $y$ are values of a nullable value type such as `int?`;
+- $\oplus$ is an arithmetic operator: `+`, `-`, `*`, `/`, `%`;
+- $\bowtie$ is an ordering comparison: `<`, `>`, `<=`, `>=`;
+- $\lor$ means "or".
+
+Example, with `five` $= 5$ and `nothing` $= \text{null}$:
+
+1. `five + nothing`: $y = \text{null}$, so the first case applies and the sum is null.
+2. `five > nothing` and `five <= nothing`: both are comparisons with a null operand, so **both** are false.
+3. So `!(a > b)` is not the same as `a <= b` once nulls are possible. The documentation warns about exactly this: "Don't assume that because a particular comparison (for example, `<=`) returns `false`, the opposite comparison (`>`) returns `true`."
+
+Equality is the exception: `==` and `!=` are not orderings, and `null == null` is true.
+
+### Level 2: `?.`, `??` and `??=`
+
+Three operators deal with "maybe nothing" without an `if` statement:
+
+```csharp
+static int Letters(string? name) => name?.Length ?? 0;
+```
+
+$$
+a\,?.\,m =
+\begin{cases}
+\text{null}, & a = \text{null} \\
+a.m, & \text{otherwise}
+\end{cases}
+\qquad
+a \mathbin{??} b =
+\begin{cases}
+b, & a = \text{null} \\
+a, & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $a$ is any expression that may be null;
+- $m$ is a member access, such as `.Length` or a method call;
+- $b$ is the fallback, evaluated **only** when $a$ is null.
+
+Example:
+
+1. `Letters(null)`: $a = \text{null}$, so `name?.Length` is null without touching `.Length`, and `null ?? 0` is 0.
+2. `Letters("Grace")`: `"Grace"?.Length` is 5, and `5 ?? 0` is 5.
+
+`??=` (C# 8) assigns only when the variable is null, which makes lazy initialisation one line:
+
+```csharp
+List<string>? tags = null;
+tags ??= [];          // assigns only because tags was null
+tags ??= ["ignored"]; // tags is not null now, so nothing happens
+tags.Add("vip");
+```
+
+The list ends as `["vip"]`. C# 14 adds the last piece: `?.` on the **left** of an assignment. The right side is evaluated only if the target exists, which the lab proves by counting calls:
+
+```csharp
+int lookups = 0;
+Customer? nobody = null;
+nobody?.Name = NextName(ref lookups); // C# 14: skipped entirely when nobody is null
+Customer? ada = new();
+ada?.Name = NextName(ref lookups);    // runs: ada is not null
+```
+
+`lookups` ends at 1, not 2: for `nobody`, `NextName` never ran.
+
+### Level 3: nullable reference types are a compile-time analysis
+
+With nullable reference types enabled (C# 8; every new project template and every file-based app turns them on), `string` means "never null" and `string?` means "may be null". The compiler then gives every expression a **null-state** at every point in the code, and warns when the states and the declarations disagree:
+
+```csharp
+// sketch: compiles, with these warnings
+string name = null;              // warning CS8600: Converting null literal or possible null value to non-nullable type.
+string? maybe = Find(1);
+Console.WriteLine(maybe.Length); // warning CS8602: Dereference of a possibly null reference.
+```
+
+A check changes the state, so the same dereference after a check is fine:
+
+```csharp
+static int SafeLength(string? text)
+{
+    if (text is null) return 0;
+    return text.Length; // no warning: here the compiler knows text is not null
+}
+```
+
+The analysis has two states and one rule for places where paths meet:
+
+$$
+\operatorname{state}(x) \in \lbrace \text{not-null},\ \text{maybe-null} \rbrace,
+\qquad
+\operatorname{state}_{\text{join}}(x) =
+\begin{cases}
+\text{not-null}, & \text{every incoming path has } x \text{ not-null} \\
+\text{maybe-null}, & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $x$ is a variable or expression;
+- $\operatorname{state}(x)$ is what the compiler knows about $x$ at one point in the code;
+- a **join** is a point where control-flow paths meet, such as the line after an `if`.
+
+Example, inside `SafeLength`:
+
+1. At entry, `text` is declared `string?`, so its state is maybe-null.
+2. `if (text is null) return 0;` splits the paths. On the path that reaches the next line, the test was false, so `text` is not-null. The path where it was null has left through `return`.
+3. Only one path reaches `return text.Length`, and it says not-null, so there is no warning.
+4. Had the `if` printed a message instead of returning, two paths would join: one with `text` null, one not-null. The rule gives maybe-null, and `text.Length` would get CS8602.
+
+The analysis looks at each method on its own; it does not read the bodies of the methods you call. To learn anything about a call, it reads the callee's **signature**: its `?` annotations and the attributes of Level 6.
+
+### Level 4: at run time, `string?` is just `string`
+
+Microsoft's documentation is blunt: "Nullable reference types are entirely a compile-time feature." The lab checks it with reflection. The property type of `string? Nickname` is plain `System.String`; the `?` survives only as metadata that tools can read:
+
+```csharp
+var nickname = typeof(Person).GetProperty(nameof(Person.Nickname))!;
+var name = typeof(Person).GetProperty(nameof(Person.Name))!;
+Check(nickname.PropertyType == typeof(string), "string? is System.String at run time");
+
+var nullability = new NullabilityInfoContext();
+Check(nullability.Create(nickname).ReadState == NullabilityState.Nullable, "string? is recorded in metadata");
+Check(nullability.Create(name).ReadState == NullabilityState.NotNull, "string is recorded as not-null");
+```
+
+Because nothing checks at run time, a non-nullable `string` can still hold null. Two ways the lab shows:
+
+```csharp
+string notReally = null!; // ! silences the compiler; nothing checks at run time
+```
+
+`notReally.Length` then throws `NullReferenceException` with `Object reference not set to an instance of an object.`, although `notReally` is declared non-nullable. And without any `!` at all:
+
+```csharp
+var names = new string[2]; // no warning, yet both elements are null
+```
+
+A new array, a `default` struct with `string` fields, and data from a deserialiser or from code compiled without the feature are all ways a "never null" reference can be null. Mads Torgersen, the C# lead designer, said it when he introduced the feature in 2017: "All enforcement of null behavior will be in the form of *warnings*, not errors", and the annotations "don't affect overload resolution or runtime behavior, and generate the same IL output code."
+
+### Level 5: the `!` operator
+
+`!` after an expression is the **null-forgiving** operator. It tells the compiler "treat this as not-null" and does nothing else: no check, no exception, no code at all. `null!` above is the extreme case. It is right only when you know something the analysis cannot see, such as a value set by a framework after construction, and each use is a place where the compiler stops protecting you. A null check, a better signature or an attribute is almost always the better fix.
+
+### Level 6: attributes describe what a method promises
+
+A `?` on a parameter cannot say "this is not null **if the method returns true**". Attributes from `System.Diagnostics.CodeAnalysis` can, and the compiler uses them at every call:
+
+```csharp
+static bool TryFindEmail(string user, [NotNullWhen(true)] out string? email)
+{
+    email = user == "ada" ? "ada@example.com" : null;
+    return email is not null;
+}
+```
+
+```csharp
+int emailLength = 0;
+if (TryFindEmail("ada", out var email))
+    emailLength = email.Length; // no warning: true means email is not null
+```
+
+`emailLength` is 15, the length of `ada@example.com`. Without the attribute, `email.Length` would warn CS8602, because the signature says `string?`. `[NotNull]` makes a promise about an argument after a method returns, which is how guard methods work:
+
+```csharp
+static void Require([NotNull] string? value)
+{
+    ArgumentNullException.ThrowIfNull(value);
+}
+```
+
+```csharp
+string? input = "hi";
+Require(input);
+int inputLength = input.Length; // no warning: Require returns only if input was not null
+```
+
+The full set, from the documentation:
+
+| Attribute | Kind | Meaning |
+|---|---|---|
+| `[AllowNull]` | precondition | a non-nullable parameter, field or property may receive null |
+| `[DisallowNull]` | precondition | a nullable one should never receive null |
+| `[MaybeNull]` | postcondition | a non-nullable return or output might be null |
+| `[NotNull]` | postcondition | a nullable return or output is never null |
+| `[MaybeNullWhen(b)]`, `[NotNullWhen(b)]` | conditional | as above, when the method returns `b` |
+| `[NotNullIfNotNull("p")]` | conditional | the result is not null if argument `p` is not null |
+| `[MemberNotNull("f")]`, `[MemberNotNullWhen(b, "f")]` | helper methods | field or property `f` is not null after the call |
+| `[DoesNotReturn]`, `[DoesNotReturnIf(b)]` | unreachable code | the method always throws, or throws when an argument is `b` |
+
+Since .NET 5 the .NET libraries themselves are annotated, so calls such as `string.IsNullOrEmpty` or `Dictionary.TryGetValue` already narrow states for you.
+
+## How it works underneath
+
+**`Nullable<T>` is an ordinary struct.** Its source in `System.Private.CoreLib` declares exactly two fields, `bool hasValue` and `T value`, and the constraint `where T : struct`, which admits only non-nullable value types, so `int??` cannot exist. Its size follows from the layout:
+
+$$
+\operatorname{size}(T?) = a_T + s_T
+$$
+
+where
+
+- $s_T$ is the size of $T$ in bytes;
+- $a_T$ is the alignment of $T$: the `bool` takes one byte, but the `T` after it must start at a multiple of $a_T$, so the flag occupies $a_T$ bytes with padding;
+- this holds for the primitive types, where $s_T$ is a multiple of $a_T$.
+
+Example, both checked with `Unsafe.SizeOf` in the lab: `int?` has $a = 4$ and $s = 4$, so $4 + 4 = 8$ bytes; `long?` has $a = 8$ and $s = 8$, so $8 + 8 = 16$ bytes. A nullable value is twice the size of the value, but it is still a value: no heap, no reference.
+
+**Boxing has a special rule.** The runtime never creates a boxed `Nullable<T>`. Boxing an empty one gives a null reference; boxing a filled one boxes the `T` inside:
+
+```csharp
+int? empty = null;
+int? filled = 5;
+object? boxedEmpty = empty;   // boxing an empty int? gives a null reference
+object? boxedFilled = filled; // boxing a filled int? gives a boxed int, not a boxed int?
+```
+
+So `boxedEmpty is null` is true, `boxedFilled.GetType()` is `System.Int32`, and unboxing `(int?)boxedFilled` gives 5 again. That is why `int? x = null; object o = x; o == null` behaves the way people expect, and why `GetType()` can never tell you a value was an `int?`.
+
+**Nullable reference types live in the compiler and in metadata.** The C# compiler (Roslyn) runs the null-state analysis of Level 3 as a data-flow pass, like the one that checks definite assignment. It then records the annotations so that other assemblies can see them, using two compiler-generated attributes described in Roslyn's `nullable-metadata.md`: `NullableAttribute`, a byte per type position with "0 for oblivious, 1 for not annotated, and 2 for annotated", and `NullableContextAttribute`, a default for a whole type or method so that most members need no attribute of their own. `NullabilityInfoContext` reads these bytes back; that is how the lab can tell `Nickname` from `Name`. "Oblivious" is the third state, for code compiled without the feature: the compiler gives no warnings either way about such references.
+
+The diagnostics are warnings, so a build succeeds with them. A project can promote them to errors with `<WarningsAsErrors>nullable</WarningsAsErrors>` (compiled in a scratch project to confirm: CS8602 then reads `error CS8602`), and `#nullable enable` or `#nullable disable` changes the context for part of a file.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Reading `.Value` of an empty `int?` | `InvalidOperationException: Nullable object must have a value.` | Check `HasValue`, or use `GetValueOrDefault()` or `??` |
+| Treating `!(a > b)` as `a <= b` for `int?` | The wrong branch runs when either is null: both comparisons are false | Handle null first, then compare |
+| Dereferencing a `string?` without a check | `warning CS8602: Dereference of a possibly null reference.` | Check for null, or use `?.` and `??` |
+| Assigning null to a non-nullable variable | `warning CS8600: Converting null literal or possible null value to non-nullable type.` | Declare it `string?`, or supply a real value |
+| A constructor that leaves a non-nullable property unset | `warning CS8618: Non-nullable property 'Name' must contain a non-null value when exiting constructor. Consider adding the 'required' modifier or declaring the property as nullable.` | Set it in the constructor, mark it `required` ([Classes, Structs and Records](03-classes-structs-and-records.qmd)), or make it nullable |
+| Silencing warnings with `!` | A `NullReferenceException` later, far from the cause | Fix the flow or the signature; keep `!` for facts the compiler cannot see |
+| Trusting non-nullable fields of arrays, `default` structs or deserialised objects | `NullReferenceException` with no warning anywhere | Validate at the boundary where the data enters |
+| Writing a `TryGet` method without an attribute | Callers get CS8602 even after the call returned true | Add `[NotNullWhen(true)]` to the `out` parameter |
+
+## Interview questions
+
+### 1. What is the difference between `int?` and `string?`?
+
+**Answer.** `int?` is a different runtime type: `Nullable<int>`, an 8-byte struct holding a `bool` and an `int`, with `HasValue`, `Value` and lifted operators. `string?` is the same runtime type as `string`, `System.String`; the `?` is an annotation that the compiler uses for null-state analysis and records in metadata (`NullableAttribute` byte 2). The lab shows both: `Unsafe.SizeOf<int?>()` is 8, while the property type of `string? Nickname` is `typeof(string)`. One consequence: you can overload a method on `int` versus `int?`, but not on `string` versus `string?`.
+
+### 2. If a variable is declared `string`, can it be null at run time?
+
+**Answer.** Yes. The feature is compile-time only, and the runtime never checks. The lab produces nulls in a non-nullable `string` with `null!` and with `new string[2]`, without a single warning in the second case. Other routes are `default` of a struct with `string` fields, deserialisers that set properties by reflection, and callers compiled with the feature off (their references are "oblivious"). Torgersen's design note says the annotations "generate the same IL output code". So public APIs still validate arguments with `ArgumentNullException.ThrowIfNull`: the annotation documents the contract, the check enforces it.
+
+### 3. What does the `!` operator do at run time?
+
+**Answer.** Nothing. `x!` changes only the compiler's null-state for `x` to not-null, which suppresses warnings; the generated IL is identical to plain `x`. In the lab, `string notReally = null!;` compiles cleanly and then throws `NullReferenceException` on `.Length`. (Do not confuse it with the prefix `!x`, logical not.) Legitimate uses are rare: a value initialised by a framework after construction, a test that deliberately passes null, or a fact the analysis cannot prove. Each one is a small hole in the safety net.
+
+### 4. Why are both `five > nothing` and `five <= nothing` false?
+
+**Answer.** Ordering comparisons on nullable value types are lifted with the rule "if either operand is null, the result is false". With `five` $= 5$ and `nothing` $= \text{null}$, both expressions have a null operand, so both are false; the lab checks both. This is not two-valued logic, so `!(a > b)` and `a <= b` disagree whenever a null is involved. Equality is different: `nothing == null` is true and `five == nothing` is false. Arithmetic is lifted too, giving null: `five + nothing` is null.
+
+### 5. What does `T?` mean when `T` is an unconstrained type parameter?
+
+```csharp
+static T? FirstOrNothing<T>(T[] items) => items.Length > 0 ? items[0] : default;
+```
+
+**Answer.** Since C# 9, `T?` on an unconstrained `T` means "`T`, or `default` for reference types made explicit as maybe-null". It does **not** become `Nullable<T>`. The C# 9 proposal says: "If `T` is substituted with a value type, then `T?` represents an instance of `T`." So `FirstOrNothing<int>([])` returns `int` 0, not a null `int?`, while `FirstOrNothing<string>([])` returns null. The lab checks both. This is why `Enumerable.FirstOrDefault` on an empty `List<int>` returns 0: to get null for "none", ask for `int?` elements, or constrain `T : struct` and return `Nullable<T>` explicitly. Generics are the topic of [Generics and Variance](05-generics-and-variance.qmd).
+
+## Summary
+
+$$
+\texttt{int?} = \texttt{Nullable<int>} \ \text{(a new runtime type)},
+\qquad
+\texttt{string?} = \texttt{string} + \text{an annotation the compiler checks}
+$$
+
+where `int?` stands for any nullable value type, `string?` for any nullable reference type, and "the compiler checks" means null-state analysis that ends in warnings, not run-time checks.
+
+Example: `Unsafe.SizeOf<int?>()` is 8 because of the extra flag, and `five + nothing` is null by the lifted rule; `typeof(Person).GetProperty("Nickname").PropertyType` is `System.String`, and `string notReally = null!;` still compiles and crashes on `.Length`.
+
+- `int?` has `HasValue` and `Value`; `.Value` on an empty one throws, and operators are lifted to null (orderings to false).
+- `?.` short-circuits to null, `??` supplies a fallback, `??=` assigns once, and C# 14 allows `a?.B = c`, evaluating `c` only when `a` exists.
+- `string` versus `string?` is a promise checked by the compiler's flow analysis with two states, not-null and maybe-null.
+- At run time nothing is checked: arrays, `default` structs, deserialisers and `!` can all put null in a `string`.
+- `!` changes the analysis, not the program; prefer checks, better signatures and attributes such as `[NotNullWhen(true)]`.
+- Hoare's billion-dollar mistake cannot be removed from C#, but annotated code can make it visible at compile time.
+
+## References
+
+- Microsoft Learn: [Nullable value types](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/nullable-value-types) (lifted operators, boxing), [Nullable reference types](https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/null-safety/nullable-reference-types), [Nullable reference types (language reference)](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/nullable-reference-types), [Attributes for null-state static analysis](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/attributes/nullable-analysis), [Resolve nullable warnings](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/compiler-messages/nullable-warnings).
+- Microsoft Learn operators: [`??` and `??=`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/null-coalescing-operator), [`?.` and `?[]`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/member-access-operators), [`!` (null-forgiving)](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/null-forgiving); [What's new in C# 14](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-14) (null-conditional assignment); [The history of C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-version-history).
+- C# 9 feature specification: [Unconstrained type parameter annotations](https://github.com/dotnet/csharplang/blob/main/proposals/csharp-9.0/unconstrained-type-parameter-annotations.md); Roslyn: [Nullable metadata](https://github.com/dotnet/roslyn/blob/main/docs/features/nullable-metadata.md); .NET API: [NullabilityInfoContext](https://learn.microsoft.com/en-us/dotnet/api/system.reflection.nullabilityinfocontext).
+- Tony Hoare, [Null References: The Billion Dollar Mistake](https://www.infoq.com/presentations/Null-References-The-Billion-Dollar-Mistake-Tony-Hoare/), QCon London 2009 ([abstract](https://qconlondon.com/london-2009/qconlondon.com/london-2009/presentation/Null%2BReferences_%2BThe%2BBillion%2BDollar%2BMistake.html)).
+- Mads Torgersen, [Introducing Nullable Reference Types in C#](https://devblogs.microsoft.com/dotnet/nullable-reference-types-in-csharp/) (15 November 2017) and [Embracing nullable reference types](https://devblogs.microsoft.com/dotnet/embracing-nullable-reference-types/) (27 November 2019).
+- Jon Skeet, [*C# in Depth*](https://www.manning.com/books/c-sharp-in-depth-fourth-edition), 4th ed., Manning, 2019: sections 2.2 "Nullable value types", 10.3 "The null conditional operator" and 15.1 "Nullable reference types" ([contents](https://csharpindepth.com/contents)); Joseph Albahari, *C# 12 in a Nutshell*, O'Reilly, 2023.
+- Lab: [`labs/nullable-types.cs`](labs/nullable-types.cs). Run it from `programming-languages/csharp/labs` with `dotnet run nullable-types.cs`.

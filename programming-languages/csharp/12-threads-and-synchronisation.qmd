@@ -1,0 +1,421 @@
+---
+title: "Threads and Synchronisation"
+description: "C# threads from the first Thread.Start to the .NET memory model: the thread pool, races and lost updates, lock and System.Threading.Lock, Monitor, Interlocked and compare-and-swap, volatile, SemaphoreSlim, concurrent collections, channels, and deadlocks with lock ordering."
+---
+
+## The problem
+
+Four threads each add 1 to a shared counter 100,000 times. The answer should be $4 \cdot 100{,}000 = 400{,}000$. Three runs of exactly that program in a scratch folder printed:
+
+```text
+116817
+152489
+138669
+```
+
+Different every time, and wrong by more than half. Nothing crashed and no exception was thrown. `count++` looks like one step, but it is three: read `count`, add 1, write `count`. When two threads interleave those steps, one thread's write overwrites the other's, and an increment is lost. This is a **race condition**, and it is the central problem of shared-memory concurrency.
+
+.NET gives you threads to do work in parallel, and a toolbox to make sharing safe: `lock` and `System.Threading.Lock` for mutual exclusion, `Interlocked` for single atomic operations, `volatile` for visibility, `SemaphoreSlim` for limits, concurrent collections, and channels for handing data from one thread to another.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## One bathroom, one key
+
+- **A race** is two children writing on the same whiteboard tally. Both read "5", both rub it out and write "6". Two marks were made, but the tally only went up by one.
+- **A lock** is the bathroom key hanging by the door. Whoever holds the key goes in; everyone else waits in the queue. Only one person is ever inside.
+- **`Interlocked`** is a clicker counter. Pressing it is a single action that cannot be half done, so two children pressing it at once still adds two.
+- **A semaphore** is a car park with two spaces and a barrier. A third car waits until somebody leaves.
+- **A channel** is a conveyor belt between a baker and a shop: the baker puts loaves on, the shop takes them off, and if the belt is full the baker waits.
+- **A deadlock** is two children who each hold one chopstick and wait for the other's. Edsger Dijkstra told this story as the problem of the five dining philosophers (EWD310, 1971), and its classic fix is that everyone picks up the lower-numbered chopstick first.
+
+Joseph Albahari's free online book *Threading in C#* explains the classic tools of this chapter (locks, `Monitor`, `Interlocked`, `volatile`, semaphores) with the same kind of small examples.
+:::
+
+## From simple to advanced
+
+### Level 1: a `Thread` versus the thread pool
+
+`new Thread(...)` asks the operating system for a real thread with its own stack. `Start` runs it, and `Join` waits for it to finish:
+
+```csharp
+int workerId = 0;
+bool workerIsPooled = true;
+var thread = new Thread(() =>
+{
+    workerId = Environment.CurrentManagedThreadId;
+    workerIsPooled = Thread.CurrentThread.IsThreadPoolThread;
+});
+thread.Start();
+thread.Join(); // wait for it to finish; its writes are visible after Join
+Check(workerId != Environment.CurrentManagedThreadId && !workerIsPooled, "a dedicated thread");
+Check(await Task.Run(() => Thread.CurrentThread.IsThreadPoolThread), "Task.Run borrows a pool thread");
+```
+
+Creating and destroying a thread is expensive, so most work runs on the **thread pool**: a set of threads that the runtime keeps alive and lends out. `Task.Run`, `await` continuations, timers and `Parallel.For` all use it. The pool grows and shrinks on its own, and in the documentation's words it "creates and destroys worker threads in order to optimize throughput". Create a dedicated `Thread` only for long-running work that should not occupy a pool thread for its whole life, or when you need a special setting such as a foreground thread.
+
+### Level 2: why `count++` loses updates
+
+```csharp
+static int RacyCount(int threads, int increments)
+{
+    int count = 0;
+    RunOnThreads(threads, () =>
+    {
+        for (int i = 0; i < increments; i++)
+            count++; // three steps that another thread can interleave
+    });
+    return count;
+}
+```
+
+One unlucky interleaving of threads A and B, starting from `count = 5`:
+
+| Step | Thread A | Thread B | `count` in memory |
+|---|---|---|---|
+| 1 | reads 5 | | 5 |
+| 2 | | reads 5 | 5 |
+| 3 | writes 5 + 1 | | 6 |
+| 4 | | writes 5 + 1 | 6 |
+
+Two increments ran, but `count` rose by one.
+
+$$
+C = T \cdot N - L, \qquad L \ge 0
+$$
+
+where
+
+- $C$ is the final count;
+- $T$ is the number of threads and $N$ the increments each one performs;
+- $L$ is the number of lost updates, which depends on timing and is different on every run.
+
+Example: $T = 4$ and $N = 100{,}000$ give $T \cdot N = 400{,}000$. The first scratch run printed $C = 116{,}817$, so $L = 400{,}000 - 116{,}817 = 283{,}183$ increments were lost. The only thing the lab can check about `RacyCount` is the guaranteed part, $C \le 400{,}000$. A race is a bug even on the runs where it happens to give the right answer.
+
+### Level 3: `lock` and `System.Threading.Lock`
+
+A **critical section** is code that only one thread may run at a time. The `lock` statement creates one:
+
+```csharp
+static int LockedCount(int threads, int increments)
+{
+    int count = 0;
+    Lock gate = new(); // System.Threading.Lock, .NET 9 and later
+    RunOnThreads(threads, () =>
+    {
+        for (int i = 0; i < increments; i++)
+        {
+            lock (gate) { count++; } // one thread at a time in here
+        }
+    });
+    return count;
+}
+```
+
+$$
+\forall t: \; |\operatorname{inside}(t)| \le 1 \;\Longrightarrow\; L = 0 \;\Longrightarrow\; C = T \cdot N
+$$
+
+where
+
+- $t$ is any moment in time, and $\forall t$ means "at every moment";
+- $\operatorname{inside}(t)$ is the set of threads executing the locked block at moment $t$, and $|\cdot|$ counts them;
+- $L$ and $C$ are the lost updates and the final count from Level 2.
+
+Example: with at most one thread between "read 5" and "write 6", the table above cannot happen, so $L = 0$ and $C = 4 \cdot 100{,}000 = 400{,}000$ on every run. The lab checks exactly 400,000.
+
+Until .NET 9 you locked on any object, usually `private readonly object gate = new();`. C# 13 with .NET 9 added a dedicated type, `System.Threading.Lock`. The `lock` statement recognises it and uses its faster API instead of `Monitor`, and nothing else in your code changes:
+
+```csharp
+Lock gate = new();
+lock (gate)
+{
+    Check(gate.IsHeldByCurrentThread, "inside the lock statement this thread holds the Lock");
+}
+Check(!gate.IsHeldByCurrentThread, "released at the closing brace");
+```
+
+A lock in .NET is **reentrant**: the thread that holds it may enter it again. It is also released if the block throws, because `lock` expands to `try`/`finally`. You cannot `await` inside a `lock`: the compiler says `error CS1996: Cannot await in the body of a lock statement`, because the code after the `await` may resume on a different thread, which does not own the lock.
+
+### Level 4: `Interlocked` and compare-and-swap
+
+For a single update of a single variable, a lock is heavy machinery. `Interlocked` uses the processor's atomic instructions instead:
+
+```csharp
+static int AtomicCount(int threads, int increments)
+{
+    int count = 0;
+    RunOnThreads(threads, () =>
+    {
+        for (int i = 0; i < increments; i++)
+            Interlocked.Increment(ref count); // one indivisible read-modify-write
+    });
+    return count;
+}
+```
+
+The result is exactly 400,000. Any update that has no ready-made `Interlocked` method can be built from **compare-and-swap**:
+
+$$
+\operatorname{CAS}(x, v, e) =
+\begin{cases}
+\text{old } x, \text{ and } x \leftarrow v & \text{if } x = e \\
+\text{old } x, \text{ and } x \text{ unchanged} & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $x$ is the shared variable, $v$ the new value, and $e$ the value the caller expects to find;
+- $\leftarrow$ means "is set to";
+- the whole test-and-set happens as one indivisible step, and the old value is always returned.
+
+`Interlocked.CompareExchange(ref max, candidate, seen)` is $\operatorname{CAS}(\texttt{max}, \texttt{candidate}, \texttt{seen})$. A loop retries until the swap succeeds or is no longer needed:
+
+```csharp
+static void UpdateMax(ref int max, int candidate)
+{
+    int seen = Volatile.Read(ref max);
+    while (candidate > seen)
+    {
+        int previous = Interlocked.CompareExchange(ref max, candidate, seen);
+        if (previous == seen) return; // nobody changed max in between: candidate is in
+        seen = previous;              // somebody did: compare again with their value
+    }
+}
+```
+
+Example: `max` is 5 and this thread's candidate is 9. If nobody interferes, $\operatorname{CAS}(\texttt{max}, 9, 5)$ finds 5, stores 9 and returns 5; `previous == seen`, done. If another thread stored 12 in between, the CAS finds $12 \ne 5$, stores nothing and returns 12; the loop sets `seen = 12`, and $9 > 12$ is false, so it stops and correctly leaves 12. The lab runs four threads that each offer 0 to 99,999 and ends with exactly 99,999.
+
+### Level 5: visibility, `volatile` and the memory model
+
+Atomicity is half the story; the other half is **visibility**. The compiler, the JIT and the processor may keep a value in a register or reorder memory operations, as long as a single thread cannot tell. Another thread can. The .NET memory model's own example is a loop that waits for a flag set by another thread: *"the read must be Volatile to ensure all reads are not coalesced into one read prior entering the while loop."* Without that, the JIT may read the flag once and spin forever.
+
+```csharp
+sealed class StopFlag
+{
+    private volatile bool isSet; // every read goes to memory; every write is published
+
+    public bool IsSet => isSet;
+
+    public void Set() => isSet = true;
+}
+```
+
+```csharp
+var stop = new StopFlag();
+var spinner = new Thread(() => { while (!stop.IsSet) { } });
+spinner.Start();
+Thread.Sleep(20);
+stop.Set();
+Check(spinner.Join(TimeSpan.FromSeconds(5)), "the spinning thread noticed the flag and ended");
+```
+
+The memory model defines what `volatile` guarantees:
+
+$$
+w \;\rightarrow_{\text{po}}\; W_{\text{rel}}(f) \;\rightarrow_{\text{rf}}\; R_{\text{acq}}(f) \;\rightarrow_{\text{po}}\; r \quad\Longrightarrow\quad r \text{ sees } w
+$$
+
+where
+
+- $W_{\text{rel}}(f)$ is a volatile write of flag $f$, which has **release** semantics: earlier reads and writes cannot move after it;
+- $R_{\text{acq}}(f)$ is a volatile read of $f$, which has **acquire** semantics: later reads and writes cannot move before it;
+- $\rightarrow_{\text{po}}$ is program order within one thread, and $\rightarrow_{\text{rf}}$ means "the read returns the value that write stored";
+- $w$ is any ordinary write before the release, and $r$ any ordinary read after the acquire.
+
+Example: thread A writes `data = 42` ($w$), then `ready = true` as a volatile write. Thread B reads `ready` as a volatile read and gets `true`, then reads `data` ($r$). The rule guarantees that $r$ returns 42, never the old 0. `lock`, `Interlocked`, `Thread.Join`, `Task` completion and every concurrent collection give the same guarantee internally, which is why Level 1 could read `workerId` after `Join`. Plain code that uses those tools never needs `volatile`. Reach for `volatile` or the `Volatile` class only for simple flags, and know that `volatile` does **not** make `count++` atomic.
+
+### Level 6: coordination tools
+
+**`SemaphoreSlim`** admits at most $k$ threads at once, and its `WaitAsync` waits without blocking a thread:
+
+```csharp
+static async Task<int> PeakConcurrencyAsync(int workers, int limit)
+{
+    using var slots = new SemaphoreSlim(limit);
+    int inside = 0, peak = 0;
+    async Task WorkAsync()
+    {
+        await slots.WaitAsync(); // waits without blocking a thread when all slots are taken
+        try
+        {
+            UpdateMax(ref peak, Interlocked.Increment(ref inside));
+            await Task.Delay(10);
+            Interlocked.Decrement(ref inside);
+        }
+        finally
+        {
+            slots.Release();
+        }
+    }
+    await Task.WhenAll(Enumerable.Range(0, workers).Select(_ => WorkAsync()));
+    return peak;
+}
+```
+
+With six workers of 10 ms and $k = 2$, they run in $\lceil 6 / 2 \rceil = 3$ rounds, about $3 \cdot 10 = 30$ ms, and the lab checks the guarantee: the peak is at most 2. This is how you limit, for example, concurrent calls to a rate-limited web service, and it is the async-friendly replacement for a `lock` around an `await`.
+
+**Concurrent collections** (`ConcurrentDictionary`, `ConcurrentQueue`, `ConcurrentBag`) are safe to use from many threads without your own lock:
+
+```csharp
+static ConcurrentDictionary<string, int> CountWords(string[] words, int threads)
+{
+    var counts = new ConcurrentDictionary<string, int>();
+    RunOnThreads(threads, () =>
+    {
+        foreach (string word in words)
+            counts.AddOrUpdate(word, 1, (_, old) => old + 1); // retried until it applies atomically
+    });
+    return counts;
+}
+```
+
+Four threads count `["tea", "jam", "tea"]`, giving `tea` $4 \cdot 2 = 8$ and `jam` $4 \cdot 1 = 4$. The update function may run more than once under contention, so it must have no side effects.
+
+**Channels** (`System.Threading.Channels`) hand items from producers to consumers. A **bounded** channel makes a fast producer wait, so memory cannot grow without limit:
+
+```csharp
+static async Task<int> ProduceAndConsumeAsync()
+{
+    var channel = Channel.CreateBounded<int>(capacity: 2); // when full, the writer waits
+    var producer = Task.Run(async () =>
+    {
+        for (int i = 1; i <= 10; i++)
+            await channel.Writer.WriteAsync(i);
+        channel.Writer.Complete(); // no more items
+    });
+    int total = 0;
+    await foreach (int item in channel.Reader.ReadAllAsync())
+        total += item;
+    await producer;
+    return total;
+}
+```
+
+The consumer receives $1 + 2 + \dots + 10 = 55$. `Complete()` plays the role of closing a Go channel: `ReadAllAsync` ends after the last item.
+
+## How it works underneath
+
+**What `lock` compiles to.** For an ordinary object, the C# reference gives the expansion:
+
+```csharp
+// sketch: the expansion of lock (x) for an object, from the C# reference
+object __lockObj = x;
+bool __lockWasTaken = false;
+try
+{
+    System.Threading.Monitor.Enter(__lockObj, ref __lockWasTaken);
+    // Your code...
+}
+finally
+{
+    if (__lockWasTaken) System.Threading.Monitor.Exit(__lockObj);
+}
+```
+
+When `x` is a `System.Threading.Lock`, the expansion is instead `using (x.EnterScope()) { ... }`, where `EnterScope` returns a `ref struct` whose `Dispose` releases the lock. `Monitor` works with **any** object because the runtime can attach lock state to any object it allocates; a thread that cannot enter waits in that object's queue until the holder exits and wakes it. `Lock` is a dedicated object that keeps that state itself, and it cannot be confused with locking on an arbitrary object such as a string or `this`. `Monitor.TryEnter(obj, timeout)` is the version that gives up after a timeout, which the next paragraph uses.
+
+**Deadlock as a cycle.** The lab's `TryLocksInOppositeOrder` makes thread one take lock `first` and thread two take lock `second`, uses a `Barrier` so that both hold one lock at the same moment, and then has each try the other lock with `Monitor.TryEnter(..., 50)`:
+
+```csharp
+// sketch: the same program with plain locks hangs forever
+lock (first)                      // thread one              lock (second)           // thread two
+{                                 //                         {
+    lock (second) { ... }         // waits for thread two        lock (first) { ... }  // waits for thread one
+}                                 //                         }
+```
+
+Both `TryEnter` calls fail, and the lab checks that. With plain `lock`, each thread would wait for the other forever. Coffman, Elphick and Shoshani (1971) showed that a deadlock needs four conditions together: mutual exclusion, hold and wait, no pre-emption, and a **circular wait**. Breaking any one prevents it, and the practical one to break is the cycle:
+
+$$
+\text{every thread acquires locks in increasing } \operatorname{rank} \;\Longrightarrow\; \text{no cycle } \ell_1 \to \ell_2 \to \dots \to \ell_1
+$$
+
+where
+
+- $\operatorname{rank}(\ell)$ is a fixed number assigned to each lock $\ell$, the same for all threads;
+- $\ell_i \to \ell_j$ means "a thread holding $\ell_i$ waits for $\ell_j$", which under the rule requires $\operatorname{rank}(\ell_i) < \operatorname{rank}(\ell_j)$;
+- a cycle would need $\operatorname{rank}(\ell_1) < \operatorname{rank}(\ell_2) < \dots < \operatorname{rank}(\ell_1)$, which is impossible.
+
+Example: accounts 1 and 2, with rank equal to the account id. A transfer from 1 to 2 and one from 2 to 1 both lock account 1's gate first, then account 2's:
+
+```csharp
+static void Transfer(Account from, Account to, int amount)
+{
+    var (low, high) = from.Id < to.Id ? (from, to) : (to, from); // a fixed global order
+    lock (low.Gate)
+    {
+        lock (high.Gate)
+        {
+            from.Balance -= amount;
+            to.Balance += amount;
+        }
+    }
+}
+```
+
+Whichever thread gets lock 1 first proceeds; the other waits for lock 1 while holding nothing, so no cycle can form. The lab runs 10,000 transfers in each direction on two threads; both finish, and $100 + 100 = 200$ is conserved.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Shared `count++` or `list.Add` without synchronisation | Wrong totals that change from run to run; `List<T>` may throw or corrupt itself | `lock`, `Interlocked`, or a concurrent collection |
+| `await` inside `lock` | `error CS1996: Cannot await in the body of a lock statement` | `await semaphore.WaitAsync()` with `try`/`finally { Release(); }` |
+| Locking on `this`, a `Type` or a string literal | Unrelated code can take the same lock, causing contention or deadlock | Lock on a private `Lock` (or `object`) field |
+| Taking two locks in different orders | A hang with no exception and no CPU use | One global lock order, or `Monitor.TryEnter` with a timeout |
+| Polling a plain `bool` flag in a loop | The loop may never see the change in an optimised build | `volatile`, `Volatile.Read`, or better a `CancellationToken` |
+| Believing `volatile` makes `count++` atomic | Lost updates remain | `Interlocked.Increment` |
+| Calling `Thread.Sleep` or blocking I/O on pool threads | The pool runs out of threads and everything slows down | Use `await`; give long blocking work its own `Thread` |
+| Side effects inside `ConcurrentDictionary.AddOrUpdate`'s update function | The effect happens more than once | Keep the function pure |
+
+## Interview questions
+
+### 1. Why is `count++` not thread-safe, and what are the ways to fix it?
+
+**Answer.** It compiles to a read, an add and a write; two threads can both read the same value and both write value + 1, losing one increment ($C = T \cdot N - L$; a scratch run gave 116,817 of 400,000). Fixes, from lightest to heaviest: `Interlocked.Increment(ref count)`, a single atomic instruction; `lock`, which makes the three steps a critical section; or avoiding shared state by giving each thread its own counter and summing at the end, which is often the fastest of all because the threads never contend.
+
+### 2. What does `System.Threading.Lock` change compared with `lock (object)`?
+
+**Answer.** It is a type introduced in .NET 9 that exists only to be locked. When the `lock` statement's target has the static type `Lock`, C# 13 compiles it to `using (gate.EnterScope()) { ... }` instead of `Monitor.Enter`/`Monitor.Exit`. The semantics, including reentrancy and release on exception, are the same; Microsoft describes the benefit as "better thread synchronization through its API". If a `Lock` is converted to `object` and then locked, the compiler falls back to `Monitor` and says so: `warning CS9216: A value of type 'System.Threading.Lock' converted to a different type will use likely unintended monitor-based locking in 'lock' statement.` Migrating is a one-word change: `object gate = new()` becomes `Lock gate = new()`.
+
+### 3. What is the difference between `lock`, `SemaphoreSlim` and `Interlocked`?
+
+**Answer.** `Interlocked` makes one operation on one variable atomic: increment, add, exchange, compare-and-swap. `lock` makes a whole block exclusive to one thread and is reentrant, but cannot contain `await`. `SemaphoreSlim(k)` lets up to $k$ callers in, is not tied to a thread (any thread may `Release`), and has `WaitAsync`, so `SemaphoreSlim(1)` is the standard async lock. The lab uses all three: `Interlocked` for exactly 400,000, `lock` for exactly 400,000, and a semaphore with $k = 2$ whose peak never exceeds 2.
+
+### 4. What is a deadlock, and how do you prevent one?
+
+**Answer.** A set of threads each waiting for a lock that another member of the set holds, so none can proceed. It requires mutual exclusion, hold-and-wait, no pre-emption and a circular wait (Coffman et al., 1971). Prevention: acquire locks in one global order, which makes a cycle impossible (the lab's `Transfer` locks the lower account id first and survives 20,000 opposite transfers); hold locks briefly and never call unknown code (callbacks, events) while holding one; use `TryEnter` with a timeout where ordering is impractical; and in async code, do not block on tasks ([Tasks and async/await](11-tasks-and-async-await.qmd)).
+
+### 5. When would you use `volatile`?
+
+**Answer.** Rarely: for a simple flag or a reference published by one thread and read by others without a lock. A volatile read has acquire semantics and a volatile write has release semantics, so writes made before the flag is set are visible to a thread that sees the flag, and a polling loop cannot be optimised into a single read. It does not make compound operations atomic. In modern code a `CancellationToken`, a `Task` or a channel usually expresses the same intent more clearly.
+
+## Summary
+
+$$
+C = T \cdot N - L, \qquad \text{lock or Interlocked} \Rightarrow L = 0, \qquad \text{one global lock order} \Rightarrow \text{no deadlock cycle}
+$$
+
+where $T$ threads perform $N$ updates each, $L$ is the number of lost updates and $C$ the final count.
+
+Example: $T = 4$, $N = 100{,}000$: without synchronisation a run gave $C = 116{,}817$ ($L = 283{,}183$); with `lock` or `Interlocked`, $L = 0$ and $C = 400{,}000$.
+
+- Prefer the thread pool (`Task.Run`, `await`) to creating `Thread` objects.
+- A read-modify-write on shared data needs `Interlocked` or a `lock`; `volatile` is not enough.
+- Use `System.Threading.Lock` for new code on .NET 9+; never `await` inside a lock, use `SemaphoreSlim.WaitAsync`.
+- Compare-and-swap loops build any atomic update.
+- Concurrent collections and channels let threads share data without hand-written locks.
+- Prevent deadlocks with one global lock order and short critical sections.
+
+## References
+
+- C# reference: [The lock statement](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/statements/lock) (both expansions) and [What's new in C# 13](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-13) ("New lock object"); API reference: [System.Threading.Lock](https://learn.microsoft.com/en-us/dotnet/api/system.threading.lock).
+- .NET guides: [The managed thread pool](https://learn.microsoft.com/en-us/dotnet/standard/threading/the-managed-thread-pool), [Managed threading best practices](https://learn.microsoft.com/en-us/dotnet/standard/threading/managed-threading-best-practices), [Thread-safe collections](https://learn.microsoft.com/en-us/dotnet/standard/collections/thread-safe/), [System.Threading.Channels](https://learn.microsoft.com/en-us/dotnet/core/extensions/channels).
+- The .NET runtime team, [.NET memory model](https://github.com/dotnet/runtime/blob/main/docs/design/specs/Memory-model.md) (acquire, release and full-fence semantics, and the polling-loop example).
+- Stephen Toub, [An Introduction to System.Threading.Channels](https://devblogs.microsoft.com/dotnet/an-introduction-to-system-threading-channels/) (.NET Blog, 2019).
+- Joseph Albahari, [Threading in C#](https://www.albahari.com/threading/) (free online book).
+- E. G. Coffman, M. Elphick and A. Shoshani, *System Deadlocks*, ACM Computing Surveys 3(2), 1971, [doi:10.1145/356586.356588](https://doi.org/10.1145/356586.356588); E. W. Dijkstra, [EWD310: Hierarchical ordering of sequential processes](https://www.cs.utexas.edu/~EWD/transcriptions/EWD03xx/EWD310.html) (1971), the dining philosophers.
+- Ian Griffiths, *Programming C# 12* (O'Reilly, 2024), chapter 16, "Multithreading".
+- Lab: [`labs/threads-and-synchronisation.cs`](labs/threads-and-synchronisation.cs). Run it from `programming-languages/csharp/labs` with `dotnet run threads-and-synchronisation.cs`.

@@ -1,0 +1,370 @@
+---
+title: "LINQ"
+description: "LINQ from the first Where to expression trees: operators as extension methods, C# 14 extension blocks, query syntax, deferred execution and multiple enumeration, GroupBy, Join and Aggregate, the .NET 9 and .NET 10 operators, and IEnumerable versus IQueryable."
+---
+
+## The problem
+
+A small shop has five orders:
+
+| Id | Customer | Amount |
+|---|---|---|
+| 1 | Ann | 30 |
+| 2 | Bob | 12 |
+| 3 | Ann | 8 |
+| 4 | Cid | 50 |
+| 5 | Bob | 20 |
+
+The owner asks three questions. Which orders are over 10? How much did each customer spend? Which city does each order ship to? With plain loops, every question is a new `foreach`, a new `List`, a new `Dictionary` and a new chance to get an index wrong. The answer to "how much did each customer spend" alone needs a dictionary, a `TryGetValue`, an add-or-update and a final loop to print.
+
+**LINQ** (Language-Integrated Query, C# 3.0, 2007) turns each question into one expression: `orders.Where(o => o.Amount > 10)`, `orders.GroupBy(o => o.Customer)`, `orders.Join(customers, ...)`. The catch is that a LINQ query is not a result. It is a **plan** that runs when you read it, and every time you read it. Not knowing that is the source of most LINQ bugs.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A recipe card, not a cooked meal
+
+- **A query is a recipe card.** Writing "take the orders, keep the big ones" on a card cooks nothing. `orders.Where(...)` writes the card.
+- **`foreach` is cooking.** Only when somebody reads the results does the kitchen go through the orders one by one.
+- **Reading twice is cooking twice.** Call `Count()` and then `foreach` on the same query, and the kitchen does all the work again.
+- **`ToList()` is cooking once and putting the meal in the fridge.** Afterwards you can eat from the fridge as often as you like.
+- **`IQueryable` is posting the recipe to another kitchen.** A database cannot run your C# code, so you send it the recipe written as data (an expression tree), and it translates the recipe into SQL.
+
+LINQ shipped with C# 3.0 in 2007. Erik Meijer, Brian Beckman and Gavin Bierman described its design in *LINQ: reconciling object, relations and XML in the .NET framework* (SIGMOD 2006). Jon Skeet later rewrote all of LINQ to Objects from scratch in his 45-part *Edulinq* blog series to show that there is no magic inside, only iterators.
+:::
+
+## From simple to advanced
+
+### Level 1: an operator is an extension method
+
+`Where` is not built into arrays. It is a static method in the class `System.Linq.Enumerable`, declared as `Where<T>(this IEnumerable<T> source, Func<T, bool> predicate)`. The `this` on the first parameter makes it an **extension method**: you may call it with a dot, as if it belonged to every `IEnumerable<T>`. The two lines below are the same call:
+
+```csharp
+var bigByDot = orders.Where(o => o.Amount > 10);
+var bigByCall = Enumerable.Where(orders, o => o.Amount > 10);
+Check(bigByDot.SequenceEqual(bigByCall), "the two calls are the same call");
+Check(bigByDot.Select(o => o.Id).SequenceEqual([1, 2, 4, 5]), "orders over 10 are 1, 2, 4, 5");
+```
+
+The compiler rewrites the dot form:
+
+$$
+x.\texttt{M}(a_1, \dots, a_k) \;\Longrightarrow\; \texttt{C}.\texttt{M}(x, a_1, \dots, a_k)
+$$
+
+where
+
+- $x$ is the receiver, the value before the dot;
+- $\texttt{M}$ is the method name, and $a_1, \dots, a_k$ are the other arguments;
+- $\texttt{C}$ is a static class in scope (through a `using`) that declares `M` with `this` on its first parameter;
+- $\Longrightarrow$ means "the compiler turns the left side into the right side".
+
+Example: `orders.CountOver(25)` becomes `OrderExtensions.CountOver(orders, 25)`. Two amounts, 30 and 50, are over 25, so the result is 2. A real instance method with the same name always wins over an extension method, so extension methods can add behaviour but never replace it.
+
+C# 14 (with .NET 10) generalises the idea into **extension blocks**. The block names the receiver once, and inside it you can declare methods and, new in C# 14, **properties** (also static members and operators):
+
+```csharp
+static class OrderExtensions
+{
+    // The classic form (C# 3): a static method whose first parameter is marked "this".
+    public static int CountOver(this IEnumerable<Order> source, int amount) =>
+        source.Count(o => o.Amount > amount);
+
+    // The C# 14 form: an extension block can also hold properties.
+    extension(IEnumerable<Order> source)
+    {
+        public int Total => source.Sum(o => o.Amount);
+        public IEnumerable<Order> Over(int amount) => source.Where(o => o.Amount > amount);
+    }
+}
+```
+
+```csharp
+Check(orders.CountOver(25) == 2, "classic extension method: 30 and 50 are over 25");
+Check(orders.Total == 120, "extension property: 30 + 12 + 8 + 50 + 20 = 120");
+Check(orders.Over(25).Select(o => o.Id).SequenceEqual([1, 4]), "extension method from an extension block");
+```
+
+`orders.Total` reads like a property of the array, but it is a static method underneath, compiled the same way as `CountOver`.
+
+### Level 2: query syntax is a translation
+
+C# has a second spelling that looks like SQL. The compiler translates it, word by word, into the method calls of Level 1:
+
+```csharp
+var queryIds = from o in orders
+               where o.Amount > 10
+               orderby o.Amount descending
+               select o.Id;
+var methodIds = orders.Where(o => o.Amount > 10)
+                      .OrderByDescending(o => o.Amount)
+                      .Select(o => o.Id);
+Check(queryIds.SequenceEqual([4, 1, 5, 2]), "query syntax: 50, 30, 20, 12");
+Check(queryIds.SequenceEqual(methodIds), "both spellings compile to the same calls");
+```
+
+The rule, from the specification's section "Query expression translation":
+
+$$
+\texttt{from } x \texttt{ in } s \texttt{ where } p \texttt{ select } f
+\;\Longrightarrow\;
+s.\texttt{Where}(x \mapsto p).\texttt{Select}(x \mapsto f)
+$$
+
+where
+
+- $s$ is the source sequence and $x$ the range variable that stands for one element;
+- $p$ is a condition on $x$, and $f$ is the value to produce from $x$;
+- $x \mapsto p$ is a lambda, written `x => p` in C#.
+
+Example with `orders`: $p$ is `o.Amount > 10`, which keeps amounts 30, 12, 50, 20 (ids 1, 2, 4, 5). The `orderby ... descending` clause becomes `OrderByDescending`, giving 50, 30, 20, 12, and $f$ is `o.Id`, giving 4, 1, 5, 2.
+
+Because the translation is purely syntactic, query syntax works on any type that has suitably named `Where` and `Select` methods. It is a pattern, not an interface. Method syntax can do everything query syntax can, plus operators that have no keyword (`Count`, `Distinct`, `Zip`, `CountBy`). Query syntax is easier to read with `join`, `let` and several `from` clauses.
+
+### Level 3: deferred execution and multiple enumeration
+
+Building the query runs nothing. The lab counts how often the predicate runs:
+
+```csharp
+int calls = 0;
+var big = orders.Where(o => { calls++; return o.Amount > 10; });
+Check(calls == 0, "nothing has run yet");
+int firstCount = big.Count();  // runs the filter over 5 orders
+int secondCount = big.Count(); // runs the whole filter again
+Check(firstCount == 4 && secondCount == 4 && calls == 10, "two enumerations cost 2 x 5 = 10 calls");
+```
+
+Every enumeration starts again from the first element:
+
+$$
+W = k \cdot n
+$$
+
+where
+
+- $W$ is the total number of predicate calls;
+- $k$ is the number of times the query is enumerated (each `foreach`, `Count()`, `ToList()` or `Any()` is one);
+- $n$ is the number of source elements the query reads.
+
+Example: $k = 2$ and $n = 5$ give $W = 2 \cdot 5 = 10$, which the lab checks. With a filter that calls a database or a web service, the second enumeration repeats every call. **Immediate** operators such as `ToList()` run the query once and store the results, so $k = 1$ and $W = 5$:
+
+```csharp
+calls = 0;
+List<Order> snapshot = big.ToList(); // immediate: runs once, stores the results
+Check(snapshot.Count == 4 && snapshot.Count == 4 && calls == 5, "ToList runs the filter 5 times, once");
+```
+
+`snapshot.Count` is a property of the list, not the LINQ `Count()` method, so reading it costs nothing. Deferral also means the query sees the source **as it is when enumerated**, not as it was when the query was written:
+
+```csharp
+var numbers = new List<int> { 1, 2, 3 };
+var doubled = numbers.Select(n => n * 2);
+numbers.Add(4); // the query has not run yet, so it will see this
+Check(doubled.SequenceEqual([2, 4, 6, 8]), "a deferred query reads the source when enumerated");
+```
+
+The rule of thumb from the documentation: operators that return a single value (`Count`, `Sum`, `First`, `Aggregate`, `ToList`, `ToDictionary`) run **immediately**; operators that return `IEnumerable<T>` are **deferred**.
+
+### Level 4: GroupBy, Aggregate and Join
+
+`GroupBy` answers "how much did each customer spend":
+
+```csharp
+var totals = orders
+    .GroupBy(o => o.Customer)
+    .Select(g => (Customer: g.Key, Total: g.Sum(o => o.Amount)))
+    .ToList();
+Check(totals.SequenceEqual([("Ann", 38), ("Bob", 32), ("Cid", 50)]), "groups keep first-seen key order");
+```
+
+Each group `g` has a `Key` and is itself a sequence of the orders with that key. LINQ to Objects keeps the keys in the order they first appear. `Aggregate` is the general fold that `Sum`, `Count` and `Max` are special cases of:
+
+```csharp
+int total = orders.Aggregate(0, (sum, o) => sum + o.Amount);
+Check(total == 120, "Aggregate folds 0 -> 30 -> 42 -> 50 -> 100 -> 120");
+```
+
+$$
+a_0 = s, \qquad a_i = f(a_{i-1}, x_i) \text{ for } i = 1, \dots, n, \qquad \texttt{Aggregate} = a_n
+$$
+
+where
+
+- $s$ is the seed, the starting value (here 0);
+- $x_i$ is the $i$-th element of the source;
+- $f$ is the function that combines the running value with the next element (here `sum + o.Amount`);
+- $a_i$ is the running value after $i$ elements, and $n$ is the number of elements.
+
+Example: $a_0 = 0$, $a_1 = 0 + 30 = 30$, $a_2 = 30 + 12 = 42$, $a_3 = 42 + 8 = 50$, $a_4 = 50 + 50 = 100$, $a_5 = 100 + 20 = 120$.
+
+`Join` matches two sequences on a key, like an SQL inner join:
+
+```csharp
+var withCity = orders.Join(customers,
+    o => o.Customer, c => c.Name,
+    (o, c) => $"{o.Id}:{c.City}");
+Check(withCity.SequenceEqual(["1:Leeds", "2:York", "3:Leeds", "5:York"]), "inner join drops order 4 (Cid)");
+```
+
+The customers are Ann (Leeds), Bob (York) and Dee (Bath). How many rows an inner join returns:
+
+$$
+|A \bowtie B| = \sum_{k} |A_k| \cdot |B_k|
+$$
+
+where
+
+- $A$ is the outer sequence (orders) and $B$ the inner one (customers);
+- $k$ runs over every key value that appears in either sequence;
+- $|A_k|$ is the number of elements of $A$ with key $k$, and $|B_k|$ the same for $B$.
+
+Example: Ann has $2 \cdot 1 = 2$ rows, Bob $2 \cdot 1 = 2$, Cid $1 \cdot 0 = 0$ (no customer record), Dee $0 \cdot 1 = 0$ (no orders). The total is $2 + 2 + 0 + 0 = 4$, so order 4 disappears.
+
+### Level 5: the .NET 9 and .NET 10 operators
+
+.NET 9 added `CountBy`, `AggregateBy` and `Index`. The first two do a `GroupBy` and a fold in one pass, without building the groups:
+
+```csharp
+var counts = orders.CountBy(o => o.Customer).ToDictionary();
+var sums = orders.AggregateBy(o => o.Customer, seed: 0, (sum, o) => sum + o.Amount).ToDictionary();
+var numbered = orders.Index().Select(pair => $"{pair.Index}:{pair.Item.Id}");
+Check(counts["Ann"] == 2 && counts["Bob"] == 2 && counts["Cid"] == 1, "CountBy");
+Check(sums["Ann"] == 38 && sums["Bob"] == 32 && sums["Cid"] == 50, "AggregateBy");
+Check(numbered.First() == "0:1" && numbered.Last() == "4:5", "Index pairs a position with each item");
+```
+
+`AggregateBy` is the Level 4 fold applied separately per key: for Ann, $0 + 30 + 8 = 38$. `Index()` yields `(Index, Item)` pairs, replacing the old `Select((item, i) => ...)` trick.
+
+.NET 10 added `LeftJoin` and `RightJoin`. Before, a left outer join needed `GroupJoin`, `SelectMany` and `DefaultIfEmpty` in a precise arrangement. Now it is one call. The missing side arrives as `null`:
+
+```csharp
+var everyOrder = orders.LeftJoin(customers,
+    o => o.Customer, c => c.Name,
+    (o, c) => $"{o.Id}:{c?.City ?? "?"}");
+var everyCustomer = orders.RightJoin(customers,
+    o => o.Customer, c => c.Name,
+    (o, c) => $"{c.Name}:{o?.Id.ToString() ?? "-"}");
+Check(everyOrder.SequenceEqual(["1:Leeds", "2:York", "3:Leeds", "4:?", "5:York"]), "LeftJoin keeps order 4");
+Check(everyCustomer.SequenceEqual(["Ann:1", "Ann:3", "Bob:2", "Bob:5", "Dee:-"]), "RightJoin keeps Dee");
+```
+
+The left join keeps every order, so its size is $\sum_k |A_k| \cdot \max(1, |B_k|)$. Example: $2 + 2 + 1 = 5$ rows, Cid's order paired with `null`. The right join keeps every customer: Ann and Bob with two orders each, Dee with `null`, so $2 + 2 + 1 = 5$ rows. Query syntax has no keyword for these yet.
+
+## How it works underneath
+
+**Iterators.** Every deferred operator in `System.Linq` is, in spirit, an iterator method like this one. The real `Enumerable.Where` adds argument checks and special cases for arrays and lists, but the behaviour is the same:
+
+```csharp
+static IEnumerable<T> MyWhere<T>(IEnumerable<T> source, Func<T, bool> predicate)
+{
+    foreach (T item in source)
+    {
+        if (predicate(item))
+            yield return item; // runs only when the caller asks for the next item
+    }
+}
+```
+
+Calling `MyWhere` runs none of its body. The compiler turns it into a state machine whose `MoveNext` runs the loop up to the next `yield return` ([Iterators and yield](07-iterators-and-yield.qmd) shows the generated class). A chain `orders.Where(...).Select(...)` is a stack of such objects. `foreach` calls `MoveNext` on the outer `Select`, which calls `MoveNext` on `Where`, which pulls from the array. Each element flows through the whole chain before the next one is read, which is why this is called **streaming**. `OrderBy` and `GroupBy` are deferred but **non-streaming**: on the first `MoveNext` they must read the entire source before they can yield anything.
+
+**Delegates versus expression trees.** The same lambda text can become two very different things, depending on the type it is assigned to:
+
+```csharp
+Func<Order, bool> asCode = o => o.Amount > 10;
+Expression<Func<Order, bool>> asData = o => o.Amount > 10;
+Check(asCode(orders[0]), "a delegate can only be called");
+Check(asData.ToString() == "o => (o.Amount > 10)", "an expression tree can be printed");
+Check(asData.Body.NodeType == ExpressionType.GreaterThan, "and inspected node by node");
+Check(asData.Compile()(orders[0]), "or compiled into a delegate");
+```
+
+`Func<Order, bool>` is compiled IL: you can call it, but you cannot look inside. `Expression<Func<Order, bool>>` is a **tree of objects** the compiler builds for you: a `GreaterThan` node whose left child reads the `Amount` member of parameter `o` and whose right child is the constant 10. That is the whole difference between the two LINQ worlds:
+
+$$
+\begin{aligned}
+\texttt{Enumerable.Where} &: \texttt{IEnumerable}\langle T \rangle \times (T \to \texttt{bool}) \to \texttt{IEnumerable}\langle T \rangle \\
+\texttt{Queryable.Where} &: \texttt{IQueryable}\langle T \rangle \times \texttt{Expression}\langle T \to \texttt{bool} \rangle \to \texttt{IQueryable}\langle T \rangle
+\end{aligned}
+$$
+
+where
+
+- $T$ is the element type (here `Order`);
+- $T \to \texttt{bool}$ is a delegate, code that can only be run;
+- $\texttt{Expression}\langle T \to \texttt{bool} \rangle$ is the same lambda kept as data;
+- $\times$ separates the parameters, and the type after the last $\to$ is what the method returns.
+
+Example: for order 1, the delegate computes $30 > 10$, which is true. The tree instead records $\texttt{GreaterThan}(\texttt{o.Amount}, 10)$, and a database provider such as Entity Framework Core can turn that record into `WHERE Amount > 10`. Overload resolution picks the version by the **static type** of the receiver:
+
+```csharp
+IQueryable<Order> query = orders.AsQueryable().Where(o => o.Amount > 10);
+Check(query.Expression.ToString() == "Order[].Where(o => (o.Amount > 10))", "the provider receives the tree");
+IEnumerable<Order> inMemory = query.AsEnumerable().Where(o => o.Id < 3);
+Check(inMemory is not IQueryable<Order>, "after AsEnumerable, Where is Enumerable.Where");
+Check(inMemory.Select(o => o.Id).SequenceEqual([1, 2]), "orders 1 and 2");
+```
+
+Each `Queryable` operator does not filter anything. It wraps the previous tree in a new `MethodCallExpression` and asks the provider (`query.Provider`) for a new `IQueryable`. Only when you enumerate does the provider receive the finished tree, translate it, and run it. After `AsEnumerable()`, the static type is `IEnumerable<Order>`, so the next `Where` is `Enumerable.Where`: in a database query, everything after that point runs in your process on rows that have already been downloaded.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Enumerating an expensive query twice (`Count()` then `foreach`) | The work, or the database round trip, happens twice ($W = k \cdot n$) | Call `ToList()` once and reuse the list |
+| Expecting a query to be a snapshot | The result changes when the source changes | Materialise with `ToList()` or `ToArray()` at the moment you want the snapshot |
+| `First()` on an empty sequence | `InvalidOperationException: Sequence contains no elements` | `FirstOrDefault()`, or check `Any()` first |
+| `Single()` when two elements match | `InvalidOperationException: Sequence contains more than one matching element` | Use `Single` only when duplicates are a bug; otherwise `First` |
+| Adding to a list inside its own `foreach` | `InvalidOperationException: Collection was modified; enumeration operation may not execute.` | Build the new items in a separate list, or loop over `list.ToList()` |
+| Calling `AsEnumerable()` or a custom C# method too early in an `IQueryable` query | The whole table is downloaded and filtered in memory, or the provider throws because it cannot translate the method | Keep filters on `IQueryable`; use only methods the provider can translate |
+| Side effects inside `Select` or `Where` | Effects run zero times (never enumerated) or many times | Keep lambdas pure; do side effects in a `foreach` |
+
+The lab checks all three exception messages.
+
+## Interview questions
+
+### 1. What is the difference between `IEnumerable<T>` and `IQueryable<T>`?
+
+**Answer.** `IEnumerable<T>` operators (in `Enumerable`) take **delegates** and run in your process, pulling one element at a time through iterators. `IQueryable<T>` operators (in `Queryable`) take **expression trees**, build up a larger tree, and hand it to an `IQueryProvider` that translates it, for example into SQL, when the query is enumerated. The choice is made at compile time by the static type: `query.Expression.ToString()` in the lab shows the tree `Order[].Where(o => (o.Amount > 10))`, while the same lambda as `Func<Order, bool>` can only be called. Use `IQueryable` so filtering happens at the data source; switch to `IEnumerable` (`AsEnumerable()`) deliberately, at the point where the rest must run in memory.
+
+### 2. Which LINQ operators execute immediately?
+
+**Answer.** Those that must produce something other than a lazy sequence: scalar results (`Count`, `Sum`, `Min`, `Max`, `Average`, `Any`, `All`, `Contains`, `First`, `Single`, `ElementAt`, `Aggregate`) and conversions (`ToList`, `ToArray`, `ToDictionary`, `ToHashSet`, `ToLookup`). Operators that return `IEnumerable<T>` are deferred. Among those, `Where`, `Select` and `Take` stream, while `OrderBy`, `GroupBy`, `Reverse` and `Distinct` must read all or much of the source on the first `MoveNext`. The lab shows the difference with a counter: zero predicate calls after `Where`, five after one `ToList()`.
+
+### 3. Why can enumerating a query twice give two different answers?
+
+**Answer.** Because the query is a plan that reads the source each time. If the source changes in between (Level 3: `numbers.Add(4)` makes `doubled` yield `2, 4, 6, 8`), or the source is itself non-repeatable (a network stream, a random generator, a database table other users write to), the two enumerations see different data. Even when the answer is the same, the cost is $W = k \cdot n$. The .NET analyser rule CA1851, "Possible multiple enumerations of `IEnumerable` collection", flags this pattern.
+
+### 4. How does `from o in orders where o.Amount > 10 select o.Id` compile?
+
+**Answer.** Into `orders.Where(o => o.Amount > 10).Select(o => o.Id)`, by a syntactic translation defined in the C# specification. The compiler does not require `IEnumerable<T>`: any type with applicable `Where` and `Select` methods (instance or extension) works. This is the same pattern-based approach as `foreach` (which needs only `GetEnumerator`) and `await` (which needs only `GetAwaiter`). A trivial `select x` at the end of a query is dropped unless it is the only clause.
+
+### 5. What do C# 14 extension blocks add over classic extension methods?
+
+**Answer.** A classic extension method is a static method with `this` on its first parameter, so only methods can be added. An `extension(IEnumerable<Order> source) { ... }` block declares the receiver once and can contain extension **properties** (`orders.Total` in the lab), and, in a block with only a receiver type, static members and operators that appear as members of the type itself. They compile to static methods, so they still cannot add state (no fields) and still lose to a real instance member with the same signature.
+
+## Summary
+
+$$
+\texttt{query} = \text{a plan}, \qquad W = k \cdot n, \qquad \texttt{Queryable.Where} \text{ takes } \texttt{Expression}\langle T \to \texttt{bool} \rangle
+$$
+
+where $k$ is the number of enumerations, $n$ the number of source elements read per enumeration, and $W$ the total work.
+
+Example: with $n = 5$ orders, `Count()` twice gives $W = 2 \cdot 5 = 10$ predicate calls; one `ToList()` gives $W = 1 \cdot 5 = 5$.
+
+- LINQ operators are **extension methods** on `IEnumerable<T>` or `IQueryable<T>`; C# 14 extension blocks add extension properties and static members.
+- Query syntax is a **compile-time translation** into method calls.
+- Sequence-returning operators are **deferred**; scalar and `To...` operators are **immediate**.
+- Enumerate once; **materialise** with `ToList()` when you need a snapshot or will read the result twice.
+- `GroupBy`, `Join` and `Aggregate` cover grouping, matching and folding; .NET 9 adds `CountBy`, `AggregateBy`, `Index`; .NET 10 adds `LeftJoin` and `RightJoin`.
+- `IQueryable` carries **expression trees** to a provider; its static type decides which `Where` you call.
+
+## References
+
+- C# language specification: [Query expressions](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/expressions#1223-query-expressions), including "Query expression translation".
+- Microsoft Learn: [Introduction to LINQ queries](https://learn.microsoft.com/en-us/dotnet/csharp/linq/get-started/introduction-to-linq-queries) (deferred and immediate execution), [Standard query operators](https://learn.microsoft.com/en-us/dotnet/csharp/linq/standard-query-operators/), [Expression trees](https://learn.microsoft.com/en-us/dotnet/csharp/advanced-topics/expression-trees/), [Extension members](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/extension-methods).
+- [What's new in C# 14](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-14) (extension members), [What's new in .NET 9 libraries](https://learn.microsoft.com/en-us/dotnet/core/whats-new/dotnet-9/libraries) (`CountBy`, `AggregateBy`, `Index`), [Enumerable.LeftJoin](https://learn.microsoft.com/en-us/dotnet/api/system.linq.enumerable.leftjoin) (.NET 10), and [What's new in EF Core 10](https://learn.microsoft.com/en-us/ef/core/what-is-new/ef-core-10.0/whatsnew) ("Support for the .NET 10 LeftJoin and RightJoin operators").
+- [The history of C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-version-history), "C# version 3.0".
+- Erik Meijer, Brian Beckman and Gavin Bierman, *LINQ: reconciling object, relations and XML in the .NET framework*, SIGMOD 2006, [doi:10.1145/1142473.1142552](https://doi.org/10.1145/1142473.1142552).
+- Jon Skeet, [Edulinq: reimplementing LINQ to Objects](https://codeblog.jonskeet.uk/category/edulinq/) (2010–2011), especially Part 43, "Out-of-process queries with IQueryable".
+- Lab: [`labs/linq.cs`](labs/linq.cs). Run it from `programming-languages/csharp/labs` with `dotnet run linq.cs`.

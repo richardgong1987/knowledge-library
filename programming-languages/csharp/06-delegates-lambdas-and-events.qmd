@@ -1,0 +1,479 @@
+---
+title: "Delegates, Lambdas and Events"
+description: "C# delegates from a stored method to the observer pattern: delegate types, Func and Action, multicast invocation lists, lambdas and closures, the loop-variable trap, static lambdas, events, and the memory leaks that subscriptions cause."
+---
+
+## The problem
+
+A greenhouse sensor reads 20 °C, then 25 °C. Two parts of the program care about the change: a display that should show `25 C`, and a logger that should write `20 -> 25`. The first version simply calls both from inside the sensor:
+
+```csharp
+// sketch: the sensor hard-codes everyone who cares
+public void Read(int celsius)
+{
+    display.Show(celsius);
+    logger.Write(Celsius, celsius);
+    Celsius = celsius;
+}
+```
+
+This works until the third listener arrives. An alarm that fires above 30 °C means editing `Sensor` again; a test of `Sensor` now needs a real display and a real logger; and the sensor's code depends on classes that have nothing to do with measuring temperature.
+
+What the sensor really needs is a **list of things to call**, which other code can add itself to. C# has three layers for that: a **delegate** is one "thing to call" stored in a variable, a **multicast delegate** is a list of them, and an **event** is that list with a lock on it, so outsiders can only add or remove themselves.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Phone numbers on the fridge
+
+- **A delegate** is a card with a phone number on it. You can hand the card to someone, and later they ring the number without knowing who answers.
+- **A multicast delegate** is a list of numbers on the fridge. When the news comes, someone rings every number, top to bottom.
+- **A lambda** is a sticky note with instructions instead of a number: "add one to the jar on my desk". The note talks about the **real jar**, not a photo of it, so if the jar changes, the note sees the change. Eric Lippert, who worked on the C# compiler, put it in bold on his blog: *"Closures close over variables, not over values."*
+- **An event** is a newsletter sign-up sheet. You may write your own name on it or cross it out, but only the newspaper sends the newsletter, and nobody may tear the sheet off the wall.
+- **A leak** is forgetting to cross your name out after you move house. The newspaper keeps your old address, and keeps posting.
+
+This is the **observer** pattern from *Design Patterns* (Gamma, Helm, Johnson and Vlissides, 1994): "Define a one-to-many dependency between objects so that when one object changes state, all its dependents are notified and updated automatically." C# built it into the language: delegates and events have been there since C# 1.0.
+:::
+
+## From simple to advanced
+
+### Level 1: a delegate type is a method signature you can store
+
+A delegate **type** names a shape of method: here, "takes an `int`, returns an `int`". A delegate **value** is an object that refers to one method of that shape.
+
+```csharp
+delegate int Transform(int x);
+```
+
+```csharp
+static int Double(int x) => x * 2;
+
+Transform transform = Double;
+Check(transform(21) == 42, "the delegate calls the method it holds");
+transform = x => x + 10;
+Check(transform(5) == 15, "a lambda converts to the same delegate type");
+```
+
+`transform(21)` is 42 and, after reassigning, `transform(5)` is 15. The variable decides *what* to run at run time, while the compiler still checks the shape: assigning a method that takes a `string` would not compile.
+
+### Level 2: `Func`, `Action` and `Predicate` are ready-made delegate types
+
+Declaring a new delegate type for every shape gets tedious, so the library ships generic ones. `Func<T1, ..., TResult>` returns its **last** type argument, `Action<T1, ...>` returns nothing, and `Predicate<T>` is an older type with the same shape as `Func<T, bool>` (the two do not convert into each other: `error CS0029: Cannot implicitly convert type 'System.Predicate<int>' to 'System.Func<int, bool>'`).
+
+```csharp
+Func<int, int, int> add = (a, b) => a + b;
+Predicate<int> isEven = n => n % 2 == 0;
+var printed = new List<string>();
+Action<string> print = text => printed.Add(text);
+
+print($"{add(2, 3)} {isEven(4)}");
+Check(printed[0] == "5 True", "Func returns a value, Predicate returns bool, Action returns nothing");
+```
+
+`add(2, 3)` is 5, `isEven(4)` is `True`, and `print` records `"5 True"`. LINQ is built on these types: `Where` takes a `Func<T, bool>` ([LINQ](08-linq.qmd)).
+
+### Level 3: one delegate can hold a list of methods
+
+Every C# delegate type derives from `System.MulticastDelegate`. `+` (and `+=`) combines two delegates into a new one whose **invocation list** is both lists joined; calling it calls each method in order.
+
+```csharp
+var calls = new List<string>();
+Func<int> first = () => { calls.Add("first"); return 1; };
+Func<int> second = () => { calls.Add("second"); return 2; };
+
+Func<int> both = first + second;
+int result = both();
+Check(calls.SequenceEqual(["first", "second"]), "handlers run in the order they were added");
+Check(result == 2, "the caller only sees the last handler's return value");
+Check(both.GetInvocationList().Length == 2, "the invocation list has two entries");
+```
+
+The rule is list concatenation:
+
+$$
+L(d_1 + d_2) = L(d_1) \mathbin{+\!\!+} L(d_2), \qquad d() \text{ returns } h_n() \text{ when } L(d) = (h_1, \dots, h_n)
+$$
+
+where
+
+- $d$, $d_1$, $d_2$ are delegates;
+- $L(d)$ is the invocation list of $d$, a sequence of single methods;
+- $\mathbin{+\!\!+}$ joins two sequences end to end;
+- $h_1, \dots, h_n$ are the methods in $L(d)$, called in that order;
+- $n$ is the length of the list.
+
+Example, with the lab's values:
+
+1. $L(\texttt{first}) = (\texttt{first})$ and $L(\texttt{second}) = (\texttt{second})$.
+2. $L(\texttt{both}) = (\texttt{first}) \mathbin{+\!\!+} (\texttt{second}) = (\texttt{first}, \texttt{second})$, so $n = 2$.
+3. Calling `both()` runs `first`, which returns 1 into thin air, then `second`, which returns $h_2() = 2$. So `result` is 2 and `calls` is `first, second`.
+
+`-` removes the **last occurrence** of a delegate's list, and a list with nothing left is not an empty delegate but `null`:
+
+```csharp
+Func<int>? none = both - first - second;
+Check(none is null, "removing every handler leaves null, not an empty delegate");
+```
+
+$(\texttt{first}, \texttt{second})$ minus $(\texttt{first})$ is $(\texttt{second})$; minus $(\texttt{second})$ is the empty list, which C# represents as `null`. That is why code that raises an event always checks for `null` first.
+
+### Level 4: a lambda captures the variable, not its value
+
+A lambda can use local variables of the method around it. It does not copy their values when it is created; it shares the **variable itself**.
+
+```csharp
+int counter = 0;
+Action increment = () => counter++;
+increment();
+increment();
+Check(counter == 2, "the lambda changed the captured variable");
+```
+
+After two calls, `counter` is 2 in the outer code too. A captured variable can even outlive the method that declared it:
+
+```csharp
+static Func<int> MakeCounter()
+{
+    int count = 0;
+    return () => ++count;
+}
+```
+
+```csharp
+Func<int> counterA = MakeCounter();
+Func<int> counterB = MakeCounter();
+Check(counterA() == 1 && counterA() == 2, "counterA keeps its own count alive");
+Check(counterB() == 1, "each call to MakeCounter creates a new variable");
+```
+
+`MakeCounter` has returned, yet `counterA` keeps counting 1, 2. Each call of `MakeCounter` creates a **new** `count`, so `counterB` starts again at 1. The rule fits in one line:
+
+$$
+f() \text{ called at time } t \text{ returns } \sigma_t(x), \quad \text{not } \sigma_c(x)
+$$
+
+where
+
+- $f$ is a lambda whose body reads a captured variable $x$, such as `() => count`;
+- $t$ is the moment $f$ is **called**, and $c$ the moment it was **created**;
+- $\sigma_t(x)$ is the value stored in the variable $x$ at moment $t$.
+
+Example: `increment` was created when $\sigma_c(\texttt{counter}) = 0$. After the first call, $\sigma(\texttt{counter}) = 1$, so the second call reads 1 and writes 2, and the check sees $\sigma_t(\texttt{counter}) = 2$. A snapshot would have kept 0 forever.
+
+### Level 5: the loop-variable trap
+
+Now put the rule inside a loop. A `for` loop declares **one** variable `i` for the whole loop. Since C# 5, a `foreach` loop declares a **fresh** variable for every iteration.
+
+```csharp
+var fromFor = new List<Func<int>>();
+for (int i = 0; i < 3; i++)
+{
+    fromFor.Add(() => i);
+}
+
+var fromForeach = new List<Func<int>>();
+foreach (int i in new[] { 0, 1, 2 })
+{
+    fromForeach.Add(() => i);
+}
+
+Check(fromFor.Select(f => f()).SequenceEqual([3, 3, 3]), "all three share the one i, which ended at 3");
+Check(fromForeach.Select(f => f()).SequenceEqual([0, 1, 2]), "each foreach iteration has its own i");
+```
+
+Apply the Level 4 rule. In the `for` loop, all three lambdas read the same $i$ when they are **called**, after the loop, when $\sigma_t(i) = 3$ (the value that made `i < 3` false), so they return 3, 3, 3. In the `foreach` loop there are three variables $i_0, i_1, i_2$ holding 0, 1 and 2, and each lambda reads its own.
+
+Until C# 4, `foreach` also declared one variable outside the loop. Eric Lippert called it "the single most common incorrect bug report we get" in *Closing over the loop variable considered harmful* (2009), explained the trade-off, and later added: "We are taking the breaking change. In C# 5, the loop variable of a foreach will be logically inside the loop". The `for` loop did not change. The fix there is to copy into a variable declared **inside** the body:
+
+```csharp
+var fixedFor = new List<Func<int>>();
+for (int i = 0; i < 3; i++)
+{
+    int copy = i; // a new variable on every pass of the loop body
+    fixedFor.Add(() => copy);
+}
+Check(fixedFor.Select(f => f()).SequenceEqual([0, 1, 2]), "copying into a body variable fixes the for loop");
+```
+
+### Level 6: a static lambda promises to capture nothing
+
+Capturing is easy to do by accident, and every capture costs an allocation (see [How it works underneath](#how-it-works-underneath)). C# 9 added the `static` modifier for lambdas: the compiler then refuses any use of locals, parameters or `this` from outside.
+
+```csharp
+Func<int, int> square = static x => x * x;
+Check(square(7) == 49, "a static lambda still uses its own parameters");
+```
+
+```csharp
+// sketch: does not compile
+int factor = 3;
+Func<int, int> scale = static x => x * factor;
+// error CS8820: A static anonymous function cannot contain a reference to 'factor'.
+```
+
+A static lambda may still use constants and static members. Use it in hot paths and library code, where an accidental capture would allocate on every call.
+
+### Level 7: events, the safe version of a public delegate
+
+The sensor exposes its listener list as an **event**. `EventHandler<T>` is the standard shape, `(object? sender, T e)`: who raised it, and the data.
+
+```csharp
+record TemperatureChangedEventArgs(int OldCelsius, int NewCelsius);
+
+class Sensor
+{
+    public event EventHandler<TemperatureChangedEventArgs>? TemperatureChanged;
+
+    public int Celsius { get; private set; } = 20;
+
+    public void Read(int celsius)
+    {
+        if (celsius == Celsius) return;
+        var change = new TemperatureChangedEventArgs(Celsius, celsius);
+        Celsius = celsius;
+        TemperatureChanged?.Invoke(this, change); // only code inside Sensor may raise it
+    }
+}
+```
+
+The display and the logger subscribe with `+=` and never touch each other:
+
+```csharp
+var sensor = new Sensor();
+var screen = new List<string>();
+var logFile = new List<string>();
+sensor.TemperatureChanged += (_, e) => screen.Add($"{e.NewCelsius} C");
+sensor.TemperatureChanged += (_, e) => logFile.Add($"{e.OldCelsius} -> {e.NewCelsius}");
+
+sensor.Read(25);
+sensor.Read(25); // no change, so no event
+Check(screen.SequenceEqual(["25 C"]), "the display saw one change");
+Check(logFile.SequenceEqual(["20 -> 25"]), "the logger saw the old and new values");
+```
+
+The sensor started at 20, so the display shows `25 C` and the logger writes `20 -> 25`, once each. Outside `Sensor`, the event is not a field. Raising it or assigning it does not compile:
+
+```csharp
+// sketch: does not compile outside Sensor
+sensor.TemperatureChanged(sensor, new TemperatureChangedEventArgs(25, 30));
+sensor.TemperatureChanged = null;
+// error CS0070: The event 'Sensor.TemperatureChanged' can only appear on the left hand side of += or -= (except when used from within the type 'Sensor')
+```
+
+Two notes on `TemperatureChangedEventArgs`. It is a `record` that does not derive from `EventArgs`: the old `where TEventArgs : EventArgs` constraint existed only up to .NET Framework 4.0. Deriving from `EventArgs` is still the convention for public libraries. And an event can take over `+=` and `-=` completely with **custom accessors**, just as a property can with `get` and `set`:
+
+```csharp
+class CountingButton
+{
+    readonly List<EventHandler> handlers = [];
+
+    public int SubscriberCount => handlers.Count;
+
+    public event EventHandler Clicked
+    {
+        add => handlers.Add(value);
+        remove => handlers.Remove(value);
+    }
+}
+```
+
+Adding the same handler twice and removing it once leaves `SubscriberCount` at 1: the accessors, not the compiler, now decide what `+=` and `-=` mean.
+
+### Level 8: a subscription is a reference, and references keep objects alive
+
+`publisher.TemperatureChanged += display.OnChanged` stores a delegate whose target is `display` inside the publisher. As long as the publisher lives, so does every subscriber it still lists. The garbage collector's rule is reachability:
+
+$$
+\operatorname{alive}(o) \iff \exists\, r \in R : r \to^{*} o
+$$
+
+where
+
+- $o$ is an object, here a `Display`;
+- $R$ is the set of roots: local variables in running methods, static fields, and a few runtime handles;
+- $a \to b$ means "$a$ holds a reference to $b$", and $\to^{*}$ means a chain of zero or more such steps;
+- $\exists$ means "there is at least one".
+
+The lab creates two displays in a helper method and keeps only a `WeakReference` to each, which does not count as a reference for the GC:
+
+```csharp
+[MethodImpl(MethodImplOptions.NoInlining)]
+static WeakReference Subscribe(Sensor publisher, bool unsubscribe)
+{
+    var display = new Display();
+    publisher.TemperatureChanged += display.OnChanged;
+    if (unsubscribe)
+    {
+        publisher.TemperatureChanged -= display.OnChanged;
+    }
+    return new WeakReference(display);
+}
+```
+
+```csharp
+var longLived = new Sensor();
+WeakReference subscribed = Subscribe(longLived, unsubscribe: false);
+WeakReference unsubscribed = Subscribe(longLived, unsubscribe: true);
+GC.Collect();
+GC.WaitForPendingFinalizers();
+GC.Collect();
+Check(subscribed.IsAlive, "the publisher's event keeps the forgotten display alive");
+Check(!unsubscribed.IsAlive, "after -= nothing points at the display, so the GC frees it");
+GC.KeepAlive(longLived);
+```
+
+Example: for the first display the chain is `longLived` (a root) $\to$ its `TemperatureChanged` field $\to$ the delegate $\to$ the delegate's target, the display. A chain exists, so $\operatorname{alive} = \text{true}$ even though no code will ever use that display again. For the second display, `-=` removed the delegate, no chain exists, and the collection frees it: $\operatorname{alive} = \text{false}$. In a real app this is the window that was closed but still reacts to a settings change. [Memory, GC and Span](13-memory-gc-and-span.qmd) covers the collector itself.
+
+## How it works underneath
+
+**A delegate is an object with two important fields.** In the .NET 10 runtime source (`Delegate.CoreCLR.cs`), `_target` is "the object we will invoke on", `null` for a static method, and `_methodPtr` points to the code to run. A multicast delegate (`MulticastDelegate.CoreCLR.cs`) adds `_invocationList`, an array of the single delegates, and `_invocationCount`. Delegates are **immutable**: `+` and `-` build a new delegate and never change the old one, which is what makes the snapshot in `TemperatureChanged?.Invoke(...)` safe. Invoking a delegate is:
+
+$$
+d(a) = m(\tau, a) \quad \text{for each } (\tau, m) \in L(d), \text{ in order}
+$$
+
+where
+
+- $d$ is the delegate and $a$ the arguments it is called with;
+- $L(d)$ is its invocation list from Level 3;
+- $\tau$ is an entry's target object (absent for a static method) and $m$ its method.
+
+Example: `bound` has one entry with $\tau = $ `shown` and $m = $ `Display.OnChanged`, so `bound(sensor, e)` runs `shown.OnChanged(sensor, e)`. `fromStatic` holds the static `Double`, so $\tau$ is absent:
+
+```csharp
+Display shown = new();
+EventHandler<TemperatureChangedEventArgs> bound = shown.OnChanged;
+Check(bound.Target == shown, "an instance-method delegate stores the object it calls");
+Check(bound.Method.Name == "OnChanged", "and the method to call on it");
+Transform fromStatic = Double;
+Check(fromStatic.Target is null, "a delegate to a static method has no target");
+```
+
+**A closure is a compiler-generated class.** A local variable cannot outlive its method's stack frame, so when a lambda captures one, the compiler moves the variable into a hidden class (Roslyn calls it a *display class*) and turns the lambda into a method of that class. Roughly:
+
+```csharp
+// sketch: roughly what the compiler generates for counter and increment
+sealed class DisplayClass
+{
+    public int counter;
+    public void Lambda() => counter++;
+}
+var closure = new DisplayClass();
+closure.counter = 0;
+Action increment = closure.Lambda;
+```
+
+Every later `counter` in the method becomes `closure.counter`, which is why the outer code and the lambda see the same variable. One display class instance is created **per scope** and holds all the captured variables of that scope, so two lambdas in one scope share it:
+
+```csharp
+object closure = increment.Target!;
+Check(closure.GetType().Name.Contains("DisplayClass"), "captured variables live in a compiler-generated class");
+Check(ReferenceEquals(closure, print.Target), "lambdas capturing variables of one scope share one closure object");
+```
+
+A lambda that captures **nothing** needs no display class. Roslyn compiles it to an instance method of a single shared object named `<>c`, creates the delegate the first time, and caches it in a static field. This is an implementation detail of the compiler, not a language rule, but it explains why non-capturing lambdas are free after the first call:
+
+```csharp
+static Func<int, int> MakeSquare() => x => x * x;
+Check(ReferenceEquals(MakeSquare(), MakeSquare()), "a lambda that captures nothing is cached and reused");
+Check(MakeSquare().Target!.GetType().Name == "<>c", "it is an instance method of one shared singleton");
+Check(!ReferenceEquals(MakeCounter(), MakeCounter()), "a capturing lambda needs a new closure each time");
+```
+
+**A field-like event is a private field plus two accessors.** The C# specification (§15.8.2, *Field-like events*) says the compiler "shall automatically create storage to hold the delegate, and shall create accessors for the event that add or remove event handlers to the delegate field. The addition and removal operations are thread safe". Roslyn's `add_TemperatureChanged` calls `Delegate.Combine` and then `Interlocked.CompareExchange` in a retry loop, rather than taking a lock. The lab confirms with reflection that `Sensor` has a private field named `TemperatureChanged` of type `EventHandler<TemperatureChangedEventArgs>` and a public method `add_TemperatureChanged`.
+
+Inside `Sensor`, the name `TemperatureChanged` means the private field, so it can be invoked or set to `null`. Outside, the same name means the event, and only the `add` and `remove` accessors are reachable. That is the whole difference between an event and a public delegate field.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Capturing a `for` loop variable in a lambda | Every lambda sees the final value: 3, 3, 3 | Copy into a variable declared inside the loop body, or use `foreach` |
+| Never unsubscribing from a long-lived publisher | Memory grows; closed windows still react to events | `-=` in `Dispose` or when the subscriber's life ends |
+| Unsubscribing with a new lambda that looks the same | `-=` silently removes nothing (the lab's `SubscriberCount` stays 2) | Keep the delegate in a variable or use a named method, and remove that |
+| `if (Changed != null) Changed(this, e);` with other threads subscribing | Rare `NullReferenceException` when the last handler leaves between the check and the call | `Changed?.Invoke(this, e)`, which reads the field once |
+| A public delegate field instead of an event | Any caller can wipe all subscribers with `= null` or raise it | Declare it with `event` |
+| Raising an event from outside its class | `error CS0070: The event 'Sensor.TemperatureChanged' can only appear on the left hand side of += or -= (except when used from within the type 'Sensor')` | Add a method on the owner that raises it |
+| Expecting every handler's return value | Only the last handler's result comes back | Call each entry of `GetInvocationList()` yourself |
+| One handler throws | The handlers after it never run | Catch inside handlers, or loop over `GetInvocationList()` with a `try` around each |
+
+## Interview questions
+
+### 1. What is the difference between an event and a public delegate field?
+
+**Answer.** Both store a multicast delegate, but an event exposes only `add` and `remove`. With a plain field, outside code can do anything:
+
+```csharp
+var leaky = new FieldSensor();
+var seen = new List<int>();
+leaky.Changed += celsius => seen.Add(celsius);
+leaky.Changed = null; // compiles: any caller can wipe every subscription
+leaky.Changed?.Invoke(30); // and any caller can raise it
+Check(seen.Count == 0, "the subscriber was silently removed by an outsider");
+```
+
+With `event`, both marked lines are `CS0070` errors outside the class. So an event is **encapsulation for a delegate**, the same way a property is encapsulation for a field.
+
+### 2. Why does a list of lambdas built in a `for` loop return 3, 3, 3?
+
+**Answer.** Lambdas capture variables, not values ($f()$ returns $\sigma_t(x)$ at call time). A `for` loop has a single `i`, and when the lambdas run after the loop, $\sigma_t(i) = 3$. `foreach` has had one variable per iteration since C# 5 (the specification notes that "earlier versions of C# declared v outside of the while loop"), so it gives 0, 1, 2. The fix for `for` is `int copy = i;` inside the body, which creates a new variable, and so a new captured slot, on every pass.
+
+### 3. How can events leak memory, and how do you prevent it?
+
+**Answer.** The publisher's delegate field references each subscriber through the delegate's target. If the publisher lives long (a static service, the main window) and the subscriber is short-lived, the subscriber stays reachable, $\operatorname{alive}(o)$ is true, and the GC can never free it. The lab proves it: the subscribed display is still alive after a full collection, the unsubscribed one is gone. Prevent it by unsubscribing when the subscriber's life ends, typically in `Dispose`; by letting the subscription return an `IDisposable` that unsubscribes; or, in UI frameworks, by using their weak-event helpers, which hold subscribers through weak references.
+
+### 4. What happens when one handler in the invocation list throws?
+
+**Answer.** Invocation is a plain loop over $L(d)$, so the exception propagates out of the call and the remaining handlers never run:
+
+```csharp
+var order = new List<string>();
+Action handlers = () => throw new InvalidOperationException("display failed");
+handlers += () => order.Add("logger");
+try
+{
+    handlers();
+}
+catch (InvalidOperationException e)
+{
+    order.Add(e.Message);
+}
+Check(order.SequenceEqual(["display failed"]), "an exception stops the rest of the invocation list");
+```
+
+The logger was never called. If every listener must run, loop over `GetInvocationList()` and catch around each call.
+
+### 5. Is `Changed?.Invoke(this, e)` thread-safe?
+
+**Answer.** It is safe against the **null race**: `?.` reads the field once into a temporary, and because delegates are immutable, that snapshot cannot change underneath the call. It does not promise freshness: a handler removed by another thread a moment earlier can still be called once, from the snapshot. For a field-like event, `+=` and `-=` are thread-safe too: the specification requires it, and Roslyn's generated accessors use `Interlocked.CompareExchange`.
+
+## Summary
+
+$$
+L(d_1 + d_2) = L(d_1) \mathbin{+\!\!+} L(d_2), \qquad f() \text{ at time } t \text{ returns } \sigma_t(x)
+$$
+
+where $L(d)$ is a delegate's invocation list, $\mathbin{+\!\!+}$ joins lists, $f$ is a lambda that captures a variable $x$, and $\sigma_t(x)$ is the value in $x$ when $f$ is called.
+
+Example: `first + second` has the list $(\texttt{first}, \texttt{second})$ and returns 2, the last result. The three `for`-loop lambdas share one `i` with $\sigma_t(i) = 3$ and return 3, 3, 3; the `foreach` lambdas have three variables and return 0, 1, 2.
+
+- A delegate is an immutable object holding a target and a method; `Func`, `Action` and `Predicate` cover most shapes.
+- `+` and `-` build new invocation lists; the result is the last handler's; an empty list is `null`.
+- Lambdas capture **variables**, stored in a compiler-generated closure object per scope. `static` lambdas capture nothing.
+- `for` has one loop variable, `foreach` one per iteration (C# 5 and later).
+- An event is a delegate field that outsiders can only `+=` and `-=`; raise it with `?.Invoke(this, e)`.
+- A subscription keeps the subscriber alive as long as the publisher: unsubscribe when you are done.
+
+## References
+
+- Microsoft Learn: [Delegates](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/delegates/), [How to combine delegates (multicast delegates)](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/delegates/how-to-combine-delegates-multicast-delegates), [Delegate.Remove](https://learn.microsoft.com/en-us/dotnet/api/system.delegate.remove).
+- Microsoft Learn: [Lambda expressions and anonymous functions](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/lambda-expressions) (capture of outer variables, static lambdas).
+- Microsoft Learn: [Events (C# programming guide)](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/events/), [Handling and raising events](https://learn.microsoft.com/en-us/dotnet/standard/events/), [EventHandler&lt;TEventArgs&gt;](https://learn.microsoft.com/en-us/dotnet/api/system.eventhandler-1).
+- C# language specification: [Field-like events (§15.8.2)](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/classes#1582-field-like-events) and [The foreach statement (§13.9.5)](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/statements#1395-the-foreach-statement).
+- [The history of C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-version-history): delegates and events in C# 1.0, lambdas in C# 3.0, static anonymous functions in C# 9.
+- Eric Lippert, [Closing over the loop variable considered harmful](https://learn.microsoft.com/en-us/archive/blogs/ericlippert/closing-over-the-loop-variable-considered-harmful) and [part two](https://learn.microsoft.com/en-us/archive/blogs/ericlippert/closing-over-the-loop-variable-part-two) (2009).
+- Jon Skeet, [The Beauty of Closures](https://csharpindepth.com/articles/Closures), and [*C# in Depth*, 4th edition](https://www.manning.com/books/c-sharp-in-depth-fourth-edition) (Manning, 2019).
+- Joseph Albahari, [*C# 12 in a Nutshell*](https://www.albahari.com/nutshell/) (O'Reilly, 2023), chapter 4, "Delegates", "Events" and "Lambda Expressions".
+- Erich Gamma, Richard Helm, Ralph Johnson and John Vlissides, *Design Patterns: Elements of Reusable Object-Oriented Software* (Addison-Wesley, 1994), "Observer".
+- Runtime source (.NET 10): [Delegate.CoreCLR.cs](https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/System.Private.CoreLib/src/System/Delegate.CoreCLR.cs) and [MulticastDelegate.CoreCLR.cs](https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/System.Private.CoreLib/src/System/MulticastDelegate.CoreCLR.cs).
+- Lab: [`labs/delegates-lambdas-and-events.cs`](labs/delegates-lambdas-and-events.cs). Run it from `programming-languages/csharp/labs` with `dotnet run delegates-lambdas-and-events.cs`.

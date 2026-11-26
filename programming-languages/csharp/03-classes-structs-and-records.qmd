@@ -1,0 +1,356 @@
+---
+title: "Classes, Structs and Records"
+description: "Designing C# types from constructors to interview level: constructor chaining, primary constructors, auto, init and required properties, the C# 14 field keyword, records and record structs with value equality and with expressions, and the mutable-struct copy trap."
+---
+
+## The problem
+
+A small banking app needs three kinds of type:
+
+- an **account**: Ada opens one with £50 and deposits £25. It has an identity (two accounts with £75 are still two accounts), its balance changes, and it must refuse a negative opening balance;
+- a **sum of money**: £5 is £5. Two `Money(5, "GBP")` values must be equal, print nicely, and be easy to copy with one part changed;
+- **settings**: a host name that must be supplied when the object is created and must never change afterwards.
+
+Before C# 9, the money type alone meant writing `Equals`, `GetHashCode`, `==`, `!=` and `ToString` by hand, about thirty lines that silently go wrong the day someone adds a field and forgets one of them. Settings needed a constructor with one parameter per property. This chapter shows the tools modern C# gives for each job, what the compiler generates for them, and the one trap, mutable structs, that no tool removes.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A pet, a banknote and a stamped form
+
+- **A class is a pet.** Two goldfish can look identical, but each is *that* fish. If you feed one, only that one is fed. Identity matters.
+- **A record is a banknote.** Nobody cares *which* £5 note is in your pocket: two £5 notes are equal. You never change a note; to "change" it you get a different note (`with`).
+- **A `required` `init` property is a form stamped at the counter.** You must fill the box before the clerk stamps it, and after the stamp nobody can change it.
+- **A mutable struct is a photocopy that you write on by mistake.** You think you are correcting the original, but you were handed a copy, and your correction goes in the bin.
+
+Eric Lippert, of the C# compiler team, put the last one bluntly in *Mutating Readonly Structs* (2008): "mutable value types are evil. Try to always make value types immutable."
+:::
+
+## From simple to advanced
+
+### Level 1: constructors establish the rules
+
+A constructor runs once, when the object is created, so it is the place to enforce rules that must always hold. A second constructor can **chain** to the first with `: this(...)`, so the rule lives in one place:
+
+```csharp
+class Account
+{
+    public string Owner { get; }
+    public decimal Balance { get; private set; }
+
+    public Account(string owner, decimal opening)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(opening);
+        Owner = owner;
+        Balance = opening;
+    }
+
+    public Account(string owner) : this(owner, 0m) { }
+
+    public void Deposit(decimal amount) => Balance += amount;
+}
+```
+
+```csharp
+var opened = new Account("Ada", 50m);
+opened.Deposit(25m);
+var empty = new Account("Bob");   // chains to the main constructor with 0
+```
+
+`opened.Balance` is 75 and `empty.Balance` is 0. `new Account("Eve", -1m)` throws `ArgumentOutOfRangeException`, which the lab checks. `Balance { get; private set; }` lets everyone read the balance but only the class change it, so "the balance changes only through `Deposit`" is a fact the compiler enforces.
+
+### Level 2: primary constructors
+
+C# 12 lets any class or struct put constructor parameters on the type declaration itself. The documentation's key sentence: "Primary constructor parameters are in scope throughout the class definition."
+
+```csharp
+class Greeter(string name)
+{
+    public string Greet() => $"Hello, {name}"; // name is in scope in every member
+}
+
+class TicketCounter(int last)
+{
+    public int Next() => ++last;               // captured, so the parameter lives on and changes
+}
+```
+
+`new Greeter("Ada").Greet()` is `"Hello, Ada"`. Two surprises follow from "they are parameters":
+
+1. They are **not properties**. `greeter.name` gives `error CS1061: 'Greeter' does not contain a definition for 'name' ...`. The documentation: "Primary constructor parameters aren't members of the class."
+2. They are **mutable**. `TicketCounter(100)` returns 101, then 102: the compiler stored `last` in a hidden field, and `++last` changes it.
+
+Records (Level 5) are different: there, the same syntax creates public properties.
+
+### Level 3: `init` and `required` properties
+
+An **auto-property** `{ get; set; }` is a property whose backing field the compiler writes for you. Two modifiers make it safer for data that is set once:
+
+```csharp
+class Settings
+{
+    public required string Host { get; init; } // must be set when the object is created, then frozen
+    public int Port { get; init; } = 443;      // optional, with a default
+}
+```
+
+```csharp
+var settings = new Settings { Host = "example.com" };
+```
+
+`settings.Port` keeps its default 443. `init` (C# 9) allows assignment only during construction, including in an object initializer; `required` (C# 11) makes the compiler insist that every creation sets the property. Breaking either rule is a compile error:
+
+```csharp
+// sketch: does not compile
+var missing = new Settings();
+// error CS9035: Required member 'Settings.Host' must be set in the object initializer or attribute constructor.
+settings.Host = "other";
+// error CS8852: Init-only property or indexer 'Settings.Host' can only be assigned in an object initializer,
+//               or on 'this' or 'base' in an instance constructor or an 'init' accessor.
+```
+
+Together they replace the old "constructor with ten parameters" for data objects, and they also fix the nullable warning CS8618 from [Nullable Types](02-nullable-types.qmd): a `required` non-nullable property is guaranteed to be set.
+
+### Level 4: the `field` keyword (C# 14)
+
+Adding one rule to an auto-property used to mean giving up the auto-property: declare a private field, write both accessors by hand. In C# 14, `field` inside an accessor names the compiler's backing field, so you write only the accessor that has a rule:
+
+```csharp
+class Thermostat
+{
+    public double Celsius
+    {
+        get;
+        set => field = value >= -273.15 ? value : throw new ArgumentOutOfRangeException(nameof(value));
+    }
+}
+```
+
+The setter enforces an invariant:
+
+$$
+\texttt{set}(v):\quad \texttt{field} :=
+\begin{cases}
+v, & v \ge -273.15 \\
+\text{unchanged, and throw}, & v < -273.15
+\end{cases}
+\qquad\Longrightarrow\qquad
+\texttt{Celsius} \ge -273.15 \ \text{ after every assignment}
+$$
+
+where
+
+- $v$ is the value being assigned, called `value` in the accessor;
+- `field` is the hidden backing field that the getter returns;
+- $-273.15$ is absolute zero in degrees Celsius, the lowest possible temperature.
+
+Example, as in the lab:
+
+1. `new Thermostat { Celsius = 21.5 }`: $21.5 \ge -273.15$, so `field` becomes 21.5.
+2. `room.Celsius = -300`: $-300 < -273.15$, so the setter throws before assigning, and `room.Celsius` is still 21.5.
+
+The documentation notes the one compatibility risk: in a type that already has a member called `field`, accessors now bind to the keyword. The compiler warns: `warning CS9258: In language version 14.0, the 'field' keyword binds to a synthesized backing field for the property. To avoid generating a synthesized backing field, and to refer to the existing member, use 'this.field' or '@field' instead.`
+
+### Level 5: records
+
+A `record` (C# 9) is a class whose identity is its data. One line declares the type, its constructor, its properties, and all of value equality:
+
+```csharp
+record Money(decimal Amount, string Currency);
+```
+
+```csharp
+var price = new Money(5m, "GBP");
+var same = new Money(5m, "GBP");
+var raised = price with { Amount = 7.5m };   // a copy with one property changed
+var (amount, currency) = raised;             // positional records deconstruct
+```
+
+The lab checks four results. `price == same` is true, although `ReferenceEquals(price, same)` is false: two objects, one value. `price.ToString()` is `Money { Amount = 5, Currency = GBP }`. `raised` is a new object with `Amount` 7.5, and `price.Amount` is still 5. `amount` and `currency` come out as 7.5 and `"GBP"`.
+
+The records feature specification defines the generated `Equals` precisely: it compares every field with `EqualityComparer<T>.Default`, and checks that both objects have the same `EqualityContract`, a generated property that returns the record's type:
+
+$$
+r_1 = r_2 \iff
+\operatorname{EC}(r_1) = \operatorname{EC}(r_2) \;\land\;
+\bigwedge_{i=1}^{k} \operatorname{eq}_{T_i}\big(r_1.f_i,\ r_2.f_i\big)
+$$
+
+where
+
+- $r_1$ and $r_2$ are two records;
+- $\operatorname{EC}(r)$ is `r.EqualityContract`, the runtime type of the record;
+- $k$ is the number of fields and $f_i$ is the $i$-th field, of type $T_i$;
+- $\operatorname{eq}_{T_i}$ is `EqualityComparer<T_i>.Default.Equals`, which uses the field type's own `Equals`.
+
+Example:
+
+1. `price` and `same`: $\operatorname{EC} = \texttt{Money}$ for both; $\operatorname{eq}(5, 5)$ and $\operatorname{eq}(\texttt{"GBP"}, \texttt{"GBP"})$ are true, so they are equal.
+2. `price` and `raised`: $\operatorname{eq}(5, 7.5)$ is false, so they are not equal.
+3. `price` and `fee`, where `record Fee(decimal Amount, string Currency) : Money(Amount, Currency);` and `fee = new Fee(5m, "GBP")`: every field matches, but $\texttt{Money} \ne \texttt{Fee}$, so `price != fee`. Without the contract, `price.Equals(fee)` would be true while `fee.Equals(price)` was false, breaking the symmetry that every hash table relies on.
+
+### Level 6: record structs
+
+`record struct` (C# 10) applies the same generation to a struct: value semantics for copying (from [Value and Reference Types](01-value-and-reference-types.qmd)) plus generated, typed, non-boxing `Equals`, `==` and `ToString`. One difference trips people up: the positional properties of a plain `record struct` are **read-write**. Add `readonly` to get `init`-only ones:
+
+```csharp
+record struct GridPoint(int X, int Y);                     // properties are { get; set; }
+
+readonly record struct Coordinate(double Lat, double Lon); // properties are { get; init; }
+```
+
+```csharp
+var cell = new GridPoint(1, 2);
+cell.X = 5;                                  // record struct properties are read-write
+var london = new Coordinate(51.5, -0.1);
+```
+
+`cell == new GridPoint(5, 2)` and `london == new Coordinate(51.5, -0.1)` are both true. Compare chapter 1, where a plain struct had no `==` at all (CS0019).
+
+### Level 7: the mutable-struct copy trap
+
+This is the bug Lippert's post is about. A struct with a method that changes it, stored three ways:
+
+```csharp
+struct MutableCounter
+{
+    public int Count;
+
+    public void Increment() => Count++;
+}
+
+class Holder
+{
+    public MutableCounter Counter { get; } = new(); // a property: every read returns a copy
+    public readonly MutableCounter Frozen = new();  // a readonly field: a value outside the constructor
+    public MutableCounter Plain = new();            // a plain field: a variable
+}
+```
+
+```csharp
+var holder = new Holder();
+holder.Counter.Increment();  // increments a temporary copy returned by the getter
+holder.Frozen.Increment();   // increments a defensive copy of the readonly field
+holder.Plain.Increment();    // a plain field is a variable: this one really changes
+```
+
+All three lines compile without a warning, but only `holder.Plain.Count` becomes 1; the other two stay 0. The rule comes from the specification's method-invocation section, which Lippert quotes: if the receiver "is not classified as a variable, then a temporary local variable of E's type is created and the value of E is assigned to that variable".
+
+$$
+E.M() \;\equiv\;
+\begin{cases}
+M \text{ runs on } \operatorname{loc}(E), & E \text{ is a variable} \\
+t := E;\ M \text{ runs on } t, & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $E$ is an expression of struct type and $M$ is a method that may change the struct;
+- a **variable** is a storage location: a local, a parameter, an array element, or a non-readonly field;
+- $\operatorname{loc}(E)$ is the storage location of $E$, and $t$ is a hidden temporary.
+
+Example:
+
+1. `holder.Plain` is a field, so a variable: `Increment` changes the stored struct, and `Count` goes from 0 to 1.
+2. `holder.Counter` is a property call that **returns a value**: $t$ gets a copy with `Count = 0`, $t$ becomes 1 and is thrown away; the stored struct is still 0.
+3. `holder.Frozen` is a `readonly` field, and Lippert's summary is "Readonly fields are not variables outside of the constructor". So $t$ is a copy again, and `Count` stays 0.
+
+Assigning a field through a property is caught, because that can never be useful: `robot.Position.X = 5` gives `error CS1612: Cannot modify the return value of 'Robot.Position' because it is not a variable`. A method call is not caught, because the compiler cannot know whether the method mutates. The cure is the one from chapter 1: make structs immutable (`readonly struct`, `readonly record struct`), and the trap disappears because there is nothing to lose.
+
+## How it works underneath
+
+All of these features are **compiler work**: the runtime sees ordinary classes, fields and methods. The lab uses reflection to look at what was generated.
+
+- **Primary constructor parameters** that a member uses are stored in a private field with an unspeakable name. For `TicketCounter(int last)` the lab finds a field named `<last>P`. The feature specification calls these "capture fields" and says a likely strategy is "a private field using a mangled name". A parameter used only to initialise a property is not captured; using it both ways stores it twice, and the compiler warns `CS9124: Parameter 'int start' is captured into the state of the enclosing type and its value is also used to initialize a field, property, or event.`
+- **`field`** is the same backing field an auto-property always had: the lab finds `<Celsius>k__BackingField` on `Thermostat`.
+- **`init`** is an ordinary `set` accessor whose return type carries the required modifier `IsExternalInit`. The `init` feature specification chose a modifier over an attribute on purpose: compilers that do not understand it "will ignore the accessor", so an old compiler cannot call the setter after construction. The lab checks the modifier with `GetRequiredCustomModifiers`.
+- **`required`** is recorded as `[RequiredMember]` on the property (and on the type), and checked at every `new` by the compiler, not at run time. The lab checks the attribute.
+- **Records** get, per the specification: a protected virtual `EqualityContract`, `Equals(object)`, a typed `Equals(Money?)`, `GetHashCode`, `==` and `!=`, `ToString` with a helper `PrintMembers`, `Deconstruct`, a protected **copy constructor** `Money(Money original)`, and a public method with the reserved name `<Clone>$` that calls it.
+
+A `with` expression is therefore "clone, then set": it calls `<Clone>$`, then runs the `init` accessors listed in the braces on the clone.
+
+$$
+\big(r \ \texttt{with}\ \lbrace f_j = v \rbrace\big).f_i =
+\begin{cases}
+v, & i = j \\
+r.f_i, & i \ne j
+\end{cases}
+$$
+
+where
+
+- $r$ is the original record and $f_i$ its $i$-th property;
+- $f_j = v$ is the assignment written inside the braces;
+- the copy constructor copies each field's **value**, so for a reference-type field the copy gets the same reference.
+
+Example: `price` is $(\texttt{Amount} = 5, \texttt{Currency} = \texttt{"GBP"})$. `price with { Amount = 7.5m }` has $j = \texttt{Amount}$, so the result is $(7.5, \texttt{"GBP"})$: the Amount case takes $v = 7.5$, and Currency keeps $r.f_i = \texttt{"GBP"}$. Interview question 4 shows what "the same reference" means for a list.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Creating an object without a `required` property | `error CS9035: Required member 'Settings.Host' must be set in the object initializer or attribute constructor.` | Set it in the initializer, or mark a constructor that sets it with `[SetsRequiredMembers]` |
+| Assigning an `init` property after creation | `error CS8852: Init-only property or indexer 'Settings.Host' can only be assigned in an object initializer, ...` | Create a new object, or use `with` on a record |
+| Reading a primary constructor parameter from outside | `error CS1061: 'Greeter' does not contain a definition for 'name' ...` | Declare a property: `public string Name { get; } = name;`, or use a record |
+| Capturing a primary constructor parameter **and** copying it into a property | `warning CS9124: Parameter 'int start' is captured into the state of the enclosing type and its value is also used to initialize a field, property, or event.` | Use only the property inside members |
+| Expecting a plain `record struct` to be immutable | `cell.X = 5` compiles and changes it | Declare `readonly record struct` |
+| Calling a mutating method on a struct property or `readonly` field | Silently, nothing changes (Level 7) | Make the struct immutable, or store it in a plain field or local |
+| Putting a `List<T>` in a record and expecting value equality or a deep copy | Two records with equal lists are unequal; `with` copies share one list | Compare with `SequenceEqual`, use an immutable collection, or copy the list yourself |
+| Using records as Entity Framework entities | Change tracking needs identity; the documentation says records "aren't appropriate for use as entity types in Entity Framework Core" | Use a class for entities and records for values |
+
+## Interview questions
+
+### 1. Class, struct, record or record struct: how do you choose?
+
+**Answer.** Two independent questions. First, **identity or value?** If two instances with the same data are still different things (an account, a customer, a window), use a class. If they are interchangeable (money, a date range, a coordinate), use a record kind, which generates value equality. Second, **reference or copy?** Small, immutable values that are created often and stored in large arrays suit a struct (Microsoft's guidelines say under 16 bytes, immutable, rarely boxed); everything else suits a reference type. That gives four answers: class (identity), `record` (value, by reference, can have inheritance), `readonly record struct` (small value, by copy), plain `struct` (low-level, performance-tuned code). `record struct` without `readonly` is rarely what you want, because of Level 7.
+
+### 2. What does the compiler generate for `record Money(decimal Amount, string Currency)`?
+
+**Answer.** Public `init` properties `Amount` and `Currency` with backing fields; a constructor taking both; `Deconstruct(out decimal, out string)`; a protected virtual `EqualityContract` returning `typeof(Money)`; `Equals(object)`, `Equals(Money?)` and `GetHashCode` over every field plus the contract; `operator ==` and `operator !=`; `ToString` and `PrintMembers` giving `Money { Amount = 5, Currency = GBP }`; a protected copy constructor `Money(Money)`; and the clone method `<Clone>$` that `with` calls. The lab finds `<Clone>$` and `EqualityContract` with reflection. The specification lets you declare `EqualityContract`, `Equals(Money?)`, `GetHashCode`, `PrintMembers`, `ToString`, `Deconstruct` and the copy constructor yourself, and the compiler then uses yours (it warns if you write only one of `Equals` and `GetHashCode`). Declaring `==`, `!=` or the `Equals(object)` override yourself is an error: they always delegate to `Equals(Money?)`.
+
+### 3. Why does `holder.Frozen.Increment()` not change anything?
+
+**Answer.** `Frozen` is a `readonly` field of a mutable struct. Outside the constructor, a readonly field is classified as a **value**, not a variable, so the method-invocation rule copies it into a hidden temporary and calls `Increment` on the temporary. This is the compiler protecting the `readonly` promise: if the call ran on the field itself, the "read-only" field would change. The same happens for `holder.Counter`, because a property getter returns a value. The fix is not to remove `readonly`, but to make the struct immutable; and when a struct is declared `readonly struct`, the compiler knows no method can mutate it, so it can call methods on the field directly without the defensive copy.
+
+### 4. Is `with` a deep copy?
+
+```csharp
+var basket = new Basket(["apple"]);
+var copy = basket with { };      // a new Basket that shares the same list
+copy.Items.Add("pear");
+```
+
+**Answer.** No, it is **shallow**. `with` calls the copy constructor, which copies each field's value, and for a `List<string>` field the value is a reference. `basket` and `copy` are two `Basket` objects pointing at one list, so after `copy.Items.Add("pear")`, `basket.Items.Count` is 2. They are even equal, `basket == copy`, because record equality compares the field with `EqualityComparer<List<string>>.Default`, which is reference equality for a list, and both hold the same reference. The documentation says so: "The result of a with expression is a shallow copy." For a truly immutable record, use immutable members such as `ImmutableArray<T>`.
+
+### 5. Primary constructors in a class versus in a record: what is the difference?
+
+**Answer.** In a `record`, `record Money(decimal Amount, string Currency)` creates public `init` properties named `Amount` and `Currency` (read-write ones in a plain `record struct`). In a class or ordinary struct, `class Greeter(string name)` creates **only parameters**: they are in scope throughout the body, captured into hidden fields like `<last>P` when members use them, mutable, and invisible from outside (`greeter.name` is CS1061). Use a class primary constructor for dependency injection and simple state; when you want properties, declare them explicitly or use a record.
+
+## Summary
+
+$$
+\text{record: } r_1 = r_2 \iff \operatorname{EC}(r_1) = \operatorname{EC}(r_2) \land \bigwedge_{i} \operatorname{eq}(r_1.f_i,\ r_2.f_i)
+\qquad
+\text{struct: } E.M() \text{ on a non-variable } E \text{ runs on a copy}
+$$
+
+where $\operatorname{EC}$ is the generated `EqualityContract`, $f_i$ are the record's fields, $\operatorname{eq}$ is `EqualityComparer<T>.Default.Equals`, and a non-variable $E$ is a property result or a `readonly` field outside the constructor.
+
+Example: `Money(5, "GBP") == Money(5, "GBP")` because both contracts are `Money` and both fields match, while `Fee(5, "GBP")` differs from them by contract alone; `holder.Counter.Increment()` leaves `Count` at 0 because it ran on a copy.
+
+- Constructors enforce invariants; chain them with `: this(...)` so a rule lives in one place.
+- Primary constructor parameters (C# 12) are captured parameters in classes, but public properties in records.
+- `init` (C# 9) freezes a property after creation; `required` (C# 11) forces callers to set it.
+- `field` (C# 14) adds validation to an auto-property without a hand-written backing field.
+- Records (C# 9) and record structs (C# 10) generate value equality, `ToString`, deconstruction and `with`; `with` is shallow.
+- Never mutate a struct through a property or `readonly` field; prefer `readonly struct` and `readonly record struct`.
+
+## References
+
+- Microsoft Learn: [Instance constructors](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/instance-constructors), [Tutorial: primary constructors](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/tutorials/primary-constructors), [Properties](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/classes-and-structs/properties), [`init`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/init), [`required`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/required), [`field`](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/keywords/field), [Records](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/builtin-types/record), [`with` expression](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/with-expression), [What's new in C# 14](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-14).
+- C# feature specifications: [Records (C# 9)](https://github.com/dotnet/csharplang/blob/main/proposals/csharp-9.0/records.md), [Required members (C# 11)](https://github.com/dotnet/csharplang/blob/main/proposals/csharp-11.0/required-members.md), [Primary constructors (C# 12)](https://github.com/dotnet/csharplang/blob/main/proposals/csharp-12.0/primary-constructors.md), [field keyword (C# 14)](https://github.com/dotnet/csharplang/blob/main/proposals/csharp-14.0/field-keyword.md).
+- Eric Lippert, [Mutating Readonly Structs](https://learn.microsoft.com/en-us/archive/blogs/ericlippert/mutating-readonly-structs) (14 May 2008).
+- [Choosing between class and struct](https://learn.microsoft.com/en-us/dotnet/standard/design-guidelines/choosing-between-class-and-struct) (Framework Design Guidelines).
+- Jon Skeet, [*C# in Depth*](https://www.manning.com/books/c-sharp-in-depth-fourth-edition), 4th ed., Manning, 2019, chapter 8 on properties and section 13.4 "Declaring structs as readonly" ([contents](https://csharpindepth.com/contents)); Joseph Albahari, *C# 12 in a Nutshell*, O'Reilly, 2023 (classes, structs, records, primary constructors).
+- Lab: [`labs/classes-structs-and-records.cs`](labs/classes-structs-and-records.cs). Run it from `programming-languages/csharp/labs` with `dotnet run classes-structs-and-records.cs`.

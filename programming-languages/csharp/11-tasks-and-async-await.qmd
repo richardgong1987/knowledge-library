@@ -1,0 +1,374 @@
+---
+title: "Tasks and async/await"
+description: "C# asynchrony from the first Task to the compiler's state machine: Task and Task<T>, why await does not block a thread, WhenAll and WhenAny time math, cancellation, Task.Run, ValueTask, SynchronizationContext and ConfigureAwait(false), async void, and the sync-over-async deadlock."
+---
+
+## The problem
+
+A web page needs three things before it can render: the user (a 30 ms database call), their orders (50 ms) and some adverts (20 ms). Written the obvious, blocking way, the server thread handling the request sits idle for $30 + 50 + 20 = 100$ ms doing nothing but waiting. With 1,000 requests at once, that is 1,000 threads, each with its own stack, almost all of them asleep. In a desktop app it is worse: the one UI thread waits, and the window freezes.
+
+**Asynchronous** code waits without holding a thread. A `Task<T>` represents an operation that will produce a `T` later, and `await` says "come back here when it is done; until then, give my thread to somebody else". Started together and awaited with `Task.WhenAll`, the three calls finish in about $\max(30, 50, 20) = 50$ ms, and no thread waits for any of them.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Making breakfast
+
+Microsoft's own tutorial on `async` uses a breakfast. You put the bread in the toaster, and instead of staring at the toaster you start the eggs, then the bacon. When the toaster pops, you come back to it. In the tutorial's words: *"Cooking breakfast is a good example of asynchronous work that isn't parallel. One person (or thread) can handle all the tasks."*
+
+- **A `Task` is the toaster's promise:** "there will be toast". You can hold the promise before the toast exists.
+- **`await` is "come back when it pops".** You do not stand at the toaster. You go and do other work, and somebody calls you back.
+- **Blocking (`.Result`, `.Wait()`) is staring at the toaster.** It works, but nobody else gets your hands. If the toaster needs *you* to press its button before it can pop, you wait forever: that is the deadlock in Level 6.
+- **`Task.Run` is asking a second cook** to do something that really needs hands, such as chopping a mountain of vegetables (CPU work).
+
+Stephen Toub, who works on the .NET runtime, wrote the long explanation of how the compiler makes this work: *How Async/Await Really Works in C#* (2023).
+:::
+
+## From simple to advanced
+
+### Level 1: a task is a promise, and `await` unwraps it
+
+`Task.FromResult(42)` is a task that is already finished, and `await ready` gives 42. The interesting case is a task that is **not** finished yet. `TaskCompletionSource<int>` makes one by hand, a promise that the lab completes later:
+
+```csharp
+static async Task<int> AddWhenReadyAsync(Task<int> input, int extra, List<string> log)
+{
+    log.Add("start");        // runs synchronously, on the caller's thread
+    int value = await input; // input is not complete: return to the caller here
+    log.Add("resumed");      // runs later, when input completes
+    return value + extra;
+}
+```
+
+```csharp
+var log = new List<string>();
+var gate = new TaskCompletionSource<int>();
+Task<int> sum = AddWhenReadyAsync(gate.Task, 3, log);
+log.Add("caller continues");
+Check(!sum.IsCompleted, "the method is suspended at its await");
+gate.SetResult(2); // completing the promise resumes the method
+Check(sum.IsCompleted, "SetResult ran the rest of the method inline, on this thread");
+Check(await sum == 5, "2 + 3");
+Check(log.SequenceEqual(["start", "caller continues", "resumed"]), "runs synchronously up to the first await");
+```
+
+The log reads `start, caller continues, resumed`. Three facts follow:
+
+1. An `async` method runs **synchronously** until its first `await` of an unfinished task. `async` alone does not create a thread.
+2. At that `await`, the method **returns** an unfinished `Task<int>` to its caller, which carries on.
+3. When `input` completes, the rest of the method runs, and `sum` completes with $2 + 3 = 5$. Here there is no context to return to, so `SetResult` runs the rest of `AddWhenReadyAsync` right away, on the thread that called it: `sum.IsCompleted` is already true on the next line.
+
+If `input` had already been complete, `await` would not have suspended at all: it checks `IsCompleted` first and simply continues.
+
+### Level 2: `await` does not block a thread
+
+The lab starts 1,000 delays of 50 ms and awaits them all:
+
+```csharp
+var clock = Stopwatch.StartNew();
+await Task.WhenAll(Enumerable.Range(0, 1000).Select(_ => Task.Delay(50)));
+Check(clock.ElapsedMilliseconds < 2000, "1000 waits of 50 ms take far less than 1000 x 50 ms");
+```
+
+It finishes in about 50 ms. A waiting `Task.Delay` is only a timer entry; no thread sleeps inside it. Compare blocking:
+
+$$
+T_{\text{one thread, blocking}} = n \cdot d, \qquad T_{\text{awaiting}} \approx d, \qquad \text{threads parked while waiting} = \begin{cases} n & \text{blocking, all at once} \\ 0 & \text{awaiting} \end{cases}
+$$
+
+where
+
+- $n$ is the number of operations;
+- $d$ is how long each one waits (for a timer, a network reply or a disk);
+- $T$ is the total time until all have finished.
+
+Example: $n = 1000$ and $d = 50$ ms. One thread calling `Thread.Sleep(50)` a thousand times needs $1000 \cdot 50 = 50{,}000$ ms. A thousand threads sleeping at once need about 50 ms but park 1,000 threads. Awaiting needs about $d = 50$ ms and parks none; the lab allows up to 2,000 ms. This is the whole point of `async` on a server: the thread count stays near the number of CPU cores no matter how many requests are waiting for I/O.
+
+### Level 3: sum versus max, `WhenAll` and `WhenAny`
+
+The problem's page, loaded one `await` after another and then all at once:
+
+```csharp
+static async Task<string> LoadAsync(string name, int milliseconds, CancellationToken token = default)
+{
+    await Task.Delay(milliseconds, token);
+    return name;
+}
+```
+
+```csharp
+clock.Restart();
+string user = await LoadAsync("user", 30);
+string orders = await LoadAsync("orders", 50);
+string ads = await LoadAsync("ads", 20);
+long sequential = clock.ElapsedMilliseconds; // about 30 + 50 + 20 = 100
+
+clock.Restart();
+string[] all = await Task.WhenAll(LoadAsync("user", 30), LoadAsync("orders", 50), LoadAsync("ads", 20));
+long concurrent = clock.ElapsedMilliseconds; // about max(30, 50, 20) = 50
+```
+
+$$
+T_{\text{sequential}} = \sum_{i=1}^{k} d_i, \qquad T_{\texttt{WhenAll}} \approx \max_i d_i, \qquad T_{\texttt{WhenAny}} \approx \min_i d_i
+$$
+
+where
+
+- $k$ is the number of independent operations;
+- $d_i$ is the duration of operation $i$;
+- `WhenAll` completes when the last task does, `WhenAny` when the first one does.
+
+Example: $d = (30, 50, 20)$. Sequential: $30 + 50 + 20 = 100$ ms. `WhenAll`: $\max(30, 50, 20) = 50$ ms. `WhenAny`: $\min(30, 50, 20) = 20$ ms. The lab checks $T_{\text{sequential}} \ge 90$, $T_{\texttt{WhenAll}} \ge 45$, and that the concurrent version is faster. `WhenAll` returns the results in **argument order** (`user, orders, ads`), not in the order they finished. The key is that all three tasks are **started** before any is awaited: calling `LoadAsync` starts the work, `await` only waits for it.
+
+`WhenAny` returns the first task to finish, so it fits "use the cache or the database, whichever answers first". The loser keeps running unless you cancel it:
+
+```csharp
+using var cts = new CancellationTokenSource();
+Task<string> cache = LoadAsync("cache", 20);
+Task<string> database = LoadAsync("database", 5000, cts.Token);
+Task<string> winner = await Task.WhenAny(cache, database);
+cts.Cancel(); // the 5-second load stops now instead of running on
+Check(await winner == "cache", "the 20 ms task wins");
+var canceled = await CatchAsync<TaskCanceledException>(database);
+Check(database.IsCanceled && canceled.Message == "A task was canceled.", "the loser ends as Canceled");
+```
+
+### Level 4: cancellation and `Task.Run`
+
+A `CancellationToken` is a read-only flag that a `CancellationTokenSource` can set. Cancellation is **cooperative**: nothing is killed. Code that receives the token checks it, as `Task.Delay` does above, or as this CPU loop does every million iterations:
+
+```csharp
+static long SumTo(long n, CancellationToken token)
+{
+    long total = 0;
+    for (long i = 1; i <= n; i++)
+    {
+        if (i % 1_000_000 == 0) token.ThrowIfCancellationRequested();
+        total += i;
+    }
+    return total;
+}
+```
+
+`await` alone would not help here: the loop never waits for anything, so it would hold whatever thread runs it. `Task.Run` queues it to the **thread pool**, so the caller (a UI thread, for example) stays free:
+
+```csharp
+Check(await Task.Run(() => SumTo(10_000_000, CancellationToken.None)) == 50_000_005_000_000, "n(n+1)/2");
+using var stopSoon = new CancellationTokenSource(TimeSpan.FromMilliseconds(30));
+var stopped = await CatchAsync<OperationCanceledException>(Task.Run(() => SumTo(long.MaxValue, stopSoon.Token)));
+Check(stopped.Message == "The operation was canceled.", "the loop noticed the token and stopped");
+```
+
+$$
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+$$
+
+where $n$ is the last number added. Example: $n = 10^7$ gives $\frac{10{,}000{,}000 \cdot 10{,}000{,}001}{2} = 50{,}000{,}005{,}000{,}000$, the value the lab checks. The second call would run for centuries, but the token source cancels itself after 30 ms, and the next check at a multiple of $10^6$ throws `OperationCanceledException`. Microsoft's guidance in *Asynchronous programming scenarios* draws the line: for I/O-bound work, "use the async modifier and await expression without the Task.Run method"; for CPU-bound work, await, "but spawn off the work on another thread" with `Task.Run`.
+
+### Level 5: `ValueTask` for the fast path
+
+Every unfinished operation needs a `Task` object on the heap. When the answer is often available immediately, such as a cache hit, allocating a `Task` just to hold it is waste (a `Task.FromResult(700)` costs 72 bytes in a scratch measurement). `ValueTask<T>` is a struct that holds either the result itself or a `Task<T>`:
+
+```csharp
+static ValueTask<int> GetPriceAsync(Dictionary<string, int> cache, string item)
+{
+    if (cache.TryGetValue(item, out int price))
+        return ValueTask.FromResult(price); // completed synchronously: no Task object
+    return new ValueTask<int>(LoadPriceAsync(cache, item));
+}
+```
+
+```csharp
+long before = GC.GetAllocatedBytesForCurrentThread();
+ValueTask<int> hit = GetPriceAsync(prices, "tea");
+long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+Check(hit.IsCompletedSuccessfully && hit.Result == 7 && allocated == 0, "a cache hit allocates nothing");
+```
+
+The first call misses and waits for the slow path; the second call finds 7 in the cache and allocates **0 bytes**. The price is a stricter contract. The `ValueTask<TResult>` documentation lists what must never be done with one: awaiting it more than once, calling `AsTask` more than once, or reading `.Result` before it has completed. Return `Task` by default; use `ValueTask` when measurements show the synchronous path is common and hot.
+
+### Level 6: `SynchronizationContext`, `ConfigureAwait(false)` and the deadlock
+
+A UI framework only lets its own UI thread touch the window. So when an `await` in a button handler resumes, it must resume **on the UI thread**. The mechanism is `SynchronizationContext.Current`: at an `await`, the awaiter captures the current context, and when the task completes it calls the context's `Post` method to schedule the rest of the method. A console app has no context (`Current` is `null`, which the lab checks first), so continuations run on the thread pool. ASP.NET Core has none either.
+
+The lab installs a context that counts `Post` calls, then starts two awaits, one plain and one with `ConfigureAwait(false)`:
+
+```csharp
+static async Task DelayAsync(bool captureContext) =>
+    await Task.Delay(10).ConfigureAwait(captureContext);
+```
+
+```csharp
+var counting = new CountingContext();
+SynchronizationContext.SetSynchronizationContext(counting);
+Task captured = DelayAsync(captureContext: true);
+Task free = DelayAsync(captureContext: false);
+SynchronizationContext.SetSynchronizationContext(null);
+await Task.WhenAll(captured, free);
+Check(counting.Posts == 1, "only the default await resumed through the context");
+```
+
+`Posts` is 1: `ConfigureAwait(false)` means "I do not need to come back to this context; any thread will do". Library code, which does not know whether it is running under a UI, should use it on every `await`. App code that touches the UI after the `await` must not.
+
+Now the famous deadlock. The lab's `SingleThreadContext` behaves like a UI thread: `Post` only puts the callback in a queue, and only the owning thread runs the queue. Then the owning thread blocks on a task, as `.Result` or `.Wait()` would:
+
+```csharp
+var ui = new SingleThreadContext();
+SynchronizationContext.SetSynchronizationContext(ui);
+Task blocked = DelayAsync(captureContext: true);
+bool finished = blocked.Wait(200); // like .Result: this thread waits for the task...
+Check(!finished, "...but the continuation is queued for this same thread: deadlock");
+Check(SpinWait.SpinUntil(() => { ui.RunPending(); return blocked.IsCompleted; }, 2000), "pumping the queue frees it");
+Task notBlocked = DelayAsync(captureContext: false);
+Check(notBlocked.Wait(2000), "with ConfigureAwait(false) the continuation runs on the pool instead");
+SynchronizationContext.SetSynchronizationContext(null);
+```
+
+The delay finishes after 10 ms and posts the rest of `DelayAsync` to the queue. But the only thread that runs the queue is blocked in `Wait`, waiting for `DelayAsync` to finish. Each waits for the other. The lab uses `Wait(200)` so the deadlock times out instead of hanging, then pumps the queue as a UI message loop would. The real fix is **async all the way**: `await` the task instead of blocking on it. `ConfigureAwait(false)` inside the library also avoids this particular deadlock, but blocking still wastes a thread.
+
+## How it works underneath
+
+**The state machine.** The compiler rewrites every `async` method into a type that implements `IAsyncStateMachine`, plus a small stub with the original signature. The stub creates the state machine, stores the parameters in it, sets its state to $-1$ and calls `MoveNext()`. Each `await` becomes a numbered resumption point. In the shape of the release-build listings in Toub's post, the lab's `AddWhenReadyAsync` becomes:
+
+```csharp
+// sketch: the shape of the generated MoveNext for AddWhenReadyAsync, after Stephen Toub's release-build listings
+void MoveNext()
+{
+    int result;
+    try
+    {
+        TaskAwaiter<int> awaiter;
+        if (<>1__state != 0)              // first entry: run up to the await
+        {
+            log.Add("start");
+            awaiter = input.GetAwaiter();
+            if (!awaiter.IsCompleted)     // not finished: suspend
+            {
+                <>1__state = 0;           // remember where to resume
+                <>u__1 = awaiter;         // keep the awaiter in a field
+                <>t__builder.AwaitUnsafeOnCompleted(ref awaiter, ref this);
+                return;                   // the thread goes back to the caller
+            }
+        }
+        else                              // second entry: resuming after the await
+        {
+            awaiter = <>u__1;
+            <>1__state = -1;
+        }
+        int value = awaiter.GetResult();  // the value, or the task's exception rethrown
+        log.Add("resumed");
+        result = value + extra;
+    }
+    catch (Exception e)
+    {
+        <>1__state = -2;
+        <>t__builder.SetException(e);     // the returned Task becomes Faulted
+        return;
+    }
+    <>1__state = -2;
+    <>t__builder.SetResult(result);       // the returned Task becomes RanToCompletion
+}
+```
+
+$$
+s \in \lbrace -1, 0, 1, \dots, k-1, -2 \rbrace
+$$
+
+where
+
+- $s$ is the field `<>1__state`;
+- $-1$ means "running" (or not yet started);
+- $0$ to $k - 1$ mean "suspended at await number $s$", for a method with $k$ awaits;
+- $-2$ means "finished", successfully or with an exception.
+
+Example: `AddWhenReadyAsync` has $k = 1$ await. Its state goes $-1$ (logs `start`) $\to 0$ (suspended, `sum.IsCompleted` is false) $\to -1$ (resumed after `gate.SetResult(2)`) $\to -2$ (finished with 5). Local variables that live across an `await`, such as `log` and `extra`, become fields of the state machine, which is why they survive while no thread is running the method. In a release build the state machine is a **struct**, and it is copied to the heap only the first time the method actually suspends, so a method that completes synchronously allocates nothing for it. In debug builds the compiler generates a class; the lab checks the `AsyncStateMachine` attribute and finds a class under `dotnet run`'s default Debug configuration.
+
+**`AwaitUnsafeOnCompleted`.** This builder call boxes the state machine (once), and registers its `MoveNext` as the continuation of the awaited task, together with the captured `ExecutionContext` (which carries `AsyncLocal<T>` values) and, unless `ConfigureAwait(false)` was used, the captured `SynchronizationContext` or `TaskScheduler`. When the task completes, its completion code posts `MoveNext` to the captured context if there is one. Otherwise it usually runs `MoveNext` immediately on the completing thread, as `gate.SetResult(2)` did in Level 1, or queues it to the thread pool.
+
+**Where the waiting happens.** For network I/O, the operating system does the waiting: the socket is registered with the kernel (I/O completion ports on Windows, `epoll` on Linux, `kqueue` on macOS), and a small number of runtime threads collect the completions and resume the right state machines. For `Task.Delay`, a single timer queue fires the callbacks. In neither case does a thread sit inside your method, which is what Level 2 measured.
+
+**Exceptions.** An exception thrown after the first `await` cannot reach the caller directly: the caller has already returned. The state machine stores it in the task (`SetException`), and `await` rethrows it with its original stack trace via `ExceptionDispatchInfo` ([Exceptions and Disposal](10-exceptions-and-disposal.qmd)). If several tasks in a `WhenAll` fail, `await` rethrows the first and `task.Exception` holds them all in an `AggregateException`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `async void` methods (except event handlers) | The caller cannot await or catch; an exception after an `await` crashes the process: `Unhandled exception. System.IO.IOException: disk full` | Return `Task`; only event handlers may be `async void` |
+| `.Result` or `.Wait()` on a UI thread or classic ASP.NET | The app freezes forever (Level 6) | `await` all the way up; `ConfigureAwait(false)` in libraries |
+| Awaiting independent calls one by one | Latency is $\sum d_i$ instead of $\max d_i$ | Start them all, then `await Task.WhenAll(...)` |
+| Wrapping I/O in `Task.Run(() => client.GetString(url))` | A pool thread blocks for the whole request | Call the real async API: `await client.GetStringAsync(url)` |
+| Long CPU loop in an `async` method without `Task.Run` | The UI freezes even though the method is `async` | `await Task.Run(() => Compute())` |
+| Awaiting a `ValueTask` twice | Undefined behaviour: wrong results or exceptions | Await once, or call `.AsTask()` once and keep the `Task` |
+| Ignoring the `CancellationToken` parameter | Cancelled requests keep using resources | Pass the token down to every async call and check it in loops |
+| Forgetting to cancel the loser of a `WhenAny` | It keeps running in the background | Cancel it, as in Level 3 |
+
+The `async void` crash was confirmed in a scratch program:
+
+```csharp
+// sketch: async void, from a scratch program that crashes
+try
+{
+    SaveAsync();
+}
+catch (IOException)
+{
+    Console.WriteLine("caught"); // never runs
+}
+
+static async void SaveAsync()
+{
+    await Task.Delay(10);
+    throw new IOException("disk full");
+}
+```
+
+`SaveAsync()` returns at its `await`, so the `try` has already ended when the exception is thrown 10 ms later. With no task to store it in, the exception is rethrown on the thread pool, and the process prints `Unhandled exception. System.IO.IOException: disk full` and dies.
+
+## Interview questions
+
+### 1. Does `await` create a new thread?
+
+**Answer.** No. An `async` method runs on the caller's thread until it awaits an unfinished task (Level 1: `start` is logged before the caller continues). Then it returns, and the thread is free. When the task completes, the continuation runs on the captured `SynchronizationContext` (a UI thread) or on a thread-pool thread. Waiting for I/O or a timer uses no thread at all, so 1,000 concurrent 50 ms delays finish in about 50 ms (Level 2). Only `Task.Run` (or `Task.Factory.StartNew`) explicitly asks for a pool thread.
+
+### 2. Why does `.Result` deadlock in a UI app but not in a console app?
+
+**Answer.** In a UI app, the `await` inside the called method captured the UI `SynchronizationContext`, so its continuation must be posted back to the UI thread. `.Result` blocks that same thread until the method finishes, and the method can only finish when the UI thread runs the continuation: a cycle. A console app (and ASP.NET Core) has no context, so the continuation runs on the pool and `.Result` merely wastes a thread. The lab reproduces both halves with `SingleThreadContext`: `Wait(200)` returns `false` with the context captured, and `true` with `ConfigureAwait(false)`.
+
+### 3. What does `ConfigureAwait(false)` do, and when should you use it?
+
+**Answer.** It tells that one `await` not to capture `SynchronizationContext.Current` (or a non-default `TaskScheduler`), so the continuation runs wherever the task completed, usually the thread pool. In the lab, the context's `Post` was called once for two awaits: only the plain one used it. Use it in general-purpose library code, where you never need a particular thread and must not deadlock callers who block. Do not use it in UI code that touches controls after the `await`. It has no effect when there is no context, as in ASP.NET Core.
+
+### 4. What is the difference between `Task` and `ValueTask`?
+
+**Answer.** `Task` is a class: always a heap object, safe to await many times, cache and combine. `ValueTask<T>` is a struct that wraps either a result, a `Task<T>`, or a pooled `IValueTaskSource<T>`. When an operation usually completes synchronously, `ValueTask` avoids the allocation: the lab's cache hit allocates 0 bytes. The cost is the rule that a `ValueTask` is consumed exactly once. Use `Task` by default and `ValueTask` for hot paths with frequent synchronous completion, as `Stream.ReadAsync(Memory<byte>)` does.
+
+### 5. Three independent calls take 30, 50 and 20 ms. How long do they take with `await` in sequence, with `WhenAll`, and with `WhenAny`?
+
+**Answer.** In sequence, $30 + 50 + 20 = 100$ ms, because each call starts only after the previous one finished. With `WhenAll`, about $\max(30, 50, 20) = 50$ ms, because all three are started before any is awaited. With `WhenAny`, about $\min(30, 50, 20) = 20$ ms, but the other two keep running unless cancelled. Real numbers are slightly higher because of scheduling; the lab checks the sequential case is at least 90 ms and slower than the `WhenAll` case.
+
+## Summary
+
+$$
+T_{\text{sequential}} = \sum_i d_i, \qquad T_{\texttt{WhenAll}} \approx \max_i d_i, \qquad \text{threads blocked by an awaited I/O wait} = 0
+$$
+
+where $d_i$ is the duration of the $i$-th independent operation.
+
+Example: for $d = (30, 50, 20)$, one `await` after another takes $100$ ms and `WhenAll` about $50$ ms, while no thread is held during either wait.
+
+- A `Task<T>` is a promise; `await` suspends the method, returns to the caller, and resumes when the task completes.
+- `async` methods run synchronously until the first unfinished `await`; the compiler turns them into a state machine.
+- Start independent work first, then `await Task.WhenAll`; cancel the losers of `WhenAny`.
+- Cancellation is cooperative: pass `CancellationToken` everywhere and check it in loops.
+- `Task.Run` is for CPU work; I/O is already asynchronous.
+- Never block on async code (`.Result`, `.Wait()`); use `ConfigureAwait(false)` in libraries; avoid `async void`.
+- `ValueTask` saves an allocation on synchronous completion, at the price of "await exactly once".
+
+## References
+
+- Microsoft Learn: [Asynchronous programming with async and await](https://learn.microsoft.com/en-us/dotnet/csharp/asynchronous-programming/) (the breakfast example), [Asynchronous programming scenarios](https://learn.microsoft.com/en-us/dotnet/csharp/asynchronous-programming/async-scenarios) (I/O-bound versus CPU-bound), [Task-based asynchronous pattern](https://learn.microsoft.com/en-us/dotnet/standard/asynchronous-programming-patterns/task-based-asynchronous-pattern-tap), [`ValueTask<TResult>`](https://learn.microsoft.com/en-us/dotnet/api/system.threading.tasks.valuetask-1) (remarks), and [The history of C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-version-history) ("C# version 5.0").
+- Stephen Toub, [How Async/Await Really Works in C#](https://devblogs.microsoft.com/dotnet/how-async-await-really-works/) (.NET Blog, 2023), section "Compiler Transform".
+- Stephen Toub, [ConfigureAwait FAQ](https://devblogs.microsoft.com/dotnet/configureawait-faq/) (2019) and [Understanding the Whys, Whats, and Whens of ValueTask](https://devblogs.microsoft.com/dotnet/understanding-the-whys-whats-and-whens-of-valuetask/) (2018).
+- Stephen Cleary, [Don't Block on Async Code](https://blog.stephencleary.com/2012/07/dont-block-on-async-code.html) (2012) and [Async/Await: Best Practices in Asynchronous Programming](https://learn.microsoft.com/en-us/archive/msdn-magazine/2013/march/async-await-best-practices-in-asynchronous-programming) (*MSDN Magazine*, March 2013): "Avoid async void", "Async all the way", "Configure context".
+- Ian Griffiths, *Programming C# 12* (O'Reilly, 2024), chapter 17, "Asynchronous Language Features".
+- Lab: [`labs/tasks-and-async-await.cs`](labs/tasks-and-async-await.cs). Run it from `programming-languages/csharp/labs` with `dotnet run tasks-and-async-await.cs`.

@@ -1,0 +1,401 @@
+---
+title: "Generics and Variance"
+description: "C# generics from the first type parameter to the runtime: reified types versus Java erasure, constraints, covariance and contravariance, unsound array covariance, generic math with INumber, and how the CLR shares or specialises code."
+---
+
+## The problem
+
+A score keeper stores the numbers 1 and 2, and by mistake someone adds the text `"three"`. With the old non-generic `ArrayList`, everything is an `object`, so the mistake compiles and waits:
+
+```csharp
+var untyped = new ArrayList { 1, 2, "three" }; // compiles: everything is an object
+int sum = 0;
+string problem = "";
+try
+{
+    foreach (object item in untyped)
+    {
+        sum += (int)item; // the cast fails on "three"
+    }
+}
+catch (InvalidCastException e)
+{
+    problem = e.Message;
+}
+```
+
+The loop adds 1 and 2, so `sum` is 3, and then it crashes on the third item:
+
+```text
+Unable to cast object of type 'System.String' to type 'System.Int32'.
+```
+
+There is a second, hidden cost: every `int` put into an `ArrayList` is **boxed** into its own small heap object. **Generics** fix both problems. `List<int>` rejects `"three"` at compile time and stores the ints themselves, unboxed.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Labelled boxes and one-way doors
+
+- **A generic type** is a storage box with a label slot: `List<int>` is the box labelled "only whole numbers". The label is checked when you put something in, so `"three"` is turned away at the door.
+- **Reified** means the label is still on the box when the program runs. You can ask a `List<int>` what it holds, and it answers `Int32`. In Java the label is peeled off after checking ("erasure"), so at run time every list looks the same.
+- **Covariance (`out`)** is a vending machine that only *gives out* fruit. If it gives out apples, it is safe to call it a fruit machine.
+- **Contravariance (`in`)** is a recycling bin that only *takes in* things. A bin that accepts any rubbish can safely be used as a bin for paper.
+- **Arrays** break this rule: an array lets you both take out and put in, yet C# lets you call a box of apples a box of fruit. Putting in a banana then fails when the program runs. Eric Lippert, who worked on the C# compiler, called this "broken" and wrote that *"it should always be legal to put a Turtle into an array of Animals"*.
+:::
+
+## From simple to advanced
+
+### Level 1: one generic method for many types
+
+A **type parameter** `T` is a placeholder for a type, filled in at each use. The constraint `where T : IComparable<T>` promises that `T` has `CompareTo`, so the body may call it:
+
+```csharp
+static T Largest<T>(T a, T b) where T : IComparable<T> => a.CompareTo(b) >= 0 ? a : b;
+
+Check(Largest(3, 7) == 7, "T = int");
+Check(Largest("pear", "apple") == "pear", "T = string");
+```
+
+The compiler infers `T` from the arguments. A generic method is a family of methods, one per type argument:
+
+$$
+\texttt{Largest}\langle T \rangle : T \times T \to T
+$$
+
+where
+
+- $T$ is the type parameter, which the caller fills in;
+- $T \times T$ means "a pair of values, both of type $T$";
+- $\to T$ means the result is also a $T$, the same type as the inputs.
+
+Example: `Largest(3, 7)` fixes $T = \texttt{int}$, giving $\texttt{int} \times \texttt{int} \to \texttt{int}$. `3.CompareTo(7)` is negative, so the result is 7, an `int` with no cast needed. `Largest("pear", "apple")` fixes $T = \texttt{string}$. `"pear"` sorts after `"apple"`, so the result is `"pear"`. Now the problem's mistake cannot compile:
+
+```csharp
+// sketch: does not compile
+List<int> numbers = [1, 2];
+numbers.Add("three"); // CS1503
+```
+
+```text
+error CS1503: Argument 1: cannot convert from 'string' to 'int'
+```
+
+### Level 2: generics are reified, and value types stay unboxed
+
+C# generics are **reified**: `T` is a real type while the program runs, not only while it compiles. `typeof(T)` works, `List<int>` and `List<string>` are two different runtime types, and each closed type even has its own static fields.
+
+```csharp
+static string NameOf<T>() => typeof(T).Name; // T is still known when the code runs
+
+Check(NameOf<int>() == "Int32" && NameOf<double>() == "Double", "value-type arguments");
+Check(NameOf<string>() == "String" && NameOf<object>() == "Object", "reference-type arguments");
+Check(new List<int>().GetType() != new List<string>().GetType(), "two different runtime types");
+Check(new List<int>().GetType().ToString() == "System.Collections.Generic.List`1[System.Int32]", "the full name");
+```
+
+Java made the opposite choice. Its generics use **type erasure** (Java Language Specification §4.6): the compiler checks the types, then replaces `T` with its bound, usually `Object`. Run with OpenJDK 23, `new ArrayList<Integer>().getClass() == new ArrayList<String>().getClass()` prints `true`, and `ArrayList<int>` is not allowed at all, so Java boxes every `int` into an `Integer`. C# can store the ints themselves. The lab measures the bytes allocated to build a list of 1,000 ints both ways:
+
+```csharp
+static List<int> FillList(int n)
+{
+    var list = new List<int>(n); // one int[n] array holds the values themselves
+    for (int i = 0; i < n; i++) list.Add(i);
+    return list;
+}
+
+static ArrayList FillArrayList(int n)
+{
+    var list = new ArrayList(n); // one object[n] array holds references to boxes
+    for (int i = 0; i < n; i++) list.Add(i); // each Add boxes an int
+    return list;
+}
+```
+
+```csharp
+Check(BytesAllocatedBy(() => FillList(1000)) == 4056, "4 bytes per int + 56 fixed");
+Check(BytesAllocatedBy(() => FillArrayList(1000)) == 32056, "8 + 24 bytes per int + 56 fixed");
+```
+
+On a 64-bit runtime the cost per element is:
+
+$$
+B_{\texttt{List<int>}}(n) = 4n + c, \qquad B_{\texttt{ArrayList}}(n) = (8 + 24)\,n + c
+$$
+
+where
+
+- $n$ is the number of ints stored;
+- $4$ is the size of one `int` stored directly inside the `int[]` array;
+- $8$ is the size of one reference slot inside the `object[]` array;
+- $24$ is the size of one boxed `int`: an 8-byte header, an 8-byte type pointer, the 4-byte value, and 4 bytes of padding;
+- $c$ is the fixed cost: the list object itself (32 bytes) plus the array's own header (24 bytes), so $c = 56$.
+
+Example with $n = 1000$: $B_{\texttt{List<int>}} = 4 \cdot 1000 + 56 = 4056$ bytes, and $B_{\texttt{ArrayList}} = 32 \cdot 1000 + 56 = 32056$ bytes. The lab measures exactly these numbers with `GC.GetAllocatedBytesForCurrentThread`. The untyped list uses about 8 times the memory, and the 1,000 boxes are 1,000 extra objects for the garbage collector to trace.
+
+### Level 3: constraints say what `T` must be, and what the body may do
+
+Without constraints, the body may only do what every type can do (`ToString`, `Equals`, assignment). Each constraint narrows the allowed types and in return unlocks operations:
+
+```csharp
+static T Make<T>() where T : new() => new T();                            // has a parameterless constructor
+static int SizeOf<T>() where T : unmanaged => Unsafe.SizeOf<T>();         // plain bytes, no references
+static bool HasValue<T>(T? maybe) where T : struct => maybe.HasValue;     // T? is Nullable<T> here
+static bool IsMissing<T>(T? maybe) where T : class => maybe is null;      // T is a reference type
+static string MessageOf<T>(T error) where T : Exception => error.Message; // base class: Message exists
+```
+
+| Constraint | `T` must be | The body may then |
+|---|---|---|
+| `where T : struct` | a non-nullable value type | use `T?` as `Nullable<T>` |
+| `where T : class` | a reference type | compare with `null`; `T?` is a nullable reference |
+| `where T : notnull` | any non-nullable type | use `T` as a dictionary key without nullable warnings |
+| `where T : unmanaged` | a value type with no references at any depth | treat it as raw bytes (`Unsafe.SizeOf<T>()`, spans of bytes) |
+| `where T : new()` | a type with a public parameterless constructor | call `new T()` |
+| `where T : Exception` | `Exception` or a subclass | use the base class's members, such as `Message` |
+| `where T : IComparable<T>` | a type implementing the interface | call `CompareTo` (Level 1) |
+
+The rule the compiler applies at every call:
+
+$$
+f\langle A \rangle \text{ compiles} \iff \forall c \in C_f :\ A \text{ satisfies } c
+$$
+
+where
+
+- $f$ is the generic method, and $A$ the type argument at this call;
+- $C_f$ is the set of constraints declared on $f$'s type parameter;
+- $\forall c \in C_f$ means "for every constraint $c$ in that set".
+
+Example: for `Make`, $C = \lbrace \texttt{new()} \rbrace$. `Make<List<int>>()` compiles because `List<int>` has a public parameterless constructor, and the lab gets an empty list. For `SizeOf`, $C = \lbrace \texttt{unmanaged} \rbrace$. `decimal` holds only numbers, so `SizeOf<decimal>()` compiles and returns 16, and `SizeOf<int>()` returns 4. The other direction, compiled in a scratch folder:
+
+```csharp
+// sketch: does not compile
+Make<string>();          // CS0310
+SizeOf<string>();        // CS8377
+HasValue<string>("x");   // CS0453
+IsMissing<int>(1);       // CS0452
+```
+
+```text
+error CS0310: 'string' must be a non-abstract type with a public parameterless constructor in order to use it as parameter 'T' in the generic type or method 'Make<T>()'
+error CS8377: The type 'string' must be a non-nullable value type, along with all fields at any level of nesting, in order to use it as parameter 'T' in the generic type or method 'SizeOf<T>()'
+error CS0453: The type 'string' must be a non-nullable value type in order to use it as parameter 'T' in the generic type or method 'HasValue<T>(T?)'
+error CS0452: The type 'int' must be a reference type in order to use it as parameter 'T' in the generic type or method 'IsMissing<T>(T?)'
+```
+
+`notnull` is the odd one out. It belongs to nullable reference types ([Nullable Types](02-nullable-types.qmd)), so breaking it is only a warning, `CS8714`. `Dictionary<TKey, TValue>` declares `where TKey : notnull`, which is why the lab's `Tally<T>` repeats it.
+
+### Level 4: covariance, `out`
+
+`string` converts to `object`. Does `IEnumerable<string>` convert to `IEnumerable<object>`? Yes, because the interface is declared `IEnumerable<out T>`. The `out` promises that `T` only ever comes **out** of it (as a return value), so anything read through the wider type really is an `object`:
+
+```csharp
+IEnumerable<string> names = ["Ada", "Grace"];
+IEnumerable<object> things = names; // allowed: IEnumerable<out T>
+Check(ReferenceEquals(things, names), "no copy: the same list, seen as objects");
+Check(things.First() is "Ada", "reading gives back the strings");
+```
+
+No copy is made: `things` and `names` are the same object, just seen through a different type. `List<T>` is **invariant**, because `Add(T)` lets `T` go *in* as well:
+
+```csharp
+// sketch: does not compile
+List<object> objects = new List<string>(); // CS0029
+objects.Add(42); // if it compiled, an int would land in a list of strings
+```
+
+```text
+error CS0029: Cannot implicitly convert type 'System.Collections.Generic.List<string>' to 'System.Collections.Generic.List<object>'
+```
+
+### Level 5: contravariance, `in`
+
+The reverse direction works for things that only take `T` **in**. `Action<in T>` only receives a `T`, so a handler for any `object` can stand in for a handler of strings:
+
+```csharp
+var printed = new List<string>();
+Action<object> printAnything = x => printed.Add($"{x}");
+Action<string> printText = printAnything; // allowed: Action<in T>
+printText("hi");
+Check(printed.Single() == "hi", "the object handler received a string");
+```
+
+`IComparer<in T>` works the same way: a comparer of objects can sort a `List<string>`. Both directions in one rule, for an interface or delegate type $I$:
+
+$$
+S \le T \;\Rightarrow\;
+\begin{cases}
+I\langle S \rangle \le I\langle T \rangle & \text{if } I \text{ is declared } I\langle \texttt{out}\ X \rangle \\
+I\langle T \rangle \le I\langle S \rangle & \text{if } I \text{ is declared } I\langle \texttt{in}\ X \rangle \\
+\text{no conversion either way} & \text{if } X \text{ has no modifier}
+\end{cases}
+$$
+
+where
+
+- $S \le T$ means "a value of type $S$ converts to type $T$ by a reference conversion", such as $\texttt{string} \le \texttt{object}$;
+- $I\langle S \rangle$ is the interface or delegate $I$ with $S$ filled in;
+- `out` marks a parameter that only appears in output positions (return types), and `in` one that only appears in input positions (parameters).
+
+Example with the lab's types and $\texttt{string} \le \texttt{object}$:
+
+1. `IEnumerable` is `out`, so $\texttt{IEnumerable<string>} \le \texttt{IEnumerable<object>}$: the same arrow direction. Level 4's assignment compiles.
+2. `Action` is `in`, so $\texttt{Action<object>} \le \texttt{Action<string>}$: the arrow flips. Level 5's assignment compiles.
+3. `List<T>` has no modifier, so `List<string>` and `List<object>` do not convert either way: `CS0029`.
+
+The compiler also checks the declaration itself. An `out T` may not appear as a method parameter, and an `in T` may not be returned. Declaring `interface IBad<out T> { void Put(T x); }` gives `error CS1961: Invalid variance: The type parameter 'T' must be contravariantly valid on 'IBad<T>.Put(T)'. 'T' is covariant.` Generic variance for interfaces and delegates arrived in C# 4.0.
+
+### Level 6: variance needs references, and arrays cheat
+
+Variance only works when the conversion $S \le T$ is a **reference** conversion, where the bits do not change. An `int` becomes an `object` only by boxing, which builds a new object, so a `List<int>` is **not** an `IEnumerable<object>`:
+
+```csharp
+object ints = new List<int>();
+Check(ints is not IEnumerable<object>, "an int must be boxed to become an object, so no variance");
+```
+
+Arrays are older than generic variance, and they are covariant **without** the `in`/`out` safety check. C# has allowed `object[] objects = new string[2]` since version 1.0. Reading is safe, but writing must be checked at run time:
+
+```csharp
+object[] objects = new string[2]; // array covariance: allowed since C# 1.0
+objects[0] = "fine";
+string storeError = "";
+try
+{
+    objects[1] = 42; // compiles, but the array really holds strings
+}
+catch (ArrayTypeMismatchException e)
+{
+    storeError = e.Message;
+}
+```
+
+The store fails with `Attempted to access an element as a type incompatible with the array.` Lippert explained in 2007 that array covariance "was added to the CLR because Java requires it and the CLR designers wanted to be able to support Java-like languages", and that it costs a type check on *every* store into an array of a reference type.
+
+### Level 7: generic math with `INumber<T>`
+
+Before .NET 7, you could not write one generic `Sum` for `int`, `double` and `decimal`, because operators are static and interfaces could not require static members. C# 11's static abstract interface members ([Inheritance and Interfaces](04-inheritance-and-interfaces.qmd), Level 6) changed that, and .NET 7 added interfaces such as `INumber<T>`, which require `T.Zero` and the `+` operator:
+
+```csharp
+static T Sum<T>(IEnumerable<T> values) where T : INumber<T>
+{
+    T total = T.Zero;
+    foreach (T value in values)
+    {
+        total += value; // T's own + operator
+    }
+    return total;
+}
+```
+
+$$
+\operatorname{Sum}_T(x_1, \dots, x_n) = \big(\cdots\big((T.\text{Zero} +_T x_1) +_T x_2\big) \cdots\big) +_T x_n
+$$
+
+where
+
+- $T$ is the number type, chosen by the caller;
+- $x_1, \dots, x_n$ are the values, all of type $T$;
+- $T.\text{Zero}$ is $T$'s own zero, a static abstract property;
+- $+_T$ is $T$'s own addition operator, with $T$'s own rounding rules.
+
+Example, the three calls in the lab:
+
+1. $T = \texttt{int}$: $0 + 1 + 2 + 3 = 6$.
+2. $T = \texttt{decimal}$: $0 + 0.1 + 0.2 = 0.3$ exactly, because `decimal` stores base-10 digits.
+3. $T = \texttt{double}$: $0.1$ and $0.2$ have no exact binary form, so the sum is `0.30000000000000004`.
+
+The same source code gives three different, correct-for-their-type answers. Because `int`, `double` and `decimal` are value types, the JIT compiles a separate `Sum` for each. There `+=` becomes a direct call to that type's operator, a single add instruction for `int`, with no boxing and no virtual call.
+
+## How it works underneath
+
+A generic type compiles to **one** definition in the assembly's metadata, ``List`1``, with `T` as a marked parameter. The runtime builds each closed type, such as `List<int>`, the first time it is used. Andrew Kennedy and Don Syme designed this for the CLR (PLDI 2001), with "exact run-time types", "just-in-time type specialization" and "representation-based code sharing". That last phrase decides how much machine code exists:
+
+- **Value-type arguments get their own code.** An `int` is 4 bytes and a `decimal` is 16, so `List<int>.Add` and `List<decimal>.Add` must move different amounts of memory. Microsoft's docs: "Specialized generic types are created one time for each unique value type that is used as a parameter."
+- **Reference-type arguments share one body.** Every reference is pointer-sized, so `List<string>.Add` and `List<object>.Add` can run the same instructions. The runtime compiles one canonical version, written internally with the placeholder type `System.__Canon`. When shared code needs the real `T`, as in `typeof(T)`, it reads it from a small per-instantiation table called the **generic dictionary** (Book of the Runtime, *Shared Generics Design*).
+
+$$
+N_{\text{bodies}}(f) = \lvert A_f \cap \mathcal{V} \rvert + \begin{cases} 1 & \text{if } A_f \cap \mathcal{R} \ne \varnothing \\ 0 & \text{otherwise} \end{cases}
+$$
+
+where
+
+- $f$ is a generic method, and $A_f$ the set of type arguments it is called with;
+- $\mathcal{V}$ is the set of value types and $\mathcal{R}$ the set of reference types;
+- $\cap$ is set intersection, and $\lvert \cdot \rvert$ counts the members of a set;
+- $N_{\text{bodies}}(f)$ is the number of machine-code bodies the JIT produces for $f$, ignoring tiered recompilation.
+
+Example: the lab calls `NameOf` with $A = \lbrace \texttt{int}, \texttt{double}, \texttt{string}, \texttt{object} \rbrace$. Two are value types, which gives two specialised bodies, and the two reference types share one more: $N = 2 + 1 = 3$. Even the shared body prints `"String"` and `"Object"` correctly, because it looks `T` up in each call's dictionary.
+
+Code may be shared, but **types are never merged**. Each closed type has its own MethodTable, so it has its own identity and its own static fields:
+
+```csharp
+PerType<int>.Count = 1;
+PerType<string>.Count = 2;
+Check(PerType<int>.Count == 1 && PerType<string>.Count == 2, "separate statics per T");
+```
+
+In Java, an erased `ArrayList<String>` and `ArrayList<Integer>` are one class at run time, so a static field exists once.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Using `ArrayList`, `Hashtable` or other non-generic collections | `InvalidCastException: Unable to cast object of type 'System.String' to type 'System.Int32'.` at run time, plus one box per value | Use `List<T>`, `Dictionary<TKey, TValue>` |
+| Expecting `List<string>` to convert to `List<object>` | `error CS0029: Cannot implicitly convert type ...` | Accept `IEnumerable<object>` or `IReadOnlyList<object>`, which are covariant |
+| Storing into an array seen through a base type | `ArrayTypeMismatchException: Attempted to access an element as a type incompatible with the array.` | Use `List<T>` or a read-only interface instead of a covariant array |
+| Expecting variance with value types | `new List<int>() is IEnumerable<object>` is `false` | Convert explicitly: `ints.Cast<object>()` (which boxes) |
+| Using a type parameter as a dictionary key without `notnull` | `warning CS8714: ... doesn't match 'notnull' constraint.` | Add `where TKey : notnull` |
+| Calling `new T()` without the constraint | `error CS0304: Cannot create an instance of the variable type 'T' because it does not have the new() constraint` | Add `where T : new()`, or pass a `Func<T>` factory |
+| Expecting a static field in a generic class to be shared | `PerType<int>.Count` and `PerType<string>.Count` are separate | Move shared state to a non-generic class |
+
+## Interview questions
+
+### 1. How are C# generics different from Java generics?
+
+**Answer.** C# generics are **reified**; Java's are **erased**. In C#, each closed type is a separate runtime type: `List<int>` prints as ``System.Collections.Generic.List`1[System.Int32]``, `typeof(T)` and `new T()` work, and each closed type has its own static fields. Value types are type arguments directly, so `List<int>` stores raw ints, 4,056 bytes for 1,000 of them against 32,056 for boxed storage. Java checks the types at compile time and then erases `T`, so `ArrayList<Integer>` and `ArrayList<String>` share one runtime class. It also forbids primitives as type arguments, so every `int` is boxed into an `Integer`.
+
+### 2. Why is `IEnumerable<T>` covariant but `List<T>` invariant?
+
+**Answer.** Covariance is safe only if `T` never flows **in**. `IEnumerable<out T>` only returns `T` values, so reading strings as objects can never go wrong. `List<T>` has `Add(T)`. If `List<string>` converted to `List<object>`, then `objects.Add(42)` would put an `int` into a list of strings. The compiler therefore rejects the conversion (`CS0029`), and it rejects `out T` in an input position when you declare your own interface.
+
+### 3. Why does `object[] a = new string[2]; a[1] = 42;` compile?
+
+**Answer.** Arrays of reference types have been covariant since C# 1.0, copied from Java so the CLR could host Java-like languages. The type system therefore cannot prove a store is safe, and the runtime checks **every** store into a reference-type array. A wrong one throws `ArrayTypeMismatchException`. That makes a compile-time bug a run-time one and adds a small cost to each store. Lippert called this kind of covariance "broken". Generic variance (`out`/`in`, C# 4.0) is the safe replacement.
+
+### 4. Why can't a `List<int>` be used as an `IEnumerable<object>`?
+
+**Answer.** Variance is a **reinterpretation**: the same object is seen through a wider type with no work done, as `ReferenceEquals(things, names)` shows. That only works when each element is already a reference. Turning an `int` into an `object` means allocating a box, a change of representation, so no free reinterpretation exists. The docs state it directly: "Variance applies only to reference types." Use `Cast<object>()`, which boxes each element as it is read.
+
+### 5. What does `where T : INumber<T>` give you that `where T : struct` does not?
+
+**Answer.** `struct` only says "a value type". It does not promise `+`, `Zero` or comparison. `INumber<T>` is a set of interfaces with **static abstract** members, so the body can write `T.Zero` and `total += value`. Each call binds to the type argument's own operator: integer addition for `int`, decimal addition for `decimal`. Since these are value types, the JIT specialises `Sum` per type, so each compiled body is essentially the code you would have written by hand for that type.
+
+## Summary
+
+$$
+S \le T \;\Rightarrow\; I\langle \texttt{out}\ S \rangle \le I\langle \texttt{out}\ T \rangle \;\text{ and }\; I\langle \texttt{in}\ T \rangle \le I\langle \texttt{in}\ S \rangle
+$$
+
+where $S \le T$ is a reference conversion, $I\langle \texttt{out}\ \cdot \rangle$ is an interface or delegate whose parameter only flows out, and $I\langle \texttt{in}\ \cdot \rangle$ one whose parameter only flows in.
+
+Example: $\texttt{string} \le \texttt{object}$, so `IEnumerable<string>` becomes `IEnumerable<object>` and `Action<object>` becomes `Action<string>`. `List<T>` has neither modifier and stays invariant, and `int` is not a reference type, so `List<int>` never becomes `IEnumerable<object>`.
+
+- Generics move type errors from run time (`InvalidCastException`) to compile time (`CS1503`).
+- C# generics are **reified**: `typeof(T)` works, each closed type is distinct, and value types are stored unboxed (4 bytes per `int`, not 32).
+- Constraints (`struct`, `class`, `notnull`, `unmanaged`, `new()`, a base class, an interface) trade generality for operations the body may use.
+- `out` and `in` give safe variance for interfaces and delegates, for reference types only. Array covariance is unsafe and checked on every store.
+- `INumber<T>` and static abstract members give generic math. The JIT specialises code per value type and shares one body for all reference types.
+
+## References
+
+- Microsoft Learn: [Generic types and methods](https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/types/generics), [Constraints on type parameters](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/generics/constraints-on-type-parameters), [Generics in the runtime](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/generics/generics-in-the-run-time).
+- Microsoft Learn: [Covariance and contravariance in generics](https://learn.microsoft.com/en-us/dotnet/standard/generics/covariance-and-contravariance), [Covariance and contravariance (C#)](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/concepts/covariance-contravariance/), [Generic math](https://learn.microsoft.com/en-us/dotnet/standard/generics/math), [INumber&lt;TSelf&gt;](https://learn.microsoft.com/en-us/dotnet/api/system.numerics.inumber-1), [ArrayTypeMismatchException](https://learn.microsoft.com/en-us/dotnet/api/system.arraytypemismatchexception).
+- C# language specification: [Interfaces](https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/language-specification/interfaces) (variant type parameter lists); [The history of C#](https://learn.microsoft.com/en-us/dotnet/csharp/whats-new/csharp-version-history).
+- Book of the Runtime: [Shared Generics Design](https://github.com/dotnet/runtime/blob/main/docs/design/coreclr/botr/shared-generics.md).
+- Andrew Kennedy and Don Syme, [Design and Implementation of Generics for the .NET Common Language Runtime](https://www.microsoft.com/en-us/research/publication/design-and-implementation-of-generics-for-the-net-common-language-runtime/), PLDI 2001, [doi:10.1145/378795.378797](https://doi.org/10.1145/378795.378797).
+- Eric Lippert, [Covariance and Contravariance in C#, Part Two: Array Covariance](https://learn.microsoft.com/en-us/archive/blogs/ericlippert/covariance-and-contravariance-in-c-part-two-array-covariance) (2007), and the rest of that series.
+- [The Java Language Specification, §4.6 Type Erasure](https://docs.oracle.com/javase/specs/jls/se21/html/jls-4.html#jls-4.6) (Java SE 21).
+- Jon Skeet, [*C# in Depth*, 4th ed.](https://www.manning.com/books/c-sharp-in-depth-fourth-edition) (Manning, 2019), sections 2.1 (generics) and 4.4 (generic variance); Joseph Albahari, [*C# 12 in a Nutshell*](https://www.albahari.com/nutshell/) (O'Reilly, 2023), chapter 3.
+- Lab: [`labs/generics-and-variance.cs`](labs/generics-and-variance.cs). Run it from `programming-languages/csharp/labs` with `dotnet run generics-and-variance.cs`.
