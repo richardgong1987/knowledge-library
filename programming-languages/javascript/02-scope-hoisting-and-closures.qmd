@@ -1,0 +1,468 @@
+---
+title: "Scope, Hoisting and Closures"
+description: "How JavaScript finds a name: lexical scope, var versus let and const, function and block scope, hoisting and the temporal dead zone, environment records and closures, the loop-closure puzzle, private state, and closures that keep memory alive."
+---
+
+## The problem
+
+A page builds three buttons in a loop. Button 0 should report 0, button 1 should report 1, and button 2 should report 2. Each click handler is a small function made inside the loop. With `var`, every handler reports **3**:
+
+```js
+function makeCallbacksWithVar() {
+  const callbacks = [];
+  for (var i = 0; i < 3; i++) {
+    callbacks.push(() => i);
+  }
+  return callbacks.map((callback) => callback());
+}
+```
+
+Change one word, `var` to `let`, and the same code gives 0, 1 and 2:
+
+```js
+function makeCallbacksWithLet() {
+  const callbacks = [];
+  for (let i = 0; i < 3; i++) {
+    callbacks.push(() => i);
+  }
+  return callbacks.map((callback) => callback());
+}
+
+assert.deepEqual(makeCallbacksWithVar(), [3, 3, 3]);
+assert.deepEqual(makeCallbacksWithLet(), [0, 1, 2]);
+```
+
+To understand why, you need three ideas: **scope** (where a name is visible), **hoisting** (when a name starts to exist) and **closure** (a function remembering the scope it was born in). This chapter builds them in that order.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Buckets of marbles, and a backpack
+
+- **Scope** is a set of nested buckets. Each function or `{ }` block is a bucket, and every variable is a marble dropped into the bucket where it was declared. To find a marble, you look in your own bucket first, then in the bucket around it, and so on outwards. You never look *inwards*.
+- **Hoisting** is the teacher writing every child's name on the register before the lesson starts. A `var` child is marked "here, but empty-handed" (`undefined`). A `let` or `const` child is on the register but may not answer until they actually walk in. Calling on them early is an error.
+- **A closure** is a backpack. When a function is made, it packs a link to the buckets around it and carries them wherever it goes, even after the outer function has finished.
+
+The bucket picture is Kyle Simpson's, from *You Don't Know JS Yet: Scope & Closures*: *"One metaphor I've found effective in understanding scope is sorting colored marbles into buckets of their matching color."* His definition of closure is the one this chapter uses: *"Closure is observed when a function uses variable(s) from outer scope(s) even while running in a scope where those variable(s) wouldn't be accessible."* Closures came from Scheme. Brendan Eich, recalling how he designed JavaScript in 1995: *"I'm happy that I chose Scheme-ish first-class functions and Self-ish (albeit singular) prototypes as the main ingredients."*
+:::
+
+## From simple to advanced
+
+### Level 1: lexical scope, looked up from the inside out
+
+JavaScript scope is **lexical**: where you *write* a function decides which variables it can see, not where you call it from. Each function, block and module has its own scope, and each scope has a link to the one around it.
+
+```js
+const planet = 'Earth'; // module scope
+function country() {
+  const name = 'Japan';
+  function city() {
+    const name = 'Tokyo'; // shadows country's name
+    return `${name}, ${planet}`; // name found here, planet two scopes out
+  }
+  return city();
+}
+assert.equal(country(), 'Tokyo, Earth');
+assert.throws(() => missingName, { name: 'ReferenceError', message: 'missingName is not defined' });
+```
+
+Looking up a name is a short recursive rule:
+
+$$
+\operatorname{resolve}(n, E) =
+\begin{cases}
+\text{ReferenceError} & \text{if } E = \texttt{null} \\
+E & \text{if } n \in \operatorname{names}(E) \\
+\operatorname{resolve}\big(n, \operatorname{outer}(E)\big) & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $n$ is the name being looked up, such as `planet`;
+- $E$ is a scope (the specification calls it an Environment Record), starting with the scope where the name is used;
+- $\operatorname{names}(E)$ is the set of names declared directly in $E$;
+- $\operatorname{outer}(E)$ is the scope around $E$, and the outermost scope's outer is `null`.
+
+Example, from inside `city`:
+
+1. `name`: $\operatorname{names}(E_{\text{city}}) = \lbrace \texttt{name} \rbrace$ contains it, so the lookup stops at once and finds `'Tokyo'`. The outer `'Japan'` is **shadowed**: hidden, not changed.
+2. `planet`: not in $E_{\text{city}}$; not in $\operatorname{names}(E_{\text{country}}) = \lbrace \texttt{name}, \texttt{city} \rbrace$; found in the module scope, two steps out.
+3. `missingName`: not in any scope, the chain reaches `null`, and the result is `ReferenceError: missingName is not defined`.
+
+### Level 2: `var` is function-scoped; `let` and `const` are block-scoped
+
+`var` (the original 1995 keyword) ignores blocks and belongs to the whole enclosing **function**. `let` and `const` (ES2015) belong to the nearest **block**, the closest pair of braces:
+
+```js
+function blockScopes() {
+  if (true) {
+    var fromVar = 'function-scoped';
+    let fromLet = 'block-scoped';
+  }
+  return [typeof fromVar, typeof fromLet];
+}
+assert.deepEqual(blockScopes(), ['string', 'undefined']);
+```
+
+Outside the `if` block, `fromVar` is still visible, while `fromLet` no longer exists (`typeof` of an undeclared name is `'undefined'`, Chapter 1).
+
+`const` means the **binding** can never point at another value. It does not freeze the value, so a `const` array can still grow:
+
+```js
+const scores = [90];
+scores.push(85); // const fixes the binding, not the array
+assert.deepEqual(scores, [90, 85]);
+assert.throws(() => {
+  scores = [];
+}, { name: 'TypeError', message: 'Assignment to constant variable.' });
+```
+
+Two more differences. Declaring the same `let` twice in one scope is an early `SyntaxError`, while `var` silently allows it. And in a classic script (not a module), a top-level `var` becomes a property of the global object, while a top-level `let` does not. The lab runs a tiny script in Node's `vm` module to show it:
+
+```js
+assert.throws(() => new Function('let x = 1; let x = 2;'), {
+  name: 'SyntaxError',
+  message: "Identifier 'x' has already been declared",
+});
+assert.equal(runInNewContext('var visits = 1; globalThis.visits'), 1); // a script's top-level var
+assert.equal(runInNewContext('let views = 1; globalThis.views'), undefined); // a top-level let
+```
+
+### Level 3: hoisting and the temporal dead zone
+
+Before a function's body runs, the engine creates **every** variable declared in it. That is called hoisting: the declarations behave as if lifted to the top. What differs is the starting value:
+
+$$
+\operatorname{init}(d) =
+\begin{cases}
+\texttt{undefined} & \text{if } d \text{ is a } \texttt{var} \\
+\text{the function object} & \text{if } d \text{ is a function declaration} \\
+\bot \ \text{(uninitialised)} & \text{if } d \text{ is a } \texttt{let}, \texttt{const} \text{ or } \texttt{class}
+\end{cases}
+$$
+
+where
+
+- $d$ is one declaration in the scope;
+- $\operatorname{init}(d)$ is the value the variable holds when the scope is entered, before any line runs;
+- $\bot$ marks a binding that exists but must not be touched; reading or writing it throws a `ReferenceError`.
+
+Example, for `hoisting()` below: $\operatorname{init}(\texttt{hoistedVar}) = \texttt{undefined}$ and $\operatorname{init}(\texttt{hoistedFunction})$ is a ready function, so the first line already gets `[undefined, 'ready']`. In `useBeforeLet()`, $\operatorname{init}(\texttt{total}) = \bot$, so the first line throws.
+
+```js
+function hoisting() {
+  const early = [hoistedVar, hoistedFunction()];
+  var hoistedVar = 'set later';
+  function hoistedFunction() {
+    return 'ready';
+  }
+  return early;
+}
+assert.deepEqual(hoisting(), [undefined, 'ready']);
+```
+
+A function **expression** stored in a `var` follows the `var` rule, not the function rule. The name exists, but holds `undefined` until the assignment runs:
+
+```js
+function callTooEarly() {
+  const result = greet(); // greet exists, but holds undefined
+  var greet = function () {
+    return 'hi';
+  };
+  return result;
+}
+assert.throws(callTooEarly, { name: 'TypeError', message: 'greet is not a function' });
+```
+
+The stretch of time between entering a scope and running a `let` or `const` line is the **temporal dead zone** (TDZ). Inside it the variable is $\bot$:
+
+```js
+function useBeforeLet() {
+  const before = total; // total exists but is not initialised yet
+  let total = 10;
+  return before;
+}
+assert.throws(useBeforeLet, {
+  name: 'ReferenceError',
+  message: "Cannot access 'total' before initialization",
+});
+```
+
+The word *temporal* matters: the zone is about **time**, not about position in the file. A function written above the declaration is fine, as long as it is *called* after the declaration has run:
+
+```js
+function timeNotPlace() {
+  const readTotal = () => total; // written above the declaration...
+  let total = 10;
+  return readTotal(); // ...but runs after it
+}
+assert.equal(timeNotPlace(), 10);
+```
+
+Even `typeof`, which is safe for names that were never declared, throws inside the dead zone:
+
+```js
+assert.throws(() => {
+  typeof later; // typeof does not protect a name in its dead zone
+  let later;
+}, { name: 'ReferenceError' });
+```
+
+### Level 4: a closure keeps its birth scope alive
+
+A function value carries a hidden link to the scope it was created in. When `makeCounter` returns, its local `count` does not vanish, because the returned arrow function still links to it:
+
+```js
+function makeCounter() {
+  let count = 0; // lives on after makeCounter returns
+  return () => {
+    count += 1;
+    return count;
+  };
+}
+const counterA = makeCounter();
+const counterB = makeCounter();
+counterA();
+counterA();
+assert.equal(counterA(), 3);
+assert.equal(counterB(), 1); // each call made a new count
+```
+
+A closure is a pair:
+
+$$
+\operatorname{closure} = \langle\, \text{code},\ E \,\rangle, \qquad E_j \neq E_k \text{ for two different calls } j \neq k
+$$
+
+where
+
+- $\text{code}$ is the function's body, shared by every closure made from the same source text;
+- $E$ is the scope that was running when the function was created, kept alive by the link;
+- $E_j$ and $E_k$ are the scopes created by two separate calls of the outer function.
+
+Example: `makeCounter()` runs twice, creating $E_1$ for `counterA` and $E_2$ for `counterB`, each with its own `count = 0`. Three calls of `counterA` take $E_1$'s count through $1, 2, 3$. The one call of `counterB` takes $E_2$'s count from 0 to 1. The two counts never meet.
+
+The link is **live**: a closure sees the variable itself, not a copy taken when the closure was made. Kyle Simpson: *"Closure is actually a live link, preserving access to the full variable itself."*
+
+```js
+function liveLink() {
+  let message = 'before';
+  const read = () => message;
+  message = 'after'; // the closure sees the variable, not a snapshot
+  return read();
+}
+assert.equal(liveLink(), 'after');
+```
+
+### Level 5: the loop puzzle, solved
+
+Now the opening problem makes sense. With `var`, the loop has **one** variable `i` in the function's scope; all three arrow functions link to that same variable, and they run after the loop has finished, when `i` is 3. With `let`, the specification creates a **fresh copy of `i` for every iteration** (the CreatePerIterationEnvironment step), so each arrow links to its own copy.
+
+$$
+v_k^{\texttt{var}} = n, \qquad v_k^{\texttt{let}} = k, \qquad k = 0, 1, \ldots, n - 1
+$$
+
+where
+
+- $n$ is the number of iterations;
+- $k$ numbers the callbacks in the order they were made;
+- $v_k$ is the value callback $k$ returns when it is finally called.
+
+Example with $n = 3$: the `var` loop gives $(v_0, v_1, v_2) = (3, 3, 3)$, because the single `i` ended at 3 when the test $3 < 3$ failed. The `let` loop gives $(0, 1, 2)$.
+
+Before 2015, the fix was to call a function on every iteration, because a call is the one thing that creates a new scope for `var`. The pattern is an IIFE, an immediately invoked function expression. Each call gets its own parameter `copy`, and the callback must read `copy`, not `i`:
+
+```js
+function makeCallbacksWithIIFE() {
+  const callbacks = [];
+  for (var i = 0; i < 3; i++) {
+    (function (copy) {
+      callbacks.push(() => copy); // each call made a new copy
+    })(i);
+  }
+  return callbacks.map((callback) => callback());
+}
+assert.deepEqual(makeCallbacksWithIIFE(), [0, 1, 2]);
+```
+
+### Level 6: private state through closures
+
+Because only functions created inside a scope can reach its variables, a closure is a lock. This is the "module pattern" that JavaScript used for privacy long before classes had `#private` fields ([Classes](05-classes.qmd)):
+
+```js
+function makeAccount(opening) {
+  let balance = opening;
+  return {
+    deposit(amount) {
+      if (amount <= 0) throw new RangeError('deposit must be positive');
+      balance += amount;
+      return balance;
+    },
+    getBalance: () => balance,
+  };
+}
+const account = makeAccount(100);
+account.deposit(50);
+assert.equal(account.getBalance(), 150);
+assert.equal(account.balance, undefined); // not a property: no way in from outside
+assert.deepEqual(Object.keys(account), ['deposit', 'getBalance']);
+assert.throws(() => account.deposit(-5), { name: 'RangeError' });
+```
+
+`balance` is not a property of `account`, so no outside code can set it to -1000. The only way to change it is `deposit`, which checks the amount.
+
+### Level 7: closures keep memory alive
+
+A closure keeps alive **everything it links to**. That is the point of a closure, but it can also hold on to far more memory than you meant to:
+
+```js
+function makeSummary(readings) {
+  return () => readings.length; // keeps the whole array alive
+}
+function makeLeanSummary(readings) {
+  const count = readings.length; // copy the one number we need
+  return () => count; // keeps one number alive
+}
+const readings = new Array(1_000_000).fill(20.5);
+assert.equal(makeSummary(readings)(), 1_000_000);
+assert.equal(makeLeanSummary(readings)(), 1_000_000);
+```
+
+Both functions return the same answer, but they cost very different amounts of memory for as long as the returned function lives:
+
+$$
+\text{bytes kept} \approx n \times b
+$$
+
+where
+
+- $n$ is the number of elements the closure keeps reachable;
+- $b$ is the bytes per element; V8 stores an array of plain doubles as raw 64-bit values, so $b = 8$.
+
+Example: `makeSummary` keeps $n = 1\,000\,000$ doubles, so about $1\,000\,000 \times 8 = 8\,000\,000$ bytes (7.6 MiB) cannot be collected while the summary function is stored somewhere, say in an event handler. Measuring `process.memoryUsage().heapUsed` around the allocation on Node 26 shows the same 8.0 MB. `makeLeanSummary` keeps one number. Copy out what you need, and drop references (`handler = null`, `removeEventListener`) when you are done. [Memory and Garbage Collection](12-memory-and-garbage-collection.qmd) explains how the collector decides what is still reachable.
+
+## How it works underneath
+
+**Environment Records.** The specification models every scope as an **Environment Record**: a table of bindings plus an `[[OuterEnv]]` link to the surrounding record ([§9.1](https://tc39.es/ecma262/#sec-environment-records)). There are declarative records (functions, blocks, `catch` clauses), function records (which also hold `this`, `super` and `new.target`), module records, and the global record. "Each time such code is evaluated, a new Environment Record is created", which is why every call of `makeCounter` gets its own `count`. Lookup is the abstract operation GetIdentifierReference, which is exactly the $\operatorname{resolve}$ rule of Level 1: check `HasBinding`, otherwise recurse into `[[OuterEnv]]`, and at `null` return an unresolvable reference that becomes a `ReferenceError`.
+
+**How a function remembers.** When a function object is created, OrdinaryFunctionCreate stores the current record in the function's internal `[[Environment]]` slot. When the function is called, NewFunctionEnvironment makes a fresh record and sets its `[[OuterEnv]]` to that saved `[[Environment]]`. So the outer link of a call's scope comes from where the function was **defined**, never from where it is called. That single assignment is lexical scope, and it is closure.
+
+**Hoisting and the TDZ in the algorithm.** FunctionDeclarationInstantiation runs before the body. For each `var` name it calls CreateMutableBinding and then `InitializeBinding(name, undefined)`. For each function declaration it creates the function object and stores it. For `let`, `const` and `class` it only creates the binding; the specification says "Lexically declared names are only instantiated here but not initialized." When the declaration line runs, it initialises the binding. Until then, GetBindingValue finds "an uninitialized binding" and throws a `ReferenceError`. The TDZ is not an extra rule bolted on; it is that missing initialisation.
+
+**The `for (let ...)` copy.** ForBodyEvaluation calls CreatePerIterationEnvironment before the first test and again after every iteration. Each call makes a new declarative record whose outer is the loop's outer scope and copies the current value of `i` into it, then the increment `i++` runs on the new copy. Callbacks made during an iteration therefore link to that iteration's record.
+
+**What V8 actually allocates.** Records are a specification device; an engine only has to behave as if they exist. V8 keeps ordinary local variables in the stack frame, which disappears on return. The V8 team explains the exception in [Blazingly fast parsing, part 2: lazy parsing](https://v8.dev/blog/preparser): "VMs for languages with lexical closures allocate variables referenced from inner functions on the heap, in a structure called a 'context'." The parser works out, per variable, whether any inner function references it. A **closure** is then the function's code plus a pointer to the current context.
+
+There is one consequence worth knowing for interviews. The context belongs to the **scope**, not to each closure, so every closure created in one call shares it. If one inner function captures a large object, every closure from that call keeps it alive, even closures that never mention it. This is V8 behaviour, not a language rule, and it can only be observed by forcing garbage collection, so the lab does not check it:
+
+```js
+// sketch: run with node --expose-gc; V8 behaviour, not a language guarantee
+function shared() {
+  const big = new Array(1000).fill(0);
+  const ref = new WeakRef(big);
+  const usesBig = () => big.length; // never returned, but it puts big in the context
+  return { keep: () => 1, ref }; // keep shares that context
+}
+const result = shared();
+await new Promise((resolve) => setTimeout(resolve, 0));
+gc();
+console.log(result.ref.deref() !== undefined); // true: big survived through keep
+```
+
+Running it on Node 26 prints `true`. Remove the `usesBig` line and it prints `false`: nothing in the context refers to `big` any more, so the collector frees it.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Callbacks created in a `var` loop | Every callback sees the final value, such as 3, 3, 3 | Use `let` in the loop header, which gives one binding per iteration |
+| Reading a `let` or `const` before its line | `ReferenceError: Cannot access 'total' before initialization` | Declare before use; move the call below the declaration |
+| Calling a function expression before its assignment | `TypeError: greet is not a function` | Use a function declaration, or call it after the assignment |
+| Reassigning a `const` | `TypeError: Assignment to constant variable.` | Use `let` if the binding must change; `const` still allows mutation of the object |
+| Declaring the same `let` twice | `SyntaxError: Identifier 'x' has already been declared` | Rename one, or remove the second declaration |
+| Expecting `const` to freeze an object | Its properties still change | `Object.freeze` for a shallow freeze ([Objects and Prototypes](04-objects-and-prototypes.qmd)) |
+| Expecting a `var` inside `if` or `for` to stay local | It leaks into the whole function | Use `let` or `const`, which are block-scoped |
+| A long-lived closure capturing a large object | Memory keeps growing; heap snapshots show the object retained by a closure's context | Capture only the values you need, and remove handlers when done |
+
+## Interview questions
+
+### 1. What does the `var` loop print, and how do you fix it?
+
+**Answer.** `makeCallbacksWithVar()` returns `[3, 3, 3]`. The loop has a single function-scoped `i`; all three closures link to it, and they run after the loop ends with `i === 3`. Three fixes: (1) `for (let i = ...)`, because the specification copies `i` into a new environment for each iteration, giving `[0, 1, 2]`; (2) an IIFE that receives `i` as a parameter, `makeCallbacksWithIIFE`, because each call creates a new variable `copy`; (3) `[0, 1, 2].forEach((i) => ...)`, where each callback call has its own parameter. The first is the modern answer.
+
+### 2. What is the temporal dead zone, and why does `typeof` throw inside it?
+
+**Answer.** It is the time between entering a scope and executing a `let`, `const` or `class` declaration. The binding already exists (hoisted), so the name shadows any outer variable, but it is uninitialised, and any access throws `ReferenceError: Cannot access 'total' before initialization`. `typeof` on a name that is **not declared anywhere** returns `'undefined'` because resolution finds no binding and `typeof` special-cases that. Inside the TDZ resolution **does** find a binding, and reading an uninitialised binding always throws, so `typeof` cannot help. The TDZ is about execution time: `timeNotPlace` refers to `total` above the declaration but calls it afterwards, and returns 10.
+
+### 3. What is a closure? Give a practical use.
+
+**Answer.** A closure is a function together with the environment it was created in: the function object's `[[Environment]]` slot links to that scope, and every call of the function starts a new scope whose outer link is that saved one. The variables stay alive as long as the function is reachable, and the link is live, so updates are seen. Practical uses: private state (`makeAccount`), function factories (`makeCounter`), callbacks that remember context, memoisation, and `once`:
+
+```js
+function once(fn) {
+  let called = false;
+  let result;
+  return (...args) => {
+    if (!called) {
+      called = true;
+      result = fn(...args);
+    }
+    return result;
+  };
+}
+```
+
+The lab calls `init` twice and checks that the wrapped function ran exactly once while both calls returned `'initialised'`.
+
+### 4. Compare `var`, `let` and `const`.
+
+**Answer.**
+
+| | `var` | `let` | `const` |
+|---|---|---|---|
+| Scope | Function | Block | Block |
+| Value before its line | `undefined` | TDZ: `ReferenceError` | TDZ: `ReferenceError` |
+| Redeclare in the same scope | Allowed | `SyntaxError` | `SyntaxError` |
+| Reassign | Allowed | Allowed | `TypeError` |
+| Top-level in a classic script | Becomes a property of `globalThis` | Does not | Does not |
+| In a `for` loop header | One shared binding | A fresh binding per iteration | A fresh binding per iteration (for `for...of`) |
+
+Default to `const`, use `let` when the binding must change, and avoid `var` in new code.
+
+### 5. Can closures cause memory leaks?
+
+**Answer.** Yes, by keeping objects reachable longer than intended, typically when a closure that captures a large object is stored in a long-lived place: an event listener, a timer, a cache or a global array. The garbage collector cannot free anything a reachable function can still read. In V8 the effect is wider than the source suggests, because all closures from one call share one heap context: if any of them captures a big object, all of them keep it alive. Fixes: capture only what you need (`makeLeanSummary` copies `readings.length`), set references to `null`, and remove listeners and timers. Heap snapshots in Chrome DevTools or `node --inspect` show the retaining path through a closure's context.
+
+## Summary
+
+$$
+\operatorname{resolve}(n, E) =
+\begin{cases}
+\text{ReferenceError} & E = \texttt{null} \\
+E & n \in \operatorname{names}(E) \\
+\operatorname{resolve}\big(n, \operatorname{outer}(E)\big) & \text{otherwise}
+\end{cases}
+\qquad
+\operatorname{outer}(E_{\text{call}}) = E_{\text{definition}}
+$$
+
+where $n$ is a name, $E$ a scope, $\operatorname{names}(E)$ the names declared in it, $\operatorname{outer}(E)$ the scope around it, $E_{\text{call}}$ the new scope a function call creates, and $E_{\text{definition}}$ the scope in which the function was written.
+
+Example: in `city`, `planet` is not in $E_{\text{city}}$ or $E_{\text{country}}$, so the lookup climbs two steps to the module scope and finds `'Earth'`. For `counterA`, $\operatorname{outer}(E_{\text{call}})$ is the scope of the first `makeCounter` call, so every call finds that scope's `count`, giving 1, 2, 3.
+
+- Scope is lexical: the place a function is written decides what it can see.
+- `var` is function-scoped and starts as `undefined`; `let` and `const` are block-scoped and start in the temporal dead zone.
+- Function declarations are hoisted with their bodies; function expressions follow the rules of their variable.
+- A closure is code plus a live link to its birth scope; each call of the outer function creates a new scope.
+- `for (let ...)` creates a fresh binding per iteration, which solves the loop puzzle.
+- Closures give private state, and they keep alive everything they reach, so capture only what you need.
+
+## References
+
+- ECMAScript Language Specification: [Environment Records](https://tc39.es/ecma262/#sec-environment-records), [GetIdentifierReference](https://tc39.es/ecma262/#sec-getidentifierreference), [OrdinaryFunctionCreate](https://tc39.es/ecma262/#sec-ordinaryfunctioncreate), [NewFunctionEnvironment](https://tc39.es/ecma262/#sec-newfunctionenvironment), [FunctionDeclarationInstantiation](https://tc39.es/ecma262/#sec-functiondeclarationinstantiation), [Let and Const Declarations](https://tc39.es/ecma262/#sec-let-and-const-declarations), [CreatePerIterationEnvironment](https://tc39.es/ecma262/#sec-createperiterationenvironment).
+- MDN: [Closures](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Closures), [Hoisting](https://developer.mozilla.org/en-US/docs/Glossary/Hoisting), [let](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/let) (including the temporal dead zone), [var](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/var), [const](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/const).
+- Kyle Simpson, *You Don't Know JS Yet: Scope & Closures*, 2nd edition: [chapter 2, "Illustrating Lexical Scope"](https://github.com/getify/You-Dont-Know-JS/blob/2nd-ed/scope-closures/ch2.md), [chapter 5, "The (Not So) Secret Lifecycle of Variables"](https://github.com/getify/You-Dont-Know-JS/blob/2nd-ed/scope-closures/ch5.md), [chapter 7, "Using Closures"](https://github.com/getify/You-Dont-Know-JS/blob/2nd-ed/scope-closures/ch7.md).
+- Brendan Eich, [Popularity](https://brendaneich.com/2008/04/popularity/) (2008), on Scheme-ish functions and Self-ish prototypes.
+- Toon Verwaest and Marja Hölttä, [Blazingly fast parsing, part 2: lazy parsing](https://v8.dev/blog/preparser) (V8 blog, 2019), on heap-allocated contexts for captured variables.
+- Lab: [`labs/scope-hoisting-and-closures.mjs`](labs/scope-hoisting-and-closures.mjs). Run it from `programming-languages/javascript/labs` with `node scope-hoisting-and-closures.mjs`.

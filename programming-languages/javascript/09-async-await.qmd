@@ -1,0 +1,278 @@
+---
+title: "Async/Await"
+description: "How async functions work: they always return a promise, await suspends through a microtask, sequential versus parallel awaits, try/catch, top-level await, for await, forEach pitfalls, and cancellation with AbortController and AbortSignal.timeout."
+---
+
+## The problem
+
+A checkout page needs three prices from three services. They answer in 30 ms, 20 ms and 10 ms, and the prices are 5, 7 and 9. With plain promises, the code is a chain of `then` callbacks ([Promises](08-promises.qmd)), which is correct but reads inside out. `async`/`await` (ES2017) lets you write the same thing top to bottom, like ordinary code:
+
+```js
+async function sequentialTotal() {
+  const a = await delay(30, 5);
+  const b = await delay(20, 7); // starts only after a has arrived
+  const c = await delay(10, 9);
+  return a + b + c;
+}
+```
+
+It returns 21. But it takes **60 ms**, although no single call takes more than 30. Reading top to bottom made it easy to forget that the three calls do not depend on each other. Two other traps are just as easy to fall into: an `async` callback inside `forEach` that nobody waits for, and a request that keeps running after the user has clicked "Cancel". This chapter is about what `await` really does, so that these mistakes become obvious.
+
+In this chapter's lab, `delay(ms, value)` is `setTimeout` from `node:timers/promises`: a promise that fulfils with `value` after `ms` milliseconds, and accepts `{ signal }` to cancel it.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The bookmark in a recipe book
+
+You are cooking from a recipe. Step 3 says "boil the eggs for 10 minutes". You do not stand and stare at the pot. You put a **bookmark** at step 3, go and do something else (help a sibling with homework), and when the timer rings you come back to the bookmark and carry on with step 4.
+
+`await` is that bookmark. The function stops at that line, the kitchen (the event loop) stays free for other work, and the function continues from the bookmark when the result arrives.
+
+But if your recipe says "boil the eggs, **then** bake the bread, **then** make the tea", you will wait 10 + 40 + 5 minutes. If none of them needs the others, start all three at once and you wait only as long as the slowest, 40 minutes. Jake Archibald's article *Async functions: making promises friendly* has a whole section called "Careful! Avoid going too sequential".
+:::
+
+## From simple to advanced
+
+### Level 1: an async function always returns a promise
+
+Marking a function `async` changes what calling it returns: always a promise. A `return` value fulfils it, and a `throw` rejects it:
+
+```js
+async function answer() {
+  return 42;
+}
+
+async function broken() {
+  throw new Error('inside async');
+}
+```
+
+`answer()` is a `Promise`, and `await answer()` is 42. Calling `broken()` does **not** throw at the call site; it returns a promise rejected with `inside async`. So the caller sees every failure the same way, as a rejection, whether the function failed before or after its first `await`.
+
+### Level 2: `await` pauses the function, not the program
+
+`await x` turns `x` into a promise, gives the rest of the function to that promise as a callback, and **returns to the caller**. When the promise settles, the rest runs as a microtask ([The Event Loop](07-the-event-loop.qmd)):
+
+```js
+async function pauseAndResume(log) {
+  log.push('before await');
+  await null; // even a plain value: the rest waits for a microtask
+  log.push('after await');
+}
+```
+
+The caller runs `const resumed = pauseAndResume(log); log.push('caller continues'); await resumed;`, and the log is:
+
+```text
+before await
+caller continues
+after await
+```
+
+The code before the first `await` runs **synchronously**, at the call. The code after it runs later, even when the awaited value was not a promise at all. Nothing runs on another thread: `await` is a bookmark, not a worker.
+
+### Level 3: sequential versus parallel
+
+Each `await` in `sequentialTotal` starts its call only after the previous one has finished. Starting them together and awaiting them as a group with `Promise.all` changes the cost from a sum to a maximum:
+
+$$
+T_{\text{sequential}} = \sum_{i=1}^{n} t_i, \qquad T_{\text{parallel}} = \max_{1 \le i \le n} t_i
+$$
+
+where
+
+- $n$ is the number of independent calls;
+- $t_i$ is how long call $i$ takes on its own;
+- $\sum$ adds them all up and $\max$ picks the largest.
+
+Example, with $t = (30, 20, 10)$ ms: $T_{\text{sequential}} = 30 + 20 + 10 = 60$ ms and $T_{\text{parallel}} = \max(30, 20, 10) = 30$ ms, half the time.
+
+```js
+async function parallelTotal() {
+  const [a, b, c] = await Promise.all([delay(30, 5), delay(20, 7), delay(10, 9)]);
+  return a + b + c;
+}
+```
+
+Both functions return $5 + 7 + 9 = 21$. The lab times them: the sequential one takes at least about 60 ms, the parallel one at least about 30 ms, and the parallel one is faster. The rule: `await` one after another **only** when the next call needs the previous result.
+
+### Level 4: `try`/`catch` catches awaited rejections
+
+Inside an async function, `await` on a rejected promise **throws** at that line, so ordinary `try`/`catch` works:
+
+```js
+async function loadOrDefault(load) {
+  try {
+    return await load(); // awaited here, so a rejection lands in this catch
+  } catch {
+    return 'default';
+  }
+}
+
+async function loadOrDefaultBroken(load) {
+  try {
+    return load(); // returned without await: the catch never sees the rejection
+  } catch {
+    return 'default';
+  }
+}
+```
+
+With `failingLoad`, which returns a promise rejected with `offline`, `loadOrDefault` returns `'default'`, but `loadOrDefaultBroken` rejects with `offline`. The broken version leaves the `try` block **before** the promise rejects; the function's own promise then adopts the rejection. Inside `try`, write `return await`. Outside `try`, `return p` and `return await p` give the same outcome.
+
+### Level 5: loops, `forEach` and `for await`
+
+A `for...of` loop with `await` in its body runs the iterations one after another, which is right when each step depends on the last and slow when they do not (Level 3). `forEach` is worse: it calls an `async` callback, receives a promise, and **throws the promise away**:
+
+```js
+function forEachDoesNotWait(ids, seen) {
+  ids.forEach(async id => {
+    await delay(10);
+    seen.push(id);
+  }); // forEach ignores the promises the callback returns
+}
+```
+
+Right after `forEachDoesNotWait([1, 2, 3], seen)`, `seen` is still `[]`: nothing has finished, and nobody can wait for it, and a rejection inside a callback would be unhandled. For parallel work, write `await Promise.all(ids.map(async id => ...))`; for one at a time, write a `for...of` loop. The same holds for `map`, `filter` and `reduce`: they do not wait for promises.
+
+When the **source** of values is itself asynchronous, use an async generator and `for await...of` (ES2018), which awaits each step ([Iterators and Generators](06-iterators-and-generators.qmd)):
+
+```js
+async function* countdown(from) {
+  for (let n = from; n > 0; n--) {
+    await delay(5);
+    yield n;
+  }
+}
+
+async function collect(source) {
+  const values = [];
+  for await (const value of source) values.push(value);
+  return values;
+}
+```
+
+`collect(countdown(3))` is `[3, 2, 1]`. `Array.fromAsync(countdown(3))` (ES2026, in Node 26) does the same collection in one call.
+
+**Top-level await** (ES2022) allows `await` outside any function, but only in an ES module; this lab uses it on almost every line. In a CommonJS file the same line is an error:
+
+```text
+SyntaxError: await is only valid in async functions and the top level bodies of modules
+```
+
+A module that awaits at the top level delays every module that imports it until it finishes ([Modules](10-modules.qmd)).
+
+### Level 6: cancellation with `AbortSignal`
+
+A promise is a **result**, not a handle to the work, so it has no `cancel` method. The standard way to stop work is an `AbortController`: the caller keeps the controller, and the work receives its `signal` and stops when the signal aborts:
+
+```js
+async function download(signal) {
+  await delay(1000, undefined, { signal }); // rejects as soon as signal aborts
+  return 'downloaded';
+}
+```
+
+After `const pending = download(controller.signal); controller.abort();`, the 1000 ms wait ends at once and `pending` rejects with an error whose `name` is `AbortError` and whose message is `The operation was aborted`. Two static helpers build signals for you:
+
+- `AbortSignal.timeout(20)` aborts itself after 20 ms. Its `reason` is a `DOMException` named `TimeoutError` with the message `The operation was aborted due to timeout`, so `download(AbortSignal.timeout(20))` gives up after about 20 ms instead of 1000.
+- `AbortSignal.any([a, b])` aborts when **either** signal does, which combines "the user clicked Cancel" with "it took too long".
+
+`fetch`, the `node:timers/promises` functions, `events.once` and most Node stream and file APIs accept `{ signal }`. In your own long loops, call `signal.throwIfAborted()` between steps.
+
+## How it works underneath
+
+An async function is a **coroutine**: a function that can suspend in the middle and be resumed later with its local variables intact. The specification's `Await(value)` operation does, in order:
+
+1. `promise = PromiseResolve(%Promise%, value)`: if `value` is already a native promise, use it as is; otherwise wrap it.
+2. `PerformPromiseThen(promise, onFulfilled, onRejected)`: register two callbacks that will resume this function, with the value or by throwing the reason.
+3. Remove the function's execution context from the stack and return to whoever called or resumed it.
+
+So `const x = await p; return x + 1;` behaves like this promise code:
+
+```js
+// sketch: what `const x = await p; return x + 1;` means
+function equivalent(p) {
+  return new Promise((resolve, reject) => {
+    Promise.resolve(p).then(x => resolve(x + 1), reject);
+  });
+}
+```
+
+The difference is that the engine keeps the whole function frame (its variables, its position, any enclosing `try` blocks) alive between the steps, which is why `try`/`catch` and loops work across `await`. The specification suspends and resumes it with the same execution-context machinery it uses for generators ([Iterators and Generators](06-iterators-and-generators.qmd)); `Promise.resolve(p)` in the sketch returns `p` itself when `p` is a native promise, exactly like `PromiseResolve`.
+
+Step 1 is the result of a 2018 change. Before it, every `await` wrapped the value in a fresh promise, and awaiting a native promise cost **three** microtasks. Maya Armyanova and Benedikt Meurer describe in *Faster async functions and promises* (V8 blog, 2018) how V8 v7.2 adopted `PromiseResolve` here and proposed the same change to the specification, cutting the cost to **one** microtask. That is why interview question 1 of [The Event Loop](07-the-event-loop.qmd) logs `a1 end` before `then`.
+
+Cancellation lives outside the language core. `AbortController` and `AbortSignal` come from the [WHATWG DOM standard](https://dom.spec.whatwg.org/#aborting-ongoing-activities); Node implements them as globals. An `AbortSignal` is an event target: aborting sets `signal.aborted = true`, stores `signal.reason`, and dispatches an `abort` event that each API listens for to clean up.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Awaiting independent calls one by one | Total time is $\sum t_i$ (60 ms) instead of $\max t_i$ (30 ms) | Start them together: `await Promise.all([...])` |
+| `array.forEach(async item => ...)` | The caller continues at once; results arrive later; rejections are unhandled | `await Promise.all(array.map(async item => ...))`, or a `for...of` loop |
+| `return promise` inside `try` without `await` | The `catch` block never runs; the caller gets the rejection | `return await promise` inside `try` |
+| Forgetting `await` on a call | A `Promise { <pending> }` is used as if it were the value; errors become unhandled rejections | Await it, or return it; lint with `@typescript-eslint/no-floating-promises` |
+| Start two calls early, then await them one by one | If the second rejects while the first is still awaited, Node reports an unhandled rejection and, by default, exits | Use `Promise.all`, which handles every input at once (interview question 4) |
+| `await` at the top level of a CommonJS file | `SyntaxError: await is only valid in async functions and the top level bodies of modules` | Use an ES module (`.mjs` or `"type": "module"`), or wrap it in an async function |
+| Expecting `async` to make CPU work parallel | The page or server still freezes during a long loop | Split the work ([The Event Loop](07-the-event-loop.qmd)) or use a worker |
+
+## Interview questions
+
+### 1. What does an async function return, and when does its body run?
+
+**Answer.** It always returns a native promise, created at the call. The body runs **synchronously** up to the first `await`, so `before await` is logged before the caller continues. Each `await` then suspends the function and returns control to the caller (the first time) or to the event loop (afterwards). A `return v` fulfils the promise with `v` (adopting it if it is a thenable), and an exception, even one thrown before any `await`, rejects it instead of escaping to the caller: `broken()` returns a rejected promise.
+
+### 2. These three requests take 30, 20 and 10 ms. How long do the sequential and the parallel versions take, and when is sequential correct?
+
+**Answer.** Sequential: $30 + 20 + 10 = 60$ ms, because each `await` waits before the next call starts. Parallel with `Promise.all`: $\max(30, 20, 10) = 30$ ms, because all three are in flight at once. Both return 21. Sequential is correct when a call **needs** the previous result (fetch the user, then that user's orders) or when you must limit the load on a service. For "parallel, but at most $k$ at a time", run a small pool of workers that each loop over a shared queue.
+
+### 3. Why does `loadOrDefaultBroken` not catch the error?
+
+**Answer.** `return load()` returns the promise immediately, so the `try` block ends successfully **before** the promise rejects. The async function's own promise then adopts the rejection, and the caller receives `offline`. With `return await load()`, the function stays inside the `try` until the promise settles, and the rejection is thrown at the `await` line, where `catch` sees it.
+
+### 4. What is wrong with starting two calls early and awaiting them one by one?
+
+**Answer.** It runs in parallel, but it handles errors badly:
+
+```js
+async function startEarlyAwaitLate() {
+  const slow = delay(30, 5);
+  const failing = delay(10).then(() => { throw new Error('b failed'); });
+  return (await slow) + (await failing); // failing rejects while we wait for slow
+}
+```
+
+At 10 ms, `failing` rejects. Nobody has attached a handler to it yet, because the function is still waiting for `slow`, so when the microtask queue drains Node emits `unhandledRejection`. With the default `--unhandled-rejections=throw`, and no listener, that **ends the process**. The lab registers listeners and sees `unhandled b failed`, then `handled later` when the second `await` finally attaches a handler at 30 ms. `Promise.all([slow, failing])` attaches handlers to both inputs immediately, so it rejects cleanly at 10 ms.
+
+### 5. How do you cancel an async operation?
+
+**Answer.** Pass an `AbortSignal` into it and make every waiting step honour the signal. The caller creates `new AbortController()`, passes `controller.signal`, and calls `controller.abort()` to cancel; `download` then rejects at once with `AbortError: The operation was aborted`. For deadlines, pass `AbortSignal.timeout(ms)`, whose reason is a `TimeoutError`, and combine sources with `AbortSignal.any([...])`. Wrapping a call in `Promise.race` with a timer only stops **waiting**; the work keeps running, which is why the signal must reach the code that does the work.
+
+## Summary
+
+$$
+T_{\text{sequential}} = \sum_{i=1}^{n} t_i, \qquad T_{\text{parallel}} = \max_{1 \le i \le n} t_i
+$$
+
+where $t_i$ is the duration of the $i$-th of $n$ independent calls.
+
+Example: calls of 30, 20 and 10 ms take $30 + 20 + 10 = 60$ ms one after another, and $\max(30, 20, 10) = 30$ ms with `Promise.all`; both return $5 + 7 + 9 = 21$.
+
+- An `async` function always returns a promise; `return` fulfils it and `throw` rejects it.
+- `await` suspends only the current function; the rest runs as a microtask, never on another thread.
+- Await one after another only when a step needs the previous result; otherwise use `Promise.all`.
+- Use `try`/`catch` around awaited calls, and `return await` inside `try`.
+- `forEach`, `map` and friends do not wait for async callbacks; use `for...of` or `Promise.all`. Use `for await` for async sources.
+- Cancel with `AbortController`, `AbortSignal.timeout` and `AbortSignal.any`; a promise cannot cancel the work behind it.
+
+## References
+
+- ECMAScript Language Specification, [Async Function Definitions](https://tc39.es/ecma262/#sec-async-function-definitions) and the [Await](https://tc39.es/ecma262/#await) operation.
+- The TC39 proposal [Async Functions for ECMAScript](https://github.com/tc39/ecmascript-asyncawait) (Brian Terlson; ES2017).
+- MDN, [async function](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/async_function), [await](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/await), [for await...of](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/for-await...of), [Array.fromAsync](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/fromAsync), [AbortSignal.timeout](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/timeout_static) and [AbortSignal.any](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal/any_static).
+- Node.js API, [AbortController and AbortSignal](https://nodejs.org/api/globals.html#class-abortsignal) and [Timers Promises API](https://nodejs.org/api/timers.html#timers-promises-api).
+- Maya Armyanova and Benedikt Meurer, [Faster async functions and promises](https://v8.dev/blog/fast-async) (V8 blog, 2018).
+- Jake Archibald, [Async functions: making promises friendly](https://web.dev/articles/async-functions) (web.dev).
+- Lab: [`labs/async-await.mjs`](labs/async-await.mjs). Run it from `programming-languages/javascript/labs` with `node async-await.mjs`.

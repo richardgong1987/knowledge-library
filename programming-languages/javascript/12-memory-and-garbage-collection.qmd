@@ -1,0 +1,243 @@
+---
+title: "Memory and Garbage Collection"
+description: "How JavaScript frees memory: reachability from roots, mark-and-sweep and cycles, V8's generational collector (Scavenger and Mark-Compact, Orinoco), the common leaks, WeakMap and WeakSet, and WeakRef with FinalizationRegistry."
+---
+
+## The problem
+
+A Node server remembers a little information about every request: `cache.set(request, { receivedAt: Date.now() })`, in a `Map` that is never cleared. Each entry, with its request object, costs perhaps 2 KB. At 100 requests a second that is $100 \times 2 = 200$ KB a second, about 700 MB an hour. After a few hours the process slows down, then dies with `FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory`.
+
+Nobody called `free` and nobody forgot to: JavaScript has no `free`. Memory is reclaimed by a **garbage collector** (GC), which deletes objects the program can no longer reach. The bug is that the `Map` still reaches every request, so to the collector they are all in use. A **memory leak** in JavaScript is memory that is still reachable but no longer needed.
+
+This chapter explains what "reachable" means exactly, how V8 finds unreachable objects quickly, which everyday patterns keep objects reachable by accident, and the weak references that let you say "remember this, but do not keep it alive". The lab forces collections with V8's `gc()` function, exposed through `v8.setFlagsFromString('--expose-gc')`, a debugging switch that is fine for a lab and wrong for production code.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Balloons on strings
+
+Imagine every object is a **balloon**, and references are **strings**. You (the running program) hold a few strings in your hands: global variables and the variables of the functions running right now. Those are the **roots**. Balloons can also be tied to other balloons.
+
+Every so often a cleaner comes by. The cleaner starts at your hands and follows every string, putting a sticker on each balloon it reaches. Then every balloon **without** a sticker floats away. It does not matter how many strings a lonely balloon has to other lonely balloons: if no path of strings leads back to your hands, it goes.
+
+A leak is a balloon you have forgotten about but are still holding by a string somewhere, perhaps tied to the back of your chair.
+
+MDN's guide to memory management describes the same algorithm: starting from the roots, "the garbage collector will thus find all reachable objects and collect all non-reachable objects." John McCarthy introduced automatic garbage collection for Lisp in 1960.
+:::
+
+## From simple to advanced
+
+### Level 1: reachable objects survive
+
+An object stays alive exactly when there is a path of references to it from a root. Written as a set:
+
+$$
+R = \text{the smallest set with } \text{Roots} \subseteq R \text{ and } \left(x \in R \land x \to y \implies y \in R\right)
+$$
+
+where
+
+- $\text{Roots}$ are the starting references: the global object, module variables, and the local variables and arguments of every function currently on the call stack (V8 calls them the root set);
+- $x \to y$ means object $x$ holds an ordinary (strong) reference to object $y$, such as a property or an array element; a `WeakRef` or `WeakMap` key does **not** count as $\to$;
+- $R$ is the set of reachable objects; $\subseteq$ means "is contained in" and $\land$ means "and";
+- every object **not** in $R$ is garbage and may be freed.
+
+Example, with this graph from the lab:
+
+```js
+function makeGraph() {
+  const a = { name: 'a' };
+  const b = { name: 'b' };
+  const c = { name: 'c' };
+  a.next = b; // a -> b
+  c.next = b; // c -> b, but nothing points to c
+  return { root: a, weakB: new WeakRef(b), weakC: new WeakRef(c) };
+}
+```
+
+The caller keeps the result in the module variable `graph`, so $\text{Roots} = \lbrace \texttt{graph} \rbrace$.
+
+1. Start with $R = \lbrace \texttt{graph} \rbrace$.
+2. `graph.root` is `a`, so add it: $R = \lbrace \texttt{graph}, a \rbrace$.
+3. $a \to b$, so add $b$: $R = \lbrace \texttt{graph}, a, b \rbrace$.
+4. Nothing in $R$ points to $c$ (the edge $c \to b$ points the wrong way, and `weakC` is weak), so $c \notin R$.
+
+After a collection, `graph.weakC.deref()` is `undefined`, while `graph.weakB.deref()` is still `b` and `graph.root.next.name` is `'b'`. When `makeGraph` returned, its local variables `a`, `b` and `c` stopped being roots; only what the return value reaches survived.
+
+### Level 2: cycles are not a problem
+
+An older strategy, **reference counting**, frees an object when the number of references to it drops to zero. It fails on cycles:
+
+```js
+function makeCycle() {
+  const left = {};
+  const right = { left };
+  left.right = right; // left <-> right: each is referenced once
+  return new WeakRef(left);
+}
+```
+
+After `makeCycle()` returns, `left` and `right` each still have one incoming reference, from each other, so a reference counter would keep both forever. Under the reachability rule, no path leads from a root to either, so both are garbage, and the lab sees the `WeakRef` cleared after a collection. MDN is blunt: "No modern JavaScript engine uses reference-counting for garbage collection anymore." Engines **trace** from the roots instead, which is the **mark-and-sweep** idea: mark everything reachable, then sweep away the rest.
+
+### Level 3: the common leaks
+
+Every leak is a path from a root that you forgot about. Four paths cause most of them:
+
+- **Globals and module-level collections.** A module variable is a root for the life of the program, so a `Map` stored there keeps every key and value it ever received. This is the problem at the top of the chapter.
+- **Timers.** A pending `setInterval` is reachable from the event loop, and so is everything its callback captures:
+
+```js
+function startPolling(data) {
+  return setInterval(() => data.length, 1000); // the callback keeps data reachable
+}
+```
+
+Even after the caller sets its own variable to `null`, the lab finds `data` still alive: root, then timer, then callback, then `data`. After `clearInterval(timer)`, the next collection frees it.
+
+- **Event listeners.** Adding a listener stores the function, and everything it captures, inside the emitter:
+
+```js
+function subscribe(emitter, onData) {
+  emitter.on('data', onData); // the emitter now holds onData and everything it captures
+  return () => emitter.off('data', onData);
+}
+```
+
+Three calls give `emitter.listenerCount('data') === 3`, and the count only goes back to 0 when each returned unsubscribe function runs. Subscribing per request and never unsubscribing grows without bound; at the 11th listener for one event, Node prints `MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 data listeners added to [EventEmitter]. MaxListeners is 10.`
+
+- **Closures.** A closure keeps the variables it uses alive ([Scope, Hoisting and Closures](02-scope-hoisting-and-closures.qmd)). V8 adds a twist: all closures created in one scope **share** a single context object holding every variable any of them uses:
+
+```js
+function makeHandlers(big) {
+  const usesBig = () => big.length; // never returned, but it captures big
+  const small = () => 'small';
+  return small; // in V8, small shares usesBig's context, so big stays alive
+}
+```
+
+`small` never mentions `big`, yet while `small` is alive, the lab finds `big` still reachable. This is an implementation choice, not a language rule, so other engines may differ; the fix is to keep large values out of scopes that create long-lived closures.
+
+### Level 4: `WeakMap` and `WeakSet`
+
+A `Map` holds its keys strongly. A `WeakMap` (ES2015) holds them **weakly**: an entry exists only as long as its key is reachable from somewhere else, and when the key is collected, the entry vanishes with it.
+
+```js
+const labels = new WeakMap();
+function label(object, text) {
+  labels.set(object, text); // no strong reference to object is kept
+}
+```
+
+In the lab, an object stored as a key in a `Map` survives collection after its last variable is set to `null`, and is freed only after `cache.clear()`. The same object labelled through the `WeakMap` is freed as soon as its variable is `null`. The price of weakness is visibility: a `WeakMap` has no `size`, no `keys()` and no iteration, because their answers would change whenever the collector ran. Keys must be objects (or non-registered symbols). `WeakSet` is the same idea for "is this object marked?".
+
+Use a `WeakMap` to attach data to objects you do not own, such as metadata for DOM nodes or per-request state, so the data lives exactly as long as the object.
+
+### Level 5: `WeakRef` and `FinalizationRegistry`
+
+ES2021 added two lower-level tools. `new WeakRef(target)` holds a reference that does not keep `target` alive; `ref.deref()` returns the target, or `undefined` once it has been collected. Every check in this lab is built on it. A `FinalizationRegistry` calls a cleanup function **some time after** a registered object is collected:
+
+```js
+const cleaned = [];
+const registry = new FinalizationRegistry(heldValue => cleaned.push(heldValue));
+function registerTemporary() {
+  registry.register({ size: 1024 }, 'temporary buffer');
+}
+```
+
+After a collection, and a later task, `cleaned` is `['temporary buffer']`. The callback receives the **held value**, never the object, which no longer exists.
+
+Both come with a strong warning. The specification gives almost no guarantees about when, or even whether, collection and cleanup happen, and MDN says: "Avoid using them where possible because the runtime semantics are almost completely unguaranteed." A cleanup callback might never run, for example if the program exits first. Use them for caches and for releasing non-memory resources as a **backup**, never as the primary way to close a file. That is the job of `using` ([Errors](11-errors.qmd), Level 7). The lab only gets reliable answers because it forces full collections and retries.
+
+## How it works underneath
+
+V8's collector is built on the **generational hypothesis**, which the V8 blog post *Trash talk* states as "most objects die young". So the heap has two generations, each with its own algorithm:
+
+| | Young generation (`new_space`) | Old generation (`old_space`) |
+|---|---|---|
+| Holds | Newly allocated objects | Objects that survived two young collections |
+| Collector | **Scavenger** (minor GC) | **Mark-Compact** (major GC) |
+| Algorithm | Copy live objects out of a semi-space | Mark reachable objects, sweep the gaps into free lists, compact fragmented pages |
+| Runs | Often, and quickly | Rarely, mostly in the background |
+
+The young generation is split into two halves, the *semi-spaces*. New objects go into one; when it fills up, the Scavenger traces from the roots, **copies** each live object into the other half (or, on its second survival, into the old generation) and treats the whole first half as empty again. It never visits dead objects at all, so its cost depends only on what survives:
+
+$$
+W_{\text{scavenge}} \approx k \cdot L
+$$
+
+where
+
+- $W_{\text{scavenge}}$ is the work of one young-generation collection;
+- $L$ is the number (or total size) of **live** objects in the young generation;
+- $k$ is the cost of copying one object and fixing the references to it.
+
+Example: a request handler allocates 1,000 temporary objects and keeps 20 of them. A scavenge copies $L = 20$ objects, so $W \approx 20k$; the 980 dead ones cost nothing individually, which is why short-lived garbage is cheap. The *Orinoco: young generation garbage collection* post puts it as "garbage collection is usually bounded by the size of live objects".
+
+Two problems remain, and V8 has an answer for each:
+
+- **Old objects pointing to young ones.** A scavenge must not miss a young object referenced only from the old generation, but it cannot afford to scan the whole old generation. V8 uses a **write barrier**: every store of a pointer into an object records old-to-new references in a list, which the Scavenger treats as extra roots.
+- **Pauses.** A collection that stops JavaScript for 100 ms would freeze a page ([The Event Loop](07-the-event-loop.qmd)). *Orinoco* is the code name of V8's project to shrink these pauses. It makes the collector **parallel** (helper threads share a pause), **incremental** (work done in small slices between JavaScript) and **concurrent** (helper threads mark and sweep while JavaScript keeps running). The major GC today starts with concurrent marking and needs only a short main-thread pause to finish. Spare time between frames is used for *idle-time* GC.
+
+The language specification sees none of this. It only promises that an object which can still be observed is never collected, defines `WeakRef` and `FinalizationRegistry` in terms of **liveness**, and adds one rule you can observe: a `WeakRef` target that was created or dereferenced during the current job stays alive until that job ends (`AddToKeptObjects`), so that `ref.deref()` cannot change in the middle of synchronous code. That is why the lab's `isCollected` waits for the next task before calling `gc()`.
+
+In Node, `v8.getHeapSpaceStatistics()` lists the heap's spaces, including `new_space` and `old_space`; `process.memoryUsage().heapUsed` reports the bytes in use; and `--max-old-space-size` sets the old generation's limit.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| A module-level `Map` used as a cache with no eviction | Memory grows steadily until `FATAL ERROR: ... Allocation failed - JavaScript heap out of memory` | Bound the cache (an LRU with a maximum size), or key it with a `WeakMap` when the keys are objects |
+| Adding listeners per request or per component and never removing them | `MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 data listeners added ...` | Keep and call the unsubscribe function; for an `EventTarget`, pass `{ signal }` to `addEventListener` and abort it |
+| A `setInterval` that is never cleared | Its callback and all it captures live forever; the process never exits | `clearInterval` when the work ends; `timer.unref()` if it must not keep the process alive |
+| A long-lived closure created in a scope that also holds large data | Memory stays high although "nothing uses" the data | Keep large values out of that scope, or set them to `null` when done |
+| Expecting `obj = null` or `delete obj.x` to free memory at once | Memory usage does not drop | They only remove **one** reference; memory is freed when the object is unreachable **and** the collector runs |
+| Relying on `FinalizationRegistry` to close files or connections | Resources leak when callbacks run late or never | Close explicitly with `using` or `try`/`finally`; use finalizers only as a backup |
+| Calling `gc()` from production code | `ReferenceError: gc is not defined` without the flag; pauses with it | Never force collection in production; the lab does it only to make checks deterministic |
+
+## Interview questions
+
+### 1. What is a memory leak in a garbage-collected language like JavaScript?
+
+**Answer.** Memory that the program no longer **needs** but can still **reach**. The collector frees exactly the objects outside the reachable set $R$, so it can never free something that a root still leads to, however useless it is. Typical paths are a module-level cache that is never evicted, a timer or listener that is never removed, and a closure that captures more than it needs. In the lab, `data` survives while its `setInterval` is active and is freed only after `clearInterval`. The cure is to cut the path, not to call the collector.
+
+### 2. What is the difference between a `Map` and a `WeakMap`?
+
+**Answer.** A `Map` holds strong references to its keys and values, so every key stays reachable for as long as the map does, and it supports `size` and iteration. A `WeakMap` holds its keys weakly: the entry does not keep the key alive, and when the key becomes unreachable elsewhere, the entry disappears. In the lab, the `Map` key survives a collection until `cache.clear()`, while the `WeakMap` key is freed as soon as its variable is `null`. To make that safe, `WeakMap` has no `size`, `keys` or iteration, and its keys must be objects or non-registered symbols. Use it to attach data to objects you do not control.
+
+### 3. Does setting a variable to `null` free the object?
+
+**Answer.** No, not by itself. It removes **one** edge from the reference graph. The object becomes garbage only when **no** path from a root leads to it, and even then the memory is reclaimed only when the collector next runs, which V8 decides. In the lab, `polled = null` did not free the object, because the interval's callback still referenced it; only `clearInterval` removed the last path. `delete obj.x` is the same: it removes a property, which is one reference.
+
+### 4. How does V8's garbage collector work?
+
+**Answer.** It is generational, because most objects die young. New objects are allocated in the young generation, which the **Scavenger** collects often by copying the few survivors between two semi-spaces, so its cost is proportional to the live objects, $W \approx k \cdot L$, not to the garbage. Objects that survive two scavenges are promoted to the old generation, which **Mark-Compact** collects: mark everything reachable from the roots, sweep the gaps into free lists, and compact fragmented pages. A write barrier records old-to-new pointers so scavenges need not scan the old generation. The *Orinoco* project made this parallel, incremental and concurrent, so most of the work runs on helper threads while JavaScript continues.
+
+### 5. How would you find a memory leak in a Node service?
+
+**Answer.** First confirm it: watch `process.memoryUsage().heapUsed` over time, under steady load. A sawtooth that returns to the same floor is healthy; a floor that keeps rising is a leak. Then take **heap snapshots** some minutes apart, with `node --inspect` and the Chrome DevTools Memory panel, or with `v8.writeHeapSnapshot()`, and compare them. Sort by the objects whose count grows, and read their **retainer** paths, which show exactly the chain from a root that keeps them alive: a `Map`, a listener array, a timer. That chain is the $\text{Roots} \to \dots \to y$ path of the formula, and breaking one edge of it fixes the leak.
+
+## Summary
+
+$$
+R = \text{the smallest set with } \text{Roots} \subseteq R \text{ and } \left(x \in R \land x \to y \implies y \in R\right)
+$$
+
+where $R$ is the set of reachable objects, $\text{Roots}$ are globals, module variables and the variables of running functions, and $x \to y$ is a strong reference from $x$ to $y$.
+
+Example: with $\text{Roots} = \lbrace \texttt{graph} \rbrace$ and edges $\texttt{graph} \to a \to b$ and $c \to b$, the set is $R = \lbrace \texttt{graph}, a, b \rbrace$, so only $c$ is collected.
+
+- Objects live exactly as long as a path of strong references leads to them from a root; cycles do not matter.
+- A leak is a forgotten path: a cache, a timer, a listener or a closure.
+- V8 collects young objects with the copying **Scavenger** and old ones with **Mark-Compact**, mostly concurrently (Orinoco).
+- `WeakMap` and `WeakSet` attach data without keeping keys alive; they cannot be iterated.
+- `WeakRef` and `FinalizationRegistry` observe collection with almost no guarantees: use them sparingly, and never for essential cleanup.
+
+## References
+
+- ECMAScript Language Specification, [WeakRef Objects](https://tc39.es/ecma262/#sec-weak-ref-objects), [FinalizationRegistry Objects](https://tc39.es/ecma262/#sec-finalization-registry-objects), [WeakMap Objects](https://tc39.es/ecma262/#sec-weakmap-objects), [Liveness](https://tc39.es/ecma262/#sec-liveness) and [AddToKeptObjects](https://tc39.es/ecma262/#sec-addtokeptobjects).
+- MDN, [Memory management](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Memory_management), [WeakMap](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakMap), [WeakRef](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/WeakRef) and [FinalizationRegistry](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry).
+- Node.js API, [v8.setFlagsFromString](https://nodejs.org/api/v8.html#v8setflagsfromstringflags), [v8.getHeapSpaceStatistics](https://nodejs.org/api/v8.html#v8getheapspacestatistics) and [v8.writeHeapSnapshot](https://nodejs.org/api/v8.html#v8writeheapsnapshotfilenameoptions); Node.js guide, [Memory diagnostics](https://nodejs.org/en/learn/diagnostics/memory) and [Using heap snapshots](https://nodejs.org/en/learn/diagnostics/memory/using-heap-snapshot).
+- Peter Marshall, [Trash talk: the Orinoco garbage collector](https://v8.dev/blog/trash-talk) (V8 blog, 2019).
+- Ulan Degenbaev, Michael Lippautz and Hannes Payer, [Orinoco: young generation garbage collection](https://v8.dev/blog/orinoco-parallel-scavenger) (V8 blog, 2017), and [Concurrent marking in V8](https://v8.dev/blog/concurrent-marking) (V8 blog, 2018).
+- John McCarthy, "Recursive functions of symbolic expressions and their computation by machine, Part I", *Communications of the ACM* 3(4), 1960, [doi:10.1145/367177.367199](https://doi.org/10.1145/367177.367199).
+- Lab: [`labs/memory-and-garbage-collection.mjs`](labs/memory-and-garbage-collection.mjs). Run it from `programming-languages/javascript/labs` with `node memory-and-garbage-collection.mjs`.

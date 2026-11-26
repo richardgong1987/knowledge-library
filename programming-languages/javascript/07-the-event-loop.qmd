@@ -1,0 +1,315 @@
+---
+title: "The Event Loop"
+description: "How JavaScript runs one thing at a time: the call stack, run-to-completion, the task queue and the microtask queue, why setTimeout(fn, 0) is not immediate, and Node's event loop phases with process.nextTick."
+---
+
+## The problem
+
+A web page shows a spinner and starts a timer: `setTimeout(() => (done = true), 0)`. Then, to "wait" for the timer, it loops: `while (!done) {}`. The loop never ends. The page freezes, the spinner stops turning, and the browser eventually offers to kill the tab. The timer was due after 0 milliseconds, yet it never fires.
+
+The same thing happens on a Node server. One request handler spends 200 ms adding up numbers in a loop, and for those 200 ms every other request waits, however small it is.
+
+Both surprises have one cause. JavaScript runs **one piece of code at a time, to the end**, and everything that "happens later" (timers, network replies, clicks, promise callbacks) waits in a queue until the running code finishes. The machinery that takes the next piece of work from a queue is the **event loop**. This chapter explains exactly what it picks next, and why.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## One cook, two piles of notes
+
+A small restaurant has **one cook**. The cook works on **one dish at a time** and never puts a dish down half-made. That is the *call stack* and *run-to-completion*.
+
+- **Order tickets** (the *task queue*): new orders, a timer that rings, a customer at the door. When a dish is finished, the cook takes the **oldest** ticket.
+- **Sticky notes** (the *microtask queue*): small "do this straight after the current dish" jobs, such as "tell table 3 their soup is ready". After **every** dish, the cook clears **all** the sticky notes, even ones added while clearing, before touching the next ticket.
+
+A timer that says "0 minutes" only puts a ticket on the pile. If the cook is busy with a huge dish, the ticket waits.
+
+Philip Roberts made this picture famous in his JSConf EU 2014 talk *What the heck is the event loop anyway?*, and built the [Loupe](http://latentflip.com/loupe/) visualiser to animate it. Jake Archibald's article *Tasks, microtasks, queues and schedules* (2015) is the classic explanation of the two queues.
+:::
+
+## From simple to advanced
+
+### Level 1: one call stack, run to completion
+
+The **call stack** records which function is running and who called it. JavaScript has one per thread, so only one function body is ever executing. A callback, such as a timer's, can only start when the stack is **empty**.
+
+```js
+function runToCompletion(order) {
+  setTimeout(() => order.push('timeout'), 0);
+  order.push('sync 1');
+  order.push('sync 2'); // the timer cannot interrupt this function
+}
+```
+
+Right after the call, `order` is `['sync 1', 'sync 2']`. The timer callback appears only after the current code, and its caller, have returned: `['sync 1', 'sync 2', 'timeout']`. This is **run-to-completion**: once a function starts, nothing else in the same thread runs until it returns or reaches an `await`. That is why the `while (!done)` loop in the problem can never see `done` change: the timer that would change it is waiting for the loop to finish.
+
+### Level 2: `setTimeout(fn, 0)` is a minimum, not a promise
+
+A timer's delay is the time **before the callback may be queued**. Running it also needs a free call stack:
+
+$$
+t_{\text{run}} \ge \max\left(t_s + d,\; t_{\text{free}}\right)
+$$
+
+where
+
+- $t_{\text{run}}$ is the time the callback actually starts;
+- $t_s$ is the time `setTimeout` was called;
+- $d$ is the requested delay in milliseconds (Node raises any $d < 1$ to 1);
+- $t_{\text{free}}$ is the first moment after $t_s + d$ when the call stack is empty and the microtask queue has drained;
+- $\max$ picks the larger of the two.
+
+Example: schedule a 0 ms timer at $t_s = 0$, then keep the stack busy for 50 ms.
+
+```js
+function blockFor(ms) {
+  const end = performance.now() + ms;
+  while (performance.now() < end) {} // busy: nothing else can run
+}
+
+function timerAfterBusyStack(busyMs) {
+  return new Promise(resolve => {
+    const scheduled = performance.now();
+    setTimeout(() => resolve(performance.now() - scheduled), 0);
+    blockFor(busyMs);
+  });
+}
+```
+
+Node turns $d = 0$ into $d = 1$, so $t_s + d = 0 + 1 = 1$ ms, and $t_{\text{free}} = 50$ ms. Then $t_{\text{run}} \ge \max(1, 50) = 50$ ms. The lab checks that `timerAfterBusyStack(50)` resolves with a value of at least 50. The delay was a floor, and the busy stack raised it fiftyfold.
+
+### Level 3: microtasks jump the queue
+
+Promise callbacks (`then`, `catch`, `finally`, the code after an `await`) and `queueMicrotask` do **not** go on the task queue. They go on the **microtask queue**, which is emptied after every task, before the next task starts. This is Jake Archibald's puzzle:
+
+```js
+function classicPuzzle(log) {
+  log.push('script start');
+  setTimeout(() => log.push('setTimeout'), 0);
+  Promise.resolve()
+    .then(() => log.push('promise1'))
+    .then(() => log.push('promise2'));
+  log.push('script end');
+}
+```
+
+```text
+script start
+script end
+promise1
+promise2
+setTimeout
+```
+
+One turn of the loop is one task followed by every microtask:
+
+$$
+T_k \;\to\; \mu_1 \to \mu_2 \to \cdots \to \mu_m \;\to\; T_{k+1}
+$$
+
+where
+
+- $T_k$ is the $k$-th task: a whole script, one timer callback, one I/O callback;
+- $\mu_1, \dots, \mu_m$ are the microtasks run in first-in, first-out order after it, **including** any queued while the queue was draining;
+- $m \ge 0$ is how many there were;
+- $\to$ means "runs completely, then".
+
+Example: $T_1$ is the script itself, which logs `script start` and `script end`. During $T_1$, the already-fulfilled promise queues $\mu_1$ (`promise1`). When $\mu_1$ finishes, the second `then`'s promise is fulfilled and queues $\mu_2$ (`promise2`), so $m = 2$. Only then does $T_2$, the timer, run. The timer was queued **before** both promise callbacks, and still ran after them.
+
+### Level 4: the microtask queue drains completely
+
+"Every microtask" is literal. A microtask that queues another microtask extends the same checkpoint, so a timer waits for the whole chain:
+
+```js
+function microtasksBeforeNextTask(count) {
+  return new Promise(resolve => {
+    let ran = 0;
+    setTimeout(() => resolve(ran), 0);
+    function step() {
+      ran += 1;
+      if (ran < count) queueMicrotask(step); // joins the same queue
+    }
+    queueMicrotask(step);
+  });
+}
+```
+
+`microtasksBeforeNextTask(1000)` resolves with 1000: in the formula, $m = 1000$, and the timer is $T_{k+1}$. With no limit on `count`, the chain would never end and the timer would **starve**, just like the busy loop of Level 2, but harder to spot because each step is tiny. To give other work a turn, schedule a **task** (`setTimeout`, `setImmediate`) instead of a microtask.
+
+### Level 5: Node's phases and `process.nextTick`
+
+Browsers have several task queues (timers, user input, networking) and choose among them. Node uses the libuv library, which visits its queues in fixed **phases**:
+
+```text
+   timers            (once, before the first iteration)
+┌> pending callbacks  some deferred system errors
+│  idle, prepare      internal
+│  poll               wait for and run I/O callbacks
+│  check              setImmediate callbacks
+│  close callbacks    e.g. socket.on('close')
+└─ timers             expired setTimeout / setInterval callbacks
+```
+
+Since libuv 1.45 (Node 20), timers run **after** the poll phase in each iteration, as drawn. One consequence is fixed: inside an I/O callback, the check phase comes before the timers phase, so `setImmediate` always beats `setTimeout(fn, 0)`:
+
+```js
+function afterIo() {
+  return new Promise(resolve => {
+    readFile(import.meta.filename, () => {
+      const order = [];
+      const done = name => { order.push(name); if (order.length === 2) resolve(order); };
+      setTimeout(() => done('timeout'), 0);
+      setImmediate(() => done('immediate'));
+    });
+  });
+}
+```
+
+It resolves with `['immediate', 'timeout']`. In the main module, outside any I/O callback, the same two calls can come out in either order, and the Node docs call that order non-deterministic.
+
+Node drains microtasks after **each** callback, not once per phase. In the lab, the first of two `setImmediate` callbacks queues a promise reaction, and the order is `['immediate 1', 'promise', 'immediate 2']`.
+
+Node also has a second, Node-only queue, `process.nextTick`. The docs say that every time the "next tick queue" is drained, the microtask queue is drained immediately after:
+
+```js
+function tickOrder(order) {
+  Promise.resolve().then(() => order.push('promise'));
+  queueMicrotask(() => order.push('microtask'));
+  process.nextTick(() => order.push('nextTick'));
+}
+```
+
+Called from a timer callback, `tickOrder` produces `['nextTick', 'promise', 'microtask']`: the tick queue first, then the microtasks in FIFO order. Called from the top level of an ES module, it produces `['promise', 'microtask', 'nextTick']`, because ES module code is already running inside the microtask queue, which finishes draining before Node returns to the tick queue. The lab checks both. The Node documentation therefore recommends `queueMicrotask` for ordinary code.
+
+## How it works underneath
+
+The ECMAScript specification defines **jobs**, but not the loop that runs them. A fulfilled promise calls the host hook `HostEnqueuePromiseJob`, and the **host**, a browser or Node, decides when the job runs. The HTML standard defines the browser's loop. The microtask queue, it says, "is not a task queue". One iteration of the processing model is, simplified:
+
+```js
+// sketch: the HTML event loop processing model, simplified
+while (true) {
+  const task = oldestRunnableTask(); // from one of the task queues
+  run(task);
+  while (microtaskQueue.length > 0) run(microtaskQueue.shift()); // "perform a microtask checkpoint"
+  if (isWindow && hasRenderingOpportunity()) updateTheRendering();
+}
+```
+
+Three consequences follow directly:
+
+1. A task cannot be interrupted, because `run(task)` returns only when the call stack is empty.
+2. Promise callbacks run before the next timer, click or network event, because the checkpoint comes before the next `oldestRunnableTask()`.
+3. The page only repaints between tasks. A 200 ms task, or a microtask chain that never ends, means no repaint for that long.
+
+Node replaces the browser's queues with libuv's phases. V8 owns the microtask queue, Node owns the next-tick queue, and after every callback that crosses from C++ into JavaScript, Node runs both. The phase that **blocks** is poll: when nothing is due, the process sleeps in the operating system's event notifier (epoll on Linux, kqueue on macOS) until a socket is ready or the next timer is due. Work that has no non-blocking system call, such as `fs` operations, `dns.lookup` and `zlib`, runs on **libuv's thread pool**, whose default size is 4. Your JavaScript still runs on one thread; only the waiting is spread out. That is the answer to "is JavaScript single-threaded?": each agent (a page, a worker, a Node main thread) has one call stack and one event loop, and `worker_threads` or Web Workers add more agents, each with its own loop.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Busy-waiting for a callback: `while (!done) {}` | The page freezes or the process hangs; the callback never runs | Never wait in a loop; continue in the callback, or `await` a promise ([Async/await](09-async-await.qmd)) |
+| Expecting `setTimeout(fn, 0)` to run at once | `fn` runs after all synchronous code and every queued microtask | Call `fn()` directly, or use `queueMicrotask` if it must run after the current code |
+| A long synchronous loop in a request handler | Every other request waits; latency spikes for all users | Split the work and yield with `setImmediate` (interview question 3), or move it to `worker_threads` |
+| A microtask or `process.nextTick` that schedules itself forever | Timers and I/O never run; the browser never repaints | Reschedule with a task (`setTimeout`, `setImmediate`) so other queues get a turn |
+| Relying on `setTimeout(fn, 0)` versus `setImmediate` order in the main module | The order changes from run to run | Inside an I/O callback, `setImmediate` is first; elsewhere, chain the two explicitly |
+| Using `process.nextTick` as a general "later" | Order differs between CommonJS and ES modules; recursive ticks starve I/O | Use `queueMicrotask` for "right after this code", `setImmediate` for "after I/O" |
+
+## Interview questions
+
+### 1. What does this print?
+
+```js
+async function a1(log) {
+  log.push('a1 start');
+  await a2(log);
+  log.push('a1 end');
+}
+
+async function a2(log) {
+  log.push('a2');
+}
+
+function asyncPuzzle(log) {
+  log.push('script start');
+  setTimeout(() => log.push('setTimeout'), 0);
+  a1(log);
+  new Promise(resolve => {
+    log.push('executor'); // the executor runs synchronously
+    resolve();
+  }).then(() => log.push('then'));
+  log.push('script end');
+}
+```
+
+**Answer.**
+
+```text
+script start
+a1 start
+a2
+executor
+script end
+a1 end
+then
+setTimeout
+```
+
+An `async` function runs **synchronously** until its first `await`, so `a1 start` and `a2` appear at once; the rest of `a1` becomes a microtask. A promise executor also runs synchronously, so `executor` comes next, and its `then` callback is a second microtask, queued after `a1`'s continuation. `script end` finishes the task, the checkpoint runs the two microtasks in order, and the timer is the next task. The lab checks this exact order.
+
+### 2. What is the difference between a task and a microtask?
+
+**Answer.** A **task** (a macrotask) is a unit the event loop picks one at a time: a script, a timer callback, an I/O callback, an event. A **microtask** is a promise reaction or a `queueMicrotask` callback. After each task the loop runs **all** microtasks, including ones queued meanwhile, before the next task or a repaint: $T_k \to \mu_1 \to \cdots \to \mu_m \to T_{k+1}$. So in the classic puzzle, `promise1` and `promise2` beat a timer that was scheduled earlier, and in Level 4, 1000 chained microtasks all run before a 0 ms timer.
+
+### 3. How do you keep a long computation from blocking the event loop?
+
+**Answer.** Split it into chunks and give the loop a **task boundary** between chunks. A microtask boundary (`await null`) is not enough, because the checkpoint would run the next chunk before any task:
+
+```js
+const yieldToLoop = () => new Promise(resolve => setImmediate(resolve));
+
+async function sumInChunks(n, chunkSize, progress) {
+  let total = 0;
+  for (let start = 0; start < n; start += chunkSize) {
+    for (let i = start; i < Math.min(n, start + chunkSize); i++) total += i;
+    progress.chunks += 1;
+    await yieldToLoop(); // other tasks can run here
+  }
+  return total;
+}
+```
+
+`sumInChunks(1_000_000, 100_000, progress)` takes $1{,}000{,}000 / 100{,}000 = 10$ chunks and returns $n(n-1)/2 = 1{,}000{,}000 \times 999{,}999 / 2 = 499{,}999{,}500{,}000$. A `setImmediate` callback scheduled right after the call runs **between** chunks: the lab sees it observe between 1 and 9 finished chunks. For CPU work that is large compared with your latency budget, use `worker_threads` instead, which runs it on another thread with its own event loop.
+
+### 4. In Node, which runs first, `setTimeout(fn, 0)` or `setImmediate(fn)`?
+
+**Answer.** It depends on where you call them. **Inside an I/O callback**, `setImmediate` always runs first: the loop is in the poll phase, and the check phase comes before the timers phase (`afterIo` returns `['immediate', 'timeout']`). **In the main module**, the order is not deterministic: it depends on whether the 1 ms timer has already expired when the loop starts. Code that needs an order must create it, for example by scheduling the second callback from inside the first.
+
+### 5. What is the order of `process.nextTick`, a promise callback and `queueMicrotask`?
+
+**Answer.** Promise reactions and `queueMicrotask` share V8's microtask queue, so between themselves they run in FIFO order. `process.nextTick` has its own queue, and Node drains it before the microtask queue **whenever it gets the chance**: after a callback from the event loop, the order is `nextTick`, `promise`, `microtask`. At the top level of an ES module, Node is already draining the microtask queue, so the order is `promise`, `microtask`, `nextTick`. The lab checks both, and that difference is why the Node docs recommend `queueMicrotask`.
+
+## Summary
+
+$$
+T_k \to \mu_1 \to \cdots \to \mu_m \to T_{k+1}, \qquad t_{\text{run}} \ge \max\left(t_s + d,\; t_{\text{free}}\right)
+$$
+
+where $T_k$ is a task, $\mu_i$ are the microtasks drained after it, $t_{\text{run}}$ is when a timer callback starts, $t_s$ when it was scheduled, $d$ its delay, and $t_{\text{free}}$ the moment the stack and the microtask queue are empty.
+
+Example: in the classic puzzle the script is $T_1$, `promise1` and `promise2` are $\mu_1, \mu_2$, and the timer is $T_2$. A 0 ms timer behind a 50 ms busy loop starts after at least $\max(0 + 1, 50) = 50$ ms.
+
+- One call stack per thread; code **runs to completion** and cannot be interrupted by callbacks.
+- Timers, I/O and events are **tasks**; promise reactions and `queueMicrotask` are **microtasks**, drained completely after every task.
+- A timer delay is a **minimum**. Busy code and long microtask chains delay every task.
+- In Node, inside an I/O callback, `setImmediate` beats `setTimeout(fn, 0)`; `process.nextTick` runs before promise callbacks except at the top level of an ES module.
+- Keep work short, yield with a **task** for long jobs, and use workers for heavy CPU work. Promises and `await` build on this loop: see [Promises](08-promises.qmd) and [Async/await](09-async-await.qmd).
+
+## References
+
+- WHATWG HTML Living Standard, [Event loops](https://html.spec.whatwg.org/multipage/webappapis.html#event-loops), including the processing model and "perform a microtask checkpoint".
+- ECMAScript Language Specification, [Jobs and Host Operations to Enqueue Jobs](https://tc39.es/ecma262/#sec-jobs) and [HostEnqueuePromiseJob](https://tc39.es/ecma262/#sec-hostenqueuepromisejob).
+- Node.js, [The Node.js Event Loop](https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick) (phases, `setImmediate` versus `setTimeout`, `process.nextTick`).
+- Node.js API, [process.nextTick and "When to use queueMicrotask() vs. process.nextTick()"](https://nodejs.org/api/process.html#processnexttickcallback-args), [Timers](https://nodejs.org/api/timers.html) and [UV_THREADPOOL_SIZE](https://nodejs.org/api/cli.html#uv_threadpool_sizesize).
+- libuv, [Design overview](https://docs.libuv.org/en/v1.x/design.html) (the loop's phases, epoll and kqueue, the thread pool).
+- Jake Archibald, [Tasks, microtasks, queues and schedules](https://jakearchibald.com/2015/tasks-microtasks-queues-and-schedules/) (2015).
+- Philip Roberts, [What the heck is the event loop anyway?](https://www.youtube.com/watch?v=8aGhZQkoFbQ) (JSConf EU 2014), and his visualiser [Loupe](http://latentflip.com/loupe/).
+- Lab: [`labs/the-event-loop.mjs`](labs/the-event-loop.mjs). Run it from `programming-languages/javascript/labs` with `node the-event-loop.mjs`.

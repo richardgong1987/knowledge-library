@@ -1,0 +1,301 @@
+---
+title: "Promises"
+description: "JavaScript promises from the three states to the spec's reaction jobs: one-time settlement, chaining with then, thenables, error propagation, catch and finally, all, allSettled, race and any with their timing, withResolvers, Promise.try and unhandled rejections."
+---
+
+## The problem
+
+A shop page needs three things in order: the user (id 7), then that user's orders, then the total of those orders. With callbacks, each step goes inside the previous one, and each step needs its own error check:
+
+```js
+// sketch: callback style, three levels deep
+getUser(7, (error, user) => {
+  if (error) return show(error);
+  getOrders(user, (error, orders) => {
+    if (error) return show(error);
+    getTotal(orders, (error, total) => {
+      if (error) return show(error);
+      show(total);
+    });
+  });
+});
+```
+
+Forget one `if (error)` and the failure vanishes. Worse, nothing stops a buggy library from calling a callback **twice**, and if that callback charges a card, the customer pays twice.
+
+A **promise** is an object that stands for a result that is not ready yet. It settles **once**, its callbacks run **once**, and its errors flow down a chain to one handler. Promises arrived in ES2015 and are the foundation of `async`/`await` ([Async/await](09-async-await.qmd)).
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The restaurant buzzer
+
+You order a burger and the cashier hands you a **buzzer**. You do not have the burger yet; you have a promise of one.
+
+- While it is quiet, the order is **pending**.
+- It buzzes **green**: your burger is ready (**fulfilled**, with a value).
+- It buzzes **red**: they ran out (**rejected**, with a reason).
+- It buzzes **once**. A buzzer never changes its mind.
+
+`then` is telling a friend: "when it buzzes green, bring the burger here and cut it in half". Your friend gives you a **new buzzer** for the cut burger, so jobs can be lined up one after another.
+
+Domenic Denicola, whose draft became the ES2015 promise specification, put it this way in *You're Missing the Point of Promises* (2012): "The point of promises is to give us back functional composition and error bubbling in the async world."
+:::
+
+## From simple to advanced
+
+### Level 1: three states, settled once
+
+A promise is in one of three states. Once it leaves `pending`, it never changes again:
+
+$$
+s(t_1) \ne \texttt{pending} \implies s(t_2) = s(t_1) \quad \text{for every } t_2 \ge t_1
+$$
+
+where
+
+- $s(t)$ is the promise's state at time $t$: `pending`, `fulfilled` (with a value) or `rejected` (with a reason);
+- $t_1$ and $t_2$ are two moments, $t_2$ no earlier than $t_1$;
+- $\implies$ means "if the left side holds, so does the right side".
+
+Example: in `settleTwice`, the first `resolve('first')` happens at $t_1$ and makes $s(t_1) = \texttt{fulfilled}(\text{'first'})$. The later `resolve('second')` and `reject(...)` happen at some $t_2 > t_1$, where $s$ must still equal $\texttt{fulfilled}(\text{'first'})$, so they do nothing.
+
+```js
+function settleTwice() {
+  return new Promise((resolve, reject) => {
+    resolve('first');
+    resolve('second'); // ignored: already settled
+    reject(new Error('too late')); // ignored too
+  });
+}
+```
+
+`await settleTwice()` gives `'first'`. JavaScript has no method that reads a promise's state, but Node's `util.inspect` shows it: a 10 ms `delay(10, 42)` prints as `Promise { <pending> }` at first and `Promise { 42 }` after it fulfils. "Settled" means fulfilled or rejected.
+
+### Level 2: `then` returns a new promise
+
+`p.then(f)` does not change `p`. It returns a **new** promise whose outcome depends on what `f` does:
+
+$$
+p.\texttt{then}(f) \text{ settles as }
+\begin{cases}
+\texttt{fulfilled}(f(v)) & \text{if } f(v) \text{ is not a thenable} \\
+\text{the outcome of } f(v) & \text{if } f(v) \text{ is a thenable} \\
+\texttt{rejected}(e) & \text{if } f \text{ throws } e
+\end{cases}
+$$
+
+where
+
+- $p$ is a promise that fulfilled with the value $v$;
+- $f$ is the callback passed to `then`, and $f(v)$ is what it returns;
+- a **thenable** is any object with a `then` method, including every promise;
+- $e$ is the value $f$ throws.
+
+Example, with the lab's `chain` and `delay(ms, value)`, a promise that fulfils with `value` after `ms` milliseconds:
+
+```js
+function chain() {
+  return Promise.resolve(2)
+    .then(x => x * 3) // a plain value: the next promise fulfils with 6
+    .then(x => delay(10, x + 1)) // a promise: the chain waits for it, then gets 7
+    .then(x => `total ${x}`);
+}
+```
+
+1. $v = 2$ and $f(v) = 2 \times 3 = 6$, a plain number: the first case gives $\texttt{fulfilled}(6)$.
+2. $v = 6$ and $f(v)$ is `delay(10, 7)`, a promise: the second case, so the chain waits 10 ms and takes its outcome, $\texttt{fulfilled}(7)$.
+3. $v = 7$ and $f(v) = \text{'total 7'}$: the first case again.
+
+`await chain()` is `'total 7'`. The second case is **thenable assimilation**, and it accepts objects that are not real promises: `Promise.resolve({ then(resolve) { resolve(42); } })` fulfils with 42. That is how promises from different libraries work together.
+
+### Level 3: errors bubble to the nearest `catch`
+
+A thrown error, or a rejected promise, skips every fulfilment handler until it reaches a `catch` (or the second argument of a `then`):
+
+```js
+function errorPath(log) {
+  return Promise.resolve(1)
+    .then(() => { throw new Error('boom'); })
+    .then(() => log.push('skipped')) // not called: the promise is rejected
+    .catch(error => { log.push(`caught ${error.message}`); return 'recovered'; })
+    .finally(() => log.push('finally')); // gets no value and passes 'recovered' on
+}
+```
+
+The result is `'recovered'` and the log is `['caught boom', 'finally']`. Three rules are at work:
+
+- `catch(g)` is `then(undefined, g)`. Its own result follows the same three cases, so returning a value **recovers** and the chain continues fulfilled.
+- `finally(h)` runs `h` on either outcome, with no argument, and passes the original outcome on unchanged, unless `h` throws or returns a rejected promise.
+- An error thrown inside the executor of `new Promise(...)` also rejects that promise, so it reaches `catch` too.
+
+This is the "error bubbling" in Denicola's sentence: one `catch` at the end replaces the three `if (error)` checks of the callback version.
+
+### Level 4: combining promises
+
+Four static methods wait for many promises at once. Give each input $i$ a settlement time $t_i$. The combined promise settles at:
+
+$$
+\begin{aligned}
+T_{\text{all}} &= \begin{cases} \max_i t_i & \text{if } R = \varnothing \\ \min_{i \in R} t_i & \text{otherwise} \end{cases} &
+T_{\text{allSettled}} &= \max_i t_i \\
+T_{\text{race}} &= \min_i t_i &
+T_{\text{any}} &= \begin{cases} \min_{i \in F} t_i & \text{if } F \ne \varnothing \\ \max_i t_i & \text{otherwise} \end{cases}
+\end{aligned}
+$$
+
+where
+
+- $t_i$ is the time at which input $i$ settles;
+- $F$ is the set of inputs that fulfil and $R$ the set that reject;
+- $\varnothing$ is the empty set;
+- $\max_i$ and $\min_i$ take the largest and smallest value over all inputs.
+
+Example, with three inputs that settle at $t = (30, 10, 20)$ ms, as in the lab:
+
+| Inputs | Call | Settles at | Result |
+|---|---|---|---|
+| all fulfil: `a`, `b`, `c` | `Promise.all` | $\max(30, 10, 20) = 30$ | `['a', 'b', 'c']`, in **input** order |
+| `b` rejects at 10 | `Promise.all` | $\min_{i \in R} t_i = 10$ | rejected with `b failed` |
+| `b` rejects at 10 | `Promise.allSettled` | $\max(30, 10, 20) = 30$ | `fulfilled`, `rejected`, `fulfilled` records |
+| all fulfil | `Promise.race` | $\min(30, 10, 20) = 10$ | `'b'` |
+| `b` rejects at 10 | `Promise.race` | $10$ | rejected: the first to settle wins, whatever its outcome |
+| `b` rejects at 10 | `Promise.any` | $\min(30, 20) = 20$ | `'c'`, the first **fulfilment** |
+| both reject, at 30 and 10 | `Promise.any` | $\max(30, 10) = 30$ | `AggregateError: All promises were rejected` |
+
+`allSettled` (ES2020) never rejects; each record is `{ status: 'fulfilled', value }` or `{ status: 'rejected', reason }`. `any` (ES2021) rejects with an `AggregateError` whose `errors` array holds every reason in input order, here `['a failed', 'b failed']`. With an empty array, `Promise.all([])` fulfils with `[]` at once, while `Promise.race([])` stays pending forever, because the minimum over no inputs never arrives.
+
+### Level 5: `Promise.withResolvers` and `Promise.try`
+
+Two recent helpers remove common boilerplate. `Promise.withResolvers()` (ES2024) returns a promise together with its `resolve` and `reject`, which is handy when the code that settles it lives outside the executor, such as an event listener:
+
+```js
+function nextMessage(emitter) {
+  const { promise, resolve } = Promise.withResolvers();
+  emitter.once('message', resolve);
+  return promise;
+}
+```
+
+After `emitter.emit('message', 'hello')`, the promise fulfils with `'hello'`.
+
+`Promise.try(f, ...args)` (ES2025, available in Node 26) calls `f` **synchronously** and wraps whatever happens in a promise: a return value fulfils it, a returned promise is adopted, and a synchronous `throw` becomes a rejection instead of escaping:
+
+```js
+function parsePort(text) {
+  const port = Number(text);
+  if (!Number.isInteger(port)) throw new TypeError(`not a port: ${text}`);
+  return port;
+}
+```
+
+`Promise.try(parsePort, '80')` fulfils with 80, and `Promise.try(parsePort, 'eighty')` rejects with `TypeError: not a port: eighty`, so one `catch` handles both synchronous and asynchronous failures. Unlike `Promise.resolve().then(f)`, it does not wait a microtask before calling `f`.
+
+### Level 6: unhandled rejections
+
+A rejected promise that nobody handles is a bug that is easy to miss, so Node treats it like an uncaught exception. Since Node 15, the default mode `--unhandled-rejections=throw` first emits the process event `unhandledRejection`; if no listener is registered, the process prints the error and exits with code 1. A rejection with a non-`Error` reason prints:
+
+```text
+UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "no file".
+```
+
+The lab registers a listener with `process.once('unhandledRejection', ...)` and checks that `Promise.reject(new Error('nobody listens'))` reaches it with that message. In real programs, the listener is a last-resort logger. The fix is always a `catch` (or a `try` around an `await`) where the error can be handled.
+
+## How it works underneath
+
+The ECMAScript specification gives every promise five internal slots: `[[PromiseState]]`, `[[PromiseResult]]`, two lists of **reactions** (`[[PromiseFulfillReactions]]` and `[[PromiseRejectReactions]]`), and `[[PromiseIsHandled]]`. The machinery is small:
+
+1. `new Promise(executor)` runs `CreateResolvingFunctions`, which makes the `resolve` and `reject` pair. They share one `alreadyResolved` flag, so the second call does nothing. That flag **is** Level 1's rule.
+2. `then(f, g)` records a reaction. If the promise is still pending, the reaction waits in a list; if it has already settled, the spec queues a `NewPromiseReactionJob` immediately. Either way `f` never runs synchronously.
+3. Settling a promise moves every waiting reaction into the microtask queue, in the order the `then` calls were made ([The Event Loop](07-the-event-loop.qmd)).
+4. Resolving with a **thenable** does not adopt it directly. The spec queues a `NewPromiseResolveThenableJob`, which calls the thenable's `then`, which queues one more job when it fires.
+
+Rule 2 is the cure for what Isaac Schlueter called "releasing Zalgo" in *Designing APIs for Asynchrony* (2013): an API that sometimes calls back immediately and sometimes later is "impossible to reason about". A promise's callbacks are always asynchronous, even when the promise is already fulfilled.
+
+Rule 4 costs two extra microtasks, and it explains a famous puzzle:
+
+```js
+function tickPuzzle(log) {
+  Promise.resolve()
+    .then(() => { log.push(0); return Promise.resolve(4); })
+    .then(x => log.push(x));
+  Promise.resolve()
+    .then(() => log.push(1))
+    .then(() => log.push(2))
+    .then(() => log.push(3))
+    .then(() => log.push(5))
+    .then(() => log.push(6));
+}
+```
+
+The log is `[0, 1, 2, 3, 4, 5, 6]`. Number the microtask rounds: round 1 logs 0 and 1. Returning `Promise.resolve(4)` from a handler queues the thenable job (round 2), whose `then` call queues the adoption (round 3), and only then is the outer promise fulfilled, so `4` is logged in round 4. Meanwhile the second chain logs one number per round: 2 in round 2, 3 in round 3, and 5 after 4. Returning a plain `4` instead would log it in round 2.
+
+Rejections use the host hook `HostPromiseRejectionTracker`, called with `"reject"` when a promise rejects with no handler and `"handle"` when a handler is attached later. Node collects these and, after the microtask queue drains, emits `unhandledRejection` for every promise still unhandled.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Forgetting `return` inside `then` | The next `then` receives `undefined`; the steps run out of order | Return the value or promise: `.then(x => load(x))` |
+| `then(onOk, onError)`, expecting `onError` to catch errors thrown in `onOk` | The error from `onOk` is unhandled | Put a separate `.catch(onError)` after the `then` |
+| No `catch` at the end of a chain | `UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, ...` and exit code 1 | End every chain with `catch`, or `await` it inside `try` |
+| Wrapping a promise in `new Promise` ("the explicit construction anti-pattern") | If the wrapper forgets to forward `reject`, the inner rejection is lost and the outer promise hangs forever | Return the inner promise, or chain on it |
+| `Promise.all` when some failures are acceptable | One rejection throws away every other result | Use `Promise.allSettled` and inspect each `status` |
+| Expecting `Promise.race` to cancel the losers | The slow operation keeps running and its timer keeps the process alive | Clear timers in `finally`; cancel work with an `AbortSignal` ([Async/await](09-async-await.qmd)) |
+
+## Interview questions
+
+### 1. What is the difference between `Promise.all`, `allSettled`, `race` and `any`?
+
+**Answer.** They differ in **when** they settle and **which** outcome they report, as in the Level 4 table. With settlement times $(30, 10, 20)$ ms: `all` fulfils at $\max = 30$ with every value in input order, but rejects at the **first rejection** (10 ms if `b` fails). `allSettled` always fulfils at $\max = 30$ with a status record per input. `race` settles at $\min = 10$ with whatever happened first, success or failure. `any` fulfils at the first **fulfilment** (20 ms when `b` fails at 10) and rejects with an `AggregateError` only if every input rejects. Use `all` for "I need everything", `allSettled` for "tell me what happened to each", `race` for timeouts, and `any` for "the first mirror that answers".
+
+### 2. Why does `tickPuzzle` log `0, 1, 2, 3, 4, 5, 6` and not `0, 1, 4, 2, ...`?
+
+**Answer.** Returning a promise from a `then` handler does not fulfil the outer promise directly. The specification resolves it through `NewPromiseResolveThenableJob`, one microtask, which calls `then` on the returned promise and so queues a second microtask. The outer promise is fulfilled only after those two extra rounds, and its own reaction runs in the round after that. In the meantime the independent chain advances one step per round, logging 2 and 3. A plain `return 4` would log `0, 1, 4, 2, 3, 5, 6`. The lesson is not to memorise tick counts but never to rely on the relative order of two independent promise chains.
+
+### 3. What happens if a promise executor throws, or calls `resolve` twice?
+
+**Answer.** The executor runs synchronously inside the `Promise` constructor, which catches any exception and calls `reject` with it. So `new Promise(() => { throw new Error('in executor'); })` is simply a rejected promise; the lab checks that it rejects with `in executor`. Calling `resolve` twice, or `resolve` then `reject`, does nothing after the first call, because the pair shares one `alreadyResolved` flag: `settleTwice()` fulfils with `'first'`. A `throw` after `resolve` is swallowed for the same reason.
+
+### 4. How do you put a time limit on any promise?
+
+**Answer.** Race it against a promise that rejects after the limit, and clear the timer whichever wins:
+
+```js
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+```
+
+`withTimeout(delay(5, 'fast'), 100)` fulfils with `'fast'`, since $\min(5, 100) = 5$. `withTimeout(delay(50, 'slow'), 10)` rejects with `timed out after 10 ms`, since $\min(50, 10) = 10$. Without `clearTimeout`, the losing timer would keep a Node process alive for its full 100 ms. Note that the slow work itself is **not** stopped; a promise is a result, not a handle to the work. To stop the work, pass it an `AbortSignal` ([Async/await](09-async-await.qmd), Level 6).
+
+## Summary
+
+$$
+s(t_1) \ne \texttt{pending} \implies s(t_2) = s(t_1), \qquad T_{\text{all}} = \max_i t_i, \quad T_{\text{race}} = \min_i t_i
+$$
+
+where $s(t)$ is a promise's state at time $t$ with $t_2 \ge t_1$, and $t_i$ is the settlement time of input $i$ (the formula for `all` assumes every input fulfils).
+
+Example: `settleTwice` stays `fulfilled('first')` after its two later calls. Inputs settling at 30, 10 and 20 ms give `all` at $\max(30, 10, 20) = 30$ ms and `race` at $\min(30, 10, 20) = 10$ ms.
+
+- A promise is `pending`, then `fulfilled` or `rejected`, **once**.
+- `then` and `catch` return **new** promises; a returned thenable is adopted, a thrown error rejects.
+- Errors skip fulfilment handlers until a `catch`; `finally` passes the outcome through.
+- `all` waits for every fulfilment or the first rejection, `allSettled` for every outcome, `race` for the first outcome, `any` for the first fulfilment.
+- Callbacks always run as microtasks, never synchronously. End every chain with a handler, or Node exits on the unhandled rejection.
+
+## References
+
+- ECMAScript Language Specification, [Promise Objects](https://tc39.es/ecma262/#sec-promise-objects), including [CreateResolvingFunctions](https://tc39.es/ecma262/#sec-createresolvingfunctions), [NewPromiseReactionJob](https://tc39.es/ecma262/#sec-newpromisereactionjob), [NewPromiseResolveThenableJob](https://tc39.es/ecma262/#sec-newpromiseresolvethenablejob), [Promise.try](https://tc39.es/ecma262/#sec-promise.try) and [HostPromiseRejectionTracker](https://tc39.es/ecma262/#sec-host-promise-rejection-tracker).
+- [Promises/A+](https://promisesaplus.com/), the community specification that ES2015 promises follow, and Domenic Denicola's [promises-unwrapping](https://github.com/domenic/promises-unwrapping), the draft of the ES2015 promise text.
+- MDN, [Promise](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise), [Using promises](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Using_promises), [Promise.withResolvers](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/withResolvers) and [Promise.try](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/try).
+- Node.js API, [Event: 'unhandledRejection'](https://nodejs.org/api/process.html#event-unhandledrejection) and [`--unhandled-rejections`](https://nodejs.org/api/cli.html#--unhandled-rejectionsmode).
+- Domenic Denicola, [You're Missing the Point of Promises](https://domenic.me/youre-missing-the-point-of-promises/) (2012).
+- Jake Archibald, [JavaScript promises: An introduction](https://web.dev/articles/promises) (web.dev).
+- Isaac Z. Schlueter, [Designing APIs for Asynchrony](https://blog.izs.me/2013/08/designing-apis-for-asynchrony/) (2013).
+- Lab: [`labs/promises.mjs`](labs/promises.mjs). Run it from `programming-languages/javascript/labs` with `node promises.mjs`.

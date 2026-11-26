@@ -1,0 +1,453 @@
+---
+title: "Iterators and Generators"
+description: "How JavaScript produces values one at a time: the iteration protocol with Symbol.iterator and next(), for...of and spread, generator functions and yield, laziness and infinite sequences, return() and throw(), the ES2025 iterator helpers, and async iterators with for await."
+---
+
+## The problem
+
+A report needs the first three square numbers greater than 50. With arrays, the natural code builds a list of candidates, squares all of them, filters, and slices. But how many candidates? Nobody knows in advance, so the code guesses a million:
+
+```js
+let eagerSquares = 0;
+const eagerBigSquares = Array.from({ length: 1_000_000 }, (_, i) => i + 1)
+  .map((n) => {
+    eagerSquares += 1;
+    return n * n;
+  })
+  .filter((square) => square > 50)
+  .slice(0, 3);
+assert.deepEqual(eagerBigSquares, [64, 81, 100]);
+assert.equal(eagerSquares, 1_000_000);
+```
+
+The answer is right, but the program squared **one million** numbers and built three arrays of up to a million elements to use **three** results. If the guess had been too small, the answer would have been wrong. Array methods are **eager**: each step finishes completely before the next starts.
+
+What we want is a source that hands out values **one at a time, only when asked**, so that the work stops as soon as we have enough, and so that a source can even be infinite. That is what JavaScript's iteration protocol and generators provide. By the end of this chapter the same question is answered after squaring 10 numbers.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A ticket machine and a storyteller
+
+- An **iterator** is the ticket machine at the deli counter. You press the button (`next()`) and get one ticket (`{ value, done: false }`). When the roll runs out, the machine says "no more" (`{ done: true }`). It never prints tickets nobody asked for.
+- An **iterable** is anything that can hand you such a machine: an array, a string, a `Map`, or your own object. `for...of` is a child who keeps pressing the button until the machine says "no more".
+- A **generator** is a storyteller who stops at "to be continued..." (`yield`) and, the next time you ask, carries on from exactly that sentence, remembering every detail.
+
+Brendan Eich brought generators to JavaScript from Python. In 2006 he wrote about "infusing JS with Pythonic generators and iterators", explaining that, given Python's years of development, "we would rather follow than lead". He was adding them to Mozilla's engine at the time; ES2015 standardised them for every engine.
+:::
+
+## From simple to advanced
+
+### Level 1: the iteration protocol, written by hand
+
+The protocol is two small agreements between objects:
+
+- An **iterable** has a method under the key `Symbol.iterator` that returns an iterator.
+- An **iterator** has a method `next()` that returns a result object `{ value, done }`.
+
+Here is an iterable for 1, 2, 3, written out in full:
+
+```js
+const oneToThree = {
+  [Symbol.iterator]() { // the iterable: hands out a fresh iterator
+    let n = 0;
+    return {
+      next() { // the iterator: one result object per call
+        n += 1;
+        return n <= 3 ? { value: n, done: false } : { value: undefined, done: true };
+      },
+    };
+  },
+};
+```
+
+For a sequence of $n$ values $v_1, \ldots, v_n$, the $k$-th call of `next()` returns:
+
+$$
+\operatorname{next}^{(k)} =
+\begin{cases}
+\lbrace \text{value}: v_k,\ \text{done}: \text{false} \rbrace & \text{if } k \le n \\
+\lbrace \text{value}: \texttt{undefined},\ \text{done}: \text{true} \rbrace & \text{if } k > n
+\end{cases}
+$$
+
+where
+
+- $k$ counts the calls of `next()` on one iterator: 1, 2, 3, and so on;
+- $n$ is the number of values in the sequence;
+- $v_k$ is the $k$-th value.
+
+Example, with $n = 3$ and $v = (1, 2, 3)$: calls $k = 1, 2, 3$ return the values 1, 2 and 3 with `done: false`; call $k = 4$ has $4 > 3$, so it returns `done: true`. Every later call keeps returning `done: true`.
+
+```js
+const iterator = oneToThree[Symbol.iterator]();
+assert.deepEqual(iterator.next(), { value: 1, done: false });
+assert.deepEqual(iterator.next(), { value: 2, done: false });
+assert.deepEqual(iterator.next(), { value: 3, done: false });
+assert.deepEqual(iterator.next(), { value: undefined, done: true });
+```
+
+### Level 2: `for...of`, spread and destructuring speak the protocol
+
+Any syntax that consumes "a sequence" calls `[Symbol.iterator]()` and then `next()` until `done`. So `oneToThree` works everywhere an array would:
+
+```js
+const seen = [];
+for (const n of oneToThree) seen.push(n);
+assert.deepEqual(seen, [1, 2, 3]);
+assert.deepEqual([...oneToThree], [1, 2, 3]); // a fresh iterator each time
+const [first, second] = oneToThree;
+assert.equal(first + second, 3);
+assert.equal(Math.max(...oneToThree), 3);
+```
+
+Each consumer asks for a **new** iterator, which is why `oneToThree` can be spread again and again. Destructuring `[first, second]` takes only two values and then stops asking.
+
+Built-ins define their own iterators. A string's iterator yields whole **code points**, while `length` counts UTF-16 code units, so an emoji counts twice in `length` but once in iteration. Plain objects are deliberately **not** iterable, because it is unclear whether you want keys, values or entries; ask for one explicitly:
+
+```js
+assert.equal('a😀'.length, 3); // UTF-16 code units
+assert.deepEqual([...'a😀'], ['a', '😀']); // the string iterator yields code points
+const settings = { theme: 'dark' };
+assert.throws(() => [...settings], { name: 'TypeError', message: 'settings is not iterable' });
+assert.deepEqual([...Object.entries(settings)], [['theme', 'dark']]);
+```
+
+### Level 3: a generator function writes the iterator for you
+
+Writing `next()` by hand means storing the position (`n`) yourself. A **generator function**, declared with `function*`, lets you write a normal loop and `yield` each value; JavaScript builds the iterator and remembers where you stopped:
+
+```js
+function* range(start, end) {
+  for (let n = start; n < end; n++) yield n;
+}
+assert.deepEqual([...range(1, 4)], [1, 2, 3]);
+```
+
+Two lines replace the eleven of Level 1. Calling a generator function **does not run its body**. It returns a generator object; each `next()` runs the body up to the next `yield` and pauses there:
+
+```js
+const steps = [];
+function* traced() {
+  steps.push('start');
+  yield 1;
+  steps.push('after 1');
+  yield 2;
+}
+const tracer = traced(); // runs nothing yet
+assert.deepEqual(steps, []);
+assert.deepEqual(tracer.next(), { value: 1, done: false });
+assert.deepEqual(steps, ['start']); // ran to the first yield, then paused
+tracer.next();
+assert.deepEqual(steps, ['start', 'after 1']);
+```
+
+A generator object is both an iterator (it has `next`) and an iterable whose `[Symbol.iterator]()` returns **itself**. So, unlike `oneToThree`, it can be consumed only once:
+
+```js
+const numbers = range(1, 3);
+assert.equal(numbers[Symbol.iterator](), numbers); // a generator is its own iterator
+assert.deepEqual([...numbers], [1, 2]);
+assert.deepEqual([...numbers], []); // ...so it can be used up only once
+```
+
+### Level 4: laziness makes infinite sequences safe
+
+Because a generator only runs when asked, it may describe a sequence that never ends. The consumer decides how much to take:
+
+```js
+function* naturals() {
+  for (let n = 1; ; n++) yield n; // never ends, and never runs ahead
+}
+function* take(iterable, count) {
+  if (count <= 0) return;
+  let taken = 0;
+  for (const value of iterable) {
+    yield value;
+    taken += 1;
+    if (taken === count) return; // stop before pulling one more value
+  }
+}
+assert.deepEqual([...take(naturals(), 5)], [1, 2, 3, 4, 5]);
+```
+
+`naturals()` would loop forever if anything asked it for everything. `take` asks for exactly five values and then returns, and returning from the `for...of` loop tells `naturals` to stop as well (Level 5).
+
+A generator also keeps its state between values, so a recurrence needs no array at all. The Fibonacci numbers are defined by
+
+$$
+F_0 = 0, \qquad F_1 = 1, \qquad F_k = F_{k-1} + F_{k-2} \quad (k \ge 2)
+$$
+
+where
+
+- $F_k$ is the $k$-th Fibonacci number;
+- each number after the first two is the sum of the two before it.
+
+Example: $F_2 = 1 + 0 = 1$, $F_3 = 1 + 1 = 2$, $F_4 = 2 + 1 = 3$, $F_5 = 3 + 2 = 5$, $F_6 = 5 + 3 = 8$ and $F_7 = 8 + 5 = 13$, so the first eight values are $0, 1, 1, 2, 3, 5, 8, 13$. The generator holds only the last two numbers, $a = F_{k}$ and $b = F_{k+1}$, however long it runs:
+
+```js
+function* fibonacci() {
+  let [a, b] = [0, 1];
+  while (true) {
+    yield a;
+    [a, b] = [b, a + b];
+  }
+}
+assert.deepEqual([...take(fibonacci(), 8)], [0, 1, 1, 2, 3, 5, 8, 13]);
+```
+
+### Level 5: `next(value)`, `return()` and `throw()`
+
+`yield` is a two-way door. `next(x)` resumes the generator, and `x` becomes the **value of the paused `yield` expression**. The very first `next()` only starts the body, and no `yield` is waiting yet, so its argument is ignored:
+
+```js
+function* runningTotal() {
+  let total = 0;
+  while (true) {
+    const amount = yield total; // pause; next(amount) resumes with a value
+    total += amount;
+  }
+}
+const till = runningTotal();
+till.next(); // run to the first yield; an argument here would be ignored
+assert.equal(till.next(5).value, 5);
+assert.equal(till.next(10).value, 15);
+```
+
+`return(v)` finishes the generator early, as if a `return v` statement appeared at the paused `yield`; `finally` blocks still run. `for...of` calls `return()` for you whenever the loop exits early (`break`, `return`, or an exception), so a generator can always clean up:
+
+```js
+const cleanups = [];
+function* withCleanup() {
+  try {
+    yield 1;
+    yield 2;
+  } finally {
+    cleanups.push('closed'); // runs on break, return() and throw()
+  }
+}
+for (const value of withCleanup()) {
+  if (value === 1) break; // break calls the generator's return()
+}
+assert.deepEqual(cleanups, ['closed']);
+const manual = withCleanup();
+manual.next();
+assert.deepEqual(manual.return(99), { value: 99, done: true });
+assert.deepEqual(cleanups, ['closed', 'closed']);
+```
+
+`throw(error)` resumes the generator by throwing `error` **at the paused `yield`**. If the generator catches it, it can recover and keep yielding. If the generator has not started yet, there is no `try` block active, so the error comes straight back out:
+
+```js
+function* resilient() {
+  while (true) {
+    try {
+      yield 'working';
+    } catch (error) {
+      yield `recovered from ${error.message}`;
+    }
+  }
+}
+const job = resilient();
+job.next();
+assert.equal(job.throw(new Error('timeout')).value, 'recovered from timeout');
+const fresh = resilient(); // not started: no try block is active yet
+assert.throws(() => fresh.throw(new Error('early')), { message: 'early' });
+```
+
+### Level 6: iterator helpers (ES2025)
+
+ES2025 added **iterator helpers**: `map`, `filter`, `take`, `drop`, `flatMap`, `reduce`, `toArray`, `forEach`, `some`, `every` and `find` on `Iterator.prototype`, plus `Iterator.from`. Every generator and every built-in iterator inherits them. Unlike their array namesakes, the chaining helpers are **lazy**: they return a new iterator and do no work until something pulls from the end of the chain. Here is the opening problem again:
+
+```js
+let lazySquares = 0;
+const lazyBigSquares = naturals()
+  .map((n) => {
+    lazySquares += 1;
+    return n * n;
+  })
+  .filter((square) => square > 50)
+  .take(3)
+  .toArray();
+assert.deepEqual(lazyBigSquares, [64, 81, 100]);
+assert.equal(lazySquares, 10); // the eager version computed 1,000,000
+```
+
+The amount of work is set by the answer, not by a guessed size:
+
+$$
+W_{\text{eager}} = N, \qquad W_{\text{lazy}} = \min \lbrace\, j : |\lbrace\, i \le j : i^2 > 50 \,\rbrace| = 3 \,\rbrace
+$$
+
+where
+
+- $W$ is the number of squares computed;
+- $N$ is the size of the array built up front;
+- $j$ is how far along the natural numbers the lazy chain has pulled, and $|\lbrace i \le j : i^2 > 50 \rbrace|$ counts the squares above 50 found so far;
+- $\min$ picks the first $j$ at which three such squares have been found.
+
+Example: $7^2 = 49$ is not above 50, $8^2 = 64$ is the first, $9^2 = 81$ the second and $10^2 = 100$ the third, so $W_{\text{lazy}} = 10$. The eager version, with $N = 1\,000\,000$, did $W_{\text{eager}} = 1\,000\,000$, which is $10^5$ times more work for the same three numbers.
+
+Laziness also changes the **order** of side effects. An array runs all of `map`, then all of `filter`. An iterator chain passes each item through the whole pipeline before touching the next:
+
+```js
+const order = [];
+[1, 2].values() // arrays hand out an iterator with values()
+  .map((n) => {
+    order.push(`map ${n}`);
+    return n;
+  })
+  .filter((n) => {
+    order.push(`filter ${n}`);
+    return true;
+  })
+  .toArray();
+assert.deepEqual(order, ['map 1', 'filter 1', 'map 2', 'filter 2']); // one item at a time
+```
+
+Note `values()`: arrays are iterables, not iterators, so they do not have the helpers themselves. And `take` is polite. When it has enough, it calls the source's `return()`, so cleanup code runs:
+
+```js
+withCleanup().take(1).toArray(); // take closes its source when it has enough
+assert.deepEqual(cleanups, ['closed', 'closed', 'closed']);
+```
+
+V8 shipped the helpers in Chrome 122 (2024) before they reached the standard; the lab confirms they run on Node 26.
+
+### Level 7: async iterators and `for await`
+
+Some sequences arrive over time: pages from an API, lines from a file, messages from a socket. The **async iteration protocol** (ES2018) is the same idea with promises: the method is `Symbol.asyncIterator`, and `next()` returns a **promise** of `{ value, done }`. An `async function*` can both `await` and `yield`, and `for await...of` consumes it ([Async/Await](09-async-await.qmd) explains `await` itself):
+
+```js
+async function fetchPage(page) { // stands in for a network call
+  await null;
+  return page <= 3 ? [`item${page}a`, `item${page}b`] : [];
+}
+async function* allItems() {
+  for (let page = 1; ; page++) {
+    const items = await fetchPage(page);
+    if (items.length === 0) return;
+    yield* items; // hand on each item, one at a time
+  }
+}
+const collected = [];
+for await (const item of allItems()) collected.push(item);
+assert.equal(collected.length, 6);
+assert.deepEqual(collected.slice(0, 3), ['item1a', 'item1b', 'item2a']);
+```
+
+Three pages of two items give $3 \times 2 = 6$ items, and the fourth, empty page ends the generator. `yield* items` delegates to another iterable, yielding each of its values in turn. The consumer never sees pages, only a flat stream of items, and a page is fetched only when the previous items have been consumed. Underneath, every `next()` returns a promise:
+
+```js
+const pages = allItems();
+const pending = pages.next(); // an async iterator returns a promise of a result
+assert.ok(pending instanceof Promise);
+assert.deepEqual(await pending, { value: 'item1a', done: false });
+```
+
+Async iterator helpers (`map` and friends for async iterators) are a separate proposal and are not part of ES2025.
+
+## How it works underneath
+
+**A generator is a paused execution context.** When a generator function is called, the specification creates a generator object with two internal slots: `[[GeneratorContext]]`, an execution context holding the function's local variables and its current position, and `[[GeneratorState]]`, which is one of `suspended-start`, `suspended-yield`, `executing` or `completed`. The transitions are:
+
+$$
+\begin{aligned}
+\text{suspended-start} &\xrightarrow{\ \texttt{next}\ } \text{executing} \\
+\text{executing} &\xrightarrow{\ \texttt{yield}\ } \text{suspended-yield} \xrightarrow{\ \texttt{next},\ \texttt{throw},\ \texttt{return}\ } \text{executing} \\
+\text{executing} &\xrightarrow{\ \text{body ends or throws}\ } \text{completed}
+\end{aligned}
+$$
+
+where
+
+- each arrow is a transition triggered by the label above it;
+- `next`, `throw` and `return` are the three generator methods, and `yield` is the expression inside the body;
+- `suspended-start` means created but not started, and `suspended-yield` means paused at a `yield`.
+
+Example, for `tracer = traced()`: it starts in `suspended-start`, and `steps` is empty. The first `next()` moves it to `executing`, which pushes `'start'`; `yield 1` moves it to `suspended-yield`. The second `next()` resumes it, pushes `'after 1'`, and pauses at `yield 2`. A third `next()` would run off the end of the body into `completed`, and every call after that returns `{ value: undefined, done: true }`.
+
+GeneratorResume saves the caller's context, switches to `[[GeneratorContext]]`, and runs until GeneratorYield switches back. Only one context runs at a time, so a generator that calls its own `next()` while running is rejected by GeneratorValidate, which throws when "state is executing":
+
+```js
+function* selfCaller() {
+  yield selfCalling.next(); // a generator cannot resume itself
+}
+const selfCalling = selfCaller();
+assert.throws(() => selfCalling.next(), { name: 'TypeError', message: 'Generator is already running' });
+```
+
+Calling `throw()` on a generator in `suspended-start` moves it straight to `completed` and rethrows, which is why `fresh.throw(...)` came back out in Level 5.
+
+**What `for...of` does.** The loop calls GetIterator (which calls `[Symbol.iterator]()`), then repeatedly calls `next()` and reads `done` and `value`. If the loop body exits early, ForIn/OfBodyEvaluation calls IteratorClose, which calls the iterator's `return()` method if it has one. That is the hook generators use to run `finally`, and the reason `take` in Level 6 can close its source: the specification's `Iterator.prototype.take` checks its remaining count before every pull, and at zero it calls IteratorClose on the underlying iterator instead of pulling again.
+
+**Iterator helpers are generators in disguise.** In the specification, each lazy helper is built with CreateIteratorFromClosure: an abstract closure that loops over the source and calls Yield, exactly like a hand-written generator. So `naturals().map(f).filter(g).take(3)` is a chain of four paused contexts, and `toArray()` at the end pulls one value through the whole chain at a time.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Spreading or `for...of` over a plain object | `TypeError: settings is not iterable` | `Object.keys`, `Object.values` or `Object.entries` |
+| Iterating a generator object twice | The second loop gets nothing: `[...numbers]` is `[]` | Call the generator function again, or make an iterable whose `[Symbol.iterator]` returns a new generator |
+| Expecting the first `next(x)` to deliver `x` | The value is ignored | Prime the generator with an empty `next()` first |
+| Spreading an infinite generator | The program hangs and memory grows | Limit it first: `take`, or the `.take(n)` helper |
+| Calling `.map` on an array and expecting laziness | All elements are processed at once | `array.values().map(...)` for a lazy chain |
+| A generator resuming itself | `TypeError: Generator is already running` | Restructure so that only the consumer calls `next()` |
+| Using `for...of` on an async iterator | `TypeError: stream is not iterable` (it has `Symbol.asyncIterator`, not `Symbol.iterator`) | `for await...of` inside an async function or a module |
+| Cleanup code after the loop inside a generator | It never runs when the consumer breaks early | Put cleanup in `finally`, which `return()` triggers |
+
+## Interview questions
+
+### 1. What is the difference between an iterable and an iterator? Is a generator object both?
+
+**Answer.** An iterable is an object with a `[Symbol.iterator]()` method; an iterator is an object with `next()` returning `{ value, done }`. Arrays, strings, `Map` and `Set` are iterables that hand out a **new** iterator each time, so they can be looped many times. A generator object is both: it has `next()`, and its `[Symbol.iterator]()` returns itself (`numbers[Symbol.iterator]() === numbers`). That makes it single-use: once exhausted, a second spread gives `[]`. To make a reusable sequence, define `[Symbol.iterator]` as a generator method, so each loop starts a fresh generator.
+
+### 2. What happens when you `break` out of a `for...of` loop over a generator?
+
+**Answer.** The loop calls IteratorClose, which calls the generator's `return()`. The generator resumes at its paused `yield` as if a `return` statement were there, so any `finally` block runs and the state becomes `completed`. The lab shows `cleanups` receiving `'closed'` after a `break` on the first value. The same happens when the loop body throws or returns, and when the `take` helper has enough values. An iterator without a `return` method simply is not notified.
+
+### 3. How do iterator helpers differ from array methods?
+
+**Answer.** Array methods are eager: `map` builds a whole new array before `filter` starts, and the source must be finite. Iterator helpers (ES2025, on `Iterator.prototype`) are lazy: `map`, `filter`, `take`, `drop` and `flatMap` return new iterators, and nothing runs until a consumer such as `toArray`, `reduce`, `forEach` or `for...of` pulls. Consequences: they work on infinite sources (`naturals()`); they do only the work the answer needs (10 squares instead of 1,000,000 in the lab); they process one item through the whole chain at a time, so side effects interleave (`map 1, filter 1, map 2, filter 2`); and there are no intermediate arrays. Arrays get them via `array.values()`, and any iterator-like object via `Iterator.from`.
+
+### 4. How does `next(value)` work, and why is the first argument ignored?
+
+**Answer.** `yield expr` sends `expr` out as the result's `value` and pauses. The next call `next(x)` resumes the generator, and the paused `yield` expression evaluates to `x`. In `runningTotal`, `const amount = yield total` receives 5 from `next(5)`, so the total becomes 5, and then 10 from `next(10)`, giving 15. The first `next()` starts the body from the top; there is no paused `yield` yet to receive a value, so the specification has nowhere to put the argument and drops it. This is why two-way generators are "primed" with an empty `next()`.
+
+### 5. What is an async iterator, and how is it different from an iterator of promises?
+
+**Answer.** An async iterator's `next()` returns a **promise** of `{ value, done }`, and the object is found under `Symbol.asyncIterator`. The difference from a sync iterator that yields promises is that `done` itself is only known asynchronously: with `allItems()`, whether another item exists depends on a page that has not been fetched yet, so a sync iterator could not answer `done` in time. `async function*` generators combine `await` and `yield`, and `for await...of` awaits each `next()`. `for await` also accepts ordinary iterables, awaiting each value, so `for await (const x of [Promise.resolve(1), 2])` gives 1 then 2.
+
+## Summary
+
+$$
+\operatorname{next}^{(k)} =
+\begin{cases}
+\lbrace \text{value}: v_k,\ \text{done}: \text{false} \rbrace & k \le n \\
+\lbrace \text{done}: \text{true} \rbrace & k > n
+\end{cases}
+\qquad
+W_{\text{lazy}} = \text{values the consumer pulls} \;\le\; W_{\text{eager}} = N
+$$
+
+where $k$ counts calls of `next()`, $n$ is the length of the sequence, $v_k$ is its $k$-th value, $W$ is the work done, and $N$ is the size of a precomputed array.
+
+Example: `oneToThree` has $n = 3$, so the fourth `next()` reports `done: true`. The lazy chain for "the first three squares above 50" pulled $W_{\text{lazy}} = 10$ numbers, while the eager array version did $W_{\text{eager}} = N = 1\,000\,000$.
+
+- An iterable has `[Symbol.iterator]()`; an iterator has `next()` returning `{ value, done }`.
+- `for...of`, spread, destructuring, `Array.from`, `Map` and `Set` all use the protocol; plain objects are not iterable.
+- A generator function returns a paused generator; each `next()` runs to the next `yield`.
+- Generators are lazy and single-use; that makes infinite sequences safe.
+- `next(x)` sends a value in; `return()` and `throw()` resume with a return or an error, and `finally` runs.
+- ES2025 iterator helpers are lazy, one-item-at-a-time versions of the array methods.
+- Async iterators return promises; consume them with `for await...of`.
+
+## References
+
+- ECMAScript Language Specification: [The Iterable and Iterator interfaces](https://tc39.es/ecma262/#sec-iterator-interface), [Iterator.prototype.map](https://tc39.es/ecma262/#sec-iterator.prototype.map), [Iterator.prototype.take](https://tc39.es/ecma262/#sec-iterator.prototype.take), [Generator objects](https://tc39.es/ecma262/#sec-generator-objects), [Properties of generator instances](https://tc39.es/ecma262/#sec-properties-of-generator-instances) (`[[GeneratorState]]`), [GeneratorValidate](https://tc39.es/ecma262/#sec-generatorvalidate), [IteratorClose](https://tc39.es/ecma262/#sec-iteratorclose), [The for-in, for-of and for-await-of statements](https://tc39.es/ecma262/#sec-for-in-and-for-of-statements), [AsyncGenerator objects](https://tc39.es/ecma262/#sec-asyncgenerator-objects).
+- TC39 finished proposals: [Iterator helpers (ES2025) and Asynchronous Iteration (ES2018)](https://github.com/tc39/proposals/blob/main/finished-proposals.md).
+- MDN: [Iteration protocols](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Iteration_protocols), [function*](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/function*), [Generator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Generator), [Generator.prototype.return()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Generator/return), [Iterator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Iterator), [AsyncGenerator](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/AsyncGenerator), [for await...of](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/for-await...of).
+- Rezvan Mahdavi Hezaveh, [Iterator helpers](https://v8.dev/features/iterator-helpers) (V8, 2024).
+- Brendan Eich, [Python and JavaScript](https://brendaneich.com/2006/02/python-and-javascript/) (2006), on borrowing generators and iterators from Python.
+- Lab: [`labs/iterators-and-generators.mjs`](labs/iterators-and-generators.mjs). Run it from `programming-languages/javascript/labs` with `node iterators-and-generators.mjs`.

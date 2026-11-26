@@ -1,0 +1,435 @@
+---
+title: "Values, Types and Coercion"
+description: "JavaScript values from the ground up: the seven primitive types and objects, typeof and its quirks, Number as an IEEE 754 double, BigInt, ToPrimitive and implicit coercion, == versus ===, Object.is, truthy and falsy, and primitives versus shared objects."
+---
+
+## The problem
+
+A shop page has a quantity box. The customer types `2`, the code adds one more for a free gift, and the basket shows **21** items. Next to it, two prices of 0.10 and 0.20 add up to **0.30000000000000004**.
+
+```js
+const quantityFromForm = '2';
+assert.equal(quantityFromForm + 1, '21'); // string + number: concatenation
+assert.equal(Number(quantityFromForm) + 1, 3); // convert first, then add
+assert.equal(0.1 + 0.2, 0.30000000000000004);
+```
+
+Neither of these is a bug in the engine. A form field always gives a **string**, and `+` with a string on one side joins text. Every JavaScript number is a **binary floating-point double**, and 0.1 has no exact binary form. Without a clear picture of *what kinds of values exist* and *when JavaScript silently converts one kind into another*, these surprises look random. They follow a small set of rules from the ECMAScript specification, and this chapter teaches those rules.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Cards, toys and a helpful translator
+
+- **Primitive values** are like cards with a number or word printed in ink. You cannot rub out the ink. To "change" a card you print a new one.
+- **Objects** are like toys in a shared toy box. A variable is a name tag tied to a toy. Two tags can hang on the same toy, so if one child paints it, the other child sees paint too.
+- **Coercion** is a translator who stands between you and every operator. Hand the `-` operator a word like `"5"` and the translator quietly turns it into the number 5. Hand `+` a word and the translator decides you wanted to glue words together.
+
+Brendan Eich wrote the first JavaScript engine at Netscape in May 1995. In his own words: *"As you may know, I wrote JavaScript in ten days."* Some of the translator's odd habits, such as `typeof null` being `"object"`, date from that sprint and can never be removed, because millions of pages depend on them. Douglas Crockford called it *"the world's most misunderstood programming language"* (2001). The rules below are how you stop misunderstanding it.
+:::
+
+## From simple to advanced
+
+### Level 1: seven primitive types, plus objects
+
+The specification lists exactly eight types. Seven are **primitive** (simple, immutable values) and one is **Object** (everything else: arrays, functions, dates, maps).
+
+$$
+\mathcal{T} = \lbrace \text{Undefined}, \text{Null}, \text{Boolean}, \text{Number}, \text{BigInt}, \text{String}, \text{Symbol} \rbrace \cup \lbrace \text{Object} \rbrace, \qquad |\mathcal{T}| = 7 + 1
+$$
+
+where
+
+- $\mathcal{T}$ is the set of all ECMAScript language types;
+- the first set holds the seven primitive types, and $\cup$ adds the one object type;
+- $|\mathcal{T}|$ is the number of types.
+
+Example: $|\mathcal{T}| = 7 + 1 = 8$. The `typeof` operator also has eight possible answers, but they do not line up one to one with the eight types:
+
+```js
+assert.equal(typeof undefined, 'undefined');
+assert.equal(typeof true, 'boolean');
+assert.equal(typeof 42, 'number');
+assert.equal(typeof 42n, 'bigint');
+assert.equal(typeof 'hi', 'string');
+assert.equal(typeof Symbol('id'), 'symbol');
+assert.equal(typeof { a: 1 }, 'object');
+```
+
+Those seven are honest. The quirks are here:
+
+```js
+assert.equal(typeof null, 'object'); // a bug kept since 1995
+assert.equal(typeof [1, 2], 'object'); // arrays are objects
+assert.equal(typeof function () {}, 'function'); // callable objects get their own answer
+assert.equal(typeof notDeclaredAnywhere, 'undefined'); // no ReferenceError
+```
+
+So Null has no answer of its own, and Object has two (`"object"` and `"function"`). The specification spells this out line by line: "If value is null, return "object"", and "If value has a [[Call]] internal method, return "function"". For the two common questions, use tests that cannot be fooled:
+
+```js
+const nothing = null;
+assert.equal(nothing === null, true); // the reliable null test
+assert.equal(Array.isArray([1, 2]), true); // the reliable array test
+```
+
+Notice one more thing: **variables have no types, values do**. `let x = 1; x = 'one';` is legal. `typeof x` asks about the value that `x` holds right now.
+
+### Level 2: every Number is an IEEE 754 double
+
+JavaScript has one ordinary number type. Integers, decimals, `NaN` and `Infinity` are all **IEEE 754 binary64** values: 64 bits split into 1 sign bit $s$, 11 exponent bits $e$ and 52 fraction bits $f$. A normal double means
+
+$$
+x = (-1)^{s} \times \left(1 + \frac{f}{2^{52}}\right) \times 2^{\,e - 1023}
+$$
+
+where
+
+- $s$ is the sign bit: 0 for positive, 1 for negative;
+- $f$ is the 52-bit fraction read as a whole number, so $0 \le f < 2^{52}$, and $1 + f/2^{52}$ is the significand between 1 and 2;
+- $e$ is the 11-bit stored exponent, and subtracting the bias 1023 gives the real power of two.
+
+Example: the lab reads the 64 bits of 0.1 with a `DataView`:
+
+```js
+function float64Bits(x) {
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, x);
+  return view.getBigUint64(0).toString(16);
+}
+assert.equal(float64Bits(0.1), '3fb999999999999a');
+assert.equal(float64Bits(0.2), '3fc999999999999a');
+assert.equal(float64Bits(0.3), '3fd3333333333333');
+assert.equal(float64Bits(0.1 + 0.2), '3fd3333333333334'); // one step above 0.3
+```
+
+The hexadecimal `3fb999999999999a` splits into $s = 0$, $e = \texttt{0x3fb} = 1019$ and $f = \texttt{0x999999999999a} = 2702159776422298$. Substituting:
+
+1. $f / 2^{52} = 2702159776422298 / 4503599627370496 = 0.6000000000000000888\ldots$
+2. The significand is $1 + 0.6000000000000000888\ldots = 1.6000000000000000888\ldots$
+3. The power is $2^{1019 - 1023} = 2^{-4} = 1/16$.
+4. $x = 1.6000000000000000888\ldots / 16 = 0.1000000000000000055511\ldots$
+
+The pattern $1001\,1001\ldots$ is $0.1$'s repeating binary expansion, cut off after 52 bits and rounded up (the final `a`); the lab checks each of these numbers, and `(0.1).toFixed(20)` prints `'0.10000000000000000555'`. So the stored "0.1" is slightly **more** than 0.1, the stored "0.2" is too, and their sum lands one step above the double closest to 0.3. JavaScript prints the shortest decimal that identifies that double, `0.30000000000000004`.
+
+The same 52 bits limit integers. With the hidden leading 1, a double carries $52 + 1 = 53$ significant bits, so every integer up to $2^{53}$ fits, but not every integer above it:
+
+$$
+M = 2^{52 + 1} - 1
+$$
+
+where
+
+- $M$ is `Number.MAX_SAFE_INTEGER`, the largest integer $n$ such that $n$ and every integer below it are stored exactly and no other integer rounds to $n$;
+- $52 + 1$ counts the stored fraction bits plus the hidden leading bit.
+
+Example: $M = 2^{53} - 1 = 9007199254740992 - 1 = 9007199254740991$. The next integers show the problem: $2^{53} = 9007199254740992$ is stored exactly, but $2^{53} + 1 = 9007199254740993$ needs 54 bits, so it rounds to $2^{53}$.
+
+```js
+assert.equal(Number.MAX_SAFE_INTEGER, 2 ** 53 - 1);
+assert.equal(Number.MAX_SAFE_INTEGER, 9007199254740991);
+assert.equal(2 ** 53 + 1, 2 ** 53); // 9007199254740993 rounds to its neighbour
+assert.equal(Number.isSafeInteger(2 ** 53), false);
+assert.equal(Number.EPSILON, 2 ** -52);
+```
+
+For money, count whole cents (integers are exact up to $M$), or compare with a tolerance such as `Number.EPSILON`, the gap between 1 and the next double:
+
+```js
+const totalCents = 10 + 20; // store 0.10 and 0.20 as whole cents
+assert.equal(totalCents, 30);
+assert.ok(Math.abs(0.1 + 0.2 - 0.3) < Number.EPSILON); // or compare with a tolerance
+```
+
+### Level 3: BigInt is exact for integers of any size
+
+ES2020 added **BigInt**, written with an `n` suffix. A BigInt stores as many digits as it needs, so it never rounds:
+
+```js
+assert.equal(2n ** 64n, 18446744073709551616n);
+assert.equal(9007199254740993n + 1n, 9007199254740994n); // no rounding
+assert.equal(7n / 2n, 3n); // division drops the fraction
+assert.throws(() => 1n + 1, {
+  name: 'TypeError',
+  message: 'Cannot mix BigInt and other types, use explicit conversions',
+});
+assert.equal(1n + BigInt(1), 2n); // convert explicitly
+assert.equal(Number(2n ** 64n), 18446744073709552000); // back to a double: rounded
+```
+
+The `TypeError` is deliberate: an automatic conversion would have to round one side or the other, so JavaScript makes you choose. Use BigInt for large integer identifiers, cryptography and exact counters; keep Number for everyday arithmetic and anything with a fraction.
+
+### Level 4: coercion and ToPrimitive
+
+Operators need operands of particular types. When they get something else, they **coerce** it with abstract operations from the specification: **ToPrimitive** (object to primitive), **ToNumber**, **ToString** and **ToBoolean**. The binary `+` operator has the most famous rule:
+
+$$
+a + b =
+\begin{cases}
+\operatorname{concat}\big(S(p_a), S(p_b)\big) & \text{if } p_a \text{ or } p_b \text{ is a String} \\
+N(p_a) + N(p_b) & \text{otherwise}
+\end{cases}
+\qquad p_a = P(a),\; p_b = P(b)
+$$
+
+where
+
+- $a$ and $b$ are the two operands;
+- $P$ is ToPrimitive: a primitive stays as it is, and an object is asked for a primitive;
+- $p_a$ and $p_b$ are the primitives that come back;
+- $S$ is ToString, $N$ is ToNumeric (ToNumber, or the BigInt itself), and $\operatorname{concat}$ joins two strings.
+
+Example 1, `'5' + 3`: $p_a$ is the String `'5'`, so the first case applies. $S$ turns 3 into `'3'`, and concat joins `'5'` and `'3'` into `'53'`. Example 2, `[1, 2] + [3]`: $P$ turns the arrays into the strings `'1,2'` and `'3'`, so the result is `'1,23'`. Example 3, `true + 1`: neither primitive is a string, so the second case gives $N(\text{true}) + N(1) = 1 + 1 = 2$. Every other arithmetic operator (`-`, `*`, `/`) has only the numeric case, which is why `'5' - 3` is 2.
+
+```js
+assert.equal('5' + 3, '53');
+assert.equal('5' - 3, 2); // minus only means subtraction: ToNumber
+assert.equal('5' * '2', 10);
+assert.equal(true + 1, 2);
+assert.equal(null + 1, 1);
+assert.ok(Number.isNaN(undefined + 1));
+```
+
+ToNumber of a string trims spaces and parses the rest as a number literal; anything left over gives `NaN`. `null` becomes 0 but `undefined` becomes `NaN`, which is why the last two lines differ:
+
+```js
+assert.equal(Number(''), 0);
+assert.equal(Number(' 12 '), 12); // surrounding spaces are ignored
+assert.ok(Number.isNaN(Number('12px')));
+assert.equal(Number(null), 0);
+assert.ok(Number.isNaN(Number(undefined)));
+assert.equal(Number([5]), 5); // [5] -> '5' -> 5
+```
+
+An object is turned into a primitive by calling its own methods. ToPrimitive passes a **hint**: `"number"`, `"string"` or `"default"`. With hint `"string"` it tries `toString` then `valueOf`; otherwise it tries `valueOf` then `toString`, and it takes the first result that is not an object:
+
+```js
+const price = {
+  valueOf() {
+    return 42;
+  },
+  toString() {
+    return 'forty-two';
+  },
+};
+assert.equal(price + 1, 43); // hint "default": valueOf first
+assert.equal(`${price}`, 'forty-two'); // hint "string": toString first
+assert.equal([] + [], ''); // [] -> ''
+assert.equal([] + {}, '[object Object]');
+assert.equal([1, 2] + [3], '1,23'); // '1,2' + '3'
+```
+
+An array's `valueOf` returns the array itself (an object), so ToPrimitive falls through to `toString`, which joins the elements with commas. An object can take full control with `Symbol.toPrimitive`, which receives the hint directly:
+
+```js
+const temperature = {
+  [Symbol.toPrimitive](hint) {
+    return hint === 'string' ? '21 degrees' : 21;
+  },
+};
+assert.equal(+temperature, 21); // hint "number"
+assert.equal(`${temperature}`, '21 degrees'); // hint "string"
+assert.equal(temperature + 1, 22); // hint "default"
+```
+
+### Level 5: `==` converts, `===` does not
+
+`===` (IsStrictlyEqual) never converts: different types are simply unequal. `==` (IsLooselyEqual) converts step by step until both sides have the same type. Writing $x \approx y$ for `x == y` and $x \equiv y$ for `x === y`, the specification's steps are, first match wins:
+
+$$
+x \approx y =
+\begin{cases}
+x \equiv y & \text{if } x \text{ and } y \text{ have the same type} \\
+\text{true} & \text{if one is } \texttt{null} \text{ and the other is } \texttt{undefined} \\
+N(x) \approx y & \text{if } x \text{ is a Boolean, or } x \text{ is a String and } y \text{ a Number} \\
+x \approx N(y) & \text{if } y \text{ is a Boolean, or } y \text{ is a String and } x \text{ a Number} \\
+P(x) \approx y & \text{if } x \text{ is an Object and } y \text{ is a String, Number, BigInt or Symbol} \\
+x \approx P(y) & \text{if } y \text{ is an Object and } x \text{ is a String, Number, BigInt or Symbol} \\
+\text{false} & \text{otherwise (two BigInt rules aside)}
+\end{cases}
+$$
+
+where
+
+- $\approx$ is loose equality `==` and $\equiv$ is strict equality `===`;
+- $N$ is ToNumber and $P$ is ToPrimitive, as in Level 4;
+- each case either answers or rewrites the question, and the rewritten question goes back to the top.
+
+Example, `[] == false`, step by step:
+
+1. Object and Boolean: the fourth case replaces `false` by $N(\text{false}) = 0$, leaving `[] == 0`.
+2. Object and Number: the fifth case replaces `[]` by its primitive, the empty string, leaving `'' == 0`.
+3. String and Number: the third case replaces `''` by its number, 0, leaving `0 == 0`.
+4. Same type: $0 \equiv 0$ is true.
+
+And `null == 0`: no case matches (null is not converted by ToNumber here), so the answer is false. `null` loosely equals only `undefined` and itself.
+
+```js
+assert.equal(null == undefined, true); // a special pair
+assert.equal(null == 0, false); // null only equals undefined
+assert.equal('0' == false, true); // false -> 0, '0' -> 0
+assert.equal([] == false, true); // false -> 0, [] -> '' -> 0
+assert.equal(NaN == NaN, false);
+assert.equal('0' === false, false); // different types: never equal
+assert.equal([] == ![], true); // interview question 3
+```
+
+`===` still has two oddities, both from IEEE 754: `NaN !== NaN`, and `0 === -0`. **`Object.is`** (the SameValue algorithm) fixes both. A third flavour, **SameValueZero**, treats `NaN` as equal to itself but `0` and `-0` as equal; `includes`, `Map` and `Set` use it:
+
+```js
+assert.equal(Object.is(NaN, NaN), true);
+assert.equal(Object.is(0, -0), false);
+assert.equal(0 === -0, true);
+assert.equal(1 / -0, -Infinity); // why -0 is a different value
+assert.equal([NaN].includes(NaN), true); // SameValueZero
+assert.equal([NaN].indexOf(NaN), -1); // ===
+```
+
+### Level 6: truthy and falsy
+
+`if`, `while`, `!`, `&&` and `||` call **ToBoolean**. It has a closed list of falsy values; everything else is truthy:
+
+$$
+\operatorname{ToBoolean}(v) = \text{false} \iff v \in F, \qquad F = \lbrace \texttt{false}, 0, -0, \texttt{0n}, \texttt{""}, \texttt{null}, \texttt{undefined}, \texttt{NaN} \rbrace
+$$
+
+where
+
+- $v$ is any value;
+- $F$ is the set of falsy values, and $\iff$ means "exactly when";
+- `""` is the empty string, and `0n` is the BigInt zero.
+
+Example: $|F| = 8$. Take $v$ to be the one-character string `'0'`. It is not the empty string, so $v \notin F$ and it is **truthy**. Take $v$ to be the empty array `[]`. It is an object, so $v \notin F$ and it is truthy too, although it loosely equals `false` (Level 5). ToBoolean never calls ToPrimitive: every object is truthy.
+
+```js
+const falsy = [false, 0, -0, 0n, '', null, undefined, NaN];
+assert.equal(falsy.filter(Boolean).length, 0);
+assert.equal(Boolean('0'), true);
+assert.equal(Boolean('false'), true);
+assert.equal(Boolean([]), true);
+assert.equal(Boolean({}), true);
+```
+
+The everyday trap is a default value. `||` replaces every falsy value, including a legitimate 0. ES2020's `??` replaces only `null` and `undefined`:
+
+```js
+const savedVolume = 0;
+assert.equal(savedVolume || 50, 50); // 0 is falsy: the user's choice is lost
+assert.equal(savedVolume ?? 50, 0); // ?? only replaces null and undefined
+```
+
+### Level 7: primitives are immutable; objects are shared
+
+A primitive cannot be changed in place. String methods return **new** strings, and writing to a character is an error in strict code (modules are always strict):
+
+```js
+const word = 'cat';
+assert.throws(() => {
+  word[0] = 'b';
+}, {
+  name: 'TypeError',
+  message: "Cannot assign to read only property '0' of string 'cat'",
+});
+assert.equal(word.toUpperCase(), 'CAT'); // a new string
+assert.equal(word, 'cat'); // the original never changes
+```
+
+An object lives in one place, and variables hold **references** to it. Assignment copies the reference, and `===` on objects compares identity, not contents:
+
+```js
+const original = { n: 3 };
+const alias = original; // copies the reference, not the object
+alias.n = 7;
+assert.equal(original.n, 7);
+assert.equal({ n: 7 } === original, false); // same contents, different object
+```
+
+Function arguments work the same way. JavaScript passes the reference **by value**, sometimes called "call by sharing": the function can change the caller's object, but rebinding its parameter does not touch the caller's variable.
+
+```js
+function rename(user) {
+  user.name = 'Bo'; // changes the caller's object
+  user = { name: 'Cy' }; // rebinds only the local parameter
+  return user.name;
+}
+const person = { name: 'Ada' };
+assert.equal(rename(person), 'Cy');
+assert.equal(person.name, 'Bo');
+```
+
+## How it works underneath
+
+**The specification's algorithms.** Every conversion above is an abstract operation in the [ECMAScript specification](https://tc39.es/ecma262/), and engines must follow them step by step. ToPrimitive (§7.1.1) does this for an object `input` and an optional preferred type:
+
+1. Look up `input[Symbol.toPrimitive]`. If it exists, call it with the hint `"default"`, `"string"` or `"number"`; a non-object result is the answer, an object result is a `TypeError`.
+2. Otherwise run **OrdinaryToPrimitive**: with hint `"string"` try `toString` then `valueOf`; with any other hint try `valueOf` then `toString`. Return the first result that is not an object; if neither gives one, throw a `TypeError`.
+
+The binary `+` (ApplyStringOrNumericBinaryOperator, §13.15.3) calls ToPrimitive on both sides *with no hint*, checks for a string, and only then converts to numbers. That is the whole reason `[] + {}` is `'[object Object]'`. Of the built-in objects, only `Date` and `Symbol` define `Symbol.toPrimitive`; a `Date` treats `"default"` as `"string"`, so `date + 1` concatenates while `date - 0` gives milliseconds.
+
+**How V8 stores values.** The specification only describes behaviour; the representation is the engine's choice. In V8 every value is a machine word called a **tagged value**. If the lowest bit is 0, the word is a **Smi** ("small integer") and the integer sits inside the word itself, with no allocation. If the lowest bit is 1, the word is a pointer to a heap object: a string, an object, or a **HeapNumber** box holding a 64-bit double such as 0.1. The V8 team's [pointer compression article](https://v8.dev/blog/pointer-compression) shows both layouts; a Smi carries 31 bits when pointer compression is on (as in Chrome) and 32 bits on a 64-bit build without it. None of this is visible to your code: `typeof 1` and `typeof 0.1` are both `'number'`, and a Smi that overflows simply becomes a HeapNumber.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Adding a number to a form value | `'2' + 1` gives `'21'` | Convert first: `Number(input)`, then check `Number.isNaN` |
+| Adding money as decimals | `0.1 + 0.2` gives `0.30000000000000004` | Store integer cents, or compare with a tolerance |
+| `typeof x === 'object'` to detect an object | `null` passes the test, then `x.name` throws `TypeError: Cannot read properties of null` | `x !== null && typeof x === 'object'`, or `Array.isArray` for arrays |
+| Comparing mixed types with `==` | `[] == false` and `'0' == false` are both `true` | Use `===`; the one common exception is `x == null`, which matches `null` and `undefined` |
+| Testing `x === NaN` | Always `false`, even when `x` is `NaN` | `Number.isNaN(x)` or `Object.is(x, NaN)` |
+| `value || fallback` for numbers or strings | A real `0` or `''` is replaced | `value ?? fallback` (ES2020) |
+| Mixing BigInt and Number | `TypeError: Cannot mix BigInt and other types, use explicit conversions` | Convert one side with `BigInt(n)` or `Number(b)` |
+| Parsing a 64-bit ID from JSON as a number | `9007199254740993` silently becomes `9007199254740992` | Send large IDs as strings, or convert them with `BigInt` |
+| Writing to a string index | `TypeError: Cannot assign to read only property '0' of string 'cat'` | Build a new string: `'b' + word.slice(1)` |
+
+## Interview questions
+
+### 1. Why is `typeof null` equal to `"object"`?
+
+**Answer.** It is a bug from the first implementation that can no longer be fixed. MDN's `typeof` page explains it: the original engine stored each value as a type tag plus data, the tag for objects was 0, and `null` was the NULL pointer, all zero bits, so it read as an object. A proposal to make `typeof null === 'null'` was rejected because it would break existing pages. Today the specification encodes the bug on purpose: "If value is null, return "object"". Test for null with `x === null`.
+
+### 2. Why is `0.1 + 0.2 !== 0.3`, and how would you handle money?
+
+**Answer.** Every Number is an IEEE 754 double with a 53-bit significand, and 0.1, 0.2 and 0.3 have infinite binary expansions, so each is rounded to the nearest double. The lab shows the bits: 0.1 is stored as $1.6000000000000000888\ldots \times 2^{-4} = 0.1000000000000000055\ldots$, slightly too large, and the rounded sum `3fd3333333333334` is one unit in the last place above the double for 0.3 (`3fd3333333333333`). For money, keep integer minor units (cents) so the arithmetic is exact up to $2^{53} - 1$; for display, format at the end (`(cents / 100).toFixed(2)`). For general floating-point comparisons use a tolerance, for example `Math.abs(a - b) < Number.EPSILON` for values near 1.
+
+### 3. What is `[] == ![]`, and why?
+
+**Answer.** `true`. First `![]` is evaluated: ToBoolean of any object is true, so `![]` is `false`. Then IsLooselyEqual runs on `[] == false`: the Boolean is converted, `[] == 0`; the object is converted with ToPrimitive, `'' == 0`; the string is converted with ToNumber, `0 == 0`; same type, so true. An array is "equal" to its own negation because `!` uses ToBoolean (objects are always truthy) while `==` uses ToPrimitive and ToNumber (the empty array becomes 0).
+
+### 4. What is the difference between `==`, `===`, `Object.is` and SameValueZero?
+
+**Answer.** `==` converts types with the IsLooselyEqual steps before comparing. `===` never converts, but follows IEEE 754 for numbers: `NaN !== NaN` and `0 === -0`. `Object.is` (SameValue) is `===` with both number oddities fixed: `Object.is(NaN, NaN)` is true and `Object.is(0, -0)` is false. SameValueZero sits in between: `NaN` equals itself but `0` equals `-0`. It is used by `Array.prototype.includes`, `Map` and `Set`, which is why `[NaN].includes(NaN)` is true while `[NaN].indexOf(NaN)` (which uses `===`) is -1. In practice: use `===`, `Object.is` when `NaN` or `-0` matter, and `x == null` only as a short test for "null or undefined".
+
+## Summary
+
+$$
+x \equiv y \;\Rightarrow\; \text{no conversion}, \qquad
+a + b =
+\begin{cases}
+\operatorname{concat}\big(S(P(a)), S(P(b))\big) & \text{if } P(a) \text{ or } P(b) \text{ is a String} \\
+N(P(a)) + N(P(b)) & \text{otherwise}
+\end{cases}
+$$
+
+where $\equiv$ is `===`, $P$ is ToPrimitive, $S$ is ToString, $N$ is ToNumeric and $\operatorname{concat}$ joins two strings.
+
+Example: `'2' + 1` has a string on the left, so the first case joins `'2'` and `'1'` into `'21'`. `Number('2') + 1` has no string, so the second case gives $2 + 1 = 3$. And `'2' === 2` is false at once, with no conversion.
+
+- There are seven primitive types and one object type; variables have no types, values do.
+- `typeof null` is `'object'` and functions report `'function'`; test with `=== null` and `Array.isArray`.
+- Every Number is an IEEE 754 double: decimals are rounded, and integers are exact only up to $2^{53} - 1$. Use BigInt beyond that.
+- `+` concatenates when either side becomes a string; other arithmetic operators always convert to numbers.
+- Prefer `===`; use `Object.is` for `NaN` and `-0`, and `??` instead of `||` for defaults.
+- Exactly eight values are falsy; every object, even `[]`, is truthy.
+- Primitives never change; objects are shared through references, including when passed to functions.
+
+## References
+
+- ECMAScript Language Specification: [ECMAScript language types](https://tc39.es/ecma262/#sec-ecmascript-language-types), [The Number type](https://tc39.es/ecma262/#sec-ecmascript-language-types-number-type), [The typeof operator](https://tc39.es/ecma262/#sec-typeof-operator-runtime-semantics-evaluation), [ToPrimitive](https://tc39.es/ecma262/#sec-toprimitive), [ToBoolean](https://tc39.es/ecma262/#sec-toboolean), [ApplyStringOrNumericBinaryOperator](https://tc39.es/ecma262/#sec-applystringornumericbinaryoperator), [IsLooselyEqual](https://tc39.es/ecma262/#sec-islooselyequal), [SameValue](https://tc39.es/ecma262/#sec-samevalue).
+- MDN: [JavaScript data types and data structures](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Data_structures), [typeof](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/typeof) (including the history of `typeof null`), [Equality comparisons and sameness](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Equality_comparisons_and_sameness), [Number.MAX_SAFE_INTEGER](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER), [BigInt](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt), [Symbol.toPrimitive](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Symbol/toPrimitive), [Falsy](https://developer.mozilla.org/en-US/docs/Glossary/Falsy).
+- IEEE, [IEEE Standard for Floating-Point Arithmetic (IEEE 754-2019)](https://doi.org/10.1109/IEEESTD.2019.8766229); David Goldberg, [What Every Computer Scientist Should Know About Floating-Point Arithmetic](https://doi.org/10.1145/103162.103163), *ACM Computing Surveys* 23(1), 1991.
+- Kyle Simpson, *You Don't Know JS Yet: Types & Grammar*, 2nd edition (work in progress), [chapter 4, "Coercing Values"](https://github.com/getify/You-Dont-Know-JS/blob/2nd-ed/types-grammar/ch4.md).
+- Douglas Crockford, [JavaScript: The World's Most Misunderstood Programming Language](https://crockford.com/javascript/javascript.html) (2001).
+- Brendan Eich, [New JavaScript engine module owner](https://brendaneich.com/2011/06/new-javascript-engine-module-owner/) (2011), the "ten days" account; Allen Wirfs-Brock and Brendan Eich, [JavaScript: the first 20 years](https://doi.org/10.1145/3386327), HOPL IV, 2020.
+- V8 team, [Pointer compression in V8](https://v8.dev/blog/pointer-compression) (2020), for Smis and tagged values.
+- Lab: [`labs/values-types-and-coercion.mjs`](labs/values-types-and-coercion.mjs). Run it from `programming-languages/javascript/labs` with `node values-types-and-coercion.mjs`.

@@ -1,0 +1,409 @@
+---
+title: "Objects and Prototypes"
+description: "JavaScript objects from the inside: objects as property maps, property descriptors, getters and setters, Object.freeze, the prototype chain with Object.create and Object.getPrototypeOf, own versus inherited properties, shadowing, shallow copies with spread, structuredClone, and Map versus plain objects."
+---
+
+## The problem
+
+An editor app has default settings, `theme: 'light'` and `fontSize: 14`. Each user may override some of them; Ada wants a font size of 18. Copying the defaults into every user's settings looks simple, but the copy is a **snapshot**. When the app later changes the default theme to `'dark'`, every copy still says `'light'`, and with ten thousand users the app holds ten thousand stale copies.
+
+```js
+const defaults = { theme: 'light', fontSize: 14 };
+const copiedSettings = { ...defaults, fontSize: 18 }; // a snapshot
+const adaSettings = Object.create(defaults); // a link: ada's settings inherit from defaults
+adaSettings.fontSize = 18; // an own property shadows the default
+defaults.theme = 'dark';
+assert.equal(copiedSettings.theme, 'light'); // the copy missed the change
+assert.equal(adaSettings.theme, 'dark'); // the link sees it
+assert.equal(adaSettings.fontSize, 18);
+```
+
+`Object.create(defaults)` makes an object that stores only Ada's own choice and **asks `defaults`** for everything else. That link is the object's **prototype**, and it is how every JavaScript object, array, function and class instance shares behaviour. This chapter builds the object model from the bottom: what a property really is, how lookup walks the prototype chain, how assignment differs from lookup, and how to copy objects without surprises.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Ask your older sibling
+
+When you don't know the answer to a question, you ask your older sister. If she doesn't know, she asks your mum, and your mum asks grandma. Grandma is the last person in the line: if she doesn't know either, the answer is "nobody knows" (`undefined`).
+
+A JavaScript object works the same way. It first checks its **own** pockets. If the property is not there, it asks its **prototype**, which asks *its* prototype, all the way up to `Object.prototype`, whose prototype is `null`. And when you *write* a new answer in your own notebook, your sister's notebook does not change: you just stop asking her that question.
+
+Brendan Eich took the idea from the language Self: *"I'm happy that I chose Scheme-ish first-class functions and Self-ish (albeit singular) prototypes as the main ingredients."* Douglas Crockford, who argued for using prototypes directly (his `object(o)` function did what ES5 later standardised as `Object.create`), summed it up: *"Objects inherit from objects. What could be more object oriented than that?"*
+:::
+
+## From simple to advanced
+
+### Level 1: an object is a map from keys to properties
+
+A plain object maps **keys** to **properties**. A key is always a string or a symbol. Anything else you use as a key is converted to a string first:
+
+$$
+\operatorname{key}(v) =
+\begin{cases}
+v & \text{if } v \text{ is a String or a Symbol} \\
+\operatorname{ToString}(v) & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $v$ is the value written inside the brackets of `obj[v]`;
+- $\operatorname{key}(v)$ is the property key actually used;
+- ToString is the conversion from [Values, Types and Coercion](01-values-types-and-coercion.qmd).
+
+Example: $\operatorname{key}(1)$ is the string `'1'`, so `box[1]` and `box['1']` are one property. For two different objects, $\operatorname{key}(\texttt{keyA})$ and $\operatorname{key}(\texttt{keyB})$ are both `'[object Object]'`, so the second write overwrites the first:
+
+```js
+const box = {};
+box[1] = 'one'; // the number 1 becomes the string key '1'
+assert.equal(box['1'], 'one');
+const keyA = { id: 'a' };
+const keyB = { id: 'b' };
+box[keyA] = 'A'; // an object key becomes '[object Object]'
+box[keyB] = 'B'; // ...the same string, so this overwrites A
+assert.equal(box[keyA], 'B');
+assert.deepEqual(Object.keys(box), ['1', '[object Object]']);
+assert.deepEqual(Object.keys({ b: 1, 2: 1, a: 1, 1: 1 }), ['1', '2', 'b', 'a']);
+```
+
+The last line shows the key order the specification guarantees: integer-like keys first in ascending order, then other strings in insertion order, then symbols. Level 7 shows the type that keeps object keys apart: `Map`.
+
+### Level 2: every property has a descriptor
+
+A property is more than a value. Each **data property** carries three flags:
+
+- `writable`: can the value be changed by assignment?
+- `enumerable`: does it show up in `Object.keys`, `for...in`, spread and `JSON.stringify`?
+- `configurable`: can it be deleted, or its flags changed?
+
+A property created by assignment or an object literal gets `true` for all three. `Object.defineProperty` lets you choose, and any flag you leave out defaults to `false`:
+
+```js
+const order = { item: 'tea' };
+assert.deepEqual(Object.getOwnPropertyDescriptor(order, 'item'), {
+  value: 'tea', writable: true, enumerable: true, configurable: true,
+});
+Object.defineProperty(order, 'id', { value: 7 }); // omitted flags default to false
+assert.deepEqual(Object.getOwnPropertyDescriptor(order, 'id'), {
+  value: 7, writable: false, enumerable: false, configurable: false,
+});
+assert.deepEqual(Object.keys(order), ['item']); // not enumerable: hidden from keys
+assert.equal(JSON.stringify(order), '{"item":"tea"}'); // ...and from JSON
+assert.throws(() => {
+  order.id = 8;
+}, { name: 'TypeError', message: "Cannot assign to read only property 'id' of object '#<Object>'" });
+assert.throws(() => {
+  delete order.id;
+}, { name: 'TypeError', message: "Cannot delete property 'id' of #<Object>" });
+```
+
+In sloppy code the two failed operations are silently ignored; modules are strict, so they throw. `Object.freeze` is nothing more than these flags applied in bulk:
+
+$$
+\operatorname{freeze}(O):\quad \forall k \in \operatorname{own}(O):\ \operatorname{writable}(k) = \operatorname{configurable}(k) = \text{false}, \qquad \operatorname{extensible}(O) = \text{false}
+$$
+
+where
+
+- $O$ is the object being frozen;
+- $\operatorname{own}(O)$ is the set of $O$'s own property keys, and $\forall$ means "for every";
+- $\operatorname{writable}(k)$ and $\operatorname{configurable}(k)$ are the flags of property $k$ (accessor properties have no `writable` flag, so only `configurable` changes);
+- $\operatorname{extensible}(O) = \text{false}$ means no new properties can be added.
+
+Example: for `config` below, $\operatorname{own}(\texttt{config}) = \lbrace \texttt{port}, \texttt{db} \rbrace$. Both become read-only, so `config.port = 9090` throws and `config.debug = true` throws. But `db`'s *value* is a reference to another object, and that object's keys are not in $\operatorname{own}(\texttt{config})$. Freezing is **shallow**:
+
+```js
+const config = Object.freeze({ port: 8080, db: { host: 'localhost' } });
+assert.throws(() => {
+  config.port = 9090;
+}, { name: 'TypeError', message: "Cannot assign to read only property 'port' of object '#<Object>'" });
+assert.throws(() => {
+  config.debug = true;
+}, { name: 'TypeError', message: 'Cannot add property debug, object is not extensible' });
+config.db.host = 'example.com'; // the inner object was never frozen
+assert.equal(config.db.host, 'example.com');
+assert.equal(Object.isFrozen(config.db), false);
+```
+
+`Object.seal` is the weaker sibling (only `configurable` false, plus not extensible), and `Object.preventExtensions` only blocks new keys.
+
+### Level 3: getters and setters run code
+
+An **accessor property** has a `get` function and/or a `set` function instead of a value. Reading the property calls `get`; assigning calls `set`. A thermometer can store Celsius and offer Fahrenheit as a computed view:
+
+$$
+F = C \times \frac{9}{5} + 32, \qquad C = (F - 32) \times \frac{5}{9}
+$$
+
+where
+
+- $C$ is the temperature in degrees Celsius, stored as a real property;
+- $F$ is the same temperature in degrees Fahrenheit, computed on demand.
+
+Example: with $C = 100$, the getter computes $100 \times 9/5 + 32 = 180 + 32 = 212$. Assigning $F = 32$ runs the setter, which stores $C = (32 - 32) \times 5/9 = 0$.
+
+```js
+const thermometer = {
+  celsius: 100,
+  get fahrenheit() {
+    return this.celsius * 9 / 5 + 32;
+  },
+  set fahrenheit(value) {
+    this.celsius = (value - 32) * 5 / 9;
+  },
+};
+assert.equal(thermometer.fahrenheit, 212);
+thermometer.fahrenheit = 32;
+assert.equal(thermometer.celsius, 0);
+assert.equal(typeof Object.getOwnPropertyDescriptor(thermometer, 'fahrenheit').get, 'function');
+```
+
+There is only one source of truth, `celsius`, so the two scales can never disagree.
+
+### Level 4: the prototype chain
+
+Every object has a hidden link called `[[Prototype]]`: either another object or `null`. `Object.create(p)` makes a new object whose link is `p`, and `Object.getPrototypeOf(o)` reads the link. Reading a property follows the links until it finds the key:
+
+$$
+\operatorname{get}(O, k) =
+\begin{cases}
+\text{the value of } O\text{'s own property } k & \text{if } k \in \operatorname{own}(O) \\
+\texttt{undefined} & \text{if } \operatorname{proto}(O) = \texttt{null} \\
+\operatorname{get}\big(\operatorname{proto}(O), k\big) & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $O$ is the object being read and $k$ the key;
+- $\operatorname{own}(O)$ is the set of $O$'s own keys;
+- $\operatorname{proto}(O)$ is $O$'s `[[Prototype]]` link;
+- for an accessor property, "the value" means calling its getter with `this` set to the object you started from.
+
+Example, with the chain `adaSettings` → `defaults` → `Object.prototype` → `null`:
+
+1. `adaSettings.fontSize`: `fontSize` $\in \operatorname{own}(\texttt{adaSettings})$, so 18, in one step.
+2. `adaSettings.theme`: not own; move to `defaults`, where it is own: `'dark'`, in two steps.
+3. `adaSettings.missing`: not in any of the three objects; the next link is `null`, so `undefined` after three checks.
+4. `adaSettings.toString`: found on `Object.prototype`, the third object, so every plain object can call it.
+
+```js
+assert.equal(Object.getPrototypeOf(adaSettings), defaults);
+assert.equal(Object.getPrototypeOf(defaults), Object.prototype);
+assert.equal(Object.getPrototypeOf(Object.prototype), null); // the end of every chain
+assert.equal(adaSettings.missing, undefined); // searched all three objects, then gave up
+assert.equal(typeof adaSettings.toString, 'function'); // found on Object.prototype
+```
+
+Methods are shared the same way. The function lives once on the prototype, and the call `cow.describe()` still makes `this` the cow ([this and Function Calls](03-this-and-function-calls.qmd)):
+
+```js
+const animal = {
+  describe() {
+    return `${this.name} says ${this.sound}`;
+  },
+};
+const cow = Object.create(animal);
+cow.name = 'Cow';
+cow.sound = 'moo';
+assert.equal(cow.describe(), 'Cow says moo'); // found on animal, this is cow
+assert.equal(Object.hasOwn(cow, 'describe'), false);
+```
+
+Three names are easy to mix up. `[[Prototype]]` is the hidden link itself. `Object.getPrototypeOf(o)` reads it (the old `o.__proto__` accessor does the same and is kept only for compatibility). `F.prototype` is an ordinary property of a *function*: the object that `new F()` will use as the new object's `[[Prototype]]`.
+
+### Level 5: own versus inherited, and shadowing
+
+Different tools look at different parts of the chain:
+
+```js
+assert.equal('theme' in adaSettings, true); // in: own or inherited
+assert.equal(Object.hasOwn(adaSettings, 'theme'), false); // hasOwn: own only
+assert.deepEqual(Object.keys(adaSettings), ['fontSize']); // own and enumerable
+const seen = [];
+for (const key in adaSettings) seen.push(key); // for...in also walks the chain
+assert.deepEqual(seen, ['fontSize', 'theme']);
+```
+
+`Object.hasOwn` (ES2022) is the modern spelling of `hasOwnProperty`, and it also works on objects with no prototype.
+
+Writing is **not** the mirror image of reading. Reading walks up the chain; assigning usually creates or updates an **own** property on the object you assigned to, leaving the prototype alone. The new own property hides, or **shadows**, the inherited one:
+
+```js
+adaSettings.theme = 'blue'; // creates an own property; defaults is untouched
+assert.equal(defaults.theme, 'dark');
+delete adaSettings.theme; // removing the shadow uncovers the inherited value
+assert.equal(adaSettings.theme, 'dark');
+```
+
+The full rule, from the specification's OrdinarySet, looks up the key first and then decides:
+
+$$
+O.k = v \;\Rightarrow\;
+\begin{cases}
+\text{call the setter with } \texttt{this} = O & \text{if the nearest } k \text{ on the chain is an accessor} \\
+\text{fail (TypeError in strict code)} & \text{if the nearest } k \text{ is a read-only data property} \\
+\text{create or update } O\text{'s own } k & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $O$ is the object on the left of the assignment, $k$ the key and $v$ the new value;
+- "the nearest $k$" is the first property named $k$ found by walking $O$'s chain, starting with $O$ itself.
+
+Example 1: `adaSettings.theme = 'blue'`. The nearest `theme` is a writable data property on `defaults`, so the third case creates an own `theme` on `adaSettings`. Example 2: `child.version = 2`, where `child` inherits from a frozen object. The nearest `version` is read-only, so the second case throws, even though `child` itself is not frozen:
+
+```js
+const locked = Object.freeze({ version: 1 });
+const child = Object.create(locked);
+assert.throws(() => {
+  child.version = 2; // an inherited read-only property blocks assignment
+}, { name: 'TypeError', message: "Cannot assign to read only property 'version' of object '#<Object>'" });
+Object.defineProperty(child, 'version', { value: 2 }); // defining is still allowed
+assert.equal(child.version, 2);
+```
+
+`Object.defineProperty` is not assignment: it never consults the chain, so it can still create the own property.
+
+### Level 6: spread is shallow; `structuredClone` is deep
+
+Object spread (ES2018) copies the **own enumerable** properties into a new object:
+
+$$
+\lbrace \ldots O \rbrace = \lbrace\, k \mapsto O[k] \;:\; k \in \operatorname{ownEnum}(O) \,\rbrace
+$$
+
+where
+
+- $O$ is the source object;
+- $\operatorname{ownEnum}(O)$ is the set of its own enumerable keys;
+- $k \mapsto O[k]$ means the new object gets key $k$ with the value read from $O$.
+
+Example: `original` below has $\operatorname{ownEnum} = \lbrace \texttt{name}, \texttt{tags}, \texttt{joined} \rbrace$, so the copy has three keys. The value of `tags` is a **reference** to an array, and the copy receives the same reference, so both objects share one array. For `adaSettings`, $\operatorname{ownEnum} = \lbrace \texttt{fontSize} \rbrace$, so its spread is just `{ fontSize: 18 }`: inherited settings are not copied.
+
+```js
+const original = { name: 'Ada', tags: ['admin'], joined: new Date(0) };
+const shallow = { ...original };
+shallow.tags.push('editor'); // the array is shared
+assert.deepEqual(original.tags, ['admin', 'editor']);
+const deep = structuredClone(original);
+deep.tags.push('owner'); // a separate array
+assert.deepEqual(original.tags, ['admin', 'editor']);
+assert.ok(deep.joined instanceof Date); // a JSON round trip would give a string
+```
+
+`structuredClone` (a web platform function that Node has provided as a global since v17.0.0) copies the whole graph: nested objects, arrays, `Date`, `Map`, `Set`, typed arrays, and even cycles. It refuses things that cannot be copied faithfully, such as functions, and it does not keep prototypes, so a class instance comes back as a plain object:
+
+```js
+assert.deepEqual({ ...adaSettings }, { fontSize: 18 }); // spread copies own properties only
+assert.throws(() => structuredClone({ greet: () => 'hi' }), {
+  name: 'DataCloneError',
+  message: "() => 'hi' could not be cloned.",
+});
+const loop = { name: 'loop' };
+loop.self = loop;
+const loopCopy = structuredClone(loop); // cycles are fine
+assert.equal(loopCopy.self, loopCopy);
+```
+
+### Level 7: `Map` is the dictionary type
+
+A plain object is a poor dictionary: keys must be strings, and every plain object inherits keys such as `toString` from `Object.prototype`. `Map` (ES2015) accepts **any** value as a key, compares keys by identity (SameValueZero), keeps insertion order, and has a `size`:
+
+```js
+const visits = new Map();
+visits.set(keyA, 1); // any value can be a key, compared by identity
+visits.set(keyB, 2);
+visits.set(1, 'number one').set('1', 'string one'); // 1 and '1' stay apart
+assert.equal(visits.get(keyA), 1);
+assert.equal(visits.size, 4);
+assert.equal('toString' in {}, true); // a plain object inherits keys
+assert.equal(visits.has('toString'), false);
+const dictionary = Object.create(null); // an object with no prototype at all
+assert.equal('toString' in dictionary, false);
+```
+
+Compare with Level 1: there, `keyA` and `keyB` collided as `'[object Object]'`; here they are two separate entries. Use a plain object for a **record** with known field names, and a `Map` for a **collection** whose keys arrive at run time, especially when keys are not strings or entries are added and removed often. `Object.create(null)` is the fallback when you need a string dictionary as a plain object.
+
+## How it works underneath
+
+**Lookup and assignment in the specification.** Property reads use OrdinaryGet ([§10.1.8.1](https://tc39.es/ecma262/#sec-ordinaryget)): get the own property descriptor; if there is none, ask the parent with "Return ? parent.[[Get]](propertyKey, receiver)", or return `undefined` when the parent is `null`; for an accessor, call the getter with the original **receiver**. Writes use OrdinarySetWithOwnDescriptor: if the object has no own property, it delegates to the parent's `[[Set]]`, still passing the original receiver; when it reaches a writable data property (or the end of the chain), it calls CreateDataProperty **on the receiver**. That one detail, "create on the receiver, not on the object where the key was found", is shadowing. A read-only data property anywhere on the path makes `[[Set]]` return false, which strict code turns into a `TypeError`.
+
+**Hidden classes in V8.** A naive engine would store every object as a hash table. V8 instead gives each object a **hidden class** (V8 calls it a Map; other engines say Shape) that records the property names, their flags and their offsets, and the object itself stores only the values. Objects created the same way share one hidden class: V8's [Fast properties](https://v8.dev/blog/fast-properties) article states the assumption: "objects with the same structure — e.g. the same named properties in the same order — share the same HiddenClass", and adding a property moves the object along a transition tree to a new one. Mathias Bynens and Benedikt Meurer explain why in [Shapes and Inline Caches](https://mathiasbynens.be/notes/shapes-ics): an **inline cache** at a property access remembers "the shape and the offset at which the property was found", so the next object with the same shape is read with one comparison and one load.
+
+**Prototype lookups are cached too.** For a method found on a prototype, V8 caches the instance's shape, the holder, and a **ValidityCell** that "is invalidated whenever someone changes the associated prototype or any prototype above it" ([Optimizing prototypes](https://mathiasbynens.be/notes/prototypes)). This is why changing a prototype after code has warmed up, or calling `Object.setPrototypeOf`, is slow: MDN warns that changing an object's `[[Prototype]]` "is ... currently a very slow operation in every browser and JavaScript engine".
+
+**When objects become dictionaries.** If many properties are added and deleted, V8 switches the object to "slow properties": "An object with slow properties has a self-contained dictionary as a properties store", and inline caches no longer apply. That is the engine-level reason to prefer `Map` for dictionaries with churn, and to create objects with all their fields in the same order.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Using objects as keys of a plain object | Different keys collide as `'[object Object]'` | Use a `Map` |
+| Assuming `Object.freeze` is deep | Nested objects still change | Freeze recursively, or keep nested data immutable by design |
+| Assigning to a frozen or read-only property | `TypeError: Cannot assign to read only property 'port' of object '#<Object>'` | Create a new object instead: `{ ...config, port: 9090 }` |
+| Adding a key to a frozen object | `TypeError: Cannot add property debug, object is not extensible` | Copy, then add to the copy |
+| Treating spread as a deep copy | Changing `copy.tags` changes `original.tags` | `structuredClone`, or copy nested levels explicitly |
+| Cloning an object that holds functions | `DataCloneError: () => 'hi' could not be cloned.` | Keep behaviour in classes or modules and clone only data |
+| `for...in` over an object with a prototype | Inherited keys such as `theme` appear | `Object.keys`, or check `Object.hasOwn` |
+| Expecting a write to reach the prototype | The prototype is unchanged; the object gets its own copy | Write to the prototype explicitly, or use a setter |
+| Using `{}` as a dictionary of user input | `'toString' in dict` is true; a key named `__proto__` is special | `new Map()` or `Object.create(null)` |
+
+## Interview questions
+
+### 1. What is the difference between `[[Prototype]]`, `__proto__` and `F.prototype`?
+
+**Answer.** `[[Prototype]]` is the internal link every object has to its prototype (or `null`); property lookup follows it. `__proto__` is a legacy getter and setter on `Object.prototype` that reads and writes that link; use `Object.getPrototypeOf` and `Object.create` instead. `F.prototype` is an ordinary property that functions (and classes) have: it is **not** `F`'s own prototype, but the object that `new F()` installs as the `[[Prototype]]` of each new instance. So for `p = new Point(1, 2)`, `Object.getPrototypeOf(p) === Point.prototype`, while `Object.getPrototypeOf(Point)` is `Function.prototype`.
+
+### 2. What happens on `child.x = 1` when `x` is inherited?
+
+**Answer.** Assignment runs OrdinarySet, which first finds the nearest `x` on the chain. If it is a writable data property, a **new own property** `x` is created on `child` and the prototype is untouched; it now shadows the inherited one, and `delete child.x` uncovers it again (`adaSettings.theme`). If it is an accessor, its setter is called with `this` set to `child`. If it is read-only, nothing is created and strict code throws `TypeError: Cannot assign to read only property 'version' ...`, even though `child` itself is writable. `Object.defineProperty(child, 'x', ...)` bypasses the chain and always defines the own property.
+
+### 3. Is `Object.freeze` deep? How do `freeze`, `seal` and `preventExtensions` differ?
+
+**Answer.** It is shallow: it sets `writable` and `configurable` to false on the object's own properties and makes the object non-extensible, but the objects those properties point to are untouched (`config.db.host` still changes). The three levels: `preventExtensions` forbids new properties; `seal` also makes every property non-configurable (no delete, no flag changes) but values stay writable; `freeze` also makes every data property read-only. A deep freeze must recurse into each property value that is an object. In strict code, every forbidden write throws a `TypeError`; in sloppy code it is silently ignored.
+
+### 4. Compare spread, `JSON.parse(JSON.stringify(x))` and `structuredClone`.
+
+**Answer.** Spread copies one level of own enumerable properties; nested objects stay shared, getters are called and stored as plain values, and the prototype is not copied. A JSON round trip is deep but lossy: `Date` becomes a string, `Map` and `Set` become `{}`, `undefined` and functions disappear, `NaN` becomes `null`, and a cycle throws `TypeError: Converting circular structure to JSON`. `structuredClone` is deep and faithful for data: it keeps `Date`, `Map`, `Set`, typed arrays and cycles (`loopCopy.self === loopCopy`), but throws `DataCloneError` on functions and returns class instances as plain objects. Choose spread for one-level updates, `structuredClone` for real deep copies of data.
+
+### 5. When should you use a `Map` instead of a plain object?
+
+**Answer.** When the keys are not known in advance or are not strings. A `Map` keeps keys of any type apart (`1` and `'1'`, two different objects), has no inherited keys, reports `size` directly, iterates in insertion order, and is designed for frequent additions and deletions; in V8 a plain object with that churn falls back to dictionary mode anyway. A plain object is the better choice for a record with fixed field names, for JSON, and for property access with dot syntax. `Object.create(null)` gives a prototype-free string dictionary when an object is required.
+
+## Summary
+
+$$
+\operatorname{get}(O, k) =
+\begin{cases}
+O\text{'s own } k & k \in \operatorname{own}(O) \\
+\texttt{undefined} & \operatorname{proto}(O) = \texttt{null} \\
+\operatorname{get}\big(\operatorname{proto}(O), k\big) & \text{otherwise}
+\end{cases}
+\qquad
+O.k = v \;\Rightarrow\; \text{own } k \text{ on } O \text{ (unless a setter or read-only } k \text{ is found)}
+$$
+
+where $O$ is an object, $k$ a key, $v$ a value, $\operatorname{own}(O)$ its own keys and $\operatorname{proto}(O)$ its `[[Prototype]]` link.
+
+Example: `adaSettings.theme` is not own, so the read moves to `defaults` and returns `'dark'`; `adaSettings.theme = 'blue'` finds a writable `theme` on `defaults` and therefore creates an own `theme` on `adaSettings`, leaving `defaults.theme` as `'dark'`.
+
+- An object maps string or symbol keys to properties; other keys are converted to strings.
+- Every property has flags: `writable`, `enumerable`, `configurable`. `Object.freeze` sets them on own properties only, so it is shallow.
+- Getters and setters compute values on access, with `this` as the object you started from.
+- Reads walk the prototype chain; writes create own properties that shadow inherited ones.
+- `in` sees inherited keys; `Object.hasOwn` and `Object.keys` see own keys only.
+- Spread copies one level; `structuredClone` copies deeply but not functions or prototypes.
+- Use `Map` for dictionaries, plain objects for records.
+
+## References
+
+- ECMAScript Language Specification: [Object type and property attributes](https://tc39.es/ecma262/#sec-property-attributes), [OrdinaryGet](https://tc39.es/ecma262/#sec-ordinaryget), [OrdinarySetWithOwnDescriptor](https://tc39.es/ecma262/#sec-ordinarysetwithowndescriptor), [Object.create](https://tc39.es/ecma262/#sec-object.create), [Object.freeze](https://tc39.es/ecma262/#sec-object.freeze), [Object.hasOwn](https://tc39.es/ecma262/#sec-object.hasown), [CopyDataProperties](https://tc39.es/ecma262/#sec-copydataproperties) (object spread).
+- MDN: [Inheritance and the prototype chain](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Inheritance_and_the_prototype_chain), [Working with objects](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Working_with_objects), [Object.defineProperty](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/defineProperty), [Object.freeze](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/freeze), [Object.create](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/create), [Object.hasOwn](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/hasOwn), [Map](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map) (including "Objects vs. Maps"), [structuredClone](https://developer.mozilla.org/en-US/docs/Web/API/Window/structuredClone); Node.js, [structuredClone global](https://nodejs.org/api/globals.html#structuredclonevalue-options).
+- Kyle Simpson, *You Don't Know JS Yet: Objects & Classes*, 2nd edition (work in progress), [chapter 2, "How Objects Work"](https://github.com/getify/You-Dont-Know-JS/blob/2nd-ed/objects-classes/ch2.md).
+- Douglas Crockford, [Prototypal Inheritance in JavaScript](https://crockford.com/javascript/prototypal.html) (2006, revised 2008).
+- Brendan Eich, [Popularity](https://brendaneich.com/2008/04/popularity/) (2008).
+- Camillo Bruni, [Fast properties in V8](https://v8.dev/blog/fast-properties) (V8 blog, 2017); Mathias Bynens and Benedikt Meurer, [JavaScript engine fundamentals: Shapes and Inline Caches](https://mathiasbynens.be/notes/shapes-ics) (2018) and [Optimizing prototypes](https://mathiasbynens.be/notes/prototypes) (2018).
+- Lab: [`labs/objects-and-prototypes.mjs`](labs/objects-and-prototypes.mjs). Run it from `programming-languages/javascript/labs` with `node objects-and-prototypes.mjs`.

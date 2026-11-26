@@ -1,0 +1,326 @@
+---
+title: "this and Function Calls"
+description: "How JavaScript decides what this means: the four binding rules (default, implicit, explicit and new) and their precedence, call, apply and bind, arrow functions and lexical this, losing this when a method is extracted, strict mode, and callbacks."
+---
+
+## The problem
+
+A page counts clicks. The counter object has a `record` method, and the page hands that method to a button as its click handler. Called directly, the method works. Handed over on its own, it crashes:
+
+```js
+const clickCounter = {
+  clicks: 0,
+  record() {
+    this.clicks += 1;
+  },
+};
+clickCounter.record(); // works: this is clickCounter
+const handler = clickCounter.record; // the same function, detached from its object
+assert.throws(handler, {
+  name: 'TypeError',
+  message: "Cannot read properties of undefined (reading 'clicks')",
+});
+assert.equal(clickCounter.clicks, 1);
+```
+
+The function is identical in both calls. What changed is **how it was called**. In JavaScript, `this` is not fixed when a function is written; it is filled in fresh at every call, from the shape of the call. Languages such as Java tie `this` to the class a method was declared in, so this surprises almost everyone once. This chapter gives the exact rules, the order in which they apply, and the three standard ways to keep `this` when you pass a method around.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The word "me"
+
+The word **"me"** has no fixed meaning. When Ada says "give me the ball", *me* is Ada; when Bo says the same sentence, *me* is Bo. You can only know who *me* is by looking at **who is speaking right now**.
+
+`this` is JavaScript's "me". A function written once can be "spoken" by different objects: `cat.describe()` makes `this` the cat, `bird.describe()` makes it the bird. If nobody is speaking (a plain call `describe()`), there is no "me" at all.
+
+Kyle Simpson puts it this way in *You Don't Know JS Yet: Objects & Classes*: *"the `this` value for a function is determined by* how *the function is invoked."* He also gives the four rules in order of precedence that this chapter proves one by one: `new`, then `call`/`apply`, then an object before the dot, then the default.
+:::
+
+## From simple to advanced
+
+### Level 1: implicit binding, the object before the dot
+
+When a function is called as `object.method()`, `this` is the object before the dot. The same function can be shared by many objects:
+
+```js
+function describe() {
+  return `${this.name} has ${this.legs} legs`;
+}
+const cat = { name: 'Cat', legs: 4, describe };
+const bird = { name: 'Bird', legs: 2, describe };
+assert.equal(cat.describe(), 'Cat has 4 legs');
+assert.equal(bird.describe(), 'Bird has 2 legs'); // same function, different this
+```
+
+`describe` is written once, outside both objects. Neither object "owns" it. At the call `cat.describe()`, `this` is `cat`; at `bird.describe()`, it is `bird`.
+
+### Level 2: default binding, and strict mode
+
+A plain call `f()` has no object before the dot. In **strict mode** `this` is then `undefined`. In old **sloppy** (non-strict) code it falls back to the global object. ES modules, like this lab, and all class bodies are always strict:
+
+```js
+function whoAmI() {
+  return this;
+}
+assert.equal(whoAmI(), undefined); // modules are strict: no receiver means undefined
+const sloppyWhoAmI = new Function('return this;'); // a Function body is sloppy by default
+assert.equal(sloppyWhoAmI(), globalThis);
+```
+
+Now the opening crash is clear. `const handler = clickCounter.record` copies only the function. Calling `handler()` is a plain call, so `this` is `undefined`, and `this.clicks` reads a property of `undefined`. In sloppy code the same mistake is worse: `this` is `globalThis`, so the code quietly reads and writes a *global* `clicks` instead of crashing.
+
+### Level 3: explicit binding with `call`, `apply` and `bind`
+
+Every function has three methods for choosing `this` yourself:
+
+- `f.call(thisArg, a, b)` calls `f` now, with the arguments listed one by one;
+- `f.apply(thisArg, [a, b])` calls `f` now, with the arguments in an array;
+- `f.bind(thisArg, a)` calls nothing; it returns a **new function** with `this` and any leading arguments fixed for good.
+
+```js
+function introduce(greeting, punctuation) {
+  return `${greeting}, I am ${this.name}${punctuation}`;
+}
+assert.equal(introduce.call(cat, 'Hello', '!'), 'Hello, I am Cat!');
+assert.equal(introduce.apply(bird, ['Hi', '.']), 'Hi, I am Bird.');
+const catIntro = introduce.bind(cat, 'Hey'); // fixes this and the first argument
+assert.equal(catIntro('?'), 'Hey, I am Cat?');
+assert.equal(catIntro.call(bird, '?'), 'Hey, I am Cat?'); // a bound this cannot be replaced
+```
+
+The last line matters. Once bound, `this` is permanent: `call`, `apply` and even another `bind` cannot change it. This pattern is often called "hard binding".
+
+### Level 4: `new` binding, and which rule wins
+
+`new F(args)` does four things: it creates a fresh object, links its prototype to `F.prototype`, calls `F` with `this` set to that object, and returns the object (unless `F` itself returns a different object):
+
+```js
+function Point(x, y) {
+  this.x = x; // this is a brand-new object
+  this.y = y;
+}
+const p = new Point(1, 2);
+assert.deepEqual({ ...p }, { x: 1, y: 2 });
+assert.equal(Object.getPrototypeOf(p), Point.prototype);
+```
+
+When several rules seem to apply to one call, they are tried in a fixed order and the first match wins:
+
+$$
+\operatorname{this}(c) =
+\begin{cases}
+\text{a new object } o \text{ with } \operatorname{proto}(o) = F.\texttt{prototype} & \text{if } c \text{ is } \texttt{new } F(\ldots) \\
+t & \text{if } F \text{ was bound to } t \text{, or } c \text{ is } F.\texttt{call}(t, \ldots) \text{ or } F.\texttt{apply}(t, \ldots) \\
+o & \text{if } c \text{ is } o.F(\ldots) \text{ or } o[k](\ldots) \\
+\texttt{undefined} & \text{otherwise, in strict code} \\
+\texttt{globalThis} & \text{otherwise, in sloppy code}
+\end{cases}
+$$
+
+where
+
+- $c$ is one particular call of a function $F$;
+- $o$ is an object and $k$ a property key, so $o[k](\ldots)$ is a method call written with brackets;
+- $t$ is the value given to `bind`, `call` or `apply`;
+- $\operatorname{proto}(o)$ is the object's prototype link ([Objects and Prototypes](04-objects-and-prototypes.qmd));
+- the rows are tried from top to bottom, and arrow functions are not covered (Level 5).
+
+Example 1: `cat.describe.call(bird)`. The first row does not apply (no `new`). The second row does: $t$ is `bird`. The third row would have given `cat`, but it is never reached, so the result is `'Bird has 2 legs'`. Explicit beats implicit.
+
+Example 2: `new BoundPoint(20)`, where `BoundPoint = Point.bind({ x: 'ignored' }, 10)`. The first row applies, so `this` is a new object and the bound `{ x: 'ignored' }` is discarded. The preset argument 10 is still passed, so `x` is 10 and `y` is 20. `new` beats `bind`.
+
+```js
+assert.equal(cat.describe.call(bird), 'Bird has 2 legs'); // explicit beats implicit
+const BoundPoint = Point.bind({ x: 'ignored' }, 10);
+const q = new BoundPoint(20); // new beats bind; the preset 10 still applies
+assert.equal(q.x, 10);
+assert.equal(q.y, 20);
+assert.ok(q instanceof Point);
+```
+
+### Level 5: arrow functions have no `this` of their own
+
+An arrow function (ES2015) does not take part in the rules above at all. It has no `this` binding, so the name `this` inside it is looked up like any other variable: in the surrounding scope, exactly as in [Scope, Hoisting and Closures](02-scope-hoisting-and-closures.qmd). This is called **lexical `this`**, and it is what callbacks inside a method usually want:
+
+```js
+const timer = {
+  seconds: 0,
+  tickAll(ticks) {
+    ticks.forEach(() => {
+      this.seconds += 1; // the arrow uses tickAll's this
+    });
+    return this.seconds;
+  },
+};
+assert.equal(timer.tickAll([1, 2, 3]), 3);
+```
+
+`tickAll` was called as `timer.tickAll(...)`, so its `this` is `timer`, and the arrow simply sees it. Swap the arrow for a regular `function` and `forEach` calls it as a plain function, so `this` is `undefined`:
+
+```js
+const brokenTimer = {
+  seconds: 0,
+  tickAll(ticks) {
+    ticks.forEach(function () {
+      this.seconds += 1; // a plain call inside forEach: this is undefined
+    });
+  },
+};
+assert.throws(() => brokenTimer.tickAll([1]), {
+  name: 'TypeError',
+  message: "Cannot read properties of undefined (reading 'seconds')",
+});
+```
+
+Because an arrow's `this` comes from where it was written, nothing at the call site can change it, and an arrow cannot be used with `new`:
+
+```js
+const arrowThis = () => this; // module top level: this is undefined
+assert.equal(arrowThis.call(cat), undefined); // call cannot change an arrow's this
+assert.throws(() => new arrowThis(), { name: 'TypeError', message: 'arrowThis is not a constructor' });
+```
+
+This is also why an arrow function makes a poor **method** in an object literal: `{ name: 'Dog', speak: () => this.name }` takes `this` from the code around the literal, not from the dog.
+
+### Level 6: passing a method as a callback
+
+Every API that takes a callback (`forEach`, `setTimeout`, event listeners, promise handlers) calls it *its own way*, and almost never as `yourObject.method()`. So a method passed by name loses its object. There are three standard fixes:
+
+```js
+const tally = {
+  count: 0,
+  add() {
+    this.count += 1;
+  },
+};
+[1, 2].forEach(tally.add.bind(tally)); // fix 1: bind
+[1, 2].forEach(() => tally.add()); // fix 2: call it as a method inside an arrow
+[1, 2].forEach(tally.add, tally); // fix 3: forEach's thisArg
+assert.equal(tally.count, 6);
+```
+
+Each line adds 2, so the count is $3 \times 2 = 6$. Fix 1 makes a hard-bound copy. Fix 2 restores the implicit rule by writing the dot yourself, inside a lexical arrow. Fix 3 uses the optional `thisArg` parameter that array methods such as `forEach`, `map` and `filter` accept. In classes, the common choice is an arrow-function field, which creates one bound function per instance ([Classes](05-classes.qmd)).
+
+Never assume what a host does. Node calls a `setTimeout` callback with `this` set to its `Timeout` object, and browsers call DOM event handlers with `this` set to the element. If your code depends on `this`, bind it yourself.
+
+## How it works underneath
+
+**Every function records how it treats `this`.** When a function object is created, OrdinaryFunctionCreate sets its internal `[[ThisMode]]` slot: `lexical` for arrow functions, `strict` for strict code, and `global` for sloppy code. That one slot explains Levels 2 and 5.
+
+**The call site produces a Reference Record.** Evaluating `cat.describe` does not just produce a function. It produces a **Reference Record** whose `[[Base]]` is `cat` and whose `[[ReferencedName]]` is `"describe"`. The call operation EvaluateCall then reads `this` from it: "If IsPropertyReference(thisValueRef) is true, then Let thisValue be GetThisValue(thisValueRef)". If the callee is not a property reference (a plain name like `handler`), `thisValue` is `undefined`. This is why the grouping operator keeps `this` and the comma operator loses it: the specification says grouping "does not apply GetValue", so `(cat.describe)` is still a reference, while the comma operator calls GetValue and returns a bare function value.
+
+```js
+assert.equal((cat.describe)(), 'Cat has 4 legs'); // grouping keeps the reference
+assert.throws(() => (0, cat.describe)(), { name: 'TypeError' }); // the comma operator returns a bare function
+```
+
+**The callee binds `this`.** Inside the call, OrdinaryCallBindThis decides from `[[ThisMode]]`:
+
+1. `lexical`: do nothing. The function has no `this` binding, so lookups go to the outer scope.
+2. `strict`: `this` is exactly the value passed, even `undefined`, `null` or a primitive.
+3. `global` (sloppy): if the value is `undefined` or `null`, use `globalThis`; otherwise convert it with ToObject, which **boxes** primitives into wrapper objects.
+
+The lab shows rule 3 against rule 2:
+
+```js
+const sloppyTypeOfThis = new Function('return typeof this;');
+function strictTypeOfThis() {
+  return typeof this;
+}
+assert.equal(sloppyTypeOfThis.call(5), 'object'); // sloppy: 5 is boxed into a Number object
+assert.equal(strictTypeOfThis.call(5), 'number'); // strict: this is exactly what was passed
+assert.equal(sloppyWhoAmI.call(null), globalThis); // sloppy: null becomes globalThis
+assert.equal(whoAmI.call(null), null); // strict: null stays null
+```
+
+**`bind` creates an exotic object.** `f.bind(t, a)` returns a *bound function exotic object* with three internal slots: `[[BoundTargetFunction]]` (`f`), `[[BoundThis]]` (`t`) and `[[BoundArguments]]` (`a`). Its `[[Call]]` ignores whatever `this` the caller supplies and runs "Call(target, boundThis, args)". That is why `catIntro.call(bird)` still introduces the cat. Its `[[Construct]]`, used by `new`, does **not** read `[[BoundThis]]`; it constructs the target with the bound arguments. That is why `new` beats `bind`.
+
+**`new` uses `[[Construct]]`.** For an ordinary constructor function, `[[Construct]]` calls OrdinaryCreateFromConstructor, which creates an object whose prototype is `F.prototype`, binds it as `this`, runs the body, and returns the object unless the body returned another object. Arrow functions and methods have no `[[Construct]]`, hence `arrowThis is not a constructor`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Passing `obj.method` as a callback | `TypeError: Cannot read properties of undefined (reading 'clicks')` | `obj.method.bind(obj)`, `() => obj.method()`, or an arrow-function class field |
+| A regular `function` callback inside a method | `TypeError: Cannot read properties of undefined (reading 'seconds')` | Use an arrow function, which takes the method's `this` |
+| An arrow function as an object-literal method | `this` is the outer scope's `this` (in a module, `undefined`) | Use method syntax: `speak() { ... }` |
+| Calling an arrow function with `new` | `TypeError: arrowThis is not a constructor` | Use a `class` or a regular function as a constructor |
+| Expecting `call` or `apply` to override `bind` | The bound object is used anyway | Bind once, at the place that knows the right object |
+| Sloppy-mode plain call | No error: `this` is `globalThis`, so the code writes global variables | Use modules or `'use strict'`, so the mistake throws instead |
+| Calling a class constructor without `new` | `TypeError: Class constructor Point cannot be invoked without 'new'` | Always `new` a class ([Classes](05-classes.qmd)) |
+
+## Interview questions
+
+### 1. What are the rules for `this`, in order of precedence?
+
+**Answer.** For a regular (non-arrow) function, look at the call site and take the first rule that matches:
+
+1. **`new`**: `new F()` makes `this` a fresh object whose prototype is `F.prototype`.
+2. **Explicit**: `F.call(t)`, `F.apply(t)`, or `F` was created by `bind(t)`: `this` is `t`.
+3. **Implicit**: `o.F()` or `o[k]()`: `this` is `o`.
+4. **Default**: a plain call `F()`: `undefined` in strict code, `globalThis` in sloppy code.
+
+Arrow functions are outside the list: they have no `this` binding and use the enclosing scope's `this`. The lab proves the two contested orderings: `cat.describe.call(bird)` gives the bird (explicit beats implicit), and `new BoundPoint(20)` builds a new point although `BoundPoint` was bound (new beats bind).
+
+### 2. What do these four calls do?
+
+```js
+// sketch: four calls of the same method
+const f = cat.describe;
+cat.describe(); // (a)
+(cat.describe)(); // (b)
+(0, cat.describe)(); // (c)
+f(); // (d)
+```
+
+**Answer.** (a) and (b) return `'Cat has 4 legs'`; (c) and (d) throw `TypeError` in strict code. The call takes `this` from a **Reference Record**. `cat.describe` is a property reference with base `cat` (a). Parentheses for grouping do not call GetValue, so (b) is still that reference. The comma operator does call GetValue and returns a bare function value with no base (c), and `f` is a variable reference, not a property reference (d), so both are plain calls with `this` undefined. Pattern (c) appears in bundler output on purpose, to call an imported function without a receiver.
+
+### 3. How is an arrow function different from a regular function?
+
+**Answer.** An arrow function has `[[ThisMode]]` lexical, so it has no own `this`, and also no own `arguments`, `super` or `new.target`; those names resolve in the enclosing scope. Consequences: `call`, `apply` and `bind` cannot change its `this` (`arrowThis.call(cat)` is still `undefined`); it has no `[[Construct]]` and no `prototype`, so `new` throws `arrowThis is not a constructor`; and it suits callbacks inside methods (`timer.tickAll`) but not object methods or constructors. Use arrows for callbacks, and method syntax or classes for anything that needs its own `this`.
+
+### 4. Write a simplified `bind`. What does it miss?
+
+**Answer.**
+
+```js
+function simpleBind(fn, boundThis, ...preset) {
+  return function (...args) {
+    return fn.apply(boundThis, [...preset, ...args]);
+  };
+}
+```
+
+`simpleBind(introduce, cat, 'Yo')('!')` returns `'Yo, I am Cat!'`: the closure remembers `fn`, `boundThis` and the preset arguments, and `apply` supplies them on every call. What it misses compared with the real `bind`: (1) `new` support, because the real bound function's `[[Construct]]` ignores the bound `this` and constructs `fn`, while this wrapper would construct a useless object and pass it nowhere; (2) metadata, because the real one has the `name` `'bound introduce'` and a `length` reduced by the preset arguments (`catIntro.length` is 1, since `'Hey'` fills one of two parameters); (3) it is an ordinary function, not a bound function exotic object, so `instanceof` against it does not forward to `fn`.
+
+## Summary
+
+$$
+\operatorname{this}(c) =
+\begin{cases}
+\text{new object} & \texttt{new } F(\ldots) \\
+t & \text{bound to } t, \text{ or } F.\texttt{call}(t) \text{ or } F.\texttt{apply}(t) \\
+o & o.F(\ldots) \\
+\texttt{undefined} \text{ or } \texttt{globalThis} & \text{plain call, strict or sloppy}
+\end{cases}
+\qquad
+\operatorname{this}_{\text{arrow}} = \operatorname{this}_{\text{outer}}
+$$
+
+where $c$ is a call of a regular function $F$, $t$ is an explicitly supplied value, $o$ is the object before the dot, the first matching row wins, and $\operatorname{this}_{\text{outer}}$ is the `this` of the scope around an arrow function.
+
+Example: `handler()` matches only the last row, so in a module `this` is `undefined` and the click counter crashes; `clickCounter.record()` matches the third row with $o$ = `clickCounter`; and inside `timer.tickAll`, the arrow's `this` equals the method's `this`, which is `timer`.
+
+- `this` is decided at each call, by the shape of the call, not where the function was written.
+- Precedence: `new`, then `call`/`apply`/`bind`, then the object before the dot, then the default.
+- Modules and class bodies are strict, so a plain call gives `undefined` and mistakes throw early.
+- Arrow functions have no `this` of their own and cannot be rebound or constructed.
+- A method passed as a callback loses its object; fix it with `bind`, a wrapping arrow, or a `thisArg`.
+
+## References
+
+- ECMAScript Language Specification: [OrdinaryFunctionCreate](https://tc39.es/ecma262/#sec-ordinaryfunctioncreate) (`[[ThisMode]]`), [EvaluateCall](https://tc39.es/ecma262/#sec-evaluatecall), [OrdinaryCallBindThis](https://tc39.es/ecma262/#sec-ordinarycallbindthis), [Bound function exotic objects](https://tc39.es/ecma262/#sec-bound-function-exotic-objects), [Function.prototype.bind](https://tc39.es/ecma262/#sec-function.prototype.bind), [The grouping operator](https://tc39.es/ecma262/#sec-grouping-operator-runtime-semantics-evaluation), [The comma operator](https://tc39.es/ecma262/#sec-comma-operator-runtime-semantics-evaluation), [Strict mode code](https://tc39.es/ecma262/#sec-strict-mode-code).
+- MDN: [this](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/this), [Function.prototype.bind](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/bind), [Function.prototype.call](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/call), [Arrow function expressions](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Functions/Arrow_functions), [new](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/new), [Strict mode](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Strict_mode).
+- Kyle Simpson, *You Don't Know JS Yet: Objects & Classes*, 2nd edition (work in progress), [chapter 4, "This Works"](https://github.com/getify/You-Dont-Know-JS/blob/2nd-ed/objects-classes/ch4.md), including the four rules in order of precedence and "lexical this".
+- Lab: [`labs/this-and-function-calls.mjs`](labs/this-and-function-calls.mjs). Run it from `programming-languages/javascript/labs` with `node this-and-function-calls.mjs`.

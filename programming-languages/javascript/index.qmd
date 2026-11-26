@@ -1,0 +1,74 @@
+---
+title: "JavaScript — Core Concepts"
+subtitle: "Dynamic values, prototypes and one event loop"
+description: "JavaScript on Node 26 from values and closures to the event loop and the garbage collector: twelve chapters on what the language guarantees and how engines run it, each with a lab that checks every result."
+aliases: ["../javascript.html"]
+---
+
+## What JavaScript is for, and where it came from
+
+JavaScript is the programming language of the **web browser**: every page that reacts to a click runs it. Through Node.js it also runs **servers, command-line tools and build systems**, and it is the language TypeScript compiles to. It is dynamically typed, garbage-collected, and built around objects, first-class functions and a single-threaded event loop.
+
+It began at Netscape. In their history *JavaScript: The First 20 Years* (HOPL 2020), Allen Wirfs-Brock and Brendan Eich record that Eich was recruited in early 1995 with the bait of *"come and do Scheme in the browser"*, and joined Netscape on 3 April 1995. Netscape and Sun had just agreed to put Java into the browser, and management wanted a small scripting language beside it that would *"look like Java"* while staying easy enough for anyone to write *"a few lines directly within an HTML document"*. Eich *"prototyped the first Mocha implementation in ten contiguous days in May, 1995"*. He took first-class functions from Scheme and, out of admiration for Self, prototypes instead of classes.
+
+The language shipped in a Netscape Navigator 2.0 beta in September 1995 under the name **LiveScript**, and Netscape and Sun announced it as **JavaScript** on 4 December 1995. To make it a vendor-neutral standard, Netscape took it to Ecma International, whose new committee **TC39** first met in November 1996. Because Sun would not license the "JavaScript" trademark, the standard was published under the placeholder name **ECMAScript**: ECMA-262, 1st Edition, approved in June 1997. TC39 still develops the language, and since ES2015 it publishes a new edition every year.
+
+## The mental model
+
+A handful of ideas explain most of JavaScript:
+
+1. **Values are primitives or objects.** Primitives are immutable and compared by value; objects are shared by reference, and operators coerce types by fixed rules. ([Values, Types and Coercion](01-values-types-and-coercion.qmd))
+2. **Functions are values that remember their scope.** Lexical scope, hoisting and closures decide what a name means; the call site decides what `this` means. ([Scope, Hoisting and Closures](02-scope-hoisting-and-closures.qmd), [this and Function Calls](03-this-and-function-calls.qmd))
+3. **Objects delegate to prototypes.** Property lookup walks a prototype chain, and `class` is syntax over that chain. ([Objects and Prototypes](04-objects-and-prototypes.qmd), [Classes](05-classes.qmd))
+4. **Iteration is a protocol.** Anything with a `[Symbol.iterator]` method works with `for...of`, and generators produce iterators lazily. ([Iterators and Generators](06-iterators-and-generators.qmd))
+5. **One thread, one event loop.** Code runs to completion; callbacks wait in task and microtask queues; promises and `async`/`await` build on those queues. ([The Event Loop](07-the-event-loop.qmd), [Promises](08-promises.qmd), [Async/Await](09-async-await.qmd))
+6. **Programs are module graphs.** ES modules link live bindings and evaluate each file once; Node still runs CommonJS beside them. ([Modules](10-modules.qmd))
+7. **Failures are exceptions; memory is traced.** Errors unwind the stack to a `catch`, `using` releases resources, and the collector frees whatever is no longer reachable. ([Errors](11-errors.qmd), [Memory and Garbage Collection](12-memory-and-garbage-collection.qmd))
+
+## The chapters
+
+### Part 1: Values, functions and objects
+
+1. [Values, Types and Coercion](01-values-types-and-coercion.qmd): the primitive types, `typeof`, numbers as IEEE 754 doubles, BigInt, coercion, `==` versus `===` and `Object.is`.
+2. [Scope, Hoisting and Closures](02-scope-hoisting-and-closures.qmd): lexical scope, `var` versus `let` and `const`, the temporal dead zone, and closures.
+3. [this and Function Calls](03-this-and-function-calls.qmd): how the call site sets `this`, `call`, `apply` and `bind`, and arrow functions.
+4. [Objects and Prototypes](04-objects-and-prototypes.qmd): properties and descriptors, the prototype chain and `Object.create`, shallow copies and `structuredClone`, and `Map` versus plain objects.
+5. [Classes](05-classes.qmd): `class` as syntax over prototypes, `extends` and `super`, static members and private fields.
+6. [Iterators and Generators](06-iterators-and-generators.qmd): the iteration protocol, `for...of`, generator functions and lazy sequences, the ES2025 iterator helpers, and `for await`.
+
+### Part 2: Asynchronous JavaScript
+
+7. [The Event Loop](07-the-event-loop.qmd): the call stack, run-to-completion, tasks and microtasks, and Node's phases and `process.nextTick`.
+8. [Promises](08-promises.qmd): three states, chaining, error propagation, `all`, `allSettled`, `race`, `any`, and unhandled rejections.
+9. [Async/Await](09-async-await.qmd): what `await` does, sequential versus parallel awaits, `for await`, and cancellation with `AbortSignal`.
+
+### Part 3: Programs and the runtime
+
+10. [Modules](10-modules.qmd): ES modules and CommonJS, live bindings, one evaluation per URL, cycles, `import()` and `require(esm)`.
+11. [Errors](11-errors.qmd): `Error` objects and `cause`, `finally` and completion records, `AggregateError`, `Error.isError` and `using`.
+12. [Memory and Garbage Collection](12-memory-and-garbage-collection.qmd): reachability, V8's generational collector, common leaks, and weak references.
+
+## How to run the labs
+
+Every chapter has one lab, `labs/<slug>.mjs`, which uses only Node's standard library, checks every result its chapter quotes, and prints `OK` last. From `programming-languages/javascript/labs`:
+
+```bash
+node the-event-loop.mjs
+```
+
+Replace `the-event-loop` with any chapter's slug, such as `promises` or `memory-and-garbage-collection`. From the repository root, the checker verifies the chapters and runs every lab:
+
+```bash
+ONLY=javascript node --test programming-languages/check-languages.test.mjs
+```
+
+## Version and further reading
+
+These pages teach JavaScript as **Node 26** runs it (V8 14.6): the language up to **ES2025**, plus the newer features Node 26 already ships, such as `Error.isError` and `Array.fromAsync` (ES2026) and `using` declarations (ES2027). Chapters say when a feature arrived where it matters, for example promises in ES2015, `async` functions in ES2017 and `Promise.try` in ES2025.
+
+- [ECMAScript Language Specification](https://tc39.es/ecma262/) (the living draft) and the published [ECMA-262](https://ecma-international.org/publications-and-standards/standards/ecma-262/) editions: the definitive rules.
+- [MDN JavaScript Guide](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide) and reference: the most complete practical documentation.
+- [Node.js 26 documentation](https://nodejs.org/docs/latest-v26.x/api/): the runtime used by every lab.
+- Allen Wirfs-Brock and Brendan Eich, [JavaScript: The First 20 Years](https://zenodo.org/records/4960086), *Proceedings of the ACM on Programming Languages* 4 (HOPL), 2020, [doi:10.1145/3386327](https://doi.org/10.1145/3386327).
+- Marijn Haverbeke, [*Eloquent JavaScript*](https://eloquentjavascript.net/), 4th edition (free online).
+- Kyle Simpson, [*You Don't Know JS Yet*](https://github.com/getify/You-Dont-Know-JS), 2nd edition: deep dives into scope, closures, objects and classes.

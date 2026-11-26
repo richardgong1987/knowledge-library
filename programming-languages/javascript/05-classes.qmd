@@ -1,0 +1,434 @@
+---
+title: "Classes"
+description: "JavaScript classes as syntax over prototypes: constructors, prototype methods, fields, static members and static blocks, extends and super, private fields and methods, accessors, instanceof and the prototype chain, mixins, and composition over inheritance."
+---
+
+## The problem
+
+A bank needs account objects. Every account shares the same `deposit` method, the balance must never be set directly (a customer typing `balance = 1e6` in the console is not a deposit), and a savings account should add interest on top of everything an ordinary account does.
+
+Before ES2015, JavaScript had no `class` keyword. You wrote a constructor function, attached methods to its `prototype` by hand, and kept the balance in a public property:
+
+```js
+function OldAccount(owner) {
+  this.owner = owner;
+  this.balance = 0; // public: anyone can write here
+}
+OldAccount.prototype.deposit = function (amount) {
+  this.balance += amount;
+  return this.balance;
+};
+const old = new OldAccount('Ada');
+old.balance = -1000; // nothing stops this
+assert.equal(old.deposit(10), -990);
+```
+
+It works, but it is verbose, inheritance needs more manual wiring with `Object.create`, forgetting `new` silently misbehaves, and nothing is private. ES2015 classes and the ES2022 additions (fields, `#private` members, static blocks) fix all four problems. Underneath, though, a class is still the prototype machinery from [Objects and Prototypes](04-objects-and-prototypes.qmd), and the hard interview questions are about exactly that.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A cookie cutter and a shared recipe book
+
+- A **class** is a cookie cutter. Each `new` presses out a fresh cookie (an instance) with its own icing (its fields).
+- The **methods** are written once in a recipe book kept on the kitchen shelf (the prototype). Every cookie can read the same book; nobody copies the book into each cookie.
+- A **`#private` field** is a diary with a lock. Only code written inside the class has the key.
+- **`extends`** says "my recipe book continues from my parent's book": if a page is missing in mine, look in theirs.
+
+MDN describes it carefully: *"Classes in JS are built on prototypes but also have some syntax and semantics that are unique to classes."* The design advice from the *Design Patterns* book (Gamma, Helm, Johnson and Vlissides, 1994) still holds for JavaScript: *"Favor 'object composition' over 'class inheritance'."*
+:::
+
+## From simple to advanced
+
+### Level 1: class syntax, the same prototypes underneath
+
+A class declaration creates a **constructor function**, and its methods go on that function's `prototype` object:
+
+```js
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+  distance() {
+    return Math.hypot(this.x, this.y);
+  }
+}
+const p = new Point(3, 4);
+assert.equal(p.distance(), 5);
+assert.equal(typeof Point, 'function'); // a class is a constructor function
+assert.equal(Object.getPrototypeOf(p), Point.prototype);
+assert.equal(Object.hasOwn(p, 'distance'), false); // methods live on the prototype
+assert.deepEqual(Object.keys(Point.prototype), []); // ...and are not enumerable
+assert.throws(() => Point(3, 4), {
+  name: 'TypeError',
+  message: "Class constructor Point cannot be invoked without 'new'",
+});
+```
+
+`p.distance()` is $\sqrt{3^2 + 4^2} = \sqrt{25} = 5$, found on `Point.prototype` by the ordinary prototype lookup. So a class is not a new kind of object. It is a cleaner way to write the `OldAccount` pattern, with four real differences: calling it without `new` throws; methods are non-enumerable; the whole class body is strict mode; and a class declaration is in the temporal dead zone until its line runs ([Scope, Hoisting and Closures](02-scope-hoisting-and-closures.qmd)).
+
+### Level 2: fields are per instance, methods are shared
+
+A **field** (ES2022) is declared in the class body and created on **each instance** when it is constructed. A **method** exists **once**, on the prototype:
+
+```js
+class Counter {
+  count = 0; // a field: one copy per instance
+  increment() { // a method: one copy, on Counter.prototype
+    this.count += 1;
+    return this.count;
+  }
+}
+const first = new Counter();
+const second = new Counter();
+first.increment();
+assert.equal(first.count, 1);
+assert.equal(second.count, 0);
+assert.equal(first.increment, second.increment); // the very same function object
+```
+
+A field whose value is an **arrow function** is different: it creates a new function for every instance, with `this` fixed to that instance (the arrow captures it, as in [this and Function Calls](03-this-and-function-calls.qmd)). That makes it safe to pass as a callback:
+
+```js
+class Button {
+  clicks = 0;
+  onClick = () => { // an arrow field: a new function per instance, this fixed
+    this.clicks += 1;
+  };
+}
+const okButton = new Button();
+const cancelButton = new Button();
+assert.notEqual(okButton.onClick, cancelButton.onClick);
+const detached = okButton.onClick;
+detached(); // still works: the arrow captured this
+assert.equal(okButton.clicks, 1);
+```
+
+The price is memory. For a class with $m$ such functions and $n$ instances:
+
+$$
+F_{\text{methods}} = m, \qquad F_{\text{arrow fields}} = n \times m
+$$
+
+where
+
+- $n$ is the number of instances created;
+- $m$ is the number of functions the class defines;
+- $F$ is the number of function objects that exist as a result.
+
+Example: with $n = 1000$ buttons and $m = 3$ handlers, prototype methods cost $F = 3$ function objects, while arrow fields cost $F = 1000 \times 3 = 3000$. Use methods by default, and arrow fields only for the few functions that really are handed out as callbacks.
+
+### Level 3: static members and static blocks
+
+`static` puts a member on the **class itself** instead of on instances. Typical uses are counters shared by all instances, constants, and factory methods. A `static { }` block (ES2022) runs once, when the class definition is evaluated, for setup that needs more than one expression:
+
+```js
+class User {
+  static count = 0; // one value, on the class
+  static roles;
+  static {
+    User.roles = new Set(['admin', 'guest']); // runs once, when the class is evaluated
+  }
+  constructor(name) {
+    this.name = name;
+    User.count += 1;
+    this.id = User.count;
+  }
+  static guest() { // a factory, called on the class
+    return new User('guest');
+  }
+}
+const ada = new User('Ada');
+const visitor = User.guest();
+assert.equal(visitor.id, 2);
+assert.equal(User.count, 2);
+assert.equal(ada.count, undefined); // statics are not on instances
+assert.ok(User.roles.has('admin'));
+```
+
+Two users were created, so `User.count` is 2 and the second one got `id` 2. `ada.count` is `undefined` because `count` is a property of the function `User`, not of `User.prototype`, so it is not on the instance's chain.
+
+### Level 4: private fields, private methods and accessors
+
+A name starting with `#` is **private** (ES2022). It is not a property: it does not appear in `Object.keys`, in `JSON.stringify` or in any reflection, and code outside the class body cannot even *mention* it. A **getter** without a setter gives read-only access:
+
+```js
+class Account {
+  #balance = 0; // private: only code inside this class body can touch it
+  constructor(owner) {
+    this.owner = owner;
+  }
+  deposit(amount) {
+    this.#check(amount);
+    this.#balance += amount;
+    return this.#balance;
+  }
+  get balance() { // an accessor: read like a property, and no setter
+    return this.#balance;
+  }
+  #check(amount) { // a private method
+    if (!(amount > 0)) throw new RangeError(`invalid amount: ${amount}`);
+  }
+  static isAccount(value) {
+    return #balance in value; // a brand check (ES2022)
+  }
+}
+```
+
+Now the balance can only change through `deposit`, which validates the amount:
+
+```js
+const account = new Account('Ada');
+account.deposit(100);
+assert.equal(account.balance, 100);
+assert.deepEqual(Object.keys(account), ['owner']); // #balance is not a property
+assert.equal(JSON.stringify(account), '{"owner":"Ada"}');
+assert.throws(() => {
+  account.balance = 1e6;
+}, { name: 'TypeError', message: 'Cannot set property balance of #<Account> which has only a getter' });
+assert.throws(() => account.deposit(-5), { name: 'RangeError', message: 'invalid amount: -5' });
+assert.equal(Account.isAccount(account), true);
+assert.equal(Account.isAccount({ owner: 'Ada', balance: 100 }), false); // looks alike, no brand
+```
+
+Privacy is checked twice. At **parse time**, `account.#balance` written outside the class is a `SyntaxError`, so the program never runs. At **run time**, every object carries a list of the private names it was given by a constructor (its "brand"), and using a private member on an object without it throws:
+
+```js
+assert.throws(() => new Function('account', 'return account.#balance;'), {
+  name: 'SyntaxError',
+  message: "Private field '#balance' must be declared in an enclosing class",
+});
+assert.throws(() => Account.prototype.deposit.call({ owner: 'fake' }, 5), {
+  name: 'TypeError',
+  message: 'Receiver must be an instance of class Account',
+});
+```
+
+`#balance in value` asks that run-time question without throwing, which is why `isAccount` rejects the look-alike plain object. (It still throws for a primitive such as 5, because `in` needs an object.)
+
+### Level 5: `extends` and `super`
+
+`class SavingsAccount extends Account` links two chains at once: instances of `SavingsAccount` inherit `Account`'s methods, and the class `SavingsAccount` inherits `Account`'s statics. `super(...)` runs the parent constructor; `super.method()` calls the parent's version of a method you have overridden:
+
+```js
+class SavingsAccount extends Account {
+  history = [];
+  constructor(owner, rate) {
+    super(owner); // Account's constructor creates this; only then can we use it
+    this.rate = rate;
+  }
+  deposit(amount) { // override, then reuse the parent's version
+    this.history.push(amount);
+    return super.deposit(amount);
+  }
+  addInterest() {
+    return this.deposit(this.balance * this.rate); // the getter is inherited too
+  }
+}
+```
+
+Interest is one line of math:
+
+$$
+B_1 = B_0 \times (1 + r)
+$$
+
+where
+
+- $B_0$ is the balance before interest;
+- $r$ is the interest rate per period as a decimal, so 5% is $0.05$;
+- $B_1$ is the balance after one period.
+
+Example: after depositing 1000, $B_0 = 1000$ and $r = 0.05$. `addInterest` deposits $B_0 \times r = 1000 \times 0.05 = 50$, so $B_1 = 1000 + 50 = 1050$, and `history` records both deposits:
+
+```js
+const savings = new SavingsAccount('Bo', 0.05);
+savings.deposit(1000);
+assert.equal(savings.addInterest(), 1050);
+assert.deepEqual(savings.history, [1000, 50]);
+assert.equal(Object.getPrototypeOf(SavingsAccount.prototype), Account.prototype); // methods
+assert.equal(Object.getPrototypeOf(SavingsAccount), Account); // statics
+assert.equal(SavingsAccount.isAccount(savings), true);
+```
+
+The subclass never touches `#balance` directly; it cannot, because the private name belongs to `Account`'s class body. It goes through `deposit` and the `balance` getter like everyone else.
+
+In a derived class, `this` **does not exist** until `super()` returns, because the parent constructor is the one that creates the object:
+
+```js
+class BrokenSavings extends Account {
+  constructor(owner) {
+    this.rate = 0; // too early: this does not exist yet
+    super(owner);
+  }
+}
+assert.throws(() => new BrokenSavings('Cy'), {
+  name: 'ReferenceError',
+  message: "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
+});
+```
+
+### Level 6: `instanceof` walks the prototype chain
+
+`x instanceof C` does not ask "was `x` made by `C`?". It asks whether `C.prototype` appears anywhere on `x`'s chain:
+
+$$
+x \mathbin{\texttt{instanceof}} C \iff \exists\, k \ge 1 : \operatorname{proto}^{k}(x) = C.\texttt{prototype}
+$$
+
+where
+
+- $x$ is the object being tested and $C$ the constructor;
+- $\operatorname{proto}^{k}(x)$ means following the `[[Prototype]]` link $k$ times, so $\operatorname{proto}^{1}(x)$ is $x$'s own prototype;
+- $\exists\, k \ge 1$ means "for some number of steps"; the walk stops with false when it reaches `null`.
+
+Example, for `savings`: $\operatorname{proto}^{1}$ is `SavingsAccount.prototype`, $\operatorname{proto}^{2}$ is `Account.prototype`, $\operatorname{proto}^{3}$ is `Object.prototype`, and $\operatorname{proto}^{4}$ is `null`. So `savings` is an instance of `SavingsAccount` ($k = 1$), `Account` ($k = 2$) and `Object` ($k = 3$).
+
+```js
+assert.ok(savings instanceof SavingsAccount); // one step up the chain
+assert.ok(savings instanceof Account); // two steps
+assert.ok(savings instanceof Object); // three steps
+const impostor = Object.create(Account.prototype); // never ran the constructor
+assert.ok(impostor instanceof Account); // instanceof only checks the chain
+assert.equal(Account.isAccount(impostor), false); // the brand check is not fooled
+```
+
+The impostor shows the difference between the two tests. `instanceof` is fooled by any object with the right chain, while the `#balance in` brand check knows that `Account`'s constructor never ran on it. A class can also take over `instanceof` entirely with `Symbol.hasInstance`, which the operator consults first:
+
+```js
+class Even {
+  static [Symbol.hasInstance](n) {
+    return n % 2 === 0;
+  }
+}
+assert.equal(4 instanceof Even, true); // instanceof asks Symbol.hasInstance first
+assert.equal(5 instanceof Even, false);
+```
+
+### Level 7: mixins, and composition over inheritance
+
+A class can extend only one parent. A **mixin** is a function that takes a class and returns a subclass of it with extra behaviour, so several can be stacked:
+
+```js
+const Serializable = (Base) => class extends Base {
+  serialize() {
+    return JSON.stringify(this);
+  }
+};
+const Timestamped = (Base) => class extends Base {
+  createdAt = 0; // fixed for the lab; real code would use Date.now()
+};
+class Note {
+  constructor(text) {
+    this.text = text;
+  }
+}
+class SmartNote extends Serializable(Timestamped(Note)) {}
+assert.equal(new SmartNote('hi').serialize(), '{"text":"hi","createdAt":0}');
+```
+
+The chain is `SmartNote` → Serializable's class → Timestamped's class → `Note`. The JSON has `text` before `createdAt` because the base constructor runs first and each subclass adds its fields after its `super()` returns.
+
+Often the better tool is **composition**: instead of *being* a logger, an object *has* a logger. The parts can be swapped (a test can pass a fake logger) and no deep chain forms:
+
+```js
+class Logger {
+  lines = [];
+  log(message) {
+    this.lines.push(message);
+  }
+}
+class Checkout {
+  constructor(logger) {
+    this.logger = logger; // has a logger, instead of being one
+  }
+  pay(amount) {
+    this.logger.log(`paid ${amount}`);
+  }
+}
+const logger = new Logger();
+new Checkout(logger).pay(30);
+assert.deepEqual(logger.lines, ['paid 30']);
+```
+
+Use `extends` for a true "is a" relation with a small, stable parent (`SavingsAccount` is an `Account`). Use composition for "has a" and "uses a" relations, which are most of them.
+
+## How it works underneath
+
+**ClassDefinitionEvaluation.** When the engine evaluates a class, the specification creates two objects: the **prototype** object and the **constructor** function `F`. Methods and accessors are defined on the prototype (or on `F` for `static`) as non-enumerable properties. `F` is marked with `[[IsClassConstructor]]` true, which is why an ordinary call throws "Class constructor Point cannot be invoked without 'new'". Instance fields are not created yet; they are stored in `F.[[Fields]]` as a list of initialisers, and private methods in `F.[[PrivateMethods]]`. Static fields and static blocks then run in source order. For `extends`, the prototype's `[[Prototype]]` is set to `Account.prototype` and `F`'s own `[[Prototype]]` is set to `Account`, giving the two chains of Level 5.
+
+**Base versus derived construction.** Each class constructor has `[[ConstructorKind]]` of `base` or `derived`. In `[[Construct]]`:
+
+1. For a **base** class, the engine first creates the object with OrdinaryCreateFromConstructor (prototype taken from `new.target.prototype`), binds it as `this`, runs InitializeInstanceElements to add the private methods and fields, and then runs the constructor body.
+2. For a **derived** class, nothing is created. `this` starts **uninitialised**. The `super(...)` call constructs the object through the parent ("Construct(func, argList, newTarget)", passing the original `new.target` so the prototype is still `SavingsAccount.prototype`), then performs "BindThisValue(thisER, result)", and only then runs InitializeInstanceElements for the derived class's own fields, such as `history`.
+
+That ordering explains three things at once: `this` before `super()` is a `ReferenceError`; a subclass's fields exist only after `super()` returns; and in the mixin example `text` is set before `createdAt`.
+
+**Private names and brands.** Each evaluation of a class body creates fresh **Private Names**, one per `#name`. They are not strings or symbols that user code can get hold of. Each object has an internal `[[PrivateElements]]` list; InitializeInstanceElements adds the class's private fields and methods to it. PrivateGet looks up the Private Name in that list and throws a `TypeError` when it is missing, and `#x in obj` performs the same lookup and returns a boolean. Because the names are created per class evaluation, even a second copy of the same class source has different private names. V8 implements a private field as a property keyed by a hidden "private name symbol" and private methods through a "private brand symbol" stored in each instance ([Faster initialization of instances with new class features](https://v8.dev/blog/faster-class-features)); reflection APIs never report either.
+
+**instanceof.** The operator first looks for `C[Symbol.hasInstance]`; `Function.prototype[Symbol.hasInstance]` runs OrdinaryHasInstance, which reads `C.prototype` and walks `x`'s chain with `[[GetPrototypeOf]]`, returning true as soon as "SameValue(proto, instance) is true" and false at `null`. For a bound function it forwards to the target function.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Calling a class without `new` | `TypeError: Class constructor Point cannot be invoked without 'new'` | Always use `new`, or add a `static` factory |
+| Using `this` before `super()` in a derived constructor | `ReferenceError: Must call super constructor in derived class before accessing 'this' or returning from derived constructor` | Call `super(...)` first |
+| Reading a private field from outside the class | `SyntaxError: Private field '#balance' must be declared in an enclosing class` | Expose a getter or a method |
+| Calling a private-using method on a look-alike object | `TypeError: Receiver must be an instance of class Account` | Pass real instances; test with `#balance in x` |
+| Assigning to a getter-only accessor | `TypeError: Cannot set property balance of #<Account> which has only a getter` | Add a setter or a method such as `deposit` |
+| Passing a method as a callback | `this` is `undefined` inside it | An arrow field, or `bind` in the constructor ([this and Function Calls](03-this-and-function-calls.qmd)) |
+| Arrow-function fields for every method | Memory grows with $n \times m$ function objects | Ordinary methods, shared on the prototype |
+| Trusting `instanceof` for security or across realms | Fooled by `Object.create(C.prototype)`; false for an array from another realm | Brand checks (`#x in obj`) or `Array.isArray` |
+| Deep `extends` hierarchies for code reuse | Fragile base classes; changes ripple down | Composition, or small mixins |
+
+## Interview questions
+
+### 1. What does a class compile to? Is JavaScript's `class` "real"?
+
+**Answer.** A class is a constructor function plus a prototype object, the same structure as `OldAccount`. `typeof Point` is `'function'`, `distance` lives on `Point.prototype`, and instances find it by the normal prototype lookup. So it is syntax over prototypes, but not *only* syntax: class constructors refuse to be called without `new` (`[[IsClassConstructor]]`), methods are non-enumerable, the body is always strict, derived constructors create `this` through `super()`, and fields, `#private` members and static blocks have no pre-2015 equivalent. A precise answer is "a class is a function with special construction rules, wired to a prototype".
+
+### 2. Why must `super()` run before `this` in a derived constructor?
+
+**Answer.** Because in a derived class the parent creates the object. The derived constructor's `[[ConstructorKind]]` is `derived`, so `[[Construct]]` does not allocate anything and `this` starts uninitialised. `super(...)` calls the parent's `[[Construct]]` with the original `new.target`, so the new object gets `SavingsAccount.prototype`, then binds it as `this` and initialises the derived class's fields. Touching `this` earlier throws `ReferenceError: Must call super constructor in derived class before accessing 'this' or returning from derived constructor`. The design lets built-ins such as `Array` and `Map` allocate their special internal slots when you subclass them.
+
+### 3. Compare `#private` fields, closures, underscores and TypeScript's `private`.
+
+**Answer.** An underscore (`this._balance`) is only a naming convention; the property is public. TypeScript's `private` is checked at compile time and erased, so at run time the property is public too. A closure (`makeAccount` in [Scope, Hoisting and Closures](02-scope-hoisting-and-closures.qmd)) is truly private, but every instance needs its own copies of the functions. `#private` is truly private *and* works with shared prototype methods: privacy is enforced by the engine both at parse time (`SyntaxError` outside the class) and at run time (a brand check per object), it is invisible to `Object.keys` and `JSON.stringify`, a `Proxy` around the object does not have it, and `#x in obj` gives a reliable type test. The trade-off is that subclasses cannot see a parent's private names; share through methods or getters.
+
+### 4. What does `instanceof` actually check, and when can it give the wrong answer?
+
+**Answer.** `x instanceof C` is true when `C.prototype` is on `x`'s prototype chain, $\exists k \ge 1 : \operatorname{proto}^k(x) = C.\texttt{prototype}$, unless `C` defines `Symbol.hasInstance`, which overrides it (`4 instanceof Even`). It can mislead in three ways: an object built with `Object.create(Account.prototype)` passes although no constructor ran (`impostor`); changing an existing object's chain with `Object.setPrototypeOf` makes it fail (a class's own `prototype` property is read-only, but a plain constructor function's can be replaced, with the same effect); and objects from another realm (an iframe, a `vm` context) have a different `Array.prototype`, so `instanceof Array` is false. Use `Array.isArray` for arrays and private brand checks for your own classes.
+
+### 5. When would you use a mixin, and when composition?
+
+**Answer.** A mixin, a function from class to subclass such as `Serializable(Timestamped(Note))`, adds a small cross-cutting capability to many classes while keeping `instanceof` and `super` working. It still builds a longer prototype chain, and two mixins with the same method name silently shadow each other. Composition (`Checkout` holding a `Logger`) keeps each class small, makes dependencies explicit and replaceable (a test passes a fake), and avoids inheritance chains entirely. Following the *Design Patterns* advice to favour object composition, reach for composition first, `extends` for a genuine "is a" relationship, and mixins for a few shared behaviours.
+
+## Summary
+
+$$
+\operatorname{proto}(\texttt{Sub.prototype}) = \texttt{Base.prototype}, \qquad \operatorname{proto}(\texttt{Sub}) = \texttt{Base}, \qquad x \mathbin{\texttt{instanceof}} C \iff \exists\, k \ge 1 : \operatorname{proto}^{k}(x) = C.\texttt{prototype}
+$$
+
+where `Sub` is a class declared with `extends Base`, $\operatorname{proto}$ reads an object's `[[Prototype]]` link, $\operatorname{proto}^{k}$ follows it $k$ times, and $C$ is any constructor.
+
+Example: for `SavingsAccount extends Account`, $\operatorname{proto}(\texttt{SavingsAccount.prototype}) = \texttt{Account.prototype}$, so `savings.balance` finds the getter two steps up; $\operatorname{proto}(\texttt{SavingsAccount}) = \texttt{Account}$, so `SavingsAccount.isAccount` works; and `savings instanceof Account` is true with $k = 2$.
+
+- A class is a constructor function plus a prototype; methods are shared, non-enumerable and strict.
+- Fields are created per instance; arrow-function fields cost one function per instance but keep `this`.
+- `static` members and `static { }` blocks belong to the class and run once.
+- `#private` fields and methods are enforced by the engine; `#x in obj` is a reliable brand check.
+- In a derived class, `super()` creates `this`; call it first.
+- `instanceof` only walks the prototype chain; it is not proof of construction.
+- Prefer composition; use `extends` for genuine "is a" relationships and mixins sparingly.
+
+## References
+
+- ECMAScript Language Specification: [Class definitions](https://tc39.es/ecma262/#sec-class-definitions), [ClassDefinitionEvaluation](https://tc39.es/ecma262/#sec-runtime-semantics-classdefinitionevaluation), [[[Construct]] for ECMAScript functions](https://tc39.es/ecma262/#sec-ecmascript-function-objects-construct-argumentslist-newtarget), [The super keyword](https://tc39.es/ecma262/#sec-super-keyword-runtime-semantics-evaluation), [PrivateGet](https://tc39.es/ecma262/#sec-privateget), [InstanceofOperator](https://tc39.es/ecma262/#sec-instanceofoperator), [OrdinaryHasInstance](https://tc39.es/ecma262/#sec-ordinaryhasinstance).
+- TC39 finished proposals: [class fields, private methods and static class features; class static blocks; ergonomic brand checks](https://github.com/tc39/proposals/blob/main/finished-proposals.md), all ES2022.
+- MDN: [Classes](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes), [Private elements](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_elements), [Static initialization blocks](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Static_initialization_blocks), [extends](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/extends), [super](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/super), [instanceof](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/instanceof).
+- Kyle Simpson, *You Don't Know JS Yet: Objects & Classes*, 2nd edition (work in progress), [chapter 3, "Classy Objects"](https://github.com/getify/You-Dont-Know-JS/blob/2nd-ed/objects-classes/ch3.md).
+- Mathias Bynens, [Public and private class fields](https://v8.dev/features/class-fields) (V8, 2018); Joyee Cheung, [Faster initialization of instances with new class features](https://v8.dev/blog/faster-class-features) (V8 blog, 2022).
+- Erich Gamma, Richard Helm, Ralph Johnson and John Vlissides, *Design Patterns: Elements of Reusable Object-Oriented Software*, Addison-Wesley, 1994, p. 20 (as quoted in [Wikipedia: Design Patterns](https://en.wikipedia.org/wiki/Design_Patterns)).
+- Lab: [`labs/classes.mjs`](labs/classes.mjs). Run it from `programming-languages/javascript/labs` with `node classes.mjs`.

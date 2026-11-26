@@ -1,0 +1,277 @@
+---
+title: "Modules"
+description: "ES modules and CommonJS side by side: static import and export, live bindings versus copied values, one evaluation per URL, circular imports, dynamic import(), top-level await, import.meta, and require() of ES modules in Node."
+---
+
+## The problem
+
+In the early web, every `<script>` tag shared one global scope. A page loads `cart.js`, which declares `var count = 0` for the items in the cart, and then `analytics.js`, which also declares `var count = 0` for page views. The second script silently overwrites the first, and the cart shows the number of page views. Scripts also had to be listed in exactly the right order, because nothing said which one needed which.
+
+A **module** fixes both problems. Each file gets its own scope, says what it **exports**, and names what it **imports** from which file. The engine reads those statements, builds the dependency graph, and runs each file once, in an order that respects the graph.
+
+JavaScript has two module systems, and Node runs both. **CommonJS** (`require`, `module.exports`) was Node's original system. **ES modules** (`import`, `export`, ES2015) are the language standard, used by browsers and by modern Node. They look alike, but they differ in when they load, what an import **is**, and how cycles behave.
+
+In this chapter's lab, `write(name, source)` saves a small module into a temporary folder, `load(name)` imports it with `import()`, and `require` is created with `createRequire` for the same folder.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A shop window and a photocopy
+
+Each module is a **shop** with its own back room. Nobody can walk in; you can only see what the shop puts in its **window**.
+
+- An **ES module import** is a view through the window. If the shopkeeper changes the price tag on the shelf, you see the new price straight away. You can look, but you cannot reach through the glass and change it.
+- A **CommonJS require** hands you a **photocopy** of the price list. If the shop changes a price later, your photocopy still shows the old one.
+
+The town keeps **one** shop per address. Asking for the same address twice takes you to the same shop; it does not build a second one.
+
+Lin Clark's *ES modules: A cartoon deep-dive* (Mozilla Hacks, 2018) draws this as cartoons and puts it simply: "ES modules use something called live bindings. Both modules point to the same location in memory."
+:::
+
+## From simple to advanced
+
+### Level 1: `export` and `import`
+
+A module is a file. Its top-level variables are private unless it **exports** them:
+
+```js
+// counter.mjs
+export let count = 0;
+export function increment() {
+  count += 1;
+}
+```
+
+Another module **imports** them by name:
+
+```js
+// main.mjs
+import { count, increment } from './counter.mjs';
+increment();
+increment();
+export const seen = count; // 2: count is a live view of counter.mjs's variable
+```
+
+Loading `main.mjs` gives `seen === 2`. Three rules make `import` **static**:
+
+- An `import` declaration may appear only at the top level of a module, never inside an `if` or a function.
+- The specifier, `'./counter.mjs'`, must be a string literal. In Node it is a URL, and relative specifiers need the file extension.
+- Every import is processed **before** any code of the module runs, wherever the line appears in the file.
+
+Because of these rules, an engine or a bundler can know the whole dependency graph without running anything. That is what lets bundlers remove unused exports ("tree shaking") and lets the engine report a misspelled import name before the first line executes.
+
+### Level 2: live bindings versus copies
+
+What `count` **means** in the importer is the biggest difference between the two systems:
+
+$$
+\text{ES modules: } \operatorname{read}(x, t) = x_m(t) \qquad \text{CommonJS: } \operatorname{read}(x, t) = x_m(t_0)
+$$
+
+where
+
+- $x$ is an exported variable of module $m$, such as `count`;
+- $x_m(t)$ is the value of that variable inside $m$ at time $t$;
+- $\operatorname{read}(x, t)$ is what the importing code sees when it reads $x$ at time $t$;
+- $t_0$ is the moment the CommonJS value was copied: when `module.exports` was assigned, or when the importer destructured it.
+
+Example: `main.mjs` called `increment()` twice, so $x_m(t) = 2$ when it reads, and `seen` is 2. Here is the CommonJS version:
+
+```js
+// counter.cjs
+let count = 0;
+function increment() {
+  count += 1;
+}
+module.exports = { count, increment }; // copies the current value, 0
+```
+
+`module.exports` was built at $t_0$, when `count` was 0. After `const { count, increment } = require('./counter.cjs')` and two calls to `increment()`, the importer's `count` is $x_m(t_0) = 0$, and so is `require('./counter.cjs').count`. The variable inside the module is 2; the copies never change.
+
+A live binding is also **read-only** for the importer. In a module that imports `count`, the assignment `count = 5` throws `TypeError: Assignment to constant variable.`, even though `counter.mjs` declared it with `let`. Only the exporting module can change it, through `increment`.
+
+### Level 3: one evaluation per URL
+
+A module's top-level code runs **once**, no matter how many modules import it. The engine keeps a **module map** from each module's URL to its record:
+
+```js
+// logger.mjs
+globalThis.loggerRuns = (globalThis.loggerRuns ?? 0) + 1;
+export const instance = Symbol('logger');
+```
+
+Loading `logger.mjs` twice returns the **same** namespace object, and `globalThis.loggerRuns` stays 1. The key is the full URL, so `load('logger.mjs', '?fresh')`, which imports `logger.mjs?fresh`, is a different module: it runs again, `loggerRuns` becomes 2, and its `instance` is a different symbol. The Node docs state it directly: "ES modules are resolved and cached as URLs". In the same way, the `counter.mjs` that the lab imports directly is the very instance `main.mjs` used: its `count` is already 2.
+
+CommonJS caches too, by resolved filename, in `require.cache`. `require('./counter.cjs') === require('./counter.cjs')` is `true`, and the module body runs once. This one-instance rule is why a module is the natural place for shared state, such as a database connection pool, and why "export a function and call it" is the way to get fresh state each time.
+
+### Level 4: circular imports
+
+Two modules can import each other. The engine evaluates the graph **depth first**, running each module after its imports, and skipping a module it has already started:
+
+$$
+\operatorname{visit}(m) =
+\begin{cases}
+\text{nothing} & \text{if } m \in V \\
+V \leftarrow V \cup \lbrace m \rbrace;\ \operatorname{visit}(d_1); \dots; \operatorname{visit}(d_k);\ \operatorname{run}(m) & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $m$ is a module and $d_1, \dots, d_k$ are the modules it imports, in source order;
+- $V$ is the set of modules already started (visited), empty at the beginning;
+- $V \leftarrow V \cup \lbrace m \rbrace$ means "add $m$ to $V$";
+- $\operatorname{run}(m)$ executes $m$'s top-level code.
+
+Example, with `a.mjs` importing `b.mjs` and `b.mjs` importing `a.mjs`:
+
+```js
+// a.mjs
+import { b } from './b.mjs';
+export const a = 'from a';
+export const bSeenByA = b; // b.mjs has already run
+export function greet() {
+  return 'hello from a';
+}
+```
+
+```js
+// b.mjs
+import { a, greet } from './a.mjs';
+export const b = 'from b';
+export let aSeenByB;
+try {
+  aSeenByB = a; // a.mjs has not run yet
+} catch (error) {
+  aSeenByB = String(error); // 'name: message'
+}
+export function readA() {
+  return a; // fine later, once a.mjs has run
+}
+export const greeting = greet(); // function declarations are ready at link time
+```
+
+1. $\operatorname{visit}(a)$: $a \notin V = \varnothing$, so $V = \lbrace a \rbrace$, and visit its import $b$.
+2. $\operatorname{visit}(b)$: $V = \lbrace a, b \rbrace$; its import $a$ is in $V$, so that visit does nothing. Then $\operatorname{run}(b)$.
+3. While `b.mjs` runs, `a` is linked but `a.mjs` has not run, so the `const` is still in its temporal dead zone: `aSeenByB` is `ReferenceError: Cannot access 'a' before initialization`.
+4. Back in step 1, $\operatorname{run}(a)$ runs, and `bSeenByA` is `'from b'`.
+
+The evaluation order was $b$, then $a$. Afterwards `b.readA()` returns `'from a'`, because by then the binding is filled in. Function declarations are the exception: they are created during linking, so `greet()` already works in step 3 and `greeting` is `'hello from a'`. The rule for cycles: at the top level of a module, use only imports that are **not** part of the cycle (or are function declarations); functions that read imports **later** are always safe.
+
+CommonJS reaches the same cycle with no error but a half-built object. `x.cjs` sets `exports.early`, then requires `y.cjs`, which requires `x.cjs` back and receives the **unfinished** `exports` object from the cache: `Object.keys(x)` is `['early']`, without `late`. Reading `x.late` there gives `undefined`, and Node prints `Warning: Accessing non-existent property 'late' of module exports inside circular dependency`.
+
+### Level 5: `import()`, top-level await and `import.meta`
+
+Static `import` cannot be conditional. The **dynamic** `import(specifier)` (ES2020) is an expression that takes any string at run time and returns a promise for the module's namespace object. The lab's own loader is one line:
+
+```js
+const load = (name, query = '') => import(pathToFileURL(join(dir, name)).href + query); // dynamic import()
+```
+
+Use it to load code only when it is needed: a heavy chart library when the user opens the chart, or a plugin chosen by a setting. It also works inside CommonJS files, which is how CommonJS code loads ES modules that use top-level await.
+
+**Top-level await** (ES2022) lets a module wait before it finishes evaluating. Every module that imports it waits too:
+
+```js
+// config.mjs
+await new Promise(resolve => setTimeout(resolve, 20)); // importers wait for this
+export const port = 8080;
+export const file = import.meta.filename;
+```
+
+A module that does `import { port } from './config.mjs'` does not start running until those 20 ms have passed, and then sees `port === 8080`; the lab measures the wait. A slow top-level await delays the start of every module above it in the graph, so keep it for genuine start-up work, such as loading configuration.
+
+`import.meta` (ES2020) is an object about the current module. `import.meta.url` is its URL (`file:///...`). Node adds `import.meta.filename` and `import.meta.dirname` (since Node 20.11), the replacements for CommonJS's `__filename` and `__dirname`, and `import.meta.resolve(specifier)`, which resolves a specifier to a URL without loading it.
+
+### Level 6: `require()` of an ES module in Node
+
+For years a CommonJS file could load an ES module only with `import()`. Node now supports `require(esm)`: it became available without a flag in Node 22.12 (December 2024) and 20.19, and the Node documentation records it as "no longer experimental" since Node 25.4. In Node 26 it just works:
+
+```js
+const required = require('./counter.mjs');
+assert.equal(required, counter); // the same namespace object as import()
+assert.equal(required.count, 3);
+assert.throws(() => require('./config.mjs'), { code: 'ERR_REQUIRE_ASYNC_MODULE' });
+```
+
+`require` returns the **namespace object**, the same one `import()` returns, with live bindings: its `count` is 3 because the lab has called `increment` three times in total. The default export appears as `.default`; a module can choose what `require` returns by exporting a value under the string name `'module.exports'`. The one limit is top-level await: `require` is synchronous, so for `config.mjs` it throws `ERR_REQUIRE_ASYNC_MODULE` with the message "require() cannot be used on an ESM graph with top-level await. Use import() instead."
+
+## How it works underneath
+
+An ES module graph is loaded in three phases, the names Lin Clark uses:
+
+1. **Construction.** Fetch the entry file, parse it into a *module record*, read its `import` declarations, fetch those, and repeat. Nothing runs. Each URL gets one entry in the module map.
+2. **Instantiation (linking).** Create each module's *environment*, allocate a slot for every exported variable, and point every import at the **exporter's slot**. This is what makes a binding live: the importer holds a reference to the variable, not a value. A missing export fails here, before any code runs, with a `SyntaxError` such as `The requested module './counter.mjs' does not provide an export named 'cuont'`.
+3. **Evaluation.** Run each module's top-level code once, in the depth-first order of Level 4. The specification's `InnerModuleEvaluation` keeps a `[[Status]]` per module (`linked`, `evaluating`, `evaluated`, and `evaluating-async` for top-level await) and returns at once for a module that is already `evaluating`, which is the "$m \in V$" case of the formula. It tracks cycles with a `[[DFSAncestorIndex]]`, the technique of Tarjan's strongly connected components algorithm, so that a whole cycle is marked evaluated together.
+
+CommonJS has no separate phases. `require(id)` is an ordinary synchronous function: resolve `id` to a filename, return `require.cache[filename].exports` if it is there, otherwise create a module object, **put it in the cache**, run the file, and return `module.exports`. Node runs the file inside a wrapper function:
+
+```js
+// sketch: the CommonJS module wrapper, from the Node documentation
+(function (exports, require, module, __filename, __dirname) {
+  // the module's code
+});
+```
+
+The wrapper explains every CommonJS behaviour in this chapter. Top-level variables are private because they are local to a function. `exports` is just a parameter that starts as the same object as `module.exports`, so assigning `exports = ...` breaks the link but assigning `module.exports = ...` works. And because the module is cached **before** it runs, a cycle receives the half-filled `exports` object instead of looping forever.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `import` without a file extension in Node: `from './counter'` | `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '.../counter'` | Write the full name: `'./counter.mjs'` |
+| Assigning to an imported binding | `TypeError: Assignment to constant variable.` | Export a function that changes it, as `increment` does |
+| Destructuring a CommonJS export and expecting updates | The value stays at its value when `module.exports` was built (0 in Level 2) | Export a function such as `getCount()` (or a getter), or use an ES module |
+| Reading a cyclic import at the top level of a module | `ReferenceError: Cannot access 'a' before initialization` | Break the cycle, or read the import inside a function called later |
+| The same cycle in CommonJS | `undefined` values, and `Warning: Accessing non-existent property 'late' of module exports inside circular dependency` | Assign `module.exports` before requiring the other module, or break the cycle |
+| `exports = { ... }` in CommonJS | The importer receives `{}` | Assign `module.exports = { ... }` |
+| `require()` of an ES module that uses top-level await | `ERR_REQUIRE_ASYNC_MODULE`: "require() cannot be used on an ESM graph with top-level await. Use import() instead." | Use `await import(...)` |
+| Putting a `?` in a path given to `pathToFileURL` | `ERR_MODULE_NOT_FOUND` for `...logger.mjs%3Ffresh` | Append the query to the URL after conversion |
+
+## Interview questions
+
+### 1. What are the main differences between ES modules and CommonJS?
+
+**Answer.** ES modules are **static and linked**: `import` and `export` are declarations that the engine reads before running anything, imports are live, read-only views of the exporter's variables, loading can be asynchronous (so top-level await is allowed), and the module code runs in strict mode. CommonJS is **dynamic and copied**: `require` is a function that can be called anywhere with any string, runs the file synchronously, and returns whatever object is in `module.exports`, so destructured values are copies taken at that moment. In the lab, two increments give `seen === 2` through `import` and `count === 0` through `require`. Both cache one instance per module, ES modules by URL and CommonJS by filename.
+
+### 2. What happens when two ES modules import each other?
+
+**Answer.** Nothing fails at load time: linking connects both sets of bindings first. Evaluation then runs depth first and skips a module already being evaluated, so the module reached second (`b.mjs`) runs **first**, while its partner's variables are still uninitialised. A top-level read of a cyclic `const` or `let` then throws `ReferenceError: Cannot access 'a' before initialization`; a read inside a function called later works and returns `'from a'`. CommonJS has the same shape but returns the partly filled `exports` object instead, so the symptom there is a silent `undefined`.
+
+### 3. Why can bundlers tree-shake ES modules but not CommonJS?
+
+**Answer.** Tree shaking means removing exports that nothing imports. With ES modules, the import and export lists are static syntax: the bundler can read exactly which names each file uses without running any code. With CommonJS, `require(name)` can be computed at run time, `module.exports` can be built by any code, and a consumer can access properties dynamically, so a bundler cannot prove that an export is unused. The static rules of Level 1 are what make the analysis possible.
+
+### 4. Can Node's `require()` load an ES module?
+
+**Answer.** Yes, in current Node. `require(esm)` was unflagged in Node 22.12 and 20.19 and marked no longer experimental in 25.4. It returns the module's namespace object, the same object `import()` returns, with the default export under `.default`. It works only when the module graph is synchronous: a graph containing top-level await throws `ERR_REQUIRE_ASYNC_MODULE`, and the fix is `await import()`. Older guides that say "CommonJS cannot require ES modules" describe Node before 22.12 (December 2024).
+
+### 5. How do you make a module that gives every caller fresh state?
+
+**Answer.** Export a **factory function** instead of the state. A module's top-level code runs once per URL (Level 3), so `export let count = 0` is one counter shared by the whole program. `export function createCounter() { let count = 0; return { increment: () => ++count }; }` creates a new closure ([Scope, Hoisting and Closures](02-scope-hoisting-and-closures.qmd)) every time it is called. Changing the URL with a query string, as the lab does with `?fresh`, also creates a second instance, but that is a testing trick, not a design.
+
+## Summary
+
+$$
+\operatorname{read}_{\text{ESM}}(x, t) = x_m(t), \qquad \operatorname{read}_{\text{CJS}}(x, t) = x_m(t_0), \qquad \text{runs}(m) \le 1
+$$
+
+where $x_m(t)$ is the value of module $m$'s variable $x$ at time $t$, $t_0$ is the moment CommonJS copied it, and $\text{runs}(m)$ is how many times module $m$, identified by its URL or filename, evaluates.
+
+Example: after two calls to `increment()`, `import { count }` reads $x_m(t) = 2$ and the destructured `require` reads $x_m(t_0) = 0$; `logger.mjs` imported twice runs once, so $\text{runs}(m) = 1$.
+
+- A module has its own scope and exports names explicitly.
+- `import` is static and processed before the module runs; `import()` is dynamic and returns a promise.
+- ES imports are live, read-only bindings; CommonJS hands out the values in `module.exports` when `require` returns.
+- Each module evaluates once per URL (ESM) or filename (CommonJS); dependencies run first, depth first.
+- In a cycle, the module reached second runs first: avoid top-level use of cyclic imports.
+- Top-level await works only in ES modules and delays importers; Node 26 can `require()` ES modules without it.
+
+## References
+
+- ECMAScript Language Specification, [Modules](https://tc39.es/ecma262/#sec-modules), including [Cyclic Module Records](https://tc39.es/ecma262/#sec-cyclic-module-records), [InnerModuleEvaluation](https://tc39.es/ecma262/#sec-innermoduleevaluation), [import()](https://tc39.es/ecma262/#sec-import-calls) and [import.meta](https://tc39.es/ecma262/#sec-meta-properties).
+- Node.js API, [ECMAScript modules](https://nodejs.org/api/esm.html) (mandatory file extensions, [`import.meta.dirname`](https://nodejs.org/api/esm.html#importmetadirname), URLs and caching).
+- Node.js API, [CommonJS modules](https://nodejs.org/api/modules.html): [Caching](https://nodejs.org/api/modules.html#caching), [Cycles](https://nodejs.org/api/modules.html#cycles), [The module wrapper](https://nodejs.org/api/modules.html#the-module-wrapper) and [Loading ECMAScript modules using `require()`](https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require).
+- MDN, [JavaScript modules](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Modules).
+- Lin Clark, [ES modules: A cartoon deep-dive](https://hacks.mozilla.org/2018/03/es-modules-a-cartoon-deep-dive/) (Mozilla Hacks, 2018).
+- Lab: [`labs/modules.mjs`](labs/modules.mjs). Run it from `programming-languages/javascript/labs` with `node modules.mjs`.

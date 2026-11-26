@@ -1,0 +1,285 @@
+---
+title: "Errors"
+description: "How JavaScript reports failure: throw any value, Error objects with message, stack and cause, custom error classes, try/catch/finally and completion records, errors in async code, AggregateError, Error.isError, and explicit resource management with using."
+---
+
+## The problem
+
+A server reads its configuration file, which a colleague has just edited by hand. The file is `{"port": 80`, with the closing brace missing. `JSON.parse` cannot make sense of it, so it **throws**:
+
+```text
+SyntaxError: Expected ',' or '}' after property value in JSON at position 11 (line 1 column 12)
+```
+
+That message is precise, but it has no context: which file, during which step of start-up? If the code catches it and returns `null` instead, the failure moves somewhere worse: ten lines later, `config.port` throws `TypeError: Cannot read properties of null (reading 'port')`, far from the real cause. And if a cleanup step, such as closing the file, is written after the parse, it is skipped when the parse throws.
+
+JavaScript's answer is **exceptions**: `throw` stops normal execution, the engine unwinds the call stack to the nearest `catch`, and `finally` blocks run on the way. This chapter covers what can be thrown, how to add context without losing the original error, what `finally` really does, how errors travel through async code, and the newest tool, `using`, which closes resources for you.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The fire alarm in a tall building
+
+Your program is a building, and every function call is a **floor** stacked on top of the last.
+
+- `throw` is pulling the **fire alarm**. Work on that floor stops at once.
+- Everyone heads **down** the stairs, floor by floor, until they reach a floor with a **fire station** (`catch`). The station decides what to do. If no floor has one, the whole building is evacuated: the program crashes.
+- `finally` is the rule "turn off your stove before you leave", and every floor obeys it, whether the alarm rang or not.
+- An `Error` object is the **alarm report**: what happened (`message`), what kind of problem (`name`), and the list of floors where people were working when it rang (`stack`).
+
+The Node documentation puts the rule plainly: "All JavaScript errors are handled as exceptions that immediately generate and throw an error using the standard JavaScript throw mechanism."
+:::
+
+## From simple to advanced
+
+### Level 1: throw any value, but throw an `Error`
+
+`throw` accepts **any** value: a string, a number, an object. Only `Error` objects record where they came from:
+
+```js
+function throwString() {
+  throw 'disk full';
+}
+
+function throwError() {
+  throw new Error('disk full');
+}
+```
+
+Catching `throwString()` gives the bare string `'disk full'`, whose `stack` is `undefined`: you know **what** went wrong but not **where**. Catching `throwError()` gives an object with `name` `'Error'`, `message` `'disk full'`, and a `stack` that begins:
+
+```text
+Error: disk full
+    at throwError
+```
+
+V8 captures the stack when the `Error` is **created**, not when it is thrown, and keeps the top `Error.stackTraceLimit` frames, 10 by default. `stack` is not part of the ECMAScript standard, but every major engine provides it.
+
+### Level 2: the engine's own error types
+
+When the engine itself detects a failure, it throws one of a few built-in subclasses of `Error`. These are V8's exact messages, all checked by the lab:
+
+| Code | Thrown |
+|---|---|
+| `null.port` | `TypeError: Cannot read properties of null (reading 'port')` |
+| `({}).load()` | `TypeError: {}.load is not a function` |
+| `missingVariable` | `ReferenceError: missingVariable is not defined` |
+| `new Array(-1)` | `RangeError: Invalid array length` |
+| `JSON.parse('{"port": 80')` | `SyntaxError: Expected ',' or '}' after property value in JSON at position 11 (line 1 column 12)` |
+
+`TypeError` means "this value cannot do that", `ReferenceError` "this name does not exist", `RangeError` "this number is out of bounds", and `SyntaxError` "this text cannot be parsed". A `SyntaxError` in your own source file is different: it is raised before the file runs, so no `catch` in that file can see it. `String(error)` gives `name: message`, which is how the table was produced.
+
+### Level 3: custom errors and `cause`
+
+Your own failures deserve their own names. Extend `Error`, set `name`, and pass the low-level error as the **cause** (ES2022):
+
+```js
+class ConfigError extends Error {
+  constructor(message, options) {
+    super(message, options); // stores options.cause as this.cause
+    this.name = 'ConfigError';
+  }
+}
+
+function loadConfig(text) {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new ConfigError('config is not valid JSON', { cause: error });
+  }
+}
+```
+
+`loadConfig('{"port": 80')` throws an error that is both `instanceof ConfigError` and `instanceof Error`, prints as `ConfigError: config is not valid JSON`, and keeps the original `SyntaxError` in `error.cause`. The caller can branch on the type (`if (error instanceof ConfigError)`), the log shows the business meaning, and when such an error is uncaught, Node prints the whole chain, with the original under `[cause]: SyntaxError: ...`. `loadConfig('{"port": 80}')` simply returns `{ port: 80 }`.
+
+### Level 4: `try`, `catch`, `finally` and completion records
+
+`finally` runs on **every** path out of a `try`: normal end, `return`, `break`, `continue`, or `throw`. When the `finally` block itself ends abruptly, it decides the result:
+
+$$
+C(\texttt{try}\ B\ \texttt{finally}\ F) =
+\begin{cases}
+C(F) & \text{if } C(F) \text{ is abrupt} \\
+C(B) & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $B$ is the `try` block (together with its `catch`, if there is one) and $F$ is the `finally` block;
+- $C(X)$ is the **completion** of running $X$: *normal*, or one of the abrupt kinds *return v*, *throw e*, *break* and *continue*;
+- *abrupt* means any completion that is not normal.
+
+Example 1:
+
+```js
+function finallyAlwaysRuns(log) {
+  try {
+    log.push('try');
+    return 'from try';
+  } finally {
+    log.push('finally'); // runs after the return value is computed
+  }
+}
+```
+
+$C(B) = \text{return 'from try'}$ and $C(F)$ is normal, so the second case applies: the result is `'from try'`, and the log is `['try', 'finally']`. The `finally` block ran **after** the return value was computed but **before** the function returned.
+
+Example 2:
+
+```js
+function finallyOverrides() {
+  try {
+    return 'from try';
+  } finally {
+    return 'from finally'; // replaces the pending return
+  }
+}
+```
+
+$C(F) = \text{return 'from finally'}$ is abrupt, so the first case applies: the result is `'from finally'`. The same rule lets a `finally` with `return` **swallow** an exception: `finallySwallows`, whose `try` throws `lost`, returns `'swallowed'`, and the error disappears without a trace. Never `return`, `break` or `throw` from a `finally` block unless that is exactly what you want.
+
+Two smaller rules: a `catch` without a binding, `catch { ... }`, is allowed since ES2019 when you do not need the error; and the `catch` parameter is block-scoped to its clause.
+
+### Level 5: errors in asynchronous code
+
+A `try` block covers only code that runs **while it is on the stack**:
+
+```js
+function throwLater() {
+  try {
+    setTimeout(() => { throw new Error('too late to catch'); }, 0);
+  } catch {
+    return 'caught'; // never happens: the callback runs after this try has ended
+  }
+  return 'try finished';
+}
+```
+
+`throwLater()` returns `'try finished'`. The callback throws later, in a new task ([The Event Loop](07-the-event-loop.qmd)), when the `try` is long gone. Nothing catches it, so Node emits `uncaughtException`; with no listener, it prints the error and exits with code 1. The lab registers a listener to observe `too late to catch`.
+
+Promises fix this by turning errors into **rejections** that travel along the chain ([Promises](08-promises.qmd)), and `await` turns them back into exceptions that `try` can catch ([Async/await](09-async-await.qmd)). When several operations fail together, `Promise.any` reports them all in one `AggregateError` (ES2021): rejecting both `mirror 1 down` and `mirror 2 down` gives an `AggregateError` whose `errors` array holds both, in input order. You can also throw one yourself: `new AggregateError([e1, e2], 'two checks failed')`.
+
+### Level 6: `Error.isError` and other realms
+
+`instanceof Error` asks "is `Error.prototype` on this object's prototype chain?" ([Objects and Prototypes](04-objects-and-prototypes.qmd)). Each **realm** (a browser iframe, a worker, a Node `vm` context) has its own `Error` constructor, so an error made in another realm fails the test:
+
+```js
+const foreign = vm.runInNewContext('new Error("from another realm")');
+assert.equal(foreign instanceof Error, false);
+assert.equal(Error.isError(foreign), true);
+assert.equal(Error.isError({ name: 'Error', message: 'a look-alike' }), false);
+```
+
+`Error.isError(value)` (ES2026, available in Node 26) checks for the internal slot `[[ErrorData]]` that only real error objects have, in any realm. The whole algorithm in the specification is three steps: not an object gives `false`, no `[[ErrorData]]` slot gives `false`, otherwise `true`. It is `true` for the foreign error and for our `ConfigError`, and `false` for an ordinary object that merely looks like an error. Use it in libraries that receive values from other realms or from untrusted code.
+
+### Level 7: `using` and explicit resource management
+
+Files, sockets and locks must be closed on every path, which used to mean a `try`/`finally` per resource. A `using` declaration does it automatically: when the block ends, for any reason, it calls the value's `[Symbol.dispose]()` method:
+
+```js
+function openFile(name, log) {
+  log.push(`open ${name}`);
+  return {
+    name,
+    [Symbol.dispose]() {
+      log.push(`close ${name}`);
+    },
+  };
+}
+
+function readTwo(log) {
+  using first = openFile('a.txt', log);
+  using second = openFile('b.txt', log);
+  log.push(`reading ${first.name} and ${second.name}`);
+} // disposes second, then first
+```
+
+The log is `open a.txt`, `open b.txt`, `reading a.txt and b.txt`, `close b.txt`, `close a.txt`: resources are released in **reverse** order, like a stack, because the second may depend on the first. For asynchronous cleanup, `await using` calls `[Symbol.asyncDispose]()` and awaits it: in the lab, `query` logs `connect`, `query`, `disconnect`. `using x = 42` throws ``TypeError: An object is expected with `using` declarations``.
+
+If the block throws **and** the disposal throws, neither error is lost. The block's error is wrapped, with the disposal error, in a `SuppressedError`:
+
+```js
+function failingRead() {
+  using file = { [Symbol.dispose]() { throw new Error('close failed'); } };
+  throw new Error('read failed');
+}
+```
+
+The thrown value is a `SuppressedError` with the message `An error was suppressed during disposal`, `error` set to the newer `close failed`, and `suppressed` set to the original `read failed`. The proposal also adds `DisposableStack` and `AsyncDisposableStack` for collecting resources dynamically. Explicit resource management reached Stage 4 in 2026 and is scheduled for **ES2027**. Node 26 already ships it; check your other target environments before relying on it.
+
+## How it works underneath
+
+The specification describes the result of every statement as a **Completion Record** with three fields: `[[Type]]` (one of `normal`, `break`, `continue`, `return`, `throw`), `[[Value]]` and `[[Target]]` (a label, for `break` and `continue`). Exceptions are not a separate mechanism; a `throw` is just a completion of type `throw` that every enclosing statement passes upward unchanged, until:
+
+1. a `try` statement with a `catch` turns it into the completion of the `catch` block;
+2. a `finally` block runs, and the Level 4 rule chooses between its completion and the pending one;
+3. or it leaves the outermost script or job, and the host reports it: the browser logs "Uncaught Error", Node emits `uncaughtException`, and, for a rejected promise, the host's rejection tracker takes over.
+
+`using` is defined in the same terms. Each `using` declaration appends its value and its dispose method to a list in the block's environment. When the block completes, the spec's `DisposeResources` walks that list **backwards**, calling each method. If a dispose method throws while the completion is already a `throw`, it builds a `SuppressedError` with the new error and the old one, which is why no error is lost.
+
+Below the specification, V8 captures the stack frames when an `Error` is created and, in the words of its documentation, formats them "on demand, the first time the stack property is accessed". Capturing is still work, so creating many errors in a hot loop costs time even if they are never thrown. `Error.captureStackTrace(object)` uses the same machinery to attach a `stack` to any object.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `throw 'something failed'` | The caught value has no `stack`, `name` or `cause`; `instanceof Error` is `false` | Throw `new Error('something failed')` or a subclass |
+| Catching and returning `null` | A later `TypeError: Cannot read properties of null (reading 'port')`, far from the cause | Let it throw, or rethrow with context: `new ConfigError('...', { cause: error })` |
+| Re-throwing a new error without `cause` | The original stack and message are lost | Pass `{ cause: error }` to the new error |
+| `return` inside `finally` | Errors vanish; `finallySwallows()` returns `'swallowed'` | Only clean up in `finally`; never return or throw from it |
+| `try` around code that schedules a callback | The callback's error is uncaught and Node exits with code 1 | Use promises and `await` inside the `try`, or catch inside the callback |
+| Checking `error instanceof Error` for errors from another realm | `false` for real errors from iframes or `vm` contexts | `Error.isError(error)` |
+| A `catch` that swallows everything: `catch {}` | Bugs such as a `ReferenceError` from a typo disappear | Catch only what you expect, check its type, and rethrow the rest |
+| Forgetting to close a resource on the error path | Leaked file handles or connections after failures | `using` / `await using`, or `try`/`finally` |
+
+## Interview questions
+
+### 1. What does `finallyOverrides()` return, and why?
+
+**Answer.** `'from finally'`. The `return 'from try'` creates a pending completion of type *return*, then the `finally` block runs. Its own `return 'from finally'` is an abrupt completion, and by the rule $C(\texttt{try}\ B\ \texttt{finally}\ F) = C(F)$ when $C(F)$ is abrupt, it replaces the pending one. The same rule makes `finallySwallows()` return `'swallowed'` and discard a thrown error. If the `finally` block completes normally, as in `finallyAlwaysRuns`, the original `'from try'` is returned.
+
+### 2. Why should you throw `Error` objects rather than strings?
+
+**Answer.** An `Error` carries a `stack` captured when it was created, a `name` for its kind, a `message`, and optionally a `cause` chain; it works with `instanceof` and `Error.isError`; and tools (Node's crash output, test runners, error trackers) know how to display it. A thrown string carries only itself: in the lab, `caught(throwString).stack` is `undefined`, so you cannot tell where it came from. Libraries should throw subclasses such as `ConfigError` so callers can branch on the type instead of parsing messages.
+
+### 3. How do you add context to an error without losing the original?
+
+**Answer.** Wrap it with the `cause` option (ES2022): `throw new ConfigError('config is not valid JSON', { cause: error })`. The new error says what the program was doing, while `error.cause` keeps the original `SyntaxError` with its own message and stack. Before ES2022, people overwrote `message` or concatenated stacks, which lost information. Do not wrap at every level; wrap where the meaning changes, such as at a module or service boundary.
+
+### 4. Why can `instanceof Error` be `false` for a real error, and what is the fix?
+
+**Answer.** `instanceof` walks the prototype chain looking for one particular `Error.prototype` object, and every realm has its own. An error created by `vm.runInNewContext('new Error(...)')`, or in an iframe, has the other realm's prototype, so `foreign instanceof Error` is `false`. Conversely, any object can fake the check with `Object.setPrototypeOf(fake, Error.prototype)`. `Error.isError` (ES2026) checks the internal `[[ErrorData]]` slot instead, which only genuine error objects have, so it returns `true` for the foreign error and `false` for a look-alike.
+
+### 5. What does `using` give you over `try`/`finally`?
+
+**Answer.** The same guarantee, with less code and fewer ways to get it wrong. Each `using` declaration registers its resource's `[Symbol.dispose]` method, and when the block ends, for any reason, the resources are disposed in reverse order (`close b.txt` before `close a.txt`). The ordering and the error handling are built in: if both the body and a disposal throw, you get a `SuppressedError` holding both (`close failed` and `read failed`), whereas a hand-written `finally` that throws would silently replace the original error. `await using` does the same for asynchronous cleanup. It is new (ES2027), so check that your runtime supports it.
+
+## Summary
+
+$$
+C(\texttt{try}\ B\ \texttt{finally}\ F) =
+\begin{cases}
+C(F) & \text{if } C(F) \text{ is abrupt} \\
+C(B) & \text{otherwise}
+\end{cases}
+$$
+
+where $C(X)$ is the completion of block $X$ (normal, return, throw, break or continue), $B$ is the `try` block with its `catch`, and $F$ is the `finally` block.
+
+Example: in `finallyAlwaysRuns`, $C(F)$ is normal, so the result is $C(B) = \text{return 'from try'}$; in `finallyOverrides`, $C(F) = \text{return 'from finally'}$ is abrupt and wins.
+
+- Throw `Error` objects (or subclasses with a `name`); they carry `message`, `stack` and `cause`.
+- Wrap low-level errors with `{ cause }` where their meaning changes.
+- `finally` always runs; never return or throw from it.
+- `try` only catches what happens while it is on the stack; async errors travel as rejections and come back through `await`.
+- `AggregateError` holds many errors, `Error.isError` recognises errors from any realm, and `using` disposes resources in reverse order, reporting double failures as `SuppressedError`.
+
+## References
+
+- ECMAScript Language Specification, [Error Objects](https://tc39.es/ecma262/#sec-error-objects) (including [AggregateError](https://tc39.es/ecma262/#sec-aggregate-error-objects), [SuppressedError](https://tc39.es/ecma262/#sec-suppressederror-objects) and [Error.isError](https://tc39.es/ecma262/#sec-error.iserror)), [The try Statement](https://tc39.es/ecma262/#sec-try-statement), [The Completion Record Specification Type](https://tc39.es/ecma262/#sec-completion-record-specification-type) and [Resource Management](https://tc39.es/ecma262/#sec-resource-management).
+- TC39 proposals: [Explicit Resource Management](https://github.com/tc39/proposal-explicit-resource-management) (Ron Buckton) and [Error.isError](https://github.com/tc39/proposal-is-error) (Jordan Harband).
+- MDN, [Error](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error), [Error: cause](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause), [try...catch](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/try...catch), [AggregateError](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/AggregateError), [Error.isError](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/isError), [using](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/using), [await using](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/await_using) and [SuppressedError](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SuppressedError).
+- Node.js API, [Errors](https://nodejs.org/api/errors.html) and [Event: 'uncaughtException'](https://nodejs.org/api/process.html#event-uncaughtexception).
+- V8, [Stack trace API](https://v8.dev/docs/stack-trace-api) (`Error.stackTraceLimit`, `Error.captureStackTrace`).
+- Lab: [`labs/errors.mjs`](labs/errors.mjs). Run it from `programming-languages/javascript/labs` with `node errors.mjs`.
