@@ -1,0 +1,328 @@
+---
+title: "Unification"
+description: "How Prolog matches terms: the unification rules, the most general unifier as a substitution, the four equality-like operators, dif/2, the occurs check, and SWI-Prolog's cyclic terms."
+---
+
+## The problem
+
+A date is stored as the term `date(2026, 11, 26)`. Three everyday jobs:
+
+1. **Take it apart:** get the month, 11.
+2. **Compare partial knowledge:** one record says `date(2026, M, 26)` (month unknown), another says `date(Y, 11, D)` (year and day unknown). Do they agree, and what do we learn from both?
+3. **Build one:** make a date whose month is 11 and whose other parts are still open.
+
+In Python these are three separate pieces of code: an accessor, a comparison that treats `None` as "unknown", and a constructor. Pattern matching in Rust or Haskell helps with job 1, but it is **one-way**: variables may appear in the pattern, never in the value.
+
+Prolog has a single operation that does all three, with variables allowed on **both** sides: **unification**, written `=`. Asking `date(2026, M, 26) = date(Y, 11, D)` answers job 2 in one step: `M = 11, Y = 2026, D = 26`. It is also how every clause head is matched against every goal, so every Prolog program runs on it. Misunderstand it and familiar-looking code surprises you: `1 = 1.0` fails, `X \= a` fails, and `X = f(X)` succeeds.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Two forms with blanks
+
+Two children each fill in a form about the same birthday. One writes `2026 / ___ / 26`. The other writes `___ / 11 / ___`. To make the forms **say the same thing**, copy each known value into the other form's blank. Now both read `2026 / 11 / 26`.
+
+- A blank can be filled **once**. After that, it is a value like any other.
+- If both forms have a printed value in the same box and the values differ, say 2026 against 2025, it is **impossible**: the forms cannot be made equal.
+- Fill in **only what you must**. If both forms have a blank in the same box, leave it blank, but remember that the two blanks are now the same blank.
+
+That last rule is the "most general" part. J. A. Robinson made it precise in 1965 in *A Machine-Oriented Logic Based on the Resolution Principle*: his unification algorithm finds the **most general unifier**, the way of filling blanks that commits to nothing it does not have to.
+:::
+
+## From simple to advanced
+
+### Level 1: constants and variables
+
+The base rules are short:
+
+- An atom unifies only with the same atom: `tom = tom` succeeds, `tom = bob` fails.
+- A number unifies only with the same number **of the same type**: `1 = 1.0` fails, because one is an integer and the other a float.
+- An unbound variable unifies with anything, and becomes **bound** to it.
+
+```prolog
+level1_constants_and_variables :-
+    assertion(tom = tom),
+    assertion(\+ tom = bob),
+    assertion(\+ 1 = 1.0),        % different types never unify
+    assertion(1 =:= 1.0),         % arithmetic comparison is a different question
+    X = tom,
+    assertion(X == tom).
+```
+
+```text
+?- 1 = 1.0.
+false.
+
+?- 1 =:= 1.0.
+true.
+```
+
+`=` asks "are these the same **term**?". `=:=` evaluates both sides as arithmetic and asks "are these the same **number**?". [Arithmetic and CLP(FD)](06-arithmetic-and-clpfd.qmd) covers the second.
+
+### Level 2: compound terms match piece by piece
+
+Two compound terms unify when they have the **same name**, the **same arity**, and each pair of arguments unifies:
+
+```text
+?- point(X, 2) = point(1, Y).
+X = 1,
+Y = 2.
+
+?- date(2026, M, 26) = date(Y, 11, D).
+M = 11,
+Y = 2026,
+D = 26.
+
+?- f(Z, Z) = f(a, b).
+false.
+```
+
+The third query fails because `Z` would have to be `a` and `b` at once. The lab also checks the two other ways to fail: `f(a) = g(a)` (different names) and `f(a) = f(a, b)` (different arity).
+
+Unification also happens every time a goal is matched against a clause head. A single fact can therefore take a term apart **and** build one:
+
+```prolog
+% Level 2: unification in a clause head takes a term apart, or builds one.
+date_month(date(_, Month, _), Month).
+```
+
+```text
+?- date_month(date(2026, 11, 26), M).
+M = 11.
+
+?- date_month(D, 11).
+D = date(_, 11, _).
+```
+
+The first query is job 1 from the problem; the second is job 3. Same clause, no extra code.
+
+### Level 3: the most general unifier
+
+A **substitution** is a finite set of bindings, written $\sigma = \lbrace X \mapsto a, Y \mapsto a \rbrace$. Applying it to a term, written $t\sigma$, replaces each variable by its binding. A substitution that makes two terms identical is a **unifier**, and the best one is defined like this:
+
+$$
+s\sigma = t\sigma \quad \text{and} \quad \forall \theta \; \big( s\theta = t\theta \Rightarrow \exists \lambda \;\; \theta = \sigma\lambda \big)
+$$
+
+where
+
+- $s$ and $t$ are the two terms being unified;
+- $\sigma$ is the **most general unifier** (mgu); $s\sigma$ is $s$ with $\sigma$ applied;
+- $\theta$ is any other unifier of $s$ and $t$;
+- $\sigma\lambda$ means "apply $\sigma$, then apply $\lambda$";
+- $\Rightarrow$ means "implies", $\forall$ "for every", $\exists$ "there is".
+
+In words: $\sigma$ makes the terms equal, and every other unifier is just $\sigma$ followed by some extra choices.
+
+Example: $s = f(A)$ and $t = f(B)$.
+
+1. $\sigma = \lbrace A \mapsto B \rbrace$ gives $s\sigma = f(B)$ and $t\sigma = f(B)$, so it is a unifier.
+2. $\theta = \lbrace A \mapsto a, B \mapsto a \rbrace$ is also a unifier: both terms become $f(a)$.
+3. Take $\lambda = \lbrace B \mapsto a \rbrace$. Then $\sigma\lambda$ sends $A \mapsto B \mapsto a$ and $B \mapsto a$, which is exactly $\theta$.
+
+So $\theta$ is $\sigma$ plus one unnecessary choice ($B = a$), and $\sigma$ is the most general. Prolog always computes the mgu. That is why `f(A) = f(B)` answers just `A = B`, leaving both unbound but now the **same** variable.
+
+How does Prolog find it? Keep a set of equations to solve and apply these rules until none is left. This form of Robinson's algorithm is due to Alberto Martelli and Ugo Montanari, *An Efficient Unification Algorithm* (1982):
+
+| Rule | Equation | Action |
+|---|---|---|
+| Delete | $t = t$ | remove it |
+| Decompose | $f(s_1, \dots, s_n) = f(t_1, \dots, t_n)$ | replace it by $s_1 = t_1, \dots, s_n = t_n$ |
+| Conflict | $f(\dots) = g(\dots)$, different name or arity | **fail** |
+| Swap | $t = X$ with $t$ not a variable | rewrite it as $X = t$ |
+| Eliminate | $X = t$ with $X$ not inside $t$ | record $X \mapsto t$ and replace $X$ by $t$ everywhere |
+| Occurs check | $X = t$ with $X$ inside $t$, $t \neq X$ | **fail** |
+
+Worked trace for `f(X, g(Y)) = f(a, g(X))`:
+
+1. Decompose: $\lbrace X = a,\; g(Y) = g(X) \rbrace$.
+2. Eliminate $X$: record $X \mapsto a$; the rest becomes $\lbrace g(Y) = g(a) \rbrace$.
+3. Decompose: $\lbrace Y = a \rbrace$.
+4. Eliminate $Y$: record $Y \mapsto a$. Nothing is left, so $\sigma = \lbrace X \mapsto a, Y \mapsto a \rbrace$.
+
+And for `point(P, Q) = point(Q, 3)`: decompose to $\lbrace P = Q, Q = 3 \rbrace$, eliminate $P \mapsto Q$, then eliminate $Q \mapsto 3$, which also turns $P \mapsto Q$ into $P \mapsto 3$. The lab checks both, plus the aliasing case:
+
+```prolog
+% Level 3: the most general unifier.
+level3_mgu :-
+    f(X, g(Y)) = f(a, g(X)),
+    assertion(X-Y == a-a),
+    point(P, Q) = point(Q, 3),
+    assertion(P-Q == 3-3),
+    f(A) = f(B),                  % mgu {A -> B}: both stay unbound, now aliased
+    assertion((var(A), A == B)).
+```
+
+SWI-Prolog prints the first answer as `X = Y, Y = a.`, its way of saying both are `a`.
+
+### Level 4: `=`, `==`, `\=` and `dif/2`
+
+Four operators look alike and ask different questions:
+
+| Goal | Question | Binds variables? |
+|---|---|---|
+| `A = B` | can A and B be made equal? (and make them so) | yes |
+| `A == B` | are A and B identical **right now**? | no |
+| `A \= B` | is unification impossible **right now**? same as `\+ A = B` | no |
+| `dif(A, B)` | must A and B **stay** different? waits until it can tell | no, but it remembers |
+
+```prolog
+% Level 4: = unifies, == compares without binding, \= means "cannot unify".
+level4_equality :-
+    assertion(\+ _ == _),         % two different fresh variables
+    X = Y,
+    assertion(X == Y),
+    assertion(a \= b),
+    assertion(\+ _ \= a),         % an unbound variable can unify with a
+    assertion(\+ (V \= a, V = b)),
+    assertion((W = b, W \= a)),   % same goals, other order: now it succeeds
+    dif(Z, a),                    % dif waits until Z is known
+    assertion(\+ Z = a),
+    Z = b,
+    assertion(Z == b).
+```
+
+```text
+?- X \= a.
+false.
+
+?- X = b, X \= a.
+X = b.
+
+?- dif(X, a), X = b.
+X = b.
+
+?- dif(X, a), X = a.
+false.
+```
+
+`X \= a` does **not** mean "X is different from a". It means "X cannot be unified with a", and a fresh `X` can be, so it fails. Swapping two goals then changes the answer, which a logical "and" never should. `dif(X, a)` is the logical version: if it cannot decide yet, it waits and re-checks every time `X` is bound. The SWI-Prolog manual calls it *"a more general and more declarative alternative for \=/2"*. It is also old: *The birth of Prolog* records that Philippe Roussel's thesis on formal equality *"would lead to the introduction of the dif predicate (for ≠) into the very first version of Prolog."*
+
+### Level 5: the occurs check
+
+What should `X = f(X)` do? There is no finite term $X$ with $X = f(X)$: whatever $X$ is, $f(X)$ is one symbol bigger. The **occurs check** rule in the table detects this and fails. Standard Prolog skips that check for speed, because it costs a scan of the whole term:
+
+$$
+\operatorname{cost}(X = t) =
+\begin{cases}
+O(1) & \text{without the occurs check} \\
+O(\lvert t \rvert) & \text{with it}
+\end{cases}
+$$
+
+where
+
+- $X$ is an unbound variable and $t$ is the term it is being bound to;
+- $\lvert t \rvert$ is the number of nodes in $t$: every atom, number, variable and compound cell;
+- $O(\cdot)$ is the usual "grows like" notation.
+
+Example: for `X = [1, 2, 3]`, the term `[1, 2, 3]` is three list cells, three numbers and the empty list, so $\lvert t \rvert = 3 + 3 + 1 = 7$. Without the check, binding `X` is one pointer write. With it, Prolog first visits all 7 nodes to make sure `X` is not among them. For a list of 1,000 elements that is 2,001 visits, on every such binding.
+
+SWI-Prolog then goes one step further than "undefined": it supports **rational trees**. `X = f(X)` succeeds and builds a cyclic term, the infinite tree $f(f(f(\dots)))$ stored in finite memory:
+
+```prolog
+% Level 5: the occurs check.
+level5_occurs_check :-
+    X = f(X),                     % succeeds in SWI-Prolog: a cyclic term
+    assertion(cyclic_term(X)),
+    assertion(\+ unify_with_occurs_check(Y, f(Y))),
+    assertion(\+ unify_with_occurs_check(f(B, g(B)), f(C, C))),
+    Z = f(f(Z)),
+    assertion(X == Z).            % both are the infinite tree f(f(f(...)))
+```
+
+```text
+?- X = f(X).
+X = f(X).
+
+?- unify_with_occurs_check(X, f(X)).
+false.
+```
+
+The last check is a surprise worth understanding: `X = f(X)` and `Z = f(f(Z))` are built differently, but both unfold to the same infinite tree, so `==` says they are identical. The second `unify_with_occurs_check` fails only after a few steps: `B = C`, then `g(B) = C`, which is `g(B) = B`.
+
+When you need sound logic, the `occurs_check` flag turns the check on for every unification. Its values are `false` (the default), `true` (fail) and `error` (throw):
+
+```prolog
+occurs_check_flag :-
+    set_prolog_flag(occurs_check, true),
+    assertion(\+ X = f(X)),
+    set_prolog_flag(occurs_check, error),
+    catch(Y = f(Y), Error, true),
+    assertion(Error = error(occurs_check(_, _), _)),
+    set_prolog_flag(occurs_check, false).
+```
+
+## How it works underneath
+
+The Warren Abstract Machine (WAM), designed by David H. D. Warren in 1983, shows how cheap unification can be. Hassan Aït-Kaci's tutorial reconstruction calls it *"the de facto standard for implementing Prolog compilers"* and describes these pieces:
+
+- **A variable is a memory cell.** An unbound variable at address $k$ is the cell $\langle \text{REF}, k \rangle$: in the book's words, *"an unbound variable is a self-referential REF cell."* Binding it overwrites the cell with a pointer to the other term. That is the $O(1)$ in the cost formula.
+- **Dereferencing.** After `A = B` and then `B = a`, the cell for `A` points to `B`, which points to `a`. Before comparing anything, the machine follows such chains to their end.
+- **A worklist instead of recursion.** The WAM's `unify` procedure pushes the two addresses on a push-down list, then repeatedly pops a pair, dereferences both, binds if either is an unbound variable, and otherwise checks the functors and pushes the argument pairs. That is the Decompose and Eliminate rules from Level 3, run as a loop.
+- **The trail.** Bindings must be undone when Prolog backtracks. The machine records them on the **trail** stack, but, as the book puts it, *"not all bindings need to be remembered in the trail. Only conditional bindings do. A conditional binding is one affecting a variable existing before creation of the current choice point."*
+- **Which variable points to which.** When two unbound variables are unified, the WAM makes the younger one point to the older one: in its words, *"an older (less recently created) variable cannot reference a younger (more recently created) variable."* Memory that is freed first is then never pointed at by memory that lives longer.
+
+The binding step is also where an occurs check would go, and the book notes that *"the occurs-check test is omitted in most actual Prolog implementations in order not to impede performance."* It is a deliberate trade: sound for almost every real program, and much faster. SWI-Prolog's own virtual machine is not the WAM: its authors describe the compiler as *"distantly based on the ZIP abstract machine"*. It uses the same ideas, though, and its stack-overflow message names the same kinds of memory: local, global and trail stacks ([Resolution and Backtracking](03-resolution-and-backtracking.qmd)).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Using `=` to compare numbers: `X = 1.0` when `X` is `1` | Fails silently | Use `=:=` for numeric equality |
+| Using `=` to test without binding | The test **binds** an unbound variable and "succeeds" | Use `==` to test identity without binding |
+| Reading `X \= a` as "X is not a" | Fails when `X` is unbound; the answer depends on goal order | Use `dif(X, a)`, or make sure `X` is bound first |
+| Expecting `X = f(X)` to fail | It succeeds and builds a cyclic term; `print/1` shows `@(S_1,[S_1=f(S_1)])` | Use `unify_with_occurs_check/2` or set the `occurs_check` flag |
+| Storing a cyclic term with `assertz/1` | ``assertz/1: Cannot represent due to `cyclic_term'`` | Do not store rational trees in the database |
+| Expecting `"abc" = abc` | Fails: a string is not an atom in SWI-Prolog 7+ | Use `atom_string/2` to convert |
+
+## Interview questions
+
+### 1. What is a most general unifier, and is it unique?
+
+**Answer.** A substitution $\sigma$ with $s\sigma = t\sigma$ such that every other unifier $\theta$ equals $\sigma\lambda$ for some $\lambda$. It is unique **up to renaming of variables**: for `f(A) = f(B)`, both $\lbrace A \mapsto B \rbrace$ and $\lbrace B \mapsto A \rbrace$ are most general, and each is the other with variables renamed. Any unifier that binds a variable to a constant, such as $\lbrace A \mapsto a, B \mapsto a \rbrace$, is less general. Prolog computes an mgu, which is why answers contain only the bindings that are forced.
+
+### 2. How is unification different from pattern matching in Haskell or Rust?
+
+**Answer.** Pattern matching is one-way: the pattern may contain variables, but the value must be fully known, and matching never changes the value. Unification is two-way: both terms may contain variables, and a variable on either side can be bound. That is why `date_month(D, 11)` can **build** `date(_, 11, _)`, and why `date(2026, M, 26) = date(Y, 11, D)` binds variables on both sides at once. Pattern matching is the special case where one side is ground (has no variables).
+
+### 3. Why does Prolog omit the occurs check by default?
+
+**Answer.** Cost. Without it, binding a variable is one pointer write, $O(1)$. With it, every binding of $X$ to $t$ must first scan $t$, $O(\lvert t \rvert)$, and a program that keeps binding variables to large terms pays that scan every time. Programs that would create $X = f(X)$ are rare, so the trade is usually worth it. SWI-Prolog makes the result well defined: a rational tree. When soundness matters, as in theorem provers or type inference, use `unify_with_occurs_check/2` at the risky places or set `occurs_check` to `true` or `error`.
+
+### 4. What is the difference between `X \= Y`, `X \== Y` and `dif(X, Y)` when both are unbound?
+
+**Answer.** `X \= Y` fails, because two fresh variables **can** be unified. `X \== Y` succeeds, because they are not the **same** variable right now. `dif(X, Y)` succeeds and leaves a constraint: it will fail later if `X` and `Y` ever become identical. Only `dif/2` gives the same answer whatever order the goals run in, which is why it is preferred in pure code.
+
+### 5. Why does `f(B, g(B)) = f(C, C)` fail under the occurs check?
+
+**Answer.** Decompose gives $B = C$ and $g(B) = C$. Eliminating $B \mapsto C$ turns the second into $g(C) = C$, which swaps to $C = g(C)$. Now $C$ occurs inside $g(C)$, so the occurs check fails. Without the check, SWI-Prolog binds $C$ to the cyclic term $g(g(g(\dots)))$. The lab checks the occurs-check failure.
+
+## Summary
+
+$$
+\sigma = \operatorname{mgu}(s, t) \iff s\sigma = t\sigma \;\land\; \forall \theta \; \big(s\theta = t\theta \Rightarrow \exists \lambda \;\; \theta = \sigma\lambda\big)
+$$
+
+where $s, t$ are terms, $\sigma$ and $\theta$ are substitutions, $\sigma\lambda$ is "apply $\sigma$ then $\lambda$", and $\operatorname{mgu}$ is the most general unifier.
+
+Example: for `f(X, g(Y)) = f(a, g(X))` the rules give $\sigma = \lbrace X \mapsto a, Y \mapsto a \rbrace$, and both sides become `f(a, g(a))`.
+
+- `=` is **two-way** matching: it takes terms apart, builds them, and binds variables on either side.
+- Same name, same arity, then argument by argument; `1` and `1.0` never unify.
+- Prolog always finds the **most general** unifier: no binding it does not need.
+- `==` tests identity without binding; `\=` means "cannot unify now"; `dif/2` is the logical "different".
+- No occurs check by default: `X = f(X)` builds a **cyclic term** in SWI-Prolog. Use `unify_with_occurs_check/2` when you need soundness.
+
+## References
+
+- SWI-Prolog manual: [(=)/2](https://www.swi-prolog.org/pldoc/man?predicate=%3D/2), [Comparison and Unification of Terms](https://www.swi-prolog.org/pldoc/man?section=compare), [unify_with_occurs_check/2](https://www.swi-prolog.org/pldoc/man?predicate=unify_with_occurs_check/2), [dif/2](https://www.swi-prolog.org/pldoc/man?predicate=dif/2), [Rational trees (cyclic terms)](https://www.swi-prolog.org/pldoc/man?section=cyclic), [Prolog flags](https://www.swi-prolog.org/pldoc/man?section=flags) (`occurs_check`).
+- J. A. Robinson, [A Machine-Oriented Logic Based on the Resolution Principle](https://doi.org/10.1145/321250.321253), *Journal of the ACM* 12(1), 23–41, 1965.
+- Alberto Martelli and Ugo Montanari, [An Efficient Unification Algorithm](https://doi.org/10.1145/357162.357169), *ACM TOPLAS* 4(2), 258–282, 1982.
+- Hassan Aït-Kaci, [*Warren's Abstract Machine: A Tutorial Reconstruction*](https://users.dimi.uniud.it/~marco.comini/Students/Documentation/wam-tutorial.html), MIT Press, 1991 (free from the author).
+- Jan Wielemaker, Tom Schrijvers, Markus Triska and Torbjörn Lager, [SWI-Prolog](https://doi.org/10.1017/S1471068411000494), *Theory and Practice of Logic Programming* 12(1–2), 2012 ([arXiv copy](https://arxiv.org/abs/1011.5332)), Section 7.1 on the virtual machine.
+- Alain Colmerauer and Philippe Roussel, [The birth of Prolog](http://alain.colmerauer.free.fr/alcol/ArchivesPublications/PrologHistory/19november92.pdf), HOPL-II, 1993 (the origin of `dif`).
+- Leon Sterling and Ehud Shapiro, [*The Art of Prolog*](https://mitpress.mit.edu/9780262691635/the-art-of-prolog/), 2nd ed., MIT Press, 1994, Section 4.1, Unification.
+- Ivan Bratko, [*Prolog Programming for Artificial Intelligence*](https://www.pearson.com/en-us/subject-catalog/p/prolog-programming-for-artificial-intelligence/P200000003804/9780321417466), 4th ed., Addison-Wesley, 2012, Chapter 2, Syntax and Meaning of Prolog Programs.
+- Markus Triska, *The Power of Prolog*: [Logical Purity](https://www.metalevel.at/prolog/purity) (why `dif/2` instead of `\=`).
+- Lab: [`labs/unification.pl`](labs/unification.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt unification.pl`.

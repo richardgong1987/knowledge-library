@@ -1,0 +1,396 @@
+---
+title: "Cut and Negation"
+description: "Controlling Prolog's search: what the cut prunes, green and red cuts, if-then-else and once/1, negation as failure under the closed-world assumption, floundering, and dif/2 as the sound alternative."
+---
+
+## The problem
+
+A teacher turns scores into grades: 90 or more is an `a`, 80 or more is a `b`, anything else is a `c`. The obvious Prolog program states the three cases:
+
+```prolog
+% Level 1: without cuts, every clause whose test passes gives an answer.
+grade_all(Score, a) :- Score >= 90.
+grade_all(Score, b) :- Score >= 80.
+grade_all(_, c).
+```
+
+The first answer is right, but [backtracking](03-resolution-and-backtracking.qmd) keeps going and finds two more:
+
+```text
+?- grade_all(95, G).
+G = a ;
+G = b ;
+G = c.
+```
+
+A score of 95 earns three grades. The program needs a way to say "once a test passes, stop looking". Prolog's answer is the **cut**, `!`. A second, related need is "succeed only if something is *not* true", for example "a bird flies unless it is a penguin". That is **negation**, `\+`. Both are powerful, and both can quietly change the meaning of a program if used carelessly. This chapter shows exactly what they do, where they go wrong, and the safer tools (`->`, `once/1`, `dif/2`) built on the same machinery.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A choose-your-own-adventure book
+
+Prolog reads a program like a choose-your-own-adventure book. At every choice it picks the first path and keeps a bookmark at the others, so it can come back if the story ends badly. That is backtracking.
+
+- **The cut `!`** is tearing out the bookmarks. "I have chosen this path; whatever happens next, do not come back and try the other ones."
+- **Negation as failure `\+`** is the class register. "Is Sam in our class?" The teacher reads the register, does not find Sam, and says "no". She does not know Sam is somewhere else; she only knows Sam is not written down. Prolog treats "not written down" as "false".
+- **`dif/2`** is a sticky note that says "these two must be different children". If the names are not filled in yet, the note waits, and it checks the moment they are.
+
+Robert Kowalski, whose work Prolog grew from, split every program into two parts in his paper *Algorithm = Logic + Control* (1979): "The logic component determines the meaning of the algorithm whereas the control component only affects its efficiency." The cut is pure control. A good cut leaves the meaning alone; a bad one changes it.
+:::
+
+## From simple to advanced
+
+### Level 1: the cut commits to a choice
+
+When Prolog runs the body of a clause and reaches `!`, two things happen:
+
+1. every remaining alternative for the goals **to the left** of the cut in this clause is thrown away;
+2. every remaining **clause** of the same predicate is thrown away.
+
+Goals to the right of the cut still backtrack normally. The smallest example:
+
+```prolog
+% Level 1: the cut commits to the first color it meets.
+color(red).
+color(green).
+color(blue).
+
+first_color(C) :- color(C), !.
+```
+
+```text
+?- color(C).
+C = red ;
+C = green ;
+C = blue.
+
+?- first_color(C).
+C = red.
+```
+
+The search tree shows what the cut removes:
+
+```text
+                 ?- first_color(C).
+                         |
+                   color(C), !
+           /             |              \
+       C = red       C = green       C = blue
+      ! commits      cut away        cut away
+          |
+    answer C = red
+```
+
+For a clause body $A, !, B$ the rule is:
+
+$$
+\operatorname{answers}(A, !, B) =
+\begin{cases}
+\operatorname{answers}(B\theta_1) & \text{if } A \text{ has a first answer } \theta_1 \\
+\emptyset & \text{if } A \text{ has no answer}
+\end{cases}
+$$
+
+where
+
+- $A$ is the conjunction of goals before the cut and $B$ the goals after it;
+- $\theta_1$ is the first answer of $A$: the variable bindings found by the first successful proof;
+- $B\theta_1$ is $B$ with those bindings filled in;
+- $\operatorname{answers}(G)$ is the list of answers Prolog would find for $G$;
+- $\emptyset$ means no answer, and in that case the next clause of the predicate is tried as usual. Only reaching the cut removes the later clauses.
+
+Example: in `first_color`, $A$ is `color(C)` with three answers, $\theta_1$ binds `C = red`, and $B$ is empty (`true`). So the clause has exactly the answers of `true` under `C = red`: one answer instead of three. In `grade/2` below, for a score of 95 the first clause's test $95 \ge 90$ succeeds, the cut is reached, and clauses 2 and 3 are never tried: one answer instead of `grade_all`'s three.
+
+```prolog
+% With cuts, the first clause whose test passes is the only answer.
+grade(Score, a) :- Score >= 90, !.
+grade(Score, b) :- Score >= 80, !.
+grade(_, c).
+```
+
+```text
+?- grade(95, G).
+G = a.
+```
+
+### Level 2: green cuts and red cuts
+
+Sterling and Shapiro's *The Art of Prolog* distinguishes two kinds of cut (Chapter 11, "Cuts and Negation"):
+
+- A **green cut** only removes branches that could never succeed anyway. Deleting it changes speed, never answers. It is Kowalski's "control only affects efficiency".
+- A **red cut** removes branches that *would* succeed. Deleting it changes the answers, so the program's meaning depends on it.
+
+The cuts in `grade/2` are red: deleting them gives `grade_all/2`, which has different answers. Red cuts have a nasty trap. Ask whether 95 earns a `c`:
+
+```text
+?- grade(95, c).
+true.
+```
+
+The call `grade(95, c)` does not unify with the heads `grade(Score, a)` or `grade(Score, b)`, so neither test runs and neither cut is reached. The third clause `grade(_, c)` has no test at all, and says yes. The cut only protected the third clause when the output was unknown. A predicate that answers correctly whatever you pass as its output is called **steadfast**, and `grade/2` is not.
+
+Two fixes. A **green** version writes each clause's full condition, so the cuts are only an optimisation:
+
+```prolog
+% Level 2: a green cut. Every clause states its full condition.
+grade_green(Score, a) :- Score >= 90, !.
+grade_green(Score, b) :- Score >= 80, Score < 90, !.
+grade_green(Score, c) :- Score < 80.
+```
+
+A **steadfast** version keeps the short conditions but binds the output only *after* the cut, so every call passes the tests first:
+
+```prolog
+% Level 2: bind the output after the cut, so a given output cannot skip the test.
+grade_safe(Score, Grade) :- Score >= 90, !, Grade = a.
+grade_safe(Score, Grade) :- Score >= 80, !, Grade = b.
+grade_safe(_, c).
+```
+
+```text
+?- grade_safe(95, c).
+false.
+
+?- grade_green(85, G).
+G = b.
+```
+
+The lab checks that both fixes give `95-a`, `85-b` and `70-c`, and that both reject `grade(95, c)`.
+
+### Level 3: if-then-else and `once/1`
+
+Most cuts in real code are really "if this, then that, else the other". Prolog has that construct built in, and it is easier to read:
+
+```prolog
+% Level 3: if-then-else says the same with no cut in sight.
+grade_ite(Score, Grade) :-
+    (   Score >= 90 -> Grade = a
+    ;   Score >= 80 -> Grade = b
+    ;   Grade = c
+    ).
+```
+
+`( Cond -> Then ; Else )` runs `Cond` once. If it succeeds, Prolog commits to its **first** solution and runs `Then`; if it fails, it runs `Else`. The cut inside is local: it prunes only `Cond`, not the clauses of `grade_ite`. Because the output is bound inside the branches, `grade_ite` is steadfast, and `grade_ite(95, c)` is false. The commitment to the first solution is visible when the condition has several:
+
+```text
+?- ( member(X, [1, 2, 3]), X > 1 -> Y = X ; Y = none ).
+X = Y, Y = 2.
+```
+
+`member` could also give `X = 3`, but the arrow has already committed to `X = 2`. Three relatives are worth knowing:
+
+- `once(G)` is `( G -> true )`: the first solution of `G` only. `once(color(C))` gives `C = red`.
+- `( Cond *-> Then ; Else )` is the **soft cut**: if `Cond` succeeds, *all* its solutions flow into `Then`; `Else` runs only if `Cond` has none. The lab checks that `( member(X, [1, 2, 3]) *-> true ; X = none )` gives 1, 2 and 3.
+- `forall(Cond, Action)` succeeds if `Action` holds for every solution of `Cond`, as in `forall(member(X, [1, 2, 3]), X > 0)`.
+
+### Level 4: negation as failure and the closed world
+
+`\+ G` (read "not provable") succeeds if Prolog **fails** to prove `G`, and fails if it succeeds. It never binds variables.
+
+```prolog
+% Level 4: what cannot be proved is taken to be false.
+bird(tweety).
+bird(pingu).
+penguin(pingu).
+
+flies(B) :- bird(B), \+ penguin(B).
+```
+
+```text
+?- flies(B).
+B = tweety ;
+false.
+
+?- \+ bird(sam).
+true.
+```
+
+$$
+\operatorname{not}(G) \text{ succeeds} \iff \operatorname{answers}(G) = \emptyset \text{ (the search for } G \text{ fails finitely)}
+$$
+
+where
+
+- $\operatorname{not}(G)$ is Prolog's `\+ G`;
+- $\operatorname{answers}(G)$ is the set of proofs Prolog finds for $G$ from the program;
+- "fails finitely" means the search ends with no proof. If it runs forever, so does `\+ G`.
+
+Example: for $G = $ `penguin(tweety)` there is no matching fact, so $\operatorname{answers}(G) = \emptyset$ and `\+ penguin(tweety)` succeeds, which lets `flies(tweety)` succeed. For `penguin(pingu)` the set has one proof, so `\+ penguin(pingu)` fails and `flies(pingu)` fails.
+
+This is not the "not" of logic. It is sound only under the **closed-world assumption**, which Raymond Reiter analysed in *On Closed World Data Bases* (1978): the program lists every true fact, so what it cannot prove is false. `\+ bird(sam)` is true not because Sam is known to be a fish, but because nobody wrote `bird(sam)`. Keith Clark showed the same year, in *Negation as Failure*, that this rule is correct with respect to the **completion** of the program: reading each predicate's clauses as "if and only if".
+
+### Level 5: floundering, when negation meets an unbound variable
+
+Swap the two goals of `flies/1` and the program breaks:
+
+```prolog
+% Level 5: the same two goals in the other order.
+flies_wrong(B) :- \+ penguin(B), bird(B).
+```
+
+```text
+?- flies_wrong(B).
+false.
+
+?- flies_wrong(tweety).
+true.
+```
+
+With `B` unbound, `\+ penguin(B)` does not ask "is B not a penguin?". It asks "can no penguin be found at all?", and `pingu` is one, so it fails:
+
+$$
+\operatorname{not}(p(X)) \text{ with } X \text{ unbound} \;\equiv\; \neg \exists x\, p(x)
+$$
+
+where
+
+- $p$ is the predicate inside the negation, here `penguin`;
+- $X$ is a variable that is still unbound when `\+` runs;
+- $\exists x\, p(x)$ means "some $x$ makes $p(x)$ true", and $\neg$ means "not".
+
+Example: $\exists x\, \texttt{penguin}(x)$ is true with $x = \texttt{pingu}$, so $\neg \exists x\, \texttt{penguin}(x)$ is false and `flies_wrong(B)` fails before `bird(B)` can offer `tweety`. With `B = tweety` already bound, the question becomes $\neg\,\texttt{penguin}(\texttt{tweety})$, which is true. This order dependence is called **floundering**. The rule that avoids it: call `\+ G` only when `G` is ground, that is, has no unbound variables. Put the goals that bind its variables first.
+
+### Level 6: `dif/2`, a sound "not equal"
+
+The most common negation is "X is not Y". Written as `\+ X = Y` it flounders in the same way: with either variable unbound, `X = Y` can succeed by binding, so `\+ X = Y` fails.
+
+```text
+?- \+ X = a, member(X, [a, b, c]).
+false.
+
+?- dif(X, a), member(X, [a, b, c]).
+X = b ;
+X = c.
+```
+
+`dif/2`, met in [Unification](02-unification.qmd), is a **constraint**. If its arguments can already never be equal, it succeeds; if they are already identical, it fails; otherwise it waits, and re-checks each time one of their variables is bound:
+
+$$
+\operatorname{dif}(s, t) \;\to\;
+\begin{cases}
+\text{succeed} & \text{if } s \text{ and } t \text{ do not unify} \\
+\text{fail} & \text{if } s \equiv t \\
+\text{wait} & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $s$ and $t$ are any two terms;
+- "do not unify" means no bindings could make them equal;
+- $s \equiv t$ means they are already the same term;
+- "wait" means the constraint stays attached to their variables and is re-tested when one of them is bound.
+
+Example with `dif(X, a)` and then `member(X, [a, b, c])`: at first `X` and `a` could still unify, so dif waits. `member` binds `X = a`; now $s \equiv t$, so dif fails and `member` backtracks. Then `X = b`: `b` and `a` do not unify, so dif succeeds, giving the first answer. `X = c` gives the second. With `\+ X = a` in the same place, the test ran too early and gave no answers at all.
+
+Because `dif/2` gives the same answers in any position, it can go first, where it reads most naturally:
+
+```prolog
+% Level 6: dif/2 is a constraint, so it may come first.
+parent(ann, bob).
+parent(ann, cy).
+
+sibling(X, Y) :- dif(X, Y), parent(P, X), parent(P, Y).
+
+sibling_naf(X, Y) :- \+ X = Y, parent(P, X), parent(P, Y).
+```
+
+```text
+?- sibling(X, Y).
+X = bob,
+Y = cy ;
+X = cy,
+Y = bob ;
+false.
+
+?- sibling_naf(X, Y).
+false.
+```
+
+`dif/2` is as old as Prolog itself. Colmerauer and Roussel recall in *The Birth of Prolog* that Philippe Roussel's thesis "would lead to the introduction of the dif predicate" into the very first version of Prolog.
+
+## How it works underneath
+
+**Choice points and the cut barrier.** Prolog keeps a stack of **choice points**, the bookmarks of the analogy: each records a goal that still has untried clauses or alternatives. Every call frame remembers which choice point was newest when the predicate was entered. The SWI-Prolog virtual machine comments its cut instruction as: "I_CUT: !. Task is to destroy all choicepoints newer then the current frame." That one sentence explains both effects in Level 1: the choice points of goals to the left of the cut, and the one holding the predicate's remaining clauses, are all newer than the frame, so all of them go.
+
+**If-then-else and `\+` are a local cut.** `( C -> T ; E )` first pushes a choice point that leads to `E`, and remembers it. If `C` succeeds, a local cut removes everything back to and including that choice point, which throws away both the other solutions of `C` and the `E` branch. If `C` fails, backtracking reaches the choice point and runs `E`. `\+ G` is compiled as `( G -> fail ; true )`. You can see this with `vm_list/1`, which prints a predicate's virtual-machine code; for `flies/1` (trimmed to the clause):
+
+```text
+       0 i_enter
+       1 b_var0
+       2 i_call(bird/1)
+       4 c_not(1,'L1')
+       7 b_var0
+       8 i_call(penguin/1)
+      10 c_cut(1)
+      12 c_fail
+L1:   13 i_exit
+```
+
+`c_not` saves the current choice point in slot 1 and pushes one that jumps to `L1`. If `penguin(B)` succeeds, `c_cut(1)` removes every choice point back to slot 1, including the jump, and `c_fail` fails: the negation fails. If `penguin(B)` fails, backtracking takes the jump to `L1` and the clause exits: the negation succeeds. `first_color/1` compiles to `i_call(color/1)` followed by a plain `i_cut`, and `grade_ite/2` to a chain of `c_ifthenelse` and `c_cut` instructions. The lab captures these listings and checks the instruction names.
+
+**`dif/2` uses attributed variables**, the same hook that [CLP(FD)](06-arithmetic-and-clpfd.qmd) uses. `dif(X, a)` attaches to `X` a note saying which terms it must differ from. When `X` is unified, the system calls the attribute's unification hook, which re-runs the comparison and fails, succeeds, or narrows the note. For compound terms the note can mention several variables: `dif(f(X, b), f(a, Y))` means "$X \ne a$ or $Y \ne b$", which the toplevel prints as `dif(f(X, Y), f(a, b))`. Binding `X = c` satisfies it completely and the note disappears; binding `X = a` and then `Y = b` makes it fail.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Clauses that rely on an earlier clause's red cut | Wrong `true` when the output is given, as in `grade(95, c)` | Bind outputs after the cut, or state each clause's full condition |
+| A cut placed before the test it should guard | The predicate commits to the first clause for every input | The cut goes right after the test: `Test, !, Body` |
+| `\+ G` with `G` not yet ground | `false` for a query that has answers, as in `flies_wrong(B)` | Bind `G`'s variables first, or use a constraint such as `dif/2` |
+| `\+ X = Y` to say "different" | Answers depend on goal order | Use `dif(X, Y)` |
+| Expecting `\+` to bind variables | Variables are still unbound after `\+ G` succeeds | `\+` never binds; use the positive goal to get bindings |
+| `( C -> T )` with no else branch | The whole construct fails when `C` fails | Add `; true` if failure of `C` should be fine |
+| Using `->` when every solution of the condition is wanted | Only the first solution is used | Use the soft cut `*->`, or plain conjunction |
+| Cutting inside a predicate meant to generate answers | Only one answer, where the relation has many | Keep generators pure; cut only in deterministic code |
+
+## Interview questions
+
+### 1. What exactly does `!` remove?
+
+**Answer.** All choice points created since the current predicate was called: the remaining alternatives of every goal to the left of the cut in the clause body, and the remaining clauses of the predicate itself. Goals to the right of the cut, and the caller's choice points, are untouched. In `first_color(C) :- color(C), !.` the alternatives `green` and `blue` are removed, so the predicate has one answer. A cut inside `\+`, inside `call/1` or in the condition of `->` is local: it only cuts that inner goal.
+
+### 2. What is the difference between a green and a red cut? Give an example of the danger.
+
+**Answer.** Removing a green cut leaves the set of answers unchanged; it only stops useless search. Removing a red cut changes the answers, because later clauses rely on earlier tests that the cut made "already done". The danger: red cuts usually only work for one calling pattern. `grade(95, c)` succeeds because the call does not unify with the first two heads, so their tests and cuts never run, and the unconditional third clause says yes. The fix is to bind outputs after the cut (`grade_safe`) or to write full conditions (`grade_green`).
+
+### 3. Why is `\+` called negation *as failure*, and when is it unsound?
+
+**Answer.** `\+ G` succeeds when the attempt to prove `G` fails, so it means "not provable", not "false". That coincides with logical negation only under the closed-world assumption, and only when `G` is ground at the time of the call. With unbound variables, `\+ p(X)` means $\neg \exists x\, p(x)$, so `\+ penguin(B), bird(B)` fails although `tweety` is a non-penguin bird. If the proof of `G` does not terminate, `\+ G` does not terminate either.
+
+### 4. What is the difference between `\+ X = Y` and `dif(X, Y)`?
+
+**Answer.** `\+ X = Y` is a one-time test of the current bindings: if `X` or `Y` is unbound it fails, because unification could succeed. `dif(X, Y)` is a constraint: it is checked now if possible and otherwise postponed until the variables are bound, so its answers do not depend on goal order. In the lab, `sibling/2` with `dif/2` first finds `bob-cy` and `cy-bob`; the same predicate with `\+ X = Y` first finds nothing.
+
+### 5. How do `->`, `*->` and `once/1` differ when the condition has several solutions?
+
+**Answer.** `( C -> T ; E )` takes only the first solution of `C`: `( member(X, [1, 2, 3]), X > 1 -> Y = X ; Y = none )` gives just `X = 2`. `once(G)` is `( G -> true )`, the same commitment without branches. `( C *-> T ; E )` keeps every solution of `C`, running `T` for each, and runs `E` only if `C` has none: with `member(X, [1, 2, 3])` as `C` it yields 1, 2 and 3.
+
+## Summary
+
+$$
+\operatorname{answers}(A, !, B) = \operatorname{answers}(B\theta_1) \text{ if } A \text{ succeeds}, \qquad \operatorname{not}(G) \iff \operatorname{answers}(G) = \emptyset
+$$
+
+where $A$ and $B$ are the goals before and after a cut, $\theta_1$ is the first answer of $A$, $G$ is a goal, and $\operatorname{answers}$ is the set of solutions Prolog finds.
+
+Example: `first_color(C)` has $A = $ `color(C)` with $\theta_1$ binding `C = red`, so it has exactly one answer, `red`. `\+ penguin(tweety)` succeeds because $\operatorname{answers}(\texttt{penguin(tweety)}) = \emptyset$.
+
+- `!` removes every choice point made since its predicate was called. Goals to its right still backtrack.
+- Prefer green cuts; with red cuts, bind outputs after the cut so the predicate stays steadfast.
+- `( C -> T ; E )`, `once/1` and `\+` are built from a local cut; they commit to the first solution of the condition.
+- `\+ G` means "not provable": correct only under the closed-world assumption and with `G` ground.
+- For "not equal", use `dif/2`; it waits until it can decide, so goal order does not matter.
+
+## References
+
+- SWI-Prolog manual: [Control predicates](https://www.swi-prolog.org/pldoc/man?section=control) (cut, `->`, `*->`, `\+`), [Meta-call predicates](https://www.swi-prolog.org/pldoc/man?section=metacall) (`once/1`, `forall/2`), [dif/2](https://www.swi-prolog.org/pldoc/man?predicate=dif/2) and [vm_list/1](https://www.swi-prolog.org/pldoc/man?predicate=vm_list/1).
+- SWI-Prolog source: [src/pl-vmi.c](https://github.com/SWI-Prolog/swipl-devel/blob/master/src/pl-vmi.c), the `I_CUT`, `C_NOT` and `C_IFTHENELSE` instructions.
+- Robert Kowalski, [Algorithm = Logic + Control](https://www.doc.ic.ac.uk/~rak/papers/algorithm%20=%20logic%20+%20control.pdf), *Communications of the ACM* 22(7), 1979 ([doi:10.1145/359131.359136](https://doi.org/10.1145/359131.359136)).
+- Keith L. Clark, [Negation as Failure](https://www.doc.ic.ac.uk/~klc/NegAsFailure.pdf), in *Logic and Data Bases*, Plenum, 1978 ([doi:10.1007/978-1-4684-3384-5_11](https://doi.org/10.1007/978-1-4684-3384-5_11)).
+- Raymond Reiter, On Closed World Data Bases, in *Logic and Data Bases*, Plenum, 1978 ([doi:10.1007/978-1-4684-3384-5_3](https://doi.org/10.1007/978-1-4684-3384-5_3)).
+- Alain Colmerauer and Philippe Roussel, [The Birth of Prolog](http://alain.colmerauer.free.fr/alcol/ArchivesPublications/PrologHistory/19november92.pdf) (1992), on the origin of `dif`.
+- Leon Sterling and Ehud Shapiro, *The Art of Prolog*, 2nd ed., MIT Press, 1994, Chapter 11 "Cuts and Negation" (11.1 green cuts, 11.4 red cuts).
+- Patrick Blackburn, Johan Bos and Kristina Striegnitz, *Learn Prolog Now!*, [Chapter 10: Cuts and Negation](https://www.let.rug.nl/bos/lpn/lpnpage.php?pagetype=html&pageid=lpn-htmlch10).
+- Lab: [`labs/cut-and-negation.pl`](labs/cut-and-negation.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt cut-and-negation.pl`.

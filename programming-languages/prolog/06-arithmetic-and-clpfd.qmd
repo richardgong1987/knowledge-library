@@ -1,0 +1,427 @@
+---
+title: "Arithmetic and CLP(FD)"
+description: "Prolog arithmetic from is/2 to constraints: evaluation versus unification, the comparison operators, why is/2 runs only one way, library(clpfd) with domains and labeling, SEND + MORE = MONEY and N-queens."
+---
+
+## The problem
+
+You want the relation "Y is one more than X". Every relation in the earlier chapters ran in any direction ([Unification](02-unification.qmd) does not care which side is known), so you hope one definition answers both "what is one more than 3?" and "4 is one more than what?".
+
+The first attempt is `Y = X + 1`. With `X = 3` it gives `Y = 3+1`: a little tree with `+` at the root, not the number 4. `=` never calculates.
+
+The second attempt uses the built-in evaluator, `plus_one(X, Y) :- Y is X + 1`. Forwards it works. Backwards it stops with an error:
+
+```text
+?- plus_one(3, Y).
+Y = 4.
+
+?- plus_one(X, 4).
+ERROR: Arguments are not sufficiently instantiated
+```
+
+The same weakness shows up on a bigger scale in the puzzle SEND + MORE = MONEY, where every letter stands for a different digit. With `is/2` the only method is generate and test: choose digits for the 8 letters, compute, compare, and repeat. That is up to $10 \times 9 \times \dots \times 3 = 1{,}814{,}400$ assignments. This chapter shows how `is/2` works, why it is one-way, and how `library(clpfd)` makes integer arithmetic a relation again, solving the puzzle with almost no search.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A note, a calculator and a pencil
+
+- **`=` compares two notes.** The note that says "1 + 2" is not the note that says "3", even though they mean the same amount. `=` only checks that the notes match letter by letter (after filling in blanks).
+- **`is` is a pocket calculator.** Type `1 + 2`, press the equals key, and it shows 3. But a calculator cannot answer "something + 1 = 4": it needs every number before you press the key.
+- **CLP(FD) is a Sudoku solved with a pencil.** You write the digits that are still possible in small print in each square, rub out the ones that cannot work, and guess only when nothing more can be rubbed out. If a guess leads to a contradiction, you rub back to the guess and try the next digit.
+
+Markus Triska, who wrote `library(clpfd)`, says in the SWI-Prolog manual that arithmetic constraints "are true relations and can be used in all directions", and that `#=/2` "subsumes both (is)/2 and (=:=)/2 over integers". His online book *The Power of Prolog* adds: "It is highly advisable to make CLP(FD) or CLP(ℤ) constraints automatically available in all your programs, since almost all Prolog programs also reason about integers."
+:::
+
+## From simple to advanced
+
+### Level 1: `=` builds a term, `is/2` evaluates it
+
+`1 + 2` is not a number. It is the compound term `+(1, 2)`, written with an operator so it is easy to read. `=` unifies terms and never looks inside them for arithmetic; `is/2` evaluates its right side and unifies the result with its left side.
+
+```text
+?- X = 1 + 2.
+X = 1+2.
+
+?- X is 1 + 2.
+X = 3.
+
+?- X = 1 + 2 * 3, write_canonical(X).
++(1,*(2,3))
+X = 1+2*3.
+```
+
+`write_canonical/1` prints the tree without operators: `*` binds tighter than `+`, so `2 * 3` is a subtree. Evaluation walks that tree from the leaves up:
+
+$$
+\operatorname{eval}(t) =
+\begin{cases}
+t & \text{if } t \text{ is a number} \\
+\operatorname{eval}(a) \oplus \operatorname{eval}(b) & \text{if } t = a \oplus b \\
+\text{instantiation error} & \text{if } t \text{ is an unbound variable}
+\end{cases}
+$$
+
+where
+
+- $t$ is the term on the right of `is`;
+- $\oplus$ stands for any evaluable operator (`+`, `-`, `*`, `/`, `//`, `mod`, `**` and others), and $a$ and $b$ are its left and right subterms;
+- "instantiation error" means evaluation stops with an exception, because a value it needs is missing.
+
+Example, for `1 + 2 * 3`: $\operatorname{eval}(1 + 2 \cdot 3) = \operatorname{eval}(1) + \operatorname{eval}(2 \cdot 3) = 1 + (2 \times 3) = 1 + 6 = 7$. Then `is/2` unifies the left side with 7, so `X is 1 + 2 * 3` binds `X = 7` and `7 is 1 + 2 * 3` simply succeeds.
+
+The operators you meet most often, with the values the lab checks:
+
+| Expression | Value | Rule |
+|---|---|---|
+| `7 / 2` | `3.5` | `/` gives a float when the division is not exact |
+| `4 / 2` | `2` | and an integer when it is |
+| `7 // 2` | `3` | integer division, truncating toward zero |
+| `-7 // 2` | `-3` | toward zero, so not $-4$ |
+| `-7 div 2` | `-4` | `div` rounds toward minus infinity (floor) |
+| `-7 mod 2` | `1` | `mod` takes the sign of the divisor and pairs with `div` |
+| `2 ** 100` | `1267650600228229401496703205376` | integers have no fixed size |
+
+### Level 2: comparison evaluates both sides
+
+The six arithmetic comparisons evaluate **both** sides and compare the numbers. Two look-alikes do not evaluate at all: `==` asks whether two terms are identical, and `=` tries to unify them.
+
+| Goal | Meaning | `1 + 2` against `3` |
+|---|---|---|
+| `A =:= B` | the values are equal | true |
+| `A =\= B` | the values differ | false |
+| `A < B`, `A > B` | less than, greater than | false, false |
+| `A =< B`, `A >= B` | at most, at least (note `=<`, not `<=`) | true, true |
+| `A == B` | the same term, symbol for symbol | false |
+| `A = B` | the terms unify | false |
+
+$$
+A \mathbin{\texttt{=:=}} B \iff \operatorname{eval}(A) = \operatorname{eval}(B), \qquad A \mathbin{\texttt{==}} B \iff A \equiv B
+$$
+
+where
+
+- $A$ and $B$ are the two terms being compared;
+- $\operatorname{eval}$ is the evaluation from Level 1;
+- $A \equiv B$ means the two terms are the same tree: same functors, same arguments, same variables.
+
+Example: with $A = 1 + 2$ and $B = 3$, $\operatorname{eval}(A) = 3 = \operatorname{eval}(B)$, so `1 + 2 =:= 3` is true. But $A$ is the tree `+(1,2)` and $B$ is the number `3`, so $A \not\equiv B$ and `1 + 2 == 3` is false. The same split shows up between integers and floats:
+
+```text
+?- 1 + 2 =:= 3.
+true.
+
+?- 1 + 2 == 3.
+false.
+
+?- 2 =:= 2.0.
+true.
+
+?- 2 == 2.0.
+false.
+```
+
+### Level 3: `is/2` works in one direction only
+
+```prolog
+% Level 3: is/2 evaluates its right-hand side, so X must already be a number.
+plus_one(X, Y) :- Y is X + 1.
+```
+
+```text
+?- plus_one(3, Y).
+Y = 4.
+
+?- plus_one(X, 4).
+ERROR: Arguments are not sufficiently instantiated
+ERROR: In:
+ERROR:   [13] 4 is _14142+1
+```
+
+The last line names the culprit: the goal `4 is _14142+1`, where `_14142` is the unbound `X` (the number differs from run to run). By the third case of $\operatorname{eval}$, the evaluator hits a variable and throws the ISO error term `error(instantiation_error, context(system:(is)/2, _))`, which the lab catches and checks. `is/2` is a function call in disguise: the right side is the input, the left side is the output, and Prolog has no way to run `+` backwards.
+
+A second consequence surprises people coming from other languages: a variable cannot be "incremented". Once `X = 3`, the goal `X is X + 1` asks whether 3 equals 4, and simply fails. You write `X1 is X + 1` with a new name instead, as in [Recursion](04-recursion.qmd).
+
+### Level 4: `#=` makes integer arithmetic a relation
+
+`library(clpfd)` defines `#=`, `#\=`, `#<`, `#>`, `#=<` and `#>=`. They mean the same as their plain cousins on integers, but they are **constraints**: if a value is missing, the goal is not an error, it is remembered until more is known.
+
+```prolog
+% Level 4: #= states a relation between integers, so it runs both ways.
+plus_one_fd(X, Y) :- Y #= X + 1.
+```
+
+```text
+?- plus_one_fd(3, Y).
+Y = 4.
+
+?- plus_one_fd(X, 4).
+X = 3.
+
+?- plus_one_fd(X, Y).
+X+1#=Y.
+```
+
+The third answer is a **residual constraint**: Prolog says "this is true provided `X+1#=Y` holds". Binding `X = 10` later wakes the constraint up and gives `Y = 11`; the lab checks this. As a set, `plus_one_fd` describes
+
+$$
+R = \lbrace (x, y) \in \mathbb{Z}^2 \mid y = x + 1 \rbrace
+$$
+
+where
+
+- $\mathbb{Z}^2$ is the set of all pairs of integers;
+- $(x, y)$ is one pair, $x$ for `X` and $y$ for `Y`;
+- $R$ is the relation: the pairs that make $y = x + 1$ true.
+
+Example: `plus_one_fd(3, Y)` asks for $\lbrace y \mid (3, y) \in R \rbrace = \lbrace 4 \rbrace$, and `plus_one_fd(X, 4)` asks for $\lbrace x \mid (x, 4) \in R \rbrace = \lbrace 3 \rbrace$, because $3 + 1 = 4$. One definition, both directions.
+
+### Level 5: domains, propagation and labeling
+
+Each CLP(FD) variable has a **domain**, the set of integers it may still take. `X in 1..5` sets one domain and `[X, Y] ins 0..3` sets several. Every new constraint **propagates**: it removes values that cannot appear in any solution.
+
+```text
+?- X in 1..5, X #> 3.
+X in 4..5.
+
+?- [X, Y] ins 0..3, X + Y #= 5.
+X in 2..3,
+X+Y#=5,
+Y in 2..3.
+```
+
+The second answer comes from bounds reasoning on a sum. For $X + Y = s$:
+
+$$
+\min X \ge s - \max Y, \qquad \max X \le s - \min Y
+$$
+
+where
+
+- $s$ is the required sum;
+- $\min X$ and $\max X$ are the smallest and largest values left in the domain of $X$, and likewise for $Y$.
+
+Example, with $s = 5$ and both domains $0..3$: $\min X \ge 5 - 3 = 2$ and $\max X \le 5 - 0 = 5$, so $X$ shrinks from $0..3$ to $2..3$. By symmetry $Y$ also becomes $2..3$. Running the rule again gives $\max X \le 5 - 2 = 3$, which removes nothing, so propagation stops.
+
+Propagation alone rarely picks one value. **Labeling** does the search: `label/1` takes the variables from left to right, tries each value of the domain in increasing order, propagates after every choice, and backtracks on failure. `labeling/2` takes options such as `down` (largest value first) or `ff` (first the variable with the smallest domain).
+
+```text
+?- [X, Y] ins 0..3, X + Y #= 5, label([X, Y]).
+X = 2,
+Y = 3 ;
+X = 3,
+Y = 2.
+
+?- X in 1..3, labeling([down], [X]).
+X = 3 ;
+X = 2 ;
+X = 1.
+```
+
+### Level 6: SEND + MORE = MONEY
+
+Henry Dudeney published this puzzle in the July 1924 issue of *The Strand Magazine*. Write each word as a number with place values:
+
+$$
+\begin{aligned}
+& 1000S + 100E + 10N + D \\
++\; & 1000M + 100O + 10R + E \\
+=\; & 10000M + 1000O + 100N + 10E + Y
+\end{aligned}
+$$
+
+where
+
+- each capital letter is one decimal digit, an integer from 0 to 9;
+- different letters are different digits;
+- $S \ne 0$ and $M \ne 0$, because a number does not start with 0;
+- the factors 10000, 1000, 100, 10 and 1 are the place values of a five-digit and a four-digit number.
+
+Example with the solution $S, E, N, D = 9, 5, 6, 7$, $M, O, R = 1, 0, 8$ and $Y = 2$: the first line is $9000 + 500 + 60 + 7 = 9567$, the second is $1000 + 0 + 80 + 5 = 1085$, and the third is $10000 + 0 + 600 + 50 + 2 = 10652$. Indeed $9567 + 1085 = 10652$.
+
+The program is the math written down:
+
+```prolog
+% Level 6: eight letters, eight different digits, one sum.
+send_more_money([S,E,N,D,M,O,R,Y]) :-
+    Digits = [S,E,N,D,M,O,R,Y],
+    Digits ins 0..9,
+    all_different(Digits),
+    S #\= 0,
+    M #\= 0,
+    1000*S + 100*E + 10*N + D + 1000*M + 100*O + 10*R + E
+        #= 10000*M + 1000*O + 100*N + 10*E + Y.
+```
+
+Before any labeling, propagation has already done most of the work:
+
+```text
+?- send_more_money(Ds).
+Ds = [9, _A, _B, _C, 1, 0, _D, _E],
+_A in 4..7,
+all_different([9, _A, _B, _C, 1, 0, _D, _E]),
+91*_A+_C+10*_D#=90*_B+_E,
+_B in 5..8,
+_C in 2..8,
+_D in 2..8,
+_E in 2..8.
+
+?- send_more_money(Ds), label(Ds).
+Ds = [9, 5, 6, 7, 1, 0, 8, 2] ;
+false.
+```
+
+Why is $M = 1$ certain? Two four-digit numbers add up to at most $9999 + 9999 = 19998$, so MONEY is below 20000 and its first digit $M$ is at most 1; with $M \ne 0$, $M = 1$. Similar bounds reasoning fixes $S = 9$ and $O = 0$. Substituting those three values, the thousands cancel and what remains is the residual equation printed above: $91E + D + 10R = 90N + Y$, with $E$ as `_A`, $N$ as `_B`, $D$ as `_C`, $R$ as `_D` and $Y$ as `_E`. The remaining search space is at most $4 \times 4 \times 7 \times 7 \times 7 = 5488$ combinations instead of 1,814,400, and the final `false` says there is no second solution.
+
+### Level 7: N-queens
+
+Place $N$ queens on an $N \times N$ chessboard so that no two attack each other. Max Bezzel posed the 8-queen version in 1848. Put one queen in each column and let $q_i$ be the row of the queen in column $i$. Then two queens in columns $i < j$ are safe exactly when
+
+$$
+q_i \ne q_j \;\land\; |q_i - q_j| \ne j - i
+$$
+
+where
+
+- $i$ and $j$ are column numbers, with $i < j$;
+- $q_i$ and $q_j$ are the rows of the two queens;
+- $q_i \ne q_j$ says they are not in the same row;
+- $|q_i - q_j| \ne j - i$ says they are not on the same diagonal: on a diagonal, the row distance equals the column distance;
+- $\land$ means "and".
+
+Example with the 4-queen answer $q = (2, 4, 1, 3)$: the rows are all different, and the six pairs give $|2-4| = 2 \ne 1$, $|2-1| = 1 \ne 2$, $|2-3| = 1 \ne 3$, $|4-1| = 3 \ne 1$, $|4-3| = 1 \ne 2$ and $|1-3| = 2 \ne 1$. All safe:
+
+```text
+        column 1 2 3 4
+row 1          . . Q .
+row 2          Q . . .
+row 3          . . . Q
+row 4          . Q . .
+```
+
+The program posts exactly these constraints, one pair at a time. `no_attack(Q, Qs, D)` compares queen `Q` with every queen to its right, and `D` counts how many columns apart they are:
+
+```prolog
+% Level 7: Qs lists, column by column, the row of each queen.
+queens(N, Qs) :-
+    length(Qs, N),
+    Qs ins 1..N,
+    safe(Qs).
+
+safe([]).
+safe([Q|Qs]) :- no_attack(Q, Qs, 1), safe(Qs).
+
+% D is how many columns apart Q and Q1 are.
+no_attack(_, [], _).
+no_attack(Q, [Q1|Qs], D) :-
+    Q #\= Q1,
+    abs(Q - Q1) #\= D,
+    D1 #= D + 1,
+    no_attack(Q, Qs, D1).
+```
+
+```text
+?- queens(4, Qs), label(Qs).
+Qs = [2, 4, 1, 3] ;
+Qs = [3, 1, 4, 2] ;
+false.
+
+?- queens(8, Qs), label(Qs).
+Qs = [1, 5, 8, 6, 3, 7, 2, 4] .
+```
+
+The lab also counts all 8-queen solutions with `aggregate_all(count, ...)` and gets 92. Generate and test would face $8^8 = 16{,}777{,}216$ boards; propagation prunes every row and diagonal clash the moment a queen is placed.
+
+## How it works underneath
+
+**`is/2` is a tree walk in C.** In SWI-Prolog, `is/2` hands the term to `evalExpression()` in `src/pl-arith.c`. The source comment explains that it uses its own stacks instead of the C stack, so deeply nested terms such as a long chain `((1+2)+3)+...` cannot overflow the machine stack. Each functor is looked up in a table of evaluable functions; an unbound variable raises `instantiation_error` and an unknown name such as `foo` raises the error `` Arithmetic: `foo/0' is not a function ``. Integers are unbounded (the flag `bounded` is `false`): small ones are stored inside a tagged machine word (on this 64-bit build the flag `max_tagged_integer` is $2^{56} - 1 = 72057594037927935$) and larger ones are GMP big numbers. That is why `2 ** 100` is exact.
+
+**A CLP(FD) variable is an attributed variable.** `X in 1..5` does not bind `X`. It attaches an *attribute* to it, a hidden record holding the domain and the list of propagators that mention `X`. Each constraint becomes one or more **propagators**: small procedures that read the domains of their variables and narrow them. When a domain changes, the propagators attached to that variable are queued and run again, until nothing changes:
+
+$$
+D^{(k+1)} = D^{(k)} \cap \bigcap_{p \in P} p\big(D^{(k)}\big), \qquad \text{stop when } D^{(k+1)} = D^{(k)}
+$$
+
+where
+
+- $D^{(k)}$ gives every variable its domain after round $k$ of propagation;
+- $P$ is the set of propagators, one or more per posted constraint;
+- $p(D)$ is the domains that propagator $p$ still allows, given $D$;
+- $\cap$ intersects: a value survives only if every propagator allows it.
+
+Example, from Level 5 with $P = \lbrace X + Y = 5 \rbrace$: $D^{(0)}$ has $X, Y \in 0..3$; the bounds rule gives $D^{(1)}$ with $X, Y \in 2..3$; applying it again gives $D^{(2)} = D^{(1)}$, so the loop stops after two rounds. Because propagators only ever remove values, the loop must stop: each domain is finite and can only shrink.
+
+When a domain shrinks to a single value the variable is unified with it, which is how `send_more_money` bound `S = 9` without labeling. In the other direction, unifying a constrained variable with a number (as in `P = 10`) calls the library's unification hook, which checks the domain and wakes the propagators. Labeling is ordinary Prolog backtracking on top: for the chosen variable it tries `X = V` and, on backtracking, `X #\= V`, propagating after each step.
+
+The toplevel prints residual goals such as `X+1#=Y` by asking each attribute to describe itself; `copy_term/3` gives you the same list as data, and the lab uses it to check that answer. Propagation is deliberately incomplete, for speed: it may stop with domains that contain no solution at all. The answer is then **conditional**, and only labeling settles it (interview question 3). The design is described in Triska's paper *The Finite Domain Constraint Solver of SWI-Prolog* (FLOPS 2012). The SWI-Prolog manual notes that development of the library has since moved to SICStus Prolog as `library(clpz)`; `library(clpfd)` remains bundled with SWI-Prolog 10.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `X = 1 + 2` and expecting 3 | `X = 1+2` | Use `X is 1 + 2`, or `X #= 1 + 2` for integers |
+| `X is X + 1` to increment | `false` | Use a new variable: `X1 is X + 1` |
+| `Y is X + 1` before `X` is known | `Arguments are not sufficiently instantiated` | Bind `X` first, or use `Y #= X + 1` |
+| Writing `<=` | `Syntax error: Operator expected` | Prolog spells it `=<` |
+| `1 + 2 == 3` to compare numbers | `false` | `==` compares terms; use `1 + 2 =:= 3` |
+| `X is foo + 1` | `` Arithmetic: `foo/0' is not a function `` | Only numbers and evaluable functions may appear on the right of `is` |
+| `X #= 1.5` | ``Domain error: `clpfd_expression' expected, found `1.5'`` | CLP(FD) is for integers only; use `is/2` for floats |
+| Forgetting `label/1` | The answer lists domains and constraints instead of numbers | Call `label(Vars)` once all constraints are posted |
+| Labeling first, constraining second | Slow: it is generate and test again | Post every constraint, then label |
+
+## Interview questions
+
+### 1. What is the difference between `=`, `==`, `=:=` and `is`?
+
+**Answer.** `=` unifies two terms and may bind variables; it never evaluates, so `X = 1 + 2` gives the term `1+2`. `==` tests whether two terms are already identical, binds nothing and never evaluates: `1 + 2 == 3` is false. `=:=` evaluates both sides, which must be ground, and compares the numbers: `1 + 2 =:= 3` and `2 =:= 2.0` are true. `is` evaluates only its right side and unifies the number with its left side: `X is 1 + 2` gives `X = 3`.
+
+### 2. Why does `plus_one(X, 4)` raise an error, and how does `#=` avoid it?
+
+**Answer.** `is/2` is a one-way evaluator: it must compute the number on the right before it can unify, and the evaluation reaches the unbound `X` and throws `instantiation_error` ("Arguments are not sufficiently instantiated"). `#=` is a constraint: with missing values it records the relation instead of computing, and propagation deduces values when it can. `Y #= X + 1` with `Y = 4` propagates $X = 4 - 1 = 3$; with neither known it leaves the residual `X+1#=Y`, which wakes up when either variable is bound.
+
+### 3. Is an answer with residual constraints always a real solution?
+
+**Answer.** No. Propagation is incomplete, so a residual answer means "true if these constraints can be satisfied". Three variables with domain $0..1$ cannot all differ, since there are only 2 values for 3 variables, yet `all_different/1` only reacts to bound values and lets the query succeed with residual goals. `all_distinct/1` reasons about the domains and fails at once, and labeling the `all_different` version fails too:
+
+```prolog
+% Three variables, two possible values: they cannot all differ.
+three_bits(Constraint, Vs) :-
+    Vs = [_, _, _],
+    Vs ins 0..1,
+    call(Constraint, Vs).
+```
+
+The lab checks all three facts: `three_bits(all_different, _)` succeeds, `three_bits(all_distinct, _)` fails, and adding `label/1` to the first one fails. To be sure an answer is a solution, label all variables.
+
+### 4. Why is CLP(FD) so much faster than generate and test on N-queens?
+
+**Answer.** Generate and test builds a complete board and only then checks it: $8^8 = 16{,}777{,}216$ boards for $N = 8$. With constraints, placing a queen immediately removes its row and both diagonals from the domains of every other column, and a column whose domain becomes empty fails at once, cutting off that whole subtree of the search before it is built. The work moves from search into propagation. The same program finds both 4-queen solutions and counts all 92 8-queen solutions in milliseconds.
+
+### 5. Why is `-7 // 2` equal to `-3` but `-7 div 2` equal to `-4`?
+
+**Answer.** They round differently. `//` truncates toward zero (SWI-Prolog's flag `integer_rounding_function` is `toward_zero`), so $-3.5$ becomes $-3$. `div` rounds toward minus infinity, so $-3.5$ becomes $-4$. Each pairs with its own remainder: `rem` for `//` and `mod` for `div`, so that `-7 =:= 2 * (-7 div 2) + (-7 mod 2)`, that is $2 \times (-4) + 1 = -7$.
+
+## Summary
+
+$$
+\texttt{Y is E} \;\Rightarrow\; Y = \operatorname{eval}(E) \text{ with } E \text{ fully known}, \qquad \texttt{Y}\ \#{=}\ \texttt{E} \iff Y = E \text{ over } \mathbb{Z}
+$$
+
+where $Y$ is the left-hand side, $E$ is an arithmetic expression, $\operatorname{eval}$ is the evaluation of Level 1, and $\mathbb{Z}$ is the set of integers.
+
+Example: `Y is 3 + 1` computes $\operatorname{eval}(3 + 1) = 4$ and binds `Y = 4`, but `4 is X + 1` cannot run with `X` unknown. `4 #= X + 1` is a statement about integers that holds for exactly one value, so CLP(FD) answers `X = 3`.
+
+- `=` unifies, `==` compares terms, `is` and the six comparisons evaluate.
+- `is/2` needs every variable on its right bound; otherwise it throws `instantiation_error`.
+- Integers are unbounded; `/` may give a float; `//` truncates and `div` floors.
+- For integers, prefer `#=` and friends from `library(clpfd)`: they work in every direction.
+- A CLP(FD) program posts constraints first, then labels. Propagation narrows domains; labeling searches what is left.
+
+## References
+
+- SWI-Prolog manual: [Arithmetic](https://www.swi-prolog.org/pldoc/man?section=arith) and [library(clpfd)](https://www.swi-prolog.org/pldoc/man?section=clpfd), including the sections on arithmetic constraints, domains and labeling.
+- SWI-Prolog source: [src/pl-arith.c](https://github.com/SWI-Prolog/swipl-devel/blob/master/src/pl-arith.c), the arithmetic evaluator.
+- Markus Triska, [The Finite Domain Constraint Solver of SWI-Prolog](https://www.metalevel.at/swiclpfd.pdf), FLOPS 2012, LNCS 7294, pp. 307–316.
+- Markus Triska, *The Power of Prolog*: [CLP(FD) and CLP(ℤ): Prolog Integer Arithmetic](https://www.metalevel.at/prolog/clpfd).
+- [Verbal arithmetic](https://en.wikipedia.org/wiki/Verbal_arithmetic) (Dudeney's SEND + MORE = MONEY, 1924) and the [Eight queens puzzle](https://en.wikipedia.org/wiki/Eight_queens_puzzle) (Bezzel, 1848; 92 solutions).
+- Lab: [`labs/arithmetic-and-clpfd.pl`](labs/arithmetic-and-clpfd.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt arithmetic-and-clpfd.pl`.

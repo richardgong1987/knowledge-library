@@ -1,0 +1,324 @@
+---
+title: "Recursion"
+description: "Recursive definitions in Prolog: ancestor, Peano numbers, why the base case goes first, termination arguments with a decreasing measure, tail recursion and last-call optimisation, mutual recursion, and the link to induction."
+---
+
+## The problem
+
+Who are Jim's ancestors? In the family from [Facts, Rules and Queries](01-facts-rules-and-queries.qmd), Pat is his parent, Bob his grandparent, and Pam and Tom his great-grandparents. With only non-recursive rules you would need `parent`, `grandparent`, `great_grandparent`, and one more rule for every generation a family might have. There is no last one to write.
+
+Prolog has no loops either: no `for`, no `while`. Both problems have the same answer, **recursion**: a definition that uses itself on a smaller problem. "An ancestor is a parent, or a parent of an ancestor" covers every generation in two clauses.
+
+Recursion also has three classic ways to go wrong in Prolog, and this chapter names each with a fix: a definition that never produces its first answer (base case in the wrong place), one that never finishes (no decreasing measure), and one that runs out of stack on large inputs (work left over after the recursive call).
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Russian dolls and dominoes
+
+- **Russian dolls.** To count a set of nested dolls, open the outer doll, count **one**, and then count the dolls inside it **the same way**. The smallest doll does not open: it just counts as one. That smallest doll is the **base case**. Each doll you open is smaller than the last, so you are sure to reach it.
+- **Dominoes.** If the first domino falls, and every domino knocks over the next one, then all of them fall. That is **mathematical induction**, and it is the same idea read the other way: recursion breaks a big problem down to the base case; induction builds the truth up from it.
+
+Giuseppe Peano wrote down the rules for counting this way in 1889: start with a first number, and every number has a next one. He started at 1; Prolog programmers start at 0 and write "the next one after N" as `s(N)`. Sterling and Shapiro's *The Art of Prolog* opens its chapter on recursive programming with arithmetic on these numbers.
+:::
+
+## From simple to advanced
+
+### Level 1: a base case and a recursive case
+
+```prolog
+% Level 1: the base case first, then one step plus a smaller problem.
+ancestor(X, Z) :- parent(X, Z).
+ancestor(X, Z) :- parent(X, Y), ancestor(Y, Z).
+```
+
+Declaratively: X is an ancestor of Z if X is a parent of Z, **or** if X is a parent of some Y who is an ancestor of Z. Procedurally: to find an ancestor, try a direct parent first; otherwise take one step down from X to a child Y and solve the same problem from there.
+
+```text
+?- ancestor(A, jim).
+A = pat ;
+A = pam ;
+A = tom ;
+A = bob ;
+false.
+```
+
+The order follows the search from [Resolution and Backtracking](03-resolution-and-backtracking.qmd). The first clause gives Pat. The second clause then tries each `parent(A, Y)` fact in order: `parent(pam, bob)` leads, through Bob and Pat, to Jim, so Pam comes next; then Tom through Bob; `parent(tom, liz)` leads nowhere; then Bob through Pat. The lab also checks the other direction: `ancestor(tom, D)` gives `bob, liz, ann, pat, jim`.
+
+### Level 2: Peano numbers
+
+Numbers themselves can be defined recursively. Zero is `0`, and `s(N)` is "the successor of N", one more than N. So 2 is `s(s(0))`:
+
+```prolog
+% Level 2: Peano numbers. 0 is zero, s(N) is "one more than N".
+nat(0).
+nat(s(N)) :- nat(N).
+
+add(0, Y, Y).
+add(s(X), Y, s(Z)) :- add(X, Y, Z).
+```
+
+`add/3` is a direct copy of two equations from school arithmetic:
+
+$$
+\begin{aligned}
+0 + y &= y \\
+s(x) + y &= s(x + y)
+\end{aligned}
+$$
+
+where
+
+- $0$ is zero and $s(x)$ is the successor of $x$, that is $x + 1$;
+- $x$ and $y$ are any natural numbers written in this notation;
+- the first line is the base case, the second line the recursive case.
+
+Example, $2 + 1$:
+
+1. $s(s(0)) + s(0) = s\big(s(0) + s(0)\big)$ by the second line.
+2. $s(0) + s(0) = s\big(0 + s(0)\big)$ by the second line again.
+3. $0 + s(0) = s(0)$ by the first line.
+4. Putting it together: $s(s(s(0)))$, which is 3.
+
+```text
+?- add(s(s(0)), s(0), Sum).
+Sum = s(s(s(0))).
+
+?- add(X, Y, s(s(0))).
+X = 0,
+Y = s(s(0)) ;
+X = Y, Y = s(0) ;
+X = s(s(0)),
+Y = 0 ;
+false.
+```
+
+The second query runs `add` **backwards**: which two numbers add up to 2? There are $2 + 1 = 3$ ways. The same shape returns in [Lists](05-lists.qmd), where `append/3` splits a list of length $n$ in $n + 1$ ways.
+
+### Level 3: termination, and the base case first
+
+Why does `add(s(s(0)), s(0), Sum)` stop? Measure the first argument by counting its `s` symbols:
+
+$$
+\mu(0) = 0, \qquad \mu(s(x)) = \mu(x) + 1
+$$
+
+where
+
+- $\mu$ (the Greek letter mu) is the **measure**, a function from terms to natural numbers;
+- $x$ is any Peano number, so $\mu(s^n(0)) = n$, where $s^n$ means $n$ nested `s`.
+
+Every recursive call of `add` goes from the head `add(s(X), ...)` to the call `add(X, ...)`, so the measure drops by exactly 1. A natural number cannot drop below 0, so after at most $\mu$ calls the base case must be reached.
+
+Example: in `add(s(s(0)), s(0), Sum)` the measure goes $2 \to 1 \to 0$, so there are 2 recursive calls plus the first one, 3 calls in all. The lab checks that a budget of 3 inferences is enough and 2 is not:
+
+```prolog
+% Level 3: the measure of the first argument falls 2, 1, 0: exactly 3 calls.
+level3_measure :-
+    call_with_inference_limit(add(s(s(0)), s(0), _), 3, Enough),
+    assertion(Enough == !),
+    call_with_inference_limit(add(s(s(0)), s(0), _), 2, TooFew),
+    assertion(TooFew == inference_limit_exceeded).
+```
+
+The measure depends on how the predicate is called. In `add(X, Y, s(s(0)))` the first argument is unknown, but the **third** shrinks from `s(Z)` in the head to `Z` in the call, so that query terminates too. In `add(X, s(0), Z)` neither shrinks, and Prolog lists `X = 0`, `X = s(0)`, `X = s(s(0))` and so on forever: there really are infinitely many answers. For `ancestor(X, Z)` with `X` known, the measure is the **height** of X, the length of the longest chain of parent facts going down from it: Tom 3, Bob 2, Pat 1, Jim 0. Each recursive call moves from a person to their child, so the height falls.
+
+A measure proves that the recursion **can** reach the base case. The clause order decides whether Prolog **tries** the base case before diving deeper. Here is `nat` with its clauses swapped:
+
+```prolog
+% Level 3: the same definition with the base case second.
+nat_bad(s(N)) :- nat_bad(N).
+nat_bad(0).
+```
+
+`nat_bad(s(s(0)))` still succeeds: the argument is given, the measure falls, and the first clause stops matching at `0`. But the generator `nat_bad(X)` never produces anything. The first clause always matches an unbound `X`, so Prolog builds `s(s(s(...)))` deeper and deeper and never gets to try `nat_bad(0)`. The lab shows it exhausting a 10,000-inference budget. The rule: **put the base case first**, so that a generator gives its smallest answer first.
+
+### Level 4: tail recursion and last-call optimisation
+
+Two ways to add up $1 + 2 + \dots + N$:
+
+```prolog
+% Level 4: work after the recursive call keeps every frame alive.
+sum_to(0, 0).
+sum_to(N, S) :-
+    N > 0,
+    N1 is N - 1,
+    sum_to(N1, S1),
+    S is S1 + N.
+
+% The accumulator version: the recursive call is the last goal.
+sum_acc(0, S, S).
+sum_acc(N, S0, S) :-
+    N > 0,
+    S1 is S0 + N,
+    N1 is N - 1,
+    sum_acc(N1, S1, S).
+```
+
+Both give 10 for $N = 4$. The difference is what remains to do when the recursive call starts. `sum_to` still has `S is S1 + N` waiting, so its frame, holding `N` and `S1`, must stay on the stack until the call returns: $N + 1$ frames at the deepest point. In `sum_acc` the recursive call is the **last** goal, so nothing in the current frame is needed any more. SWI-Prolog then reuses the frame for the call. The manual's condition is that *"no choice points have been created since the invocation and the last subclause is started (last call optimisation)."* A tail-recursive predicate runs in constant stack space, like a loop.
+
+The accumulator `S0` carries the sum so far. What `sum_acc` computes is fixed by one invariant:
+
+$$
+S = S_0 + \frac{N(N + 1)}{2}
+$$
+
+where
+
+- $N$ is the count still to add, the first argument;
+- $S_0$ is the accumulator, the total of the numbers already added;
+- $S$ is the final answer, the third argument, passed down unchanged;
+- $\frac{N(N+1)}{2}$ is $1 + 2 + \dots + N$, the formula for triangular numbers.
+
+Example, `sum_acc(4, 0, S)`: the pairs $(N, S_0)$ go $(4, 0) \to (3, 4) \to (2, 7) \to (1, 9) \to (0, 10)$, and the base clause sets $S = 10$. Check the invariant halfway, at $(2, 7)$: $7 + \frac{2 \cdot 3}{2} = 7 + 3 = 10$. Every step keeps it true, and at $N = 0$ it says $S = S_0$, which is exactly the base clause.
+
+The lab makes the stack difference visible. It lowers the stack limit to 20 MB and runs both with $N = 1{,}000{,}000$:
+
+```prolog
+level4_last_call :-
+    sum_to(4, S4),
+    sum_acc(4, 0, A4),
+    assertion(S4-A4 == 10-10),
+    current_prolog_flag(stack_limit, Old),
+    set_prolog_flag(stack_limit, 20_000_000),
+    sum_acc(1_000_000, 0, Big),
+    catch(sum_to(1_000_000, _), Error, true),
+    set_prolog_flag(stack_limit, Old),
+    assertion(Big == 500_000_500_000),
+    assertion(Error = error(resource_error(stack), _)).
+```
+
+`sum_acc` returns $\frac{10^6 (10^6 + 1)}{2} = 500{,}000{,}500{,}000$. `sum_to` overflows the stack.
+
+### Level 5: mutual recursion
+
+Two predicates may call each other. A number is even if it is 0 or the successor of an odd number; it is odd if it is the successor of an even number:
+
+```prolog
+% Level 5: mutual recursion.
+even(0).
+even(s(N)) :- odd(N).
+
+odd(s(N)) :- even(N).
+```
+
+```text
+?- even(s(s(s(s(0))))).
+true.
+```
+
+The termination argument is the same as before, applied across both predicates: every call, from `even` to `odd` or back, removes one `s`, so the measure falls by 1 per call. For 4 the chain is `even(4)`, `odd(3)`, `even(2)`, `odd(1)`, `even(0)`, and `even(0)` is a fact. `odd/1` has no base clause of its own: `odd(0)` simply has no matching clause, so it fails, which is why `even(s(0))` is false. The lab checks all three cases.
+
+### Level 6: recursion is induction run backwards
+
+A recursive predicate and a proof by induction have the same two parts. The principle of induction on Peano numbers is:
+
+$$
+\Big( P(0) \;\land\; \forall n \, \big( P(n) \Rightarrow P(s(n)) \big) \Big) \;\Rightarrow\; \forall n \; P(n)
+$$
+
+where
+
+- $P(n)$ is any statement about the number $n$;
+- $P(0)$ is the **base case**, matching the base clause;
+- $P(n) \Rightarrow P(s(n))$ is the **inductive step**, matching the recursive clause;
+- $\forall n$ reads "for every natural number $n$".
+
+Example, with $P(n)$ = "`add(n, 0, n)` is provable":
+
+1. Base case: `add(0, 0, 0)` follows from the clause `add(0, Y, Y)` with $Y = 0$.
+2. Step: if `add(n, 0, n)` holds, the clause `add(s(X), Y, s(Z)) :- add(X, Y, Z)` with $X = n$, $Y = 0$, $Z = n$ gives `add(s(n), 0, s(n))`.
+3. For $n = 2$: `add(0, 0, 0)` gives `add(s(0), 0, s(0))`, which gives `add(s(s(0)), 0, s(s(0)))`.
+
+The lab cannot check infinitely many numbers, but it checks the first six:
+
+```prolog
+% Level 6: induction. add(N, 0, N) holds for 0 and is carried from N to s(N).
+induction_check :-
+    once(findnsols(6, N, nat(N), Ns)),
+    assertion(forall(member(M, Ns), add(M, 0, M))).
+```
+
+The same correspondence is the way to **write** recursive predicates: decide what the base case is, then assume the predicate already works for the smaller argument and write the one step that extends it. For lists, the smaller argument is the tail, and the base case is `[]` ([Lists](05-lists.qmd)).
+
+## How it works underneath
+
+Each call to a clause body allocates an **environment frame** on SWI-Prolog's local stack. The frame holds the clause's variables and the **continuation**: which goal to run after the current one returns. A frame can be dropped when the clause exits without leaving choice points, or earlier, at the last call, if no choice points were created since the clause was entered. That is last-call optimisation, and SWI-Prolog has a flag for it, `last_call_optimisation`, on by default.
+
+Two things block it.
+
+**Work after the call.** In `sum_to`, `S is S1 + N` comes after the recursive call, so the frame must survive. Running `sum_to(1000000, S)` with `swipl --stack-limit=20m` stops with this report (the `ERROR:` prefixes removed):
+
+```text
+Stack limit (20.0Mb) exceeded
+  Stack sizes: local: 16.0Mb, global: 1.3Mb, trail: 0Kb
+  Stack depth: 174,542, last-call: 0%, Choice points: 4
+  Possible non-terminating recursion:
+    [174,542] user:sum_to(825469, _102)
+    [174,541] user:sum_to(825470, _122)
+```
+
+That is 174,542 frames, `last-call: 0%`, but only 4 choice points: the stack filled with frames waiting to do their addition, not with alternatives. The recursion was not infinite; it was just too deep for 20 MB.
+
+**A choice point left behind.** If Prolog cannot tell that the other clauses will not match, it must keep a choice point, and then the frame must stay too, because backtracking might need it. Indexing is what prevents this. A call `sum_acc(5, ...)` has the integer 5 as its first argument; the first clause has `0`, so first-argument indexing rules it out, only the second clause remains, and no choice point is made. The same holds for `add`: `0` and `s(_)` are different, so `add(s(s(0)), s(0), Sum)` answers with a full stop. At the very end, `sum_acc(0, ...)` matches both clauses (the second has a plain variable `N`), so one choice point is left and the toplevel prints `S = 10 ;` followed by `false.`. The guard `N > 0` keeps that extra branch from giving a wrong answer; [Cut and Negation](07-cut-and-negation.qmd) shows how to remove it.
+
+Prolog's other loop is **failure-driven**: backtracking into a generator, as `forall/2` and `findall/3` do. It uses no extra stack per iteration either, because each iteration is undone before the next. [Accumulators and Difference Lists](08-accumulators-and-difference-lists.qmd) takes the accumulator idea further.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| No base case, or one that never matches | `Stack limit (1.0Gb) exceeded`, or plain `false` | Write the base case first and check that every recursive call moves toward it |
+| Base case after the recursive clause in a generator | `nat_bad(X)` never produces an answer | Put the base clause first |
+| No guard: `sum_bad(N, S) :- N1 is N - 1, ...` | The first answer is right; on backtracking `N` goes negative forever | Add `N > 0` so the recursive clause cannot apply at 0 |
+| Calling arithmetic with an unbound argument: `sum_to(N, 10)` | `>/2: Arguments are not sufficiently instantiated` | Arithmetic with `is` and `>` runs one way; for both ways use CLP(FD) ([Arithmetic and CLP(FD)](06-arithmetic-and-clpfd.qmd)) |
+| Work after the recursive call on large inputs | `Stack limit ... exceeded` with `last-call: 0%` | Rewrite with an accumulator so the recursive call is last |
+| Assuming termination in every mode | `add(X, s(0), Z)` lists answers forever | State which arguments must be known; argue with a measure for each mode |
+
+## Interview questions
+
+### 1. How do you prove that a recursive Prolog predicate terminates?
+
+**Answer.** Find a **measure**: a function $\mu$ from the arguments to the natural numbers that is strictly smaller in every recursive call than in the head. Since natural numbers cannot decrease forever, the recursion depth is at most $\mu$ of the first call. For `add(s(X), Y, s(Z)) :- add(X, Y, Z)`, $\mu$ = number of `s` in the first argument works when that argument is known; with the third argument known, the third one works instead. Termination is therefore a property of a predicate **and a calling mode**. For universal termination, every answer and the final `false`, the measure must fall on every branch, not only the first.
+
+### 2. What is last-call optimisation in Prolog, and what prevents it?
+
+**Answer.** When a clause calls its last goal and no choice point has been created since the clause was entered, the clause's frame is no longer needed, so the engine reuses it for the call. Tail-recursive predicates then run in constant local stack, like loops. Two things prevent it: work after the recursive call (`S is S1 + N` in `sum_to`), and a choice point left by clauses that indexing could not rule out. The lab shows `sum_acc(1_000_000, 0, S)` running in a 20 MB stack while `sum_to(1_000_000, S)` raises `resource_error(stack)`.
+
+### 3. Turn `sum_to/2` into a tail-recursive predicate and state its invariant.
+
+**Answer.** Add an accumulator for the sum so far: `sum_acc(N, S0, S)`, starting with `S0 = 0`. Add `N` to the accumulator **before** the recursive call, and let the base case return the accumulator: `sum_acc(0, S, S)`. The invariant is $S = S_0 + \frac{N(N+1)}{2}$. It holds at the start, since $0 + \frac{4 \cdot 5}{2} = 10$; each step moves $N$ from the formula into $S_0$; and at $N = 0$ it reduces to the base clause $S = S_0$. Writing the invariant down is how you check an accumulator version is correct.
+
+### 4. Why does `?- add(X, Y, s(s(0))).` terminate, while `?- add(X, s(0), Z).` does not?
+
+**Answer.** In the first query the third argument is a complete number, and the recursive clause shrinks it from `s(Z)` to `Z` at each call, so after two calls only the base clause can match. Prolog finds the $2 + 1 = 3$ splits and then fails. In the second query neither the first nor the third argument is known, so no argument shrinks: each recursive call makes `X` and `Z` one `s` longer, and there are genuinely infinitely many answers.
+
+### 5. What is the connection between recursion and mathematical induction?
+
+**Answer.** They are the same structure used in opposite directions. Induction proves $P(n)$ for all $n$ from $P(0)$ and $P(n) \Rightarrow P(s(n))$; a recursive definition computes the answer for $s(n)$ from the answer for $n$, ending at the base case 0. So the base clause corresponds to the base case and the recursive clause to the inductive step, and a proof that a predicate is correct is usually an induction over the same argument that the termination measure uses. For lists, both run over the length of the list.
+
+## Summary
+
+$$
+\mu(\text{argument of each recursive call}) < \mu(\text{argument of the head}), \qquad \mu \geq 0
+$$
+
+where $\mu$ is a measure from terms to natural numbers, such as the number of `s` symbols or the height of a person in the family tree.
+
+Example: in `add(s(s(0)), s(0), Sum)` the measure goes $2 \to 1 \to 0$, so the recursion makes 2 recursive calls, 3 calls in total, as the lab checks.
+
+- A recursive predicate has a **base case** and a **recursive case** that works on something smaller.
+- Prove termination with a **measure** that falls on every recursive call, for each calling mode.
+- Put the **base case first** so generators produce their smallest answer first.
+- Make the recursive call the **last goal** (often with an accumulator) to get last-call optimisation and constant stack.
+- Recursion and **induction** have the same shape: base clause = base case, recursive clause = inductive step.
+
+## References
+
+- SWI-Prolog manual: [Limits on memory areas](https://www.swi-prolog.org/pldoc/man?section=memlimit) (local stack and last-call optimisation), [Prolog flags](https://www.swi-prolog.org/pldoc/man?section=flags) (`last_call_optimisation`, `stack_limit`), [findnsols/4](https://www.swi-prolog.org/pldoc/man?predicate=findnsols/4), [call_with_inference_limit/3](https://www.swi-prolog.org/pldoc/man?predicate=call_with_inference_limit/3).
+- Leon Sterling and Ehud Shapiro, [*The Art of Prolog*](https://mitpress.mit.edu/9780262691635/the-art-of-prolog/), 2nd ed., MIT Press, 1994, Section 2.3 (Recursive Rules) and Chapter 3 (Recursive Programming, starting with 3.1 Arithmetic).
+- Ivan Bratko, [*Prolog Programming for Artificial Intelligence*](https://www.pearson.com/en-us/subject-catalog/p/prolog-programming-for-artificial-intelligence/P200000003804/9780321417466), 4th ed., Addison-Wesley, 2012, Chapter 1 (recursive rules: the predecessor relation).
+- William F. Clocksin and Christopher S. Mellish, [*Programming in Prolog: Using the ISO Standard*](https://doi.org/10.1007/978-3-642-55481-0), 5th ed., Springer, 2003.
+- Markus Triska, *The Power of Prolog*: [Termination](https://www.metalevel.at/prolog/termination) and [Nontermination](https://www.metalevel.at/prolog/nontermination).
+- Giuseppe Peano and his 1889 axioms: [MacTutor biography](https://mathshistory.st-andrews.ac.uk/Biographies/Peano.html).
+- Lab: [`labs/recursion.pl`](labs/recursion.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt recursion.pl`.

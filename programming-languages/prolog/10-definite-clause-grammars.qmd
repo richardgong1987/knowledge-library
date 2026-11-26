@@ -1,0 +1,380 @@
+---
+title: "Definite Clause Grammars"
+description: "Prolog's grammar notation: how --> rules translate into difference-list clauses, phrase/2 and phrase/3, balanced parentheses and a^n b^n with the math of why they are not regular, an expression parser that evaluates with the right precedence, and generating sentences by running a grammar backwards."
+---
+
+## The problem
+
+A calculator receives the text `2+3*4` and must answer 14, not 20. To do that it has to **parse**: split the characters into numbers and operators, see that `*` binds tighter than `+`, and only then compute. Writing such a parser by hand means juggling an index into the string, deciding what to do at every character, and backtracking by hand when a guess was wrong.
+
+In Prolog the same parser is a handful of rules that read like a grammar from a textbook:
+
+```prolog
+% Level 5: + and - at the top, * below, so * binds tighter.
+expr(V) --> term(T), expr_rest(T, V).
+```
+
+The `-->` notation is called a **definite clause grammar** (DCG). It is not a separate tool: each rule is translated into an ordinary Prolog clause that threads a [difference list](08-accumulators-and-difference-lists.qmd) through the body. Because the result is ordinary Prolog, the same grammar can check a sentence, parse it into a value, and **generate** every sentence it describes.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## LEGO instructions that also check other people's models
+
+A grammar is like a LEGO instruction booklet: "a sentence is a noun phrase, then a verb phrase; a noun phrase is *the* or *a*, then *cat* or *dog*". You can use the booklet two ways. Hand Prolog a finished model, the sentence `[a, dog, chases, the, cat]`, and it checks it page by page. Hand it an empty table, and it builds every model the booklet allows, one after another.
+
+Balanced parentheses are nesting dolls: every doll you open must be closed again, and inner dolls close before outer ones.
+
+Markus Triska's *Prolog DCG Primer* begins: "A Prolog definite clause grammar (DCG) describes a sequence. Operationally, DCGs can be used to parse, generate, complete and check sequences manifested as lists." The SWI-Prolog manual puts the mechanism in one line: "Grammar rules form a comfortable interface to difference lists."
+:::
+
+## From simple to advanced
+
+### Level 1: a rule describes a sequence
+
+A DCG rule `Head --> Body` says "a `Head` is a sequence made of the parts in `Body`, one after another". A list in the body, such as `[hello]`, is a **terminal**: it stands for exactly those elements. A name such as `who` is a **nonterminal**: it stands for whatever its own rules describe.
+
+```prolog
+% Level 1: a greeting is the word hello followed by a name.
+greeting --> [hello], who.
+
+who --> [world].
+who --> [prolog].
+```
+
+`phrase(Body, List)` is true when `Body` describes the whole of `List`:
+
+```text
+?- phrase(greeting, [hello, world]).
+true.
+
+?- phrase(greeting, G).
+G = [hello, world] ;
+G = [hello, prolog].
+```
+
+The second query already runs the grammar backwards: with `G` unbound, Prolog builds every list a greeting can be.
+
+### Level 2: the translation into difference lists
+
+Prolog translates each rule when it loads the file, adding two arguments to every nonterminal: the input list, and the part of it that is left over. `listing/1` shows the result:
+
+```text
+?- listing(greeting).
+greeting([hello|A], B) :-
+    who(A, B).
+
+true.
+
+?- listing(who).
+who([world|A], A).
+who([prolog|A], A).
+
+true.
+```
+
+Read `greeting(S0, S)` as "the list `S0` starts with a greeting, and `S` is what remains after it": that is the difference list `S0-S` of [Accumulators and Difference Lists](08-accumulators-and-difference-lists.qmd). In general:
+
+$$
+N \to \alpha_1, \alpha_2, \dots, \alpha_m \quad \text{becomes} \quad N(S_0, S_m) \;\text{:-}\; \alpha_1(S_0, S_1),\ \alpha_2(S_1, S_2),\ \dots,\ \alpha_m(S_{m-1}, S_m)
+$$
+
+where
+
+- $N$ is the nonterminal being defined and $\alpha_1, \dots, \alpha_m$ are the parts of its body;
+- $S_0$ is the input list and $S_i$ is what remains after the first $i$ parts, so $S_m$ is what remains after the whole rule;
+- for a terminal list $[t_1, \dots, t_j]$, the step $\alpha_i(S_{i-1}, S_i)$ is the unification $S_{i-1} = [t_1, \dots, t_j \mid S_i]$;
+- for a plain Prolog goal written in braces, `{ G }`, the step runs `G` and passes the list on unchanged: $S_i = S_{i-1}$.
+
+Example, for `greeting --> [hello], who` with $m = 2$: the terminal gives $S_0 = [\texttt{hello} \mid S_1]$ and the nonterminal gives `who(S1, S2)`. The compiler moves the unification into the head, which is exactly the listing above: `greeting([hello|A], B) :- who(A, B)`, with `A` as $S_1$ and `B` as $S_2$. For `who --> [world]`, $m = 1$ and the whole body is $S_0 = [\texttt{world} \mid S_1]$, so the clause is a fact.
+
+`phrase/2` calls the translated predicate with the list and `[]`, demanding that nothing is left over. `phrase/3` returns the remainder instead:
+
+```text
+?- phrase(greeting, [hello, world, and, more], Rest).
+Rest = [and, more].
+```
+
+### Level 3: balanced parentheses
+
+Strings of `(` and `)` are balanced when every opening bracket is closed, in the right order: `(()())` is balanced, `(()` and `)(` are not. One rule says it all: a balanced string is empty, or a balanced string inside a pair of brackets followed by another balanced string.
+
+```prolog
+% Level 3: balanced parentheses, read as character codes.
+parens --> [].
+parens --> "(", parens, ")", parens.
+```
+
+In SWI-Prolog a double-quoted string in a DCG body stands for its list of character codes, so `"("` is the terminal `[40]`. The lab converts text with `string_codes/2` before calling `phrase/2`:
+
+```text
+?- balanced("(()())").
+true ;
+false.
+
+?- balanced("(()").
+false.
+```
+
+The first answer ends with `; false` because the grammar left choice points; asking for more finds no second way to read the string. Run backwards with a fixed length, the grammar lists every balanced string of that length:
+
+```text
+?- length(Cs, 6), phrase(parens, Cs), atom_codes(A, Cs).
+Cs = [40, 41, 40, 41, 40, 41],
+A = '()()()' ;
+Cs = [40, 41, 40, 40, 41, 41],
+A = '()(())' ;
+Cs = [40, 40, 41, 41, 40, 41],
+A = '(())()' ;
+Cs = [40, 40, 41, 40, 41, 41],
+A = '(()())' ;
+Cs = [40, 40, 40, 41, 41, 41],
+A = '((()))' ;
+false.
+```
+
+The count is a famous number. The balanced strings with $n$ pairs of brackets are counted by the Catalan numbers:
+
+$$
+C_n = \frac{(2n)!}{(n+1)!\; n!}
+$$
+
+where
+
+- $n$ is the number of bracket pairs, so the strings have length $2n$;
+- $C_n$ is the number of balanced strings with $n$ pairs;
+- $k!$ is the factorial $1 \times 2 \times \dots \times k$, with $0! = 1$.
+
+Example with $n = 3$, the length-6 query above: $C_3 = \frac{6!}{4! \times 3!} = \frac{720}{24 \times 6} = \frac{720}{144} = 5$, and the query found exactly 5 strings.
+
+### Level 4: aⁿbⁿ, a language no finite automaton can recognise
+
+The language of $n$ copies of `a` followed by the same number of `b`:
+
+$$
+L = \lbrace a^n b^n \mid n \ge 0 \rbrace = \lbrace \varepsilon, ab, aabb, aaabbb, \dots \rbrace
+$$
+
+where
+
+- $a^n$ means the letter `a` written $n$ times, and likewise $b^n$;
+- $\varepsilon$ is the empty string, the case $n = 0$;
+- $L$ is the set of all such strings.
+
+Example: $n = 3$ gives $a^3 b^3 = aaabbb$, which is in $L$; $aaaabbb = a^4 b^3$ is not, because $4 \ne 3$.
+
+The DCG is two rules: an `a`, the language again, a `b`.
+
+```prolog
+% Level 4: n copies of a, then n copies of b.
+anbn --> [].
+anbn --> [a], anbn, [b].
+```
+
+```text
+?- phrase(anbn, [a, a, a, b, b, b]).
+true ;
+false.
+
+?- phrase(anbn, [a, a, a, a, b, b, b]).
+false.
+
+?- listing(anbn).
+anbn(A, B) :-
+    A=B.
+anbn([a|A], B) :-
+    anbn(A, C),
+    C=[b|B].
+
+true.
+```
+
+**Why no regular expression can do this.** A regular expression in the formal sense is equivalent to a finite automaton, which has a fixed number of states, so it cannot count without limit. (Engines such as PCRE add recursion and backreferences, which go beyond regular languages.) The **pumping lemma** makes this precise: if $L$ were regular, there would be a length $p$ such that every string $s \in L$ with $|s| \ge p$ splits as $s = xyz$ with $|xy| \le p$ and $|y| \ge 1$, and $xy^iz \in L$ for every $i \ge 0$. Take $s = a^p b^p$:
+
+$$
+s = xyz,\quad |xy| \le p,\quad |y| \ge 1 \;\Rightarrow\; y = a^k \text{ with } k \ge 1 \;\Rightarrow\; xy^2z = a^{p+k} b^p \notin L
+$$
+
+where
+
+- $p$ is the pumping length the lemma promises, and $s = a^p b^p$ is the chosen string of length $2p$;
+- $x$, $y$ and $z$ are the three pieces of the split, and $|w|$ is the length of a piece $w$;
+- $y = a^k$ follows because $xy$ lies within the first $p$ letters, which are all `a`;
+- $xy^2z$ repeats the piece $y$ once more, adding $k$ extra letters `a`.
+
+Example with $p = 3$: $s = aaabbb$, the split $x = \varepsilon$, $y = a$, $z = aabbb$ satisfies $|xy| = 1 \le 3$ and $|y| = 1$, and pumping gives $xy^2z = aaaabbb = a^4 b^3$. The lab checks that `anbn` rejects exactly this string, while a regular language would have had to accept it. The contradiction shows $L$ is not regular. The DCG succeeds because each recursive call of `anbn` remembers, on Prolog's call stack, one `b` still owed: the stack does the counting a finite automaton cannot. Balanced parentheses are not regular for the same reason.
+
+### Level 5: a parser that evaluates, with precedence
+
+Arithmetic needs two levels of precedence: `*` before `+` and `-`. The grammar puts each level in its own nonterminal, so that a `term` (products) is complete before an `expr` (sums) combines terms:
+
+$$
+\begin{aligned}
+E &\to T\, E' & E' &\to \texttt{+}\, T\, E' \;\mid\; \texttt{-}\, T\, E' \;\mid\; \varepsilon \\
+T &\to F\, T' & T' &\to \texttt{*}\, F\, T' \;\mid\; \varepsilon \\
+F &\to \text{integer} \;\mid\; \texttt{(}\, E\, \texttt{)}
+\end{aligned}
+$$
+
+where
+
+- $E$ is an expression (a sum of terms), $T$ a term (a product of factors) and $F$ a factor (a number or a bracketed expression);
+- $E'$ and $T'$ are "the rest": zero or more further `+ T`, `- T` or `* F` parts;
+- $\mid$ separates alternatives and $\varepsilon$ is the empty alternative.
+
+Example: in `2+3*4`, the first $T$ is just the factor 2, because `+` cannot continue a term. $E'$ then reads `+` and a second $T$, which reads `3`, `*` and `4`, so the product $3 \times 4 = 12$ is finished before the sum: $2 + 12 = 14$.
+
+Each rule carries values. The `_rest` rules take the value so far as an **accumulator**, so that `10-2-3` groups to the left, as $(10 - 2) - 3$:
+
+```prolog
+% Level 5: + and - at the top, * below, so * binds tighter.
+expr(V) --> term(T), expr_rest(T, V).
+
+expr_rest(Acc, V) --> "+", term(T), { Acc1 is Acc + T }, expr_rest(Acc1, V).
+expr_rest(Acc, V) --> "-", term(T), { Acc1 is Acc - T }, expr_rest(Acc1, V).
+expr_rest(V, V) --> [].
+
+term(V) --> factor(F), term_rest(F, V).
+
+term_rest(Acc, V) --> "*", factor(F), { Acc1 is Acc * F }, term_rest(Acc1, V).
+term_rest(V, V) --> [].
+
+factor(V) --> integer(V).
+factor(V) --> "(", expr(V), ")".
+```
+
+`integer//1` comes from `library(dcg/basics)` and reads an optionally signed number. The goals in `{ }` are plain Prolog, run in the middle of the parse. The lab's `calc/2` converts the text to codes and calls `phrase(expr(V), Codes)`:
+
+```text
+?- calc("2+3*4", V).
+V = 14 ;
+false.
+
+?- calc("(2+3)*4", V).
+V = 20 ;
+false.
+
+?- calc("10-2-3", V).
+V = 5 ;
+false.
+```
+
+For `10-2-3` the accumulator goes $10$, then $10 - 2 = 8$, then $8 - 3 = 5$. An incomplete input such as `2+` simply fails, because no rule can read a term after the `+`.
+
+### Level 6: running the grammar backwards
+
+A grammar that only uses terminals and nonterminals, with no one-way arithmetic in `{ }`, is a pure relation, so it generates as easily as it parses:
+
+```prolog
+% Level 6: a tiny grammar of English.
+sentence --> noun_phrase, verb_phrase.
+noun_phrase --> determiner, noun.
+verb_phrase --> verb, noun_phrase.
+
+determiner --> [the].
+determiner --> [a].
+noun --> [cat].
+noun --> [dog].
+verb --> [sees].
+verb --> [chases].
+```
+
+```text
+?- phrase(sentence, S).
+S = [the, cat, sees, the, cat] ;
+S = [the, cat, sees, the, dog] ;
+S = [the, cat, sees, a, cat] .
+```
+
+Prolog's depth-first search varies the **last** choice fastest, like the last digit of an odometer. Every sentence is a determiner, a noun, a verb, a determiner and a noun, so the number of sentences is a product:
+
+$$
+|\texttt{sentence}| = |D| \cdot |N| \cdot |V| \cdot |D| \cdot |N|
+$$
+
+where
+
+- $|D|$, $|N|$ and $|V|$ are the numbers of determiners, nouns and verbs;
+- $|\texttt{sentence}|$ is the number of different sentences the grammar describes.
+
+Example: $|D| = 2$ (*the*, *a*), $|N| = 2$ (*cat*, *dog*) and $|V| = 2$ (*sees*, *chases*), so there are $2 \cdot 2 \cdot 2 \cdot 2 \cdot 2 = 32$ sentences. The lab collects them with `findall/3` and checks the count and the first three. The same grammar accepts `[a, dog, chases, the, cat]`.
+
+Generation needs a finite search. `phrase(anbn, L)` with `L` unbound produces `[]`, `[a, b]`, `[a, a, b, b]` and so on forever; fixing the length first, as with `length(Cs, 6)` above, or bounding it with `between/3`, keeps the enumeration finite.
+
+## How it works underneath
+
+**Translation at load time.** When SWI-Prolog reads a term `Head --> Body`, `expand_term/2` calls `dcg_translate_rule/2`, which produces the clause with two extra arguments. Its raw output for the recursive `anbn` rule is:
+
+```text
+?- dcg_translate_rule((anbn --> [a], anbn, [b]), C).
+C = (anbn(_A, _B):-_A=[a|_C], anbn(_C, _D), _D=[b|_B]).
+```
+
+The compiler then moves the first unification, `_A=[a|_C]`, into the head, giving the `anbn([a|A], B)` that `listing/1` printed. The terminal `[b]` after the recursive call stays a body unification, `C=[b|B]`, because it can only be checked once the inner `anbn` has consumed its part. The lab checks both forms. Since nonterminals are just predicates with two more arguments, a nonterminal `name//N` is the predicate `name/N+2`: `expr//1` is `expr/3`.
+
+**Parsing is depth-first search.** A DCG is a top-down, recursive-descent parser with unlimited backtracking: Prolog tries the alternatives of each nonterminal in order and backtracks into the previous choice when the input does not match. That is why `balanced/1` and `calc/2` answer `; false`: the empty alternatives `parens --> []` and `expr_rest(V, V) --> []` leave choice points that a second request explores and rejects. It is also why **left recursion** fails: in `lexpr --> lexpr, "-", integer`, the first thing `lexpr` does is call itself on the same input, so it recurses forever without consuming anything. The lab proves it with `call_with_inference_limit/3`, which stops the parse after 100,000 inferences and returns `inference_limit_exceeded`.
+
+**Inside the body.** Besides terminals, nonterminals and `{ Goal }`, the SWI-Prolog manual lists the control constructs `\+`, `->`, `;`, `,` and `!` as usable in grammar rules, with the same meaning as in clauses ([Cut and Negation](07-cut-and-negation.qmd)). `call//N` calls a closure with the two list arguments added, the DCG version of [`call/N`](09-all-solutions-and-higher-order.qmd). `phrase/3` checks that its list arguments are lists or unbound, which is why passing a string object raises a type error.
+
+**History.** Colmerauer and Roussel describe how Colmerauer, in 1972, associated with each nonterminal "a binary predicate $N(x, y)$" meaning that the difference between the strings $x$ and $y$ can be derived from $N$: the translation above, at the birth of Prolog. Fernando Pereira and David H. D. Warren named and popularised the notation in *Definite Clause Grammars for Language Analysis* (1980), presenting DCGs as a special case of Colmerauer's metamorphosis grammars.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| A left-recursive rule, `e --> e, "-", t` | The parse never returns, then `Stack limit (...) exceeded` with "Probable infinite recursion (cycle)" | Rewrite as `e --> t, e_rest` with an accumulator, as in Level 5 |
+| Making it right-recursive instead, `e --> t, "-", e` | It terminates, but `10-2-3` gives 11, grouping as $10 - (2 - 3)$ | Use the `_rest` accumulator to group to the left |
+| A Prolog goal without braces, `V is A + B` in a body | `Unknown procedure: (is)/4`: the goal was translated as a nonterminal | Wrap plain Prolog in `{ }` |
+| Passing a string to `phrase/2`, as in `phrase(parens, "(())")` at the toplevel | ``Type error: `list' expected, found `"(())"' (a string)`` | Convert first: `string_codes(Text, Codes)` |
+| A nonterminal whose name clashes with a built-in, such as `atom_length --> [x]` | ``No permission to modify static procedure `atom_length/2'`` | Choose another name; remember that `atom_length//0` is the predicate `atom_length/2` |
+| Expecting `phrase/2` to accept a prefix | `false` when input is left over | Use `phrase/3` and inspect the rest |
+| Generating from a recursive grammar with no bound | An endless stream of answers | Fix the length with `length/2`, or bound it with `between/3` |
+
+## Interview questions
+
+### 1. What does `a --> b, [x], c.` compile to?
+
+**Answer.** `a(S0, S) :- b(S0, S1), S1 = [x|S2], c(S2, S).` Every nonterminal gets two extra arguments, the input list and the remainder; terminals become unifications with the list; `{ G }` goals run unchanged without consuming input. Each pair `Si-Si+1` is a difference list, so the sequence is threaded through the body in order with no `append/3`. In the lab, `listing(greeting)` shows `greeting([hello|A], B) :- who(A, B).`, where the compiler has also moved the first terminal into the head.
+
+### 2. Why is aⁿbⁿ not a regular language, and how does a DCG recognise it?
+
+**Answer.** By the pumping lemma: if it were regular with pumping length $p$, then $a^p b^p$ could be split as $xyz$ with $|xy| \le p$ and $|y| \ge 1$, so $y$ consists only of `a`s, and $xy^2z = a^{p+k}b^p$ would also be in the language, which it is not. Intuitively, a finite automaton cannot count without bound. The DCG `anbn --> [a], anbn, [b]` is context-free: each recursive call leaves a pending `[b]` on Prolog's call stack, and the stack does the counting. The lab checks that `[a, a, a, a, b, b, b]`, the pumped string for $p = 3$, is rejected.
+
+### 3. How do you get operator precedence and left associativity in a DCG without left recursion?
+
+**Answer.** One nonterminal per precedence level, lowest precedence at the top: `expr` combines `term`s with `+` and `-`, `term` combines `factor`s with `*`, and `factor` is a number or a bracketed `expr`. Because a `term` is parsed completely before `expr` continues, `*` binds tighter, and `2+3*4` is 14. Left associativity comes from the `_rest` rules carrying the value so far as an accumulator: `10-2-3` computes $10 - 2 = 8$, then $8 - 3 = 5$. The naive right-recursive rule `rexpr --> integer, "-", rexpr` gives 11, and the left-recursive rule never terminates.
+
+### 4. How can the same grammar both parse and generate, and when does generating go wrong?
+
+**Answer.** A DCG compiles to ordinary Prolog clauses that relate a list to its remainder, so `phrase(sentence, L)` with `L` bound checks the list, and with `L` unbound enumerates every list the grammar describes: 32 sentences for the lab's grammar. It goes wrong when the grammar is not a pure relation, for example when a `{ }` goal uses `is/2` on values that are not yet known, or when the language is infinite and the search never reaches some sentences. `phrase(anbn, L)` generates forever; fixing the length first with `length(L, N)` makes each query finite.
+
+### 5. What is the difference between `phrase/2` and `phrase/3`?
+
+**Answer.** `phrase(G, L)` is `phrase(G, L, [])`: the grammar must describe all of `L`. `phrase(G, L, Rest)` lets the grammar describe a prefix of `L` and binds `Rest` to what follows, which is how you parse a stream piece by piece or check a header and continue. `phrase(greeting, [hello, world, and, more], Rest)` gives `Rest = [and, more]`, while `phrase(greeting, [hello, world, and, more])` fails.
+
+## Summary
+
+$$
+N \to \alpha_1, \dots, \alpha_m \quad \text{becomes} \quad N(S_0, S_m) \;\text{:-}\; \alpha_1(S_0, S_1), \dots, \alpha_m(S_{m-1}, S_m)
+$$
+
+where $N$ is a nonterminal, $\alpha_1, \dots, \alpha_m$ the parts of its body, and $S_0, \dots, S_m$ the list before and after each part.
+
+Example: `greeting --> [hello], who` has $m = 2$, giving $S_0 = [\texttt{hello} \mid S_1]$ and `who(S1, S2)`, which `listing/1` prints as `greeting([hello|A], B) :- who(A, B)`.
+
+- A DCG rule describes a sequence; `phrase/2` checks or generates a whole list, `phrase/3` a prefix.
+- The translation adds a difference list to every nonterminal: no `append/3`, constant cost per terminal.
+- Plain Prolog goes in `{ }`; strings in a rule body are lists of codes.
+- DCGs are context-free and more: aⁿbⁿ and balanced brackets, which no finite automaton can recognise, take two rules each.
+- Avoid left recursion; get precedence from one nonterminal per level and left associativity from an accumulator.
+
+## References
+
+- SWI-Prolog manual: [DCG Grammar rules](https://www.swi-prolog.org/pldoc/man?section=DCG), [phrase/2 and phrase/3](https://www.swi-prolog.org/pldoc/man?section=phrase) and [library(dcg/basics)](https://www.swi-prolog.org/pldoc/man?section=basics).
+- Fernando C. N. Pereira and David H. D. Warren, Definite Clause Grammars for Language Analysis, *Artificial Intelligence* 13(3), 1980 ([doi:10.1016/0004-3702(80)90003-X](https://doi.org/10.1016/0004-3702(80)90003-X)).
+- Alain Colmerauer and Philippe Roussel, [The Birth of Prolog](http://alain.colmerauer.free.fr/alcol/ArchivesPublications/PrologHistory/19november92.pdf) (1992), on the grammar encoding behind DCGs.
+- Markus Triska, *The Power of Prolog*: [Prolog DCG Primer](https://www.metalevel.at/prolog/dcg).
+- Leon Sterling and Ehud Shapiro, *The Art of Prolog*, 2nd ed., MIT Press, 1994, Chapter 19 "Logic Grammars" (19.1 definite clause grammars).
+- Patrick Blackburn, Johan Bos and Kristina Striegnitz, *Learn Prolog Now!*: [Chapter 7: Definite Clause Grammars](https://www.let.rug.nl/bos/lpn/lpnpage.php?pagetype=html&pageid=lpn-htmlch7) and [Chapter 8: More Definite Clause Grammars](https://www.let.rug.nl/bos/lpn/lpnpage.php?pagetype=html&pageid=lpn-htmlch8).
+- [Pumping lemma for regular languages](https://en.wikipedia.org/wiki/Pumping_lemma_for_regular_languages).
+- Lab: [`labs/definite-clause-grammars.pl`](labs/definite-clause-grammars.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt definite-clause-grammars.pl`.

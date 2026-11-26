@@ -1,0 +1,350 @@
+---
+title: "Lists"
+description: "Prolog lists from the cell up: [H|T] and SWI-Prolog's '[|]' constructor, member/2, append/3 in every direction, length/2, naive reverse against the accumulator version, nth0 and nth1, and msort, sort and sort/4."
+---
+
+## The problem
+
+A shopping list has an unknown number of items: today `[milk, eggs, bread]`, tomorrow two items, next week none. A compound term like `items(milk, eggs, bread)` has a **fixed** arity, so it cannot hold "any number" of things. Prolog needs a data structure that can grow, and it builds one from tools you already have: a compound term for "one item plus the rest", an empty list to end it, and recursion to walk it.
+
+Once lists are just terms, every list predicate is an ordinary relation and runs in several directions. `append/3` joins two lists, but asked differently it also splits a list, removes a prefix, or finds the last element. The same simplicity has costs you must know: getting the $n$-th element takes $n$ steps, and the obvious way to reverse a list takes quadratic time, $496$ calls for just 30 elements.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A train of wagons
+
+- A list is a **train**. Each wagon carries one thing (the **head**) and is hooked to the rest of the train (the **tail**). The last wagon is hooked to an empty piece of track, `[]`.
+- To look at the third thing, you have to walk past the first two wagons. There is no shortcut.
+- Adding a wagon at the **front** is instant. Adding one at the **back** means walking the whole train first.
+- Two trains can share their last wagons: build a new front part and hook it onto an existing train, without copying the old wagons.
+
+Markus Triska says it plainly in *The Power of Prolog*: *"Prolog lists are a special case of terms."* Everything below follows from that.
+:::
+
+## From simple to advanced
+
+### Level 1: a list is a chain of cells
+
+`[1, 2, 3]` is shorthand. Underneath it is a nested term built from one two-argument constructor. In SWI-Prolog 7 and later that constructor is named `'[|]'`; older Prologs, and the ISO standard, use `'.'`:
+
+$$
+[x_1, x_2, \dots, x_n] = \texttt{'[|]'}(x_1, \texttt{'[|]'}(x_2, \dots \texttt{'[|]'}(x_n, [\,]) \dots))
+$$
+
+where
+
+- $x_1, \dots, x_n$ are the elements, and $n$ is the length;
+- $\texttt{'[|]'}(H, T)$ is one **cell**: head $H$, tail $T$;
+- $[\,]$ is the empty list, which ends every proper list;
+- $n = 0$ gives just $[\,]$.
+
+Example: $[1, 2, 3] = \texttt{'[|]'}(1, \texttt{'[|]'}(2, \texttt{'[|]'}(3, [\,])))$, which is $n = 3$ cells. The notation `[H|T]` writes one cell directly, so `[1, 2, 3] = [1|[2|[3|[]]]]`.
+
+```text
+?- [1, 2, 3] = [H|T].
+H = 1,
+T = [2, 3].
+
+?- X = [a|b].
+X = [a|b].
+
+?- is_list([a|b]).
+false.
+```
+
+`[a|b]` is a legal term whose tail is not a list, so `is_list/1` rejects it. The lab checks each of these claims, plus SWI-Prolog's change from version 7: the manual's section *Lists are special* says *"The constant [] is special constant that is not an atom"*, so `atom([])` fails and `[] == '[]'` fails.
+
+```prolog
+level1_cells :-
+    [1, 2, 3] = [H|T],
+    assertion(H-T == 1-[2, 3]),
+    assertion([1, 2, 3] == '[|]'(1, '[|]'(2, '[|]'(3, [])))),
+    assertion([a, b] == [a|[b|[]]]),
+    functor([1, 2, 3], Name, Arity),
+    assertion(Name-Arity == '[|]'-2),
+    assertion(\+ [] == '[]'),     % SWI-Prolog 7+: [] is not the atom '[]'
+    assertion(\+ atom([])),
+    assertion(\+ is_list([a|b])),
+    assertion(\+ "abc" = [_|_]). % double quotes make a string, not a list
+```
+
+### Level 2: `member/2`, the first list recursion
+
+Write list predicates the way [Recursion](04-recursion.qmd) teaches: a case for the head, and a case that recurses on the tail. The library already has `member/2`, so the lab's teaching versions carry a `my_` prefix:
+
+```prolog
+% Level 2: member. Either X is the head, or X is a member of the tail.
+my_member(X, [X|_]).
+my_member(X, [_|T]) :- my_member(X, T).
+```
+
+There is no clause for `[]`: nothing is a member of the empty list, so the call simply fails there. The termination measure is the length of the list, which falls by one in every recursive call. Like every relation, it works both ways:
+
+```text
+?- my_member(b, [a, b, c]).
+true ;
+false.
+
+?- my_member(X, [a, b, c]).
+X = a ;
+X = b ;
+X = c ;
+false.
+```
+
+As a check it says yes. As a generator it lists the elements in order. The `true ;` then `false.` in the first query is the second clause, still open after `b` matched, finding nothing in `[c]`. The lab compares the results with the library's `member/2`.
+
+### Level 3: `append/3` in every direction
+
+```prolog
+% Level 3: append. The empty list in front changes nothing;
+% otherwise the first element of the result is the first element of the front.
+my_append([], L, L).
+my_append([H|T], L, [H|R]) :- my_append(T, L, R).
+```
+
+Forwards, it joins: `my_append([1], [2, 3], L)` gives `L = [1, 2, 3]`. Leave the first two arguments open and it **splits**:
+
+```text
+?- my_append(X, Y, [1, 2, 3]).
+X = [],
+Y = [1, 2, 3] ;
+X = [1],
+Y = [2, 3] ;
+X = [1, 2],
+Y = [3] ;
+X = [1, 2, 3],
+Y = [] ;
+false.
+```
+
+The number of answers is always one more than the length:
+
+$$
+\big\lvert \lbrace (X, Y) \mid X \mathbin{+\!\!+} Y = L \rbrace \big\rvert = n + 1
+$$
+
+where
+
+- $L$ is the given list and $n$ its length;
+- $X \mathbin{+\!\!+} Y$ is $X$ followed by $Y$, which is what `append(X, Y, L)` states;
+- $\lvert \cdot \rvert$ is the number of elements of a set;
+- each answer picks a cut point: before element 1, between two elements, or after element $n$.
+
+Example: $L = [1, 2, 3]$ has $n = 3$, so there are $3 + 1 = 4$ cut points, the 4 answers above. Procedurally, the first clause gives the cut before the first element, and each step through the second clause moves the cut one element to the right; after $n$ steps the first argument has consumed the whole list and only the first clause can match. It is the same shape as `add(X, Y, s(s(0)))` in [Recursion](04-recursion.qmd), which had $2 + 1 = 3$ answers.
+
+Other directions come for free. `my_append(Front, [3], [1, 2, 3])` removes a known suffix, `Front = [1, 2]`, and `my_append(_, [Last], [1, 2, 3])` finds the last element, `Last = 3`. The lab checks all of them:
+
+```prolog
+level3_append :-
+    my_append([1], [2, 3], L),
+    assertion(L == [1, 2, 3]),
+    findall(X+Y, my_append(X, Y, [1, 2, 3]), Splits),
+    assertion(Splits == [[]+[1, 2, 3], [1]+[2, 3], [1, 2]+[3], [1, 2, 3]+[]]),
+    assertion(length(Splits, 4)),
+    my_append(Front, [3], [1, 2, 3]),
+    assertion(Front == [1, 2]),
+    my_append(_, [Last], [1, 2, 3]),
+    assertion(Last == 3).
+```
+
+### Level 4: `length/2` measures and builds
+
+The built-in `length/2` runs both ways too:
+
+```text
+?- length([a, b, c], N).
+N = 3.
+
+?- length(L, 2).
+L = [_, _].
+
+?- length(L, N).
+L = [],
+N = 0 ;
+L = [_],
+N = 1 ;
+L = [_, _],
+N = 2 ;
+L = [_, _, _],
+N = 3 .
+```
+
+Given a list, it counts the cells, which takes $n$ steps. Given a number, it **builds** a list of fresh variables, a common way to make a template of known size. Given neither, it enumerates lists of every length, shortest first; the lab takes the first three with `limit/2` and checks the lengths `0, 1, 2`. That last mode is the basis of iterative deepening: try all answers of length 0, then 1, then 2, so that the shortest answer is always found first.
+
+### Level 5: naive reverse against the accumulator
+
+The first reverse most people write follows the definition "reverse the tail, then put the head at the end":
+
+```prolog
+% Level 5: naive reverse calls append once per element.
+naive_reverse([], []).
+naive_reverse([H|T], R) :-
+    naive_reverse(T, RT),
+    my_append(RT, [H], R).
+```
+
+It is correct and slow. Putting `H` at the end means walking the whole reversed tail with `append`. Count the calls for a list of length $n$: `naive_reverse` itself is called $n + 1$ times, and the `append` for a tail of length $k$ takes $k + 1$ calls, for $k = 0, 1, \dots, n - 1$:
+
+$$
+T(n) = (n + 1) + \sum_{k=0}^{n-1} (k + 1) = (n + 1) + \frac{n(n+1)}{2} = \frac{(n + 1)(n + 2)}{2}
+$$
+
+where
+
+- $T(n)$ is the total number of predicate calls, Prolog's **logical inferences**;
+- $n$ is the length of the list;
+- $n + 1$ counts the `naive_reverse` calls, one per cell plus one for `[]`;
+- $k + 1$ counts the `append` calls needed to walk a list of length $k$.
+
+Example: for $n = 3$, $T(3) = \frac{4 \cdot 5}{2} = 10$. For $n = 30$, $T(30) = \frac{31 \cdot 32}{2} = 496$. That number is famous: Quintus Computer Systems' 1984 benchmark file says *"To reverse a thirty element list requires 496 Prolog procedure calls"*, and "logical inferences per second" (LIPS) were long measured by timing exactly this. The growth is quadratic, $O(n^2)$.
+
+The fix is the accumulator from [Recursion](04-recursion.qmd). Move one element from the front of the input to the front of the accumulator at each step; the front is the cheap end:
+
+```prolog
+% The accumulator version moves one element per step.
+reverse_acc(List, Reversed) :- reverse_acc(List, [], Reversed).
+
+reverse_acc([], Acc, Acc).
+reverse_acc([H|T], Acc, R) :- reverse_acc(T, [H|Acc], R).
+```
+
+`reverse_acc/2` and `reverse_acc/3` are different predicates, because arity is part of the name. The cost is one call to `reverse_acc/2` plus $n + 1$ calls to `reverse_acc/3`: $n + 2$, linear. For $n = 30$ that is $32$ instead of $496$. The lab proves both numbers **exactly**: it runs each goal with `call_with_inference_limit/3` and checks that the stated budget is enough and one fewer is not.
+
+```prolog
+% Exactly Limit calls succeed and Limit - 1 calls are not enough.
+costs_exactly(Goal, Limit) :-
+    call_with_inference_limit(Goal, Limit, Result),
+    Result \== inference_limit_exceeded,
+    Fewer is Limit - 1,
+    call_with_inference_limit(Goal, Fewer, inference_limit_exceeded).
+```
+
+The library's `reverse/2` uses the accumulator method, and the lab checks that all three versions agree.
+
+### Level 6: indexing, sorting and the standard order
+
+`nth0/3` counts from 0 and `nth1/3` from 1: `nth0(1, [a, b, c], E)` gives `b`, `nth1(1, [a, b, c], E)` gives `a`. Both walk the list, so finding element $i$ costs about $i$ steps. If you index into lists in a loop, you probably want a different data structure.
+
+SWI-Prolog has three sorting predicates, and they differ in what they do with duplicates. The manual defines the first two through the third:
+
+| Call | Same as | Order | Duplicates |
+|---|---|---|---|
+| `msort(L, S)` | `sort(0, @=<, L, S)` | ascending | kept |
+| `sort(L, S)` | `sort(0, @<, L, S)` | ascending | **removed** |
+| `sort(K, @>=, L, S)` | | descending on key `K` | kept |
+| `sort(K, @>, L, S)` | | descending on key `K` | removed |
+
+```text
+?- msort([b, a, c, a], M).
+M = [a, a, b, c].
+
+?- sort([b, a, c, a], S).
+S = [a, b, c].
+
+?- sort(0, @>=, [3, 1, 2, 3], D).
+D = [3, 3, 2, 1].
+```
+
+Key `0` means "compare whole elements"; key `K > 0` compares the `K`-th argument of each element. The manual also guarantees that *"The sort is stable"*, so equal keys keep their original order:
+
+```prolog
+level6_index_and_sort :-
+    nth0(1, [a, b, c], Zero),
+    nth1(1, [a, b, c], One),
+    assertion(Zero-One == b-a),
+    msort([b, a, c, a], M),
+    assertion(M == [a, a, b, c]),
+    sort([b, a, c, a], S),
+    assertion(S == [a, b, c]),
+    sort(0, @>=, [3, 1, 2, 3], Desc),
+    assertion(Desc == [3, 3, 2, 1]),
+    sort(2, @>=, [item(apple, 3), item(pear, 5), item(fig, 3)], ByCount),
+    assertion(ByCount == [item(pear, 5), item(apple, 3), item(fig, 3)]),
+    msort([b, 2, "s", f(x), 1.0, V, a, 1], Ordered),
+    assertion(Ordered == [V, 1.0, 1, 2, "s", a, b, f(x)]).
+```
+
+Sorting by count, `apple` and `fig` both have 3, and `apple` stays before `fig` because it came first. The last check shows the **standard order of terms** that all of these use. SWI-Prolog's manual states it as *"Variables < Numbers < Strings < Atoms < Compound Terms"*; numbers compare by value, and for equal values *"the float is considered the smaller value"*, which is why `1.0` comes before `1`.
+
+## How it works underneath
+
+**Three cells per element.** SWI-Prolog stores a compound term on the global stack as one cell for the functor followed by one cell per argument. A list cell `'[|]'(H, T)` is therefore 3 cells, and small integers and atoms fit inside a cell. `term_size/2` reports the size in cells, and the lab checks that `[1, 2, 3]` takes $3 \times 3 = 9$. On a 64-bit machine each cell is 8 bytes, so a list of small integers costs 24 bytes per element: far more than an array, which is one reason long numeric data is better kept elsewhere.
+
+**Sharing, not copying.** `append(X, Y, Z)` copies the cells of `X`, because each needs a new tail, but it does not touch `Y`: the last new cell simply points at it. The lab proves the tail of the result is the very same term as the second argument, using `same_term/2`:
+
+```prolog
+% Underneath: three memory cells per list element; append shares its second list.
+memory_layout :-
+    term_size([1, 2, 3], Cells),
+    assertion(Cells == 9),
+    Back = [3, 4],
+    my_append([1, 2], Back, Joined),
+    Joined = [_, _|Rest],
+    assertion(same_term(Rest, Back)).
+```
+
+So `append` costs $O(\lvert X \rvert)$ time and memory, independent of the length of `Y`. This is why adding at the front, `[H|T]`, is $O(1)$, and adding at the end is $O(n)$.
+
+**Indexing makes list recursion deterministic.** First-argument indexing distinguishes `[]` from `[_|_]`. `naive_reverse([1, 2, 3], R)` and `reverse_acc([1, 2, 3], R)` therefore answer `R = [3, 2, 1].` with a full stop: at every step only one clause can match, no choice point is left, and `reverse_acc/3` runs with last-call optimisation in constant stack. `my_member/2` and `my_append/3` put the list in the second or third argument in some modes, so they do leave choice points, which is the `;` and `false` you saw above. [Accumulators and Difference Lists](08-accumulators-and-difference-lists.qmd) shows how to append in $O(1)$ by keeping a pointer to the end of the list.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Writing `[H, T]` when you mean `[H|T]` | Matches only lists of exactly two elements; `T` is the second element, not the rest | `[H|T]` for head and tail; `[A, B]` for exactly two |
+| Expecting `"abc"` to be a list of characters | `"abc" = [_|_]` fails; in SWI-Prolog 7+ it is a string | Use `string_chars/2`, `atom_chars/2`, or set the `double_quotes` flag |
+| Building a list by appending at the end in a loop | Quadratic time: 496 calls for 30 elements with naive reverse | Add at the front and reverse once, or use an accumulator or a difference list |
+| Using `sort/2` and losing duplicates | `[b, a, c, a]` becomes `[a, b, c]` | Use `msort/2` or `sort(0, @=<, L, S)` |
+| Mixing up `nth0` and `nth1` | Off-by-one: `nth1(1, [a, b, c], E)` is `a`, `nth0(1, ...)` is `b` | Pick one per code base and name the index variable accordingly |
+| Testing for the empty list with `atom/1` | `atom([])` fails in SWI-Prolog 7+ | Use `L == []`, or match `[]` in a clause head |
+| Defining your own `member/2` or `append/3` next to the library's | Confusing behaviour if the library version was already imported | Use the library, or give teaching versions their own names |
+
+## Interview questions
+
+### 1. Why does `append(X, Y, [1, 2, 3])` have four solutions?
+
+**Answer.** Each solution is a cut point in the list: before the first element, between any two, or after the last. A list of $n$ elements has $n + 1$ cut points, so $3 + 1 = 4$. Procedurally, the first clause `append([], L, L)` gives the cut at the front, and each use of the second clause moves one element from `Z` into `X`, shifting the cut one place right. After $n$ steps the third argument is `[]`, only the first clause matches, and the search ends with the final `false`. The lab checks the four pairs in order.
+
+### 2. Why is naive reverse quadratic, and how do you make it linear?
+
+**Answer.** It appends each head at the end of the already-reversed tail, and appending to a list of length $k$ walks all $k$ cells. Summing $k + 1$ for $k = 0, \dots, n - 1$ plus the $n + 1$ reverse calls gives $T(n) = \frac{(n+1)(n+2)}{2}$, so 496 inferences for 30 elements. The accumulator version pushes each element onto the front of an accumulator, an $O(1)$ step, so it needs $n + 2$ calls: 32 for 30 elements. Both counts are verified exactly in the lab with `call_with_inference_limit/3`.
+
+### 3. What is the difference between `sort/2`, `msort/2` and `sort/4`?
+
+**Answer.** All three sort by the standard order of terms. `sort/2` removes duplicates, which makes it a set constructor; `msort/2` keeps them. `sort/4` generalises both: `sort(Key, Order, List, Sorted)` sorts on argument `Key` of each element (0 for the whole element), and `Order` is one of `@<` and `@>` (remove duplicates) or `@=<` and `@>=` (keep them). It is stable, so it is the tool for sorting records by a field. `sort(0, @>=, [3, 1, 2, 3], D)` gives `[3, 3, 2, 1]`.
+
+### 4. What is `'[|]'`, and why did SWI-Prolog stop using `'.'`?
+
+**Answer.** It is the name of the list constructor: `[H|T]` is the term `'[|]'(H, T)`, and `functor([1, 2, 3], N, A)` gives `N = '[|]'`, `A = 2`. Traditional Prolog and ISO use `'.'`. SWI-Prolog 7 changed it so that lists can be told apart from other terms at runtime; the manual says that as of version 7, *"SWI-Prolog lists can be distinguished unambiguously at runtime from ./2 terms and the atom '[]'."* That freed `.` for its dict syntax. Code that writes `[H|T]` and `[]` is unaffected; code that builds lists with `'.'(H, T)` or tests `atom([])` breaks.
+
+### 5. Why is `[H|T]` constant time to build, but adding at the end linear?
+
+**Answer.** `[H|T]` allocates one new 3-cell term whose tail points at the existing `T`; nothing else is touched. A list has no pointer to its last cell, so adding at the end must copy every cell from the front, because each copied cell needs a new tail. That is why idiomatic Prolog builds lists at the front, or keeps an open tail with a difference list.
+
+## Summary
+
+$$
+[x_1, \dots, x_n] = \texttt{'[|]'}(x_1, \dots \texttt{'[|]'}(x_n, [\,]) \dots), \qquad T_{\text{naive}}(n) = \frac{(n+1)(n+2)}{2}
+$$
+
+where $x_1, \dots, x_n$ are the elements, $\texttt{'[|]'}$ is the cell constructor, $[\,]$ the empty list, and $T_{\text{naive}}(n)$ the number of calls naive reverse makes on $n$ elements.
+
+Example: $[1, 2, 3]$ is three cells ending in $[\,]$, 9 memory cells in all; reversing 30 elements naively costs $\frac{31 \cdot 32}{2} = 496$ calls against $30 + 2 = 32$ with an accumulator.
+
+- A list is nested `'[|]'(Head, Tail)` cells ending in `[]`; `[H|T]` writes one cell.
+- List predicates recurse on the tail; the length of the list is the termination measure.
+- `member/2` and `append/3` are relations: they check, generate and split. `append` on $n$ elements has $n + 1$ splits.
+- Front is cheap, end is expensive: naive reverse is $O(n^2)$, the accumulator version $O(n)$.
+- `msort` keeps duplicates, `sort/2` removes them, `sort/4` sorts on a key, stably, in either direction.
+
+## References
+
+- SWI-Prolog manual: [Lists are special](https://www.swi-prolog.org/pldoc/man?section=ext-lists), [library(lists)](https://www.swi-prolog.org/pldoc/man?section=lists), [append/3](https://www.swi-prolog.org/pldoc/man?predicate=append/3), [length/2](https://www.swi-prolog.org/pldoc/man?predicate=length/2), [nth0/3](https://www.swi-prolog.org/pldoc/man?predicate=nth0/3), [msort/2](https://www.swi-prolog.org/pldoc/man?predicate=msort/2), [sort/4](https://www.swi-prolog.org/pldoc/man?predicate=sort/4), [Standard Order of Terms](https://www.swi-prolog.org/pldoc/man?section=standardorder).
+- Quintus Computer Systems, [BENCH.PL, the naive reverse benchmark](https://gerrit.googlesource.com/prolog-cafe/+/vendor/examples/benchmarks/src/bench.pl) (1984), as kept in the Prolog Cafe repository.
+- Leon Sterling and Ehud Shapiro, [*The Art of Prolog*](https://mitpress.mit.edu/9780262691635/the-art-of-prolog/), 2nd ed., MIT Press, 1994, Section 3.2 (Lists).
+- Ivan Bratko, [*Prolog Programming for Artificial Intelligence*](https://www.pearson.com/en-us/subject-catalog/p/prolog-programming-for-artificial-intelligence/P200000003804/9780321417466), 4th ed., Addison-Wesley, 2012, Chapter 3 (Lists, Operators, Arithmetic).
+- William F. Clocksin and Christopher S. Mellish, [*Programming in Prolog: Using the ISO Standard*](https://doi.org/10.1007/978-3-642-55481-0), 5th ed., Springer, 2003.
+- Markus Triska, *The Power of Prolog*: [Data Structures](https://www.metalevel.at/prolog/data) and [Sorting and Searching](https://www.metalevel.at/prolog/sorting).
+- Lab: [`labs/lists.pl`](labs/lists.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt lists.pl`.

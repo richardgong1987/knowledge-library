@@ -1,0 +1,318 @@
+---
+title: "Facts, Rules and Queries"
+description: "A Prolog program is a knowledge base: facts and rules written as Horn clauses, terms as the only data, queries that run in every direction, and the declarative and procedural readings of the same clause."
+---
+
+## The problem
+
+Here is a small family. Pam and Tom are Bob's parents, Tom is also Liz's parent, Bob is the parent of Ann and Pat, and Pat is the parent of Jim. Ivan Bratko opens *Prolog Programming for Artificial Intelligence* with exactly this family, and it comes back in later chapters.
+
+Now ask three questions about it:
+
+1. Who are Tom's grandchildren? (Ann and Pat.)
+2. Who are Jim's grandparents? (Bob.)
+3. Who are Bob's siblings? (Liz.)
+
+In Python or Go you would store a map from parent to children, then write a loop for question 1. Question 2 runs the other way, from child to parent, so it needs a second map or a full scan, and a second function. Question 3 needs a third function. Every new question, and every new **direction** of an old question, is new code that can disagree with the old code.
+
+Prolog removes that work. You write down **what is true**, once: six facts and two short rules. Then you ask any question, in any direction, and the same rules answer all of them. The program is a knowledge base, and running it means asking it questions.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A notebook and a detective
+
+- The **notebook** holds two kinds of sentences. **Facts** are things that are simply true: "Tom is a parent of Bob." **Rules** are "if" sentences: "Someone is a grandparent of a child **if** they are a parent of somebody who is a parent of that child."
+- You ask the **detective** a question: "Who are Tom's grandchildren?" The detective looks only in the notebook. He either says "yes, and here is who", or "I cannot prove that from my notebook".
+- "I cannot prove it" is not the same as "it is false in real life". If the notebook does not mention Liz's children, the detective cannot know about them.
+
+Robert Kowalski, the logician whose resolution methods the Marseille team built Prolog on, summed this up in the title of a 1979 paper: **Algorithm = Logic + Control**. His abstract says that *"an algorithm can be regarded as consisting of a logic component, which specifies the knowledge to be used in solving problems, and a control component, which determines the problem-solving strategies by means of which that knowledge is used."* The notebook is the logic. How the detective turns the pages is the control. In Prolog, you write the notebook, and the detective comes built in.
+:::
+
+## From simple to advanced
+
+### Level 1: facts are sentences that are true
+
+A **fact** is a name followed by arguments in parentheses, ending with a full stop:
+
+```prolog
+% Level 1: facts. The family Ivan Bratko uses to open his book.
+parent(pam, bob).
+parent(tom, bob).
+parent(tom, liz).
+parent(bob, ann).
+parent(bob, pat).
+parent(pat, jim).
+```
+
+`parent` is the **predicate**: the name of a relation. `pam` and `bob` are its **arguments**. The order of the arguments is a convention you choose and then keep: here `parent(X, Y)` means "X is a parent of Y". Prolog does not know what "parent" means; it only knows which sentences are in the notebook.
+
+A **query** asks Prolog to prove something. At the SWI-Prolog prompt `?-`:
+
+```text
+?- parent(tom, bob).
+true.
+
+?- parent(bob, tom).
+false.
+
+?- parent(liz, X).
+false.
+
+?- parent(tom, X).
+X = bob ;
+X = liz.
+```
+
+A name that starts with a capital letter, like `X`, is a **variable**: a blank that Prolog fills in. Typing `;` asks for the next answer. `parent(liz, X)` is `false` because the notebook lists no children of Liz. That is the **closed-world assumption**: what cannot be proved from the program is reported as false. The lab checks all four queries.
+
+### Level 2: terms are the only data
+
+Everything in Prolog, both data and program, is a **term**. There are four kinds:
+
+| Kind | Examples | Rule |
+|---|---|---|
+| Atom | `tom`, `parent`, `'Tom Smith'` | starts with a lower-case letter, or is quoted |
+| Number | `42`, `3.14`, `-7` | integers are unbounded in SWI-Prolog |
+| Variable | `X`, `Who`, `_Child`, `_` | starts with a capital letter or `_` |
+| Compound term | `parent(tom, bob)`, `date(2026, 11, 26)` | a **functor** name plus arguments |
+
+A compound term is identified by its **name and arity** (number of arguments), written `parent/2`. Built-in predicates test which kind a term is:
+
+```text
+?- atom(tom), atom('Tom Smith').
+true.
+
+?- integer(42), float(3.14).
+true.
+
+?- compound(parent(tom, bob)).
+true.
+
+?- functor(parent(tom, bob), Name, Arity).
+Name = parent,
+Arity = 2.
+```
+
+Two details trip people up. First, `"Bob"` in double quotes is a **string** in SWI-Prolog 7 and later, not an atom; the `double_quotes` flag defaults to `string`. Second, `parent(tom, bob)` as a fact and `parent(tom, bob)` as data are **the same term**. A fact is a term that you have asserted to be true.
+
+### Level 3: rules, and the Horn clause
+
+A **rule** says that its head is true if its body is true:
+
+```prolog
+grandparent(X, Z) :-
+    parent(X, Y),
+    parent(Y, Z).
+```
+
+Read `:-` as "if" and the comma as "and". Markus Triska puts it this way in *The Power of Prolog*: *"Note that :- is in fact meant to represent the arrow ←."* Every Prolog clause has this one shape:
+
+$$
+H \leftarrow B_1 \land B_2 \land \dots \land B_n
+$$
+
+where
+
+- $H$ is the **head**, a single goal such as $\text{grandparent}(X, Z)$;
+- $B_1, \dots, B_n$ are the **body** goals, such as $\text{parent}(X, Y)$;
+- $\leftarrow$ means "is true if", and $\land$ means "and";
+- $n$ is the number of body goals; $n = 0$ is a **fact**, true with no conditions.
+
+A clause with at most one goal on the left of the arrow is a **Horn clause**, named after the logician Alfred Horn, who studied such sentences in 1951. A query is a Horn clause with no head at all: "prove $B_1 \land \dots \land B_n$".
+
+Example, with the grandparent rule, so $n = 2$, $B_1 = \text{parent}(X, Y)$ and $B_2 = \text{parent}(Y, Z)$:
+
+1. Choose $X = \text{tom}$, $Y = \text{bob}$, $Z = \text{ann}$.
+2. $B_1 = \text{parent}(\text{tom}, \text{bob})$ is the second fact, so it is true.
+3. $B_2 = \text{parent}(\text{bob}, \text{ann})$ is the fourth fact, so it is true.
+4. Both are true, so $H = \text{grandparent}(\text{tom}, \text{ann})$ is true.
+
+The fact `parent(pam, bob).` is the same shape with $n = 0$: $\text{parent}(\text{pam}, \text{bob}) \leftarrow$ (nothing), true outright.
+
+Variables in a rule have a precise logical meaning. Those in the head mean "for all"; one that appears only in the body, like `Y`, means "there exists":
+
+$$
+\forall X\, \forall Z\; \Big( \text{grandparent}(X, Z) \leftarrow \exists Y\; \big(\text{parent}(X, Y) \land \text{parent}(Y, Z)\big) \Big)
+$$
+
+where $\forall$ reads "for every", $\exists Y$ reads "there is at least one $Y$", and the other symbols are as before. $Y$ is the person in the middle, and Prolog's job is to find one.
+
+Example: for $X = \text{tom}$, $Z = \text{pat}$ the witness is $Y = \text{bob}$, so the rule proves it. For $X = \text{tom}$, $Z = \text{jim}$ the candidates are Tom's children, $Y \in \lbrace \text{bob}, \text{liz} \rbrace$. Neither $\text{parent}(\text{bob}, \text{jim})$ nor $\text{parent}(\text{liz}, \text{jim})$ is a fact, so no witness exists and Prolog answers `false`. Jim is Tom's great-grandchild, which [Recursion](04-recursion.qmd) handles.
+
+```text
+?- grandparent(tom, W).
+W = ann ;
+W = pat ;
+false.
+```
+
+The final `false.` means Prolog kept one more possibility open (Tom's other child, Liz), tried it after `pat`, and found nothing. [Resolution and Backtracking](03-resolution-and-backtracking.qmd) shows exactly why.
+
+### Level 4: one rule answers every direction
+
+Nothing in the rule says which arguments are inputs. Leave the first one open and the same rule answers question 2:
+
+```text
+?- grandparent(G, jim).
+G = bob ;
+false.
+```
+
+Leave both open and it lists every grandparent pair. The lab collects them with `findall/3`, which gathers all answers into a list:
+
+```prolog
+level3_rules :-
+    findall(W, grandparent(tom, W), TomsGrandchildren),
+    assertion(TomsGrandchildren == [ann, pat]),
+    findall(G, grandparent(G, jim), JimsGrandparents),
+    assertion(JimsGrandparents == [bob]),
+    findall(A-B, grandparent(A, B), Pairs),
+    assertion(Pairs == [pam-ann, pam-pat, tom-ann, tom-pat, bob-jim]),
+    assertion(length(Pairs, 5)).
+```
+
+Why five? Every answer passes through one person in the middle, so the count is a sum over middle people:
+
+$$
+N = \sum_{y} p(y) \cdot c(y)
+$$
+
+where
+
+- $y$ ranges over every person in the family;
+- $p(y)$ is the number of parents of $y$ in the facts;
+- $c(y)$ is the number of children of $y$ in the facts;
+- $N$ is the number of answers to `grandparent(A, B)`.
+
+Example: Bob has $p = 2$ (Pam, Tom) and $c = 2$ (Ann, Pat), giving $2 \cdot 2 = 4$. Pat has $p = 1$ and $c = 1$, giving $1$. Liz has $p = 1$ but $c = 0$, giving $0$. Everyone else has no parents or no children listed. So $N = 4 + 1 + 0 = 5$, which the lab checks. The formula counts **proofs**, not distinct pairs: if two different middle people linked the same grandparent and grandchild, that pair would appear twice.
+
+Question 3 needs one more idea. Two people are siblings if they share a parent **and are different people**:
+
+```prolog
+% Level 4: two people are siblings if they share a parent and differ.
+sibling(X, Y) :-
+    parent(P, X),
+    parent(P, Y),
+    dif(X, Y).
+```
+
+Without `dif(X, Y)`, everybody would be their own sibling. `dif/2` is the constraint "these two terms are different", explained in [Unification](02-unification.qmd).
+
+```text
+?- sibling(bob, S).
+S = liz.
+```
+
+The lab also lists all sibling pairs: `bob-liz, liz-bob, ann-pat, pat-ann`. Each pair comes in both orders, because the rule is symmetric.
+
+### Level 5: two readings of the same clause
+
+Every clause can be read in two ways, and both are correct.
+
+- **Declarative reading:** "grandparent(X, Z) is true if parent(X, Y) and parent(Y, Z) are true for some Y." It says *what holds*. It ignores order, and it is how you check that a program is right. Triska: *"Declaratively, Prolog programs state what holds."*
+- **Procedural reading:** "To solve grandparent(X, Z), first solve parent(X, Y), then solve parent(Y, Z)." It says *how Prolog searches*. It is how you reason about speed and about whether a query terminates.
+
+This is Kowalski's equation:
+
+$$
+\text{Algorithm} = \text{Logic} + \text{Control}
+$$
+
+where
+
+- Logic is the clauses: what is true;
+- Control is the search strategy: in Prolog, goals left to right, clauses top to bottom, depth first;
+- $+$ means the two are combined to give a runnable algorithm.
+
+Example: keep the logic of `grandparent` and swap its two body goals, a different control. For `grandparent(tom, W)`, the original first goal `parent(tom, Y)` matches 2 of the 6 facts; the swapped first goal `parent(Y, W)` must try all 6. Both find Ann and Pat. Kowalski's abstract states it directly: *"The logic component determines the meaning of the algorithm whereas the control component only affects its efficiency."* In real Prolog, control can also decide whether a query terminates at all; that is the subject of [Resolution and Backtracking](03-resolution-and-backtracking.qmd).
+
+**Where Prolog came from.** Alain Colmerauer and Philippe Roussel created Prolog in Marseille in 1972, for a system that answered questions in French. In *The birth of Prolog* they write that Roussel chose the name as an abbreviation for *"PROgrammation en LOGique"*, following a suggestion from his wife, and that he wrote the first Prolog system in Algol-W in the autumn of 1972. Kowalski visited Marseille in June 1971 and again in April and May 1972, and the definitive version of the language followed in 1973.
+
+## How it works underneath
+
+**Loading builds a database.** `swipl family.pl` reads the file one clause at a time. Each clause is read as a term and added to the predicate it belongs to. A predicate is identified by its **predicate indicator** `Name/Arity`, so `parent/2` and `parent/3` would be two unrelated predicates. Within a predicate, clauses keep their source order, and that order is the order in which Prolog tries them.
+
+**A clause is itself a term.** `Head :- Body` is the compound term `':-'(Head, Body)`, and a fact is stored as a rule whose body is the atom `true`. The lab proves both with `clause/2`, which looks up a clause by its head:
+
+```prolog
+clauses_are_terms :-
+    clause(parent(pam, bob), FactBody),
+    assertion(FactBody == true),
+    clause(grandparent(_, _), RuleBody),
+    assertion(RuleBody = (parent(_, _), parent(_, _))),
+    Rule = (grandparent(X, Z) :- parent(X, Y), parent(Y, Z)),
+    functor(Rule, Neck, 2),
+    assertion(Neck == (:-)).
+```
+
+Because programs are terms, Prolog programs can read, build and run other programs. [All Solutions and Higher-Order](09-all-solutions-and-higher-order.qmd) uses this.
+
+**Indexing picks the candidate clauses.** SWI-Prolog's manual on just-in-time indexing says *"The principal clause list maintains a key, normally for the first argument."* For `parent(tom, X)` the key `tom` selects only the two Tom clauses. After `X = liz` the index shows that no other clause can match, so Prolog keeps no alternative open and prints `X = liz.` with a full stop. For `grandparent(tom, W)`, the alternative `Y = liz` is still open after `W = pat`, so Prolog has to try it, and only then reports `false`. SWI-Prolog also builds indexes on other arguments the first time a call would benefit from one.
+
+**Unknown predicates are errors, not failures.** If a predicate has no clauses at all and was never declared, SWI-Prolog raises an existence error instead of quietly failing, because a typo is the likeliest cause:
+
+```prolog
+% Common mistakes: calling a predicate that does not exist raises an error.
+unknown_predicate :-
+    catch(parnet(tom, bob), Error, true),
+    assertion(Error = error(existence_error(procedure, parnet/2), _)).
+```
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Writing a person's name with a capital: `parent(tom, Bob).` | `Warning: ... Singleton variables: [Bob]`. `Bob` is a variable, so the fact says Tom is everyone's parent | Write constants in lower case, or quote them: `'Bob'` |
+| A space before the parenthesis: `parent (tom, bob).` | `Syntax error: Operator expected` | No space between the name and `(` |
+| Forgetting the full stop at the end of a clause | `Syntax error: Operator expected`, pointing just after the clause that lacks it | End every clause with `.` |
+| Clauses of one predicate scattered through the file | `Clauses of p/1 are not together in the source-file` | Keep them together, or declare `:- discontiguous p/1.` |
+| A misspelt predicate name | `Unknown procedure: parnet/2` | Fix the spelling; the existence error is SWI-Prolog helping you |
+| Reading `false` as "untrue in the world" | Wrong conclusions about missing data | `false` means "not provable from these clauses"; add the missing facts |
+| Swapping argument order between clauses: `parent(bob, pam)` meaning "Bob's parent is Pam" | Silent wrong answers | Write the convention in a comment, such as `% parent(Parent, Child)` |
+
+## Interview questions
+
+### 1. What is a Horn clause, and why does Prolog use only Horn clauses?
+
+**Answer.** A Horn clause has at most one positive conclusion: $H \leftarrow B_1 \land \dots \land B_n$. A fact is the case $n = 0$, a rule has $n \geq 1$, and a query has no head. The restriction is what makes Prolog fast and predictable. For Horn clauses, proving a goal reduces to a simple loop: pick a goal, find a clause whose head matches it, and replace the goal by that clause's body. That procedure, SLD resolution, is complete for Horn clauses when the search is fair; Prolog's depth-first search is not, as [Resolution and Backtracking](03-resolution-and-backtracking.qmd) shows. Full first-order logic would allow conclusions such as "A or B", which need far more expensive general resolution. The price is expressiveness: you cannot state "every person is male or female" as a single clause.
+
+### 2. What does `false` mean in Prolog?
+
+**Answer.** It means "this cannot be derived from the program", the **closed-world assumption**. `?- parent(liz, X).` is `false` because no fact lists a child of Liz, not because Liz has no children. Negation in Prolog, written `\+ G`, works the same way: it succeeds when `G` cannot be proved. That is **negation as failure**, covered in [Cut and Negation](07-cut-and-negation.qmd).
+
+### 3. What is the difference between the declarative and the procedural meaning of a program?
+
+**Answer.** The declarative meaning is the set of facts that logically follow from the clauses. It does not depend on the order of clauses or goals. The procedural meaning is what Prolog's search actually does: goals left to right, clauses top to bottom, depth first. The two agree on every answer Prolog finds, but the procedural meaning also decides the **order** of answers, the amount of work, and whether a query terminates. Swapping the goals of `grandparent` keeps the meaning but changes the work from 2 candidate facts to 6. A left-recursive rule keeps the meaning and loops forever ([Resolution and Backtracking](03-resolution-and-backtracking.qmd)).
+
+### 4. Why does `?- parent(tom, X).` end with `X = liz.` but `?- grandparent(tom, W).` end with `false.`?
+
+**Answer.** A full stop means Prolog knows no other answer is possible; `;` followed by `false` means it still had an alternative open and had to try it. First-argument indexing on `tom` selects exactly two clauses of `parent/2`, so after the second answer none is left. In `grandparent(tom, W)`, the first goal `parent(tom, Y)` still has `Y = liz` open after the answers through Bob. Prolog tries it, `parent(liz, W)` fails, and only then can it say there are no more answers. The lab confirms this with `call_with_inference_limit/3`, which reports whether a goal left a choice point ([Resolution and Backtracking](03-resolution-and-backtracking.qmd)).
+
+## Summary
+
+$$
+H \leftarrow B_1 \land \dots \land B_n
+$$
+
+where $H$ is the head, $B_1, \dots, B_n$ are the body goals, $\leftarrow$ is "if", $\land$ is "and", and $n = 0$ makes the clause a fact.
+
+Example: `grandparent(tom, ann)` holds because $B_1 = \text{parent}(\text{tom}, \text{bob})$ and $B_2 = \text{parent}(\text{bob}, \text{ann})$ are both facts, with $n = 2$.
+
+- A program is a **knowledge base**: facts are true sentences, rules are "head if body".
+- Everything is a **term**: atoms, numbers, variables and compound terms named by `Name/Arity`.
+- A query is a question; variables are blanks Prolog fills, in **any direction**.
+- `false` means **not provable** from the program: the closed-world assumption.
+- Read every clause twice: **declaratively** for correctness, **procedurally** for efficiency and termination. Algorithm = Logic + Control.
+
+## References
+
+- SWI-Prolog manual: [Getting started quickly](https://www.swi-prolog.org/pldoc/man?section=quickstart), [The SWI-Prolog syntax](https://www.swi-prolog.org/pldoc/man?section=syntax), [Loading Prolog source files](https://www.swi-prolog.org/pldoc/man?section=consulting), [Just-in-time clause indexing](https://www.swi-prolog.org/pldoc/man?section=jitindex), [Prolog flags](https://www.swi-prolog.org/pldoc/man?section=flags) (`double_quotes`).
+- Robert Kowalski, [Algorithm = Logic + Control](https://doi.org/10.1145/359131.359136), *Communications of the ACM* 22(7), 424–436, 1979. [Author's copy (scanned PDF)](https://www.doc.ic.ac.uk/~rak/papers/algorithm%20=%20logic%20+%20control.pdf).
+- Alain Colmerauer and Philippe Roussel, [The birth of Prolog](http://alain.colmerauer.free.fr/alcol/ArchivesPublications/PrologHistory/19november92.pdf), presented at HOPL-II, 1993.
+- Alfred Horn, [On sentences which are true of direct unions of algebras](https://doi.org/10.2307/2268661), *Journal of Symbolic Logic* 16(1), 14–21, 1951.
+- Ivan Bratko, [*Prolog Programming for Artificial Intelligence*](https://www.pearson.com/en-us/subject-catalog/p/prolog-programming-for-artificial-intelligence/P200000003804/9780321417466), 4th ed., Addison-Wesley, 2012, Chapter 1 (the family tree).
+- Leon Sterling and Ehud Shapiro, [*The Art of Prolog*](https://mitpress.mit.edu/9780262691635/the-art-of-prolog/), 2nd ed., MIT Press, 1994, Chapters 1 (Basic Constructs) and 2 (Database Programming).
+- William F. Clocksin and Christopher S. Mellish, [*Programming in Prolog: Using the ISO Standard*](https://doi.org/10.1007/978-3-642-55481-0), 5th ed., Springer, 2003.
+- Markus Triska, *The Power of Prolog*: [Reading Prolog Programs](https://www.metalevel.at/prolog/reading) and [Basic Concepts](https://www.metalevel.at/prolog/concepts).
+- Lab: [`labs/facts-rules-and-queries.pl`](labs/facts-rules-and-queries.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt facts-rules-and-queries.pl`.

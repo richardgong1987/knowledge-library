@@ -1,0 +1,309 @@
+---
+title: "Resolution and Backtracking"
+description: "How Prolog runs a query: SLD resolution, the search tree, depth-first left-to-right search, choice points and backtracking, the Byrd box model with a traced example, why clause and goal order matter, and tabling."
+---
+
+## The problem
+
+Three one-way roads: `a` to `b`, `b` to `c`, `c` to `d`. Where can you get to from `a`? Obviously `b`, `c` and `d`. Here are two definitions of "there is a path", and they say **the same thing** in logic: a path is a single road, or a path followed by a road.
+
+```prolog
+% Right recursion: the base case first, the recursive call last.
+path(X, Z) :- edge(X, Z).
+path(X, Z) :- edge(X, Y), path(Y, Z).
+
+% Left recursion: the first goal calls path_left again with the same X.
+path_left(X, Z) :- path_left(X, Y), edge(Y, Z).
+path_left(X, Z) :- edge(X, Z).
+```
+
+`?- path(a, d).` answers `true` at once. `?- path_left(a, d).` prints nothing and keeps running: with SWI-Prolog's default 1 GB stack it was still going after 20 minutes on the machine used for this chapter. Started with a small stack, `swipl --stack-limit=20m`, it stops at once with `Stack limit (20.0Mb) exceeded` and the hint `Probable infinite recursion`. The logic is identical; the behaviour is not.
+
+To predict which programs work, you need to know Prolog's **control**: the exact procedure it follows to search for a proof. That procedure is SLD resolution, searched depth first and left to right, with backtracking. Once you know it, the answer order, the trailing `false`, and the infinite loop above all become predictable.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Exploring a maze with a ball of string
+
+- You stand at the entrance of a maze. At every fork you take the **leftmost** passage you have not tried yet, unrolling string behind you.
+- At a dead end you **wind the string back** to the most recent fork that still has an untried passage, rub out any chalk marks you made since, and try the next passage. That is **backtracking**; each fork with untried passages is a **choice point**.
+- When you reach the treasure, you shout the answer. If someone asks "is there more treasure?", you keep going from where you are.
+- The danger: a passage that leads straight back to **the same fork**, so you walk the same loop forever and never try the other passages. That is left recursion.
+
+Lawrence Byrd gave Prolog programmers a second picture in 1980: every goal is a **box with four doors**. You go in through **Call**, come out through **Exit** with an answer, go back in through **Redo** to ask for another answer, and come out through **Fail** when there are no more. Debuggers, including SWI-Prolog's, still print these four names.
+:::
+
+## From simple to advanced
+
+### Level 1: one resolution step
+
+Prolog keeps a list of goals still to prove. One step of **SLD resolution** takes the first goal, finds a clause whose head unifies with it, and replaces the goal by that clause's body:
+
+$$
+(G_1, G_2, \dots, G_k) \;\longrightarrow\; (B_1, \dots, B_m, G_2, \dots, G_k)\,\sigma \qquad \text{where } \sigma = \operatorname{mgu}(G_1, H)
+$$
+
+where
+
+- $G_1, \dots, G_k$ are the goals still to prove, and $G_1$, the leftmost, is the one selected;
+- $H \leftarrow B_1, \dots, B_m$ is a program clause, copied with fresh variable names;
+- $\sigma$ is the most general unifier of $G_1$ and $H$ from [Unification](02-unification.qmd), applied to the whole new list;
+- $m$ is the clause's body length; for a fact $m = 0$, so $G_1$ simply disappears;
+- the new list has $k - 1 + m$ goals, and the proof succeeds when the list is empty.
+
+Example, the query `grandparent(tom, W)` against this rule:
+
+```prolog
+% Level 1: one rule to resolve against.
+grandparent(X, Z) :-
+    parent(X, Y),
+    parent(Y, Z).
+```
+
+1. Start with $k = 1$: $(\text{grandparent}(\text{tom}, W))$. The rule has $m = 2$ and $\sigma = \lbrace X \mapsto \text{tom}, Z \mapsto W \rbrace$, giving $1 - 1 + 2 = 2$ goals: $(\text{parent}(\text{tom}, Y), \text{parent}(Y, W))$.
+2. $G_1 = \text{parent}(\text{tom}, Y)$ unifies with the fact `parent(tom, bob)`, $m = 0$, $\sigma = \lbrace Y \mapsto \text{bob} \rbrace$, giving $2 - 1 + 0 = 1$ goal: $(\text{parent}(\text{bob}, W))$.
+3. $G_1 = \text{parent}(\text{bob}, W)$ unifies with `parent(bob, ann)`, $\sigma = \lbrace W \mapsto \text{ann} \rbrace$, giving $1 - 1 + 0 = 0$ goals. The list is empty: success, with $W = \text{ann}$.
+
+The name says what it does: **S**elective (one goal is selected, here always the leftmost) **L**inear (each step produces one new goal list from the previous one) resolution for **D**efinite clauses (Horn clauses with exactly one head). Kowalski described the rule in *Predicate Logic as Programming Language* (1974). *The birth of Prolog* recalls that its ancestor, Kowalski and Kuehner's SL-resolution, appealed to the Marseille team because its *"stack type operating mode was similar to the management of procedure calls in a standard programming language"*.
+
+### Level 2: the search tree, depth first and left to right
+
+At step 2 above, `parent(tom, Y)` matched **two** facts, `parent(tom, bob)` and `parent(tom, liz)`. Each match starts a different branch. Drawn out, the choices form the **search tree**:
+
+```text
+grandparent(tom, W)
+└── parent(tom, Y), parent(Y, W)
+    ├── Y = bob:  parent(bob, W)
+    │   ├── W = ann       success
+    │   └── W = pat       success
+    └── Y = liz:  parent(liz, W)
+        └── no clause     failure
+```
+
+Prolog walks this tree **depth first** and **left to right**: it follows the first branch all the way down before looking at the second, and "left to right" means clauses in source order. So the answers come out in the order of the leaves: `ann`, then `pat`, then the Liz branch fails, and Prolog reports `false`.
+
+```prolog
+level1_and_2_search_order :-
+    findall(W, grandparent(tom, W), Ws),
+    assertion(Ws == [ann, pat]).
+```
+
+Depth first is cheap, because Prolog only stores the current path, not the whole tree. Its weakness is the one from the maze: if some branch is **infinite**, Prolog walks down it forever and never reaches the branches to its right, even when they hold the answer. SLD resolution with a fair search would find every answer; Prolog's depth-first search does not. That trade is behind Level 4.
+
+### Level 3: choice points and the Byrd box
+
+When a goal matches a clause and other clauses could also match, Prolog leaves a **choice point**: a note saying "I took clause $i$ here; try clause $i + 1$ if we come back". When a later goal fails, Prolog returns to the **most recent** choice point, undoes every variable binding made since, and tries the next clause. That is **chronological backtracking**.
+
+Byrd's box model makes the flow visible. The lab builds the four doors around any goal in a few lines. Each `;` offers a second path that is only taken when Prolog backtracks into it:
+
+```prolog
+% Level 3: the Byrd box. Each port is recorded as control passes it.
+:- dynamic seen/2.
+
+boxed(Goal) :-
+    (   assertz(seen(call, Goal))
+    ;   assertz(seen(fail, Goal)), fail
+    ),
+    call(Goal),
+    (   assertz(seen(exit, Goal))
+    ;   assertz(seen(redo, Goal)), fail
+    ).
+```
+
+Entering records `call`. Each success of `call(Goal)` records `exit`. Backtracking into the box first reaches the last disjunction, records `redo`, and fails back into `call(Goal)` for its next solution. When `call(Goal)` has no more, backtracking reaches the first disjunction, records `fail`, and leaves. Now wrap both goals of `grandparent`:
+
+```prolog
+grandparent_traced(X, Z) :-
+    boxed(parent(X, Y)),
+    boxed(parent(Y, Z)).
+```
+
+Asking for every answer to `grandparent_traced(tom, W)` records this sequence, which the lab checks event by event:
+
+```text
+call  parent(tom, _)       exit  parent(tom, bob)
+call  parent(bob, _)       exit  parent(bob, ann)      answer W = ann
+redo  parent(bob, ann)     exit  parent(bob, pat)      answer W = pat
+redo  parent(bob, pat)     fail  parent(bob, _)
+redo  parent(tom, bob)     exit  parent(tom, liz)
+call  parent(liz, _)       fail  parent(liz, _)
+redo  parent(tom, liz)     fail  parent(tom, _)
+```
+
+Every box that runs until it fails passes the same pattern of doors:
+
+$$
+P = 2k + 2
+$$
+
+where
+
+- $P$ is the number of port events one box records, from its call to its final fail;
+- $k$ is the number of solutions the goal inside produces;
+- $2k$ counts one exit and one redo per solution;
+- $2$ counts the first call and the last fail.
+
+Example: `parent(tom, Y)` has $k = 2$, so $P = 2 \cdot 2 + 2 = 6$. The inner box `parent(bob, W)` also has $k = 2$, so $P = 6$. The inner box `parent(liz, W)` has $k = 0$, so $P = 2$. In total $6 + 6 + 2 = 14$ events, the 14 lines above, and the lab checks the count. A lone `boxed(parent(tom, _))` records $P = 6$, also checked.
+
+SWI-Prolog's own tracer prints the same story with fewer lines. This is `trace(parent/2)` on the plain `grandparent(tom, W)`, asking for all answers, with the thread prefix, the timings and the printed answers removed; variable numbers differ from run to run:
+
+```text
+T [14] Call: parent(tom, _5448)
+T [14] Exit: parent(tom, bob)
+T [14] Call: parent(bob, _44)
+T [14] Exit: parent(bob, ann)
+T [14] Redo: parent(bob, ann)
+T [14] Exit: parent(bob, pat)
+T [14] Redo: parent(tom, bob)
+T [14] Exit: parent(tom, liz)
+T [14] Call: parent(liz, _44)
+T [14] Fail: parent(liz, _44)
+```
+
+Four events are missing: the redo and fail after `parent(bob, pat)`, and the redo and fail after `parent(tom, liz)`. Indexing told SWI-Prolog that those two exits left **no choice point**, so on backtracking it jumps straight past their boxes to the previous choice point. The lab sees the same difference with `call_with_inference_limit/3`, whose result is `!` when a goal succeeded without a choice point and `true` when one remains:
+
+```prolog
+level3_choice_points :-
+    call_with_inference_limit(parent(tom, liz), 1000, Last),
+    assertion(Last == !),         % no choice point left
+    call_with_inference_limit(parent(tom, _), 1000, First),
+    assertion(First == true).     % a choice point remains for liz
+```
+
+### Level 4: clause order and goal order matter
+
+**Goal order** changes the work and the order of answers, but not the set of answers when the search is finite:
+
+```prolog
+% Level 4: the same logic with the goals in the other order.
+grandparent_swapped(X, Z) :-
+    parent(Y, Z),
+    parent(X, Y).
+```
+
+All answers of `grandparent(A, B)` come out as `pam-ann, pam-pat, tom-ann, tom-pat, bob-jim`, grouped by grandparent. `grandparent_swapped(A, B)` gives `pam-ann, tom-ann, pam-pat, tom-pat, bob-jim`, grouped by grandchild. Sorted, the two lists are equal; the lab checks all three facts. For `grandparent(tom, W)` the original starts with `parent(tom, Y)`, which indexing narrows to 2 facts; the swapped version starts with `parent(Y, W)`, which must try all 6.
+
+**Clause order and recursion** decide termination. Follow `path_left(a, d)` with the Level 1 rule. The first clause replaces the goal by `path_left(a, Y1), edge(Y1, d)`. Its first goal is again `path_left(a, _)`, so the first clause applies again, and again. The leftmost branch of the search tree is infinite, and the goal list keeps growing:
+
+$$
+\lvert L_n \rvert = n + 1
+$$
+
+where
+
+- $L_n$ is the goal list after $n$ resolution steps with the first clause;
+- $\lvert L_n \rvert$ is its length: one `path_left` goal plus $n$ pending `edge` goals.
+
+Example: after $n = 3$ steps the list is `path_left(a, Y3), edge(Y3, Y2), edge(Y2, Y1), edge(Y1, d)`, so $\lvert L_3 \rvert = 3 + 1 = 4$. Each step also leaves a choice point for the untried second clause, and memory runs out long before $n$ stops growing. In `path`, by contrast, the recursive call comes **after** `edge(X, Y)`, which binds `Y` to a real town further along the road, so each recursive call starts closer to the end.
+
+```prolog
+level4_left_recursion :-
+    findall(W, path(a, W), Ws),
+    assertion(Ws == [b, c, d]),
+    call_with_inference_limit(path_left(a, d), 100000, Result),
+    assertion(Result == inference_limit_exceeded).
+```
+
+The lab cannot wait for a stack overflow, so it gives `path_left(a, d)` a budget of 100,000 inferences and checks that the budget runs out.
+
+### Level 5: tabling makes left recursion terminate
+
+Sometimes the left-recursive form is the natural one, for instance in grammars or graph closure. SWI-Prolog's **tabling** (also called SLG resolution) handles it. Declare the predicate as tabled:
+
+```prolog
+% Level 5: tabling remembers answers, so left recursion terminates.
+:- table path_tabled/2.
+path_tabled(X, Z) :- path_tabled(X, Y), edge(Y, Z).
+path_tabled(X, Z) :- edge(X, Z).
+```
+
+The manual explains the effect: *"a goal calling a variant of itself recursively and thus looping under the normal Prolog SLD resolution is avoided"*. Instead of calling `path_tabled(a, Y)` again, the inner call waits for answers that the outer call has already found, and the whole computation stops once no new answer appears. The lab checks that the answers are `b`, `c` and `d`, and that `path_tabled(a, e)` fails instead of looping. It sorts the answers first, because tabling does not promise any order.
+
+## How it works underneath
+
+SWI-Prolog keeps three stacks, which its manual describes in *Limits on memory areas*:
+
+- The **local stack** *"stores the environment frames used to call predicates as well as choice points."*
+- The **global stack** holds the terms built during execution.
+- The **trail** records variable bindings so that backtracking can undo them.
+
+A choice point saves where to resume (the next candidate clause and the goals after it) together with the current tops of the global stack and the trail. Backtracking to it does three cheap things:
+
+1. **Undo bindings.** Walk the trail back to the saved top, resetting each recorded variable to unbound. Only bindings of variables older than the choice point are ever recorded, as in the WAM ([Unification](02-unification.qmd)).
+2. **Free memory.** Reset the global stack top to the saved value. Every term built since is discarded at once, with no garbage collector involved.
+3. **Resume.** Pop back to the saved goals and try the next clause.
+
+Choice points are why the left-recursive loop dies of memory, not of time alone. Running `path_left(a, d)` with a 20 MB limit (`swipl --stack-limit=20m`) shows it plainly (the `ERROR:` prefixes removed):
+
+```text
+Stack limit (20.0Mb) exceeded
+  Stack sizes: local: 16.0Mb, global: 0.8Mb, trail: 0Kb
+  Stack depth: 104,730, last-call: 0%, Choice points: 104,723
+  Probable infinite recursion (cycle):
+    [104,730] user:path_left(a, _102)
+    [104,729] user:path_left(a, _122)
+```
+
+Over 100,000 nested calls, each with a choice point for the untried clause, filled the local stack. `last-call: 0%` says that none of those frames could be reused, because the recursive call is not the last goal ([Recursion](04-recursion.qmd) explains last-call optimisation). Indexing, from [Facts, Rules and Queries](01-facts-rules-and-queries.qmd), is the other half of the story: every choice point that indexing avoids is one less frame to keep and one less redo to run.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| A recursive call as the **first** goal (left recursion) | No answer for a long time, then `Stack limit (1.0Gb) exceeded` and `Probable infinite recursion` | Put a goal that consumes input first, as in `path`; or `:- table` the predicate |
+| Moving the base case first and assuming that fixes it | Answers appear, but the query never says `false` | The recursive clause still loops; restructure it or table it |
+| An unselective goal first: `parent(Y, W), parent(tom, Y)` | Correct answers, much more work | Put the goal with the most bound arguments first |
+| Expecting answers in some "natural" order | Order follows clauses and goals, nothing else | Sort the results, or reorder clauses deliberately |
+| Printing inside code that backtracks | Output appears several times, or for failed branches | Collect results with `findall/3` first, then print |
+| Reading the final `false` as an error | Confusion after correct answers | It only means the last choice point led nowhere |
+
+## Interview questions
+
+### 1. What is a choice point, and when does Prolog create one?
+
+**Answer.** A record on the local stack, created when a goal matches a clause and **another** clause could still match it. It holds the next clause to try, the goals that were waiting, and the tops of the global stack and trail at that moment. On failure, Prolog returns to the most recent choice point, undoes later bindings via the trail, frees later terms by resetting the global stack, and tries the next clause. No choice point is created when indexing proves that only one clause can match. `call_with_inference_limit/3` makes this visible: `parent(tom, liz)` returns `!` (none left), `parent(tom, _)` returns `true` (one left for `liz`).
+
+### 2. Why can Prolog loop forever on a query that logically has an answer?
+
+**Answer.** Because depth-first search is incomplete. SLD resolution guarantees that a proof exists in the search tree, but Prolog explores the leftmost branch first, and if that branch is infinite it never comes back. `path_left(a, d)` is true in logic, yet the first clause sends Prolog down an infinite branch before it ever tries `edge`. Three fixes: reorder so a goal that consumes input runs before the recursive call; use tabling, which detects the repeated variant call; or use a complete search strategy such as iterative deepening.
+
+### 3. Name the four ports of the Byrd box model. Why does SWI-Prolog's trace sometimes skip Redo?
+
+**Answer.** **Call** (first entry), **Exit** (success with an answer), **Redo** (re-entry on backtracking, asking for another answer) and **Fail** (no more answers). The SWI-Prolog manual adds two more ports, `unify` and `exception`. In the pure model, a box that ran to completion always produces $P = 2k + 2$ events; the lab's hand-built box gives 14 for `grandparent(tom, W)`. SWI-Prolog's tracer showed 10, because when a goal exits **without leaving a choice point**, there is nothing to redo, and backtracking skips straight to the previous choice point.
+
+### 4. Does putting the base case first fix left recursion?
+
+**Answer.** Only partly. With `path_left_base_first(X, Z) :- edge(X, Z).` first, Prolog finds `b` at once, and also `c` and `d` on backtracking. But when there are no more answers, the second clause still calls `path_left_base_first(X, Y)` first, which recurses forever. So `path_left_base_first(a, e)` never answers `false`; the lab shows it exhausting a 100,000-inference budget. The query terminates **existentially** (it finds an answer when one exists) but not **universally** (it cannot finish the search). Markus Triska defines the second one precisely: *"A Prolog query Q terminates universally iff the query ?- Q, false. terminates existentially."*
+
+### 5. How does backtracking undo variable bindings so cheaply?
+
+**Answer.** Binding a variable only writes one memory cell, and if the variable is older than the newest choice point, its address is pushed on the **trail**. Backtracking pops the trail down to the level saved in the choice point and resets each listed cell to unbound. In the WAM design, bindings of variables created after the choice point are not trailed at all, because resetting the global stack top discards those variables wholesale. The cost of undoing is therefore proportional to the number of conditional bindings, not to the size of the terms.
+
+## Summary
+
+$$
+(G_1, G_2, \dots, G_k) \;\longrightarrow\; (B_1, \dots, B_m, G_2, \dots, G_k)\,\sigma, \qquad \sigma = \operatorname{mgu}(G_1, H)
+$$
+
+where the $G_i$ are the pending goals, $H \leftarrow B_1, \dots, B_m$ is a renamed clause, and $\sigma$ is the most general unifier of the selected goal $G_1$ and the head $H$.
+
+Example: $(\text{grandparent}(\text{tom}, W))$ becomes $(\text{parent}(\text{tom}, Y), \text{parent}(Y, W))$, with $k = 1$ and $m = 2$ giving $1 - 1 + 2 = 2$ goals; two more steps with facts empty the list and give $W = \text{ann}$.
+
+- Prolog proves a query by **SLD resolution**: replace the leftmost goal by the body of a matching clause.
+- The choices form a **search tree**, explored **depth first, left to right**; answers come in leaf order.
+- A **choice point** marks an untried clause; **backtracking** returns to the newest one and undoes bindings via the trail.
+- The **Byrd box** has four ports: call, exit, redo, fail. A box with $k$ answers shows $2k + 2$ events.
+- Clause and goal order change speed and answer order; **left recursion** makes the search infinite. Reorder, or use `:- table`.
+
+## References
+
+- SWI-Prolog manual: [The Byrd Box Model And Ports](https://www.swi-prolog.org/pldoc/man?section=byrd-box-model), [Overview of the Debugger](https://www.swi-prolog.org/pldoc/man?section=debugoverview), [call_with_inference_limit/3](https://www.swi-prolog.org/pldoc/man?predicate=call_with_inference_limit/3), [Tabled execution (SLG resolution)](https://www.swi-prolog.org/pldoc/man?section=tabling), [Limits on memory areas](https://www.swi-prolog.org/pldoc/man?section=memlimit), [Just-in-time clause indexing](https://www.swi-prolog.org/pldoc/man?section=jitindex).
+- Robert Kowalski, [Predicate Logic as Programming Language](https://www.doc.ic.ac.uk/~rak/papers/IFIP%2074.pdf), Proceedings IFIP Congress 1974, 569–574.
+- Lawrence Byrd, *Understanding the Control Flow of Prolog Programs*, Logic Programming Workshop, July 1980.
+- Alain Colmerauer and Philippe Roussel, [The birth of Prolog](http://alain.colmerauer.free.fr/alcol/ArchivesPublications/PrologHistory/19november92.pdf), HOPL-II, 1993 (SL-resolution and backtracking in the first Prolog).
+- Leon Sterling and Ehud Shapiro, [*The Art of Prolog*](https://mitpress.mit.edu/9780262691635/the-art-of-prolog/), 2nd ed., MIT Press, 1994, Section 5.4 (Search Trees) and Section 6.1 (The Execution Model of Prolog).
+- Ivan Bratko, [*Prolog Programming for Artificial Intelligence*](https://www.pearson.com/en-us/subject-catalog/p/prolog-programming-for-artificial-intelligence/P200000003804/9780321417466), 4th ed., Addison-Wesley, 2012, Chapter 2 (the declarative and procedural meaning).
+- Hassan Aït-Kaci, [*Warren's Abstract Machine: A Tutorial Reconstruction*](https://users.dimi.uniud.it/~marco.comini/Students/Documentation/wam-tutorial.html), MIT Press, 1991 (choice points and the trail).
+- Markus Triska, *The Power of Prolog*: [Termination](https://www.metalevel.at/prolog/termination) and [Nontermination](https://www.metalevel.at/prolog/nontermination).
+- Lab: [`labs/resolution-and-backtracking.pl`](labs/resolution-and-backtracking.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt resolution-and-backtracking.pl`.

@@ -1,0 +1,340 @@
+---
+title: "Accumulators and Difference Lists"
+description: "Two Prolog techniques that turn quadratic list code into linear code: accumulators for sum, length and reverse, with exact step counts, difference lists for constant-time append and queues, and the link to foldl."
+---
+
+## The problem
+
+Reversing a list looks easy with `append/3` from [Lists](05-lists.qmd): reverse the tail, then append the head at the end.
+
+```prolog
+% Level 3: naive reverse appends at the end, again and again.
+nrev([], []).
+nrev([X|Xs], Rs) :- nrev(Xs, R0), append(R0, [X], Rs).
+```
+
+It gives the right answer, but `append(R0, [X], Rs)` must walk all of `R0` to find its end, and it does that once per element. For a list of 30 elements SWI-Prolog counts 496 inferences (predicate calls); for 1,000 elements it counts 501,501. Doubling the list roughly quadruples the work. The same reverse written with an **accumulator** takes 32 and 1,002 inferences.
+
+The deeper problem is that a Prolog list can only be extended cheaply at the **front**. This chapter shows the two classic ways around that: an **accumulator** builds the result as you walk forwards, and a **difference list** keeps a pointer to the end of a list so that adding there costs one step.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A piggy bank and a train with an open coupling
+
+- **Without an accumulator** you walk to the end of a row of coins without touching them, then count them on the way back: "3, plus 2 is 5, plus 1 is 6". You must remember every coin you passed.
+- **With an accumulator** you carry a piggy bank and drop each coin in as you walk: "1, then 3, then 6". When you reach the end, the answer is already in your hands, and you never need to walk back.
+- **A difference list** is a toy train whose last wagon has an open coupling. To add another train, you hook it on in one move. You do not walk along the train looking for the end, because you are holding the end.
+
+Alain Colmerauer used this "hole at the end" idea before Prolog even had its name. In *The Birth of Prolog*, he and Philippe Roussel describe representing each grammar symbol as a pair of lists so that "It was thus possible to do without list concatenation. (This technique is now known as the difference lists technique)."
+:::
+
+## From simple to advanced
+
+### Level 1: an accumulator carries the answer so far
+
+The direct definition of a sum adds each element **after** the recursive call returns:
+
+```prolog
+% Level 1: the sum is computed on the way back out of the recursion.
+sum([], 0).
+sum([X|Xs], S) :- sum(Xs, S0), S is S0 + X.
+```
+
+For `[1, 2, 3]` it computes $1 + (2 + (3 + 0))$, and every pending `S is S0 + X` waits on a stack until the end of the list is reached. The accumulator version adds each element **before** the recursive call, passing the running total down:
+
+```prolog
+% Level 1: the accumulator carries the sum so far on the way in.
+sum_acc(Xs, S) :- sum_acc(Xs, 0, S).
+
+sum_acc([], S, S).
+sum_acc([X|Xs], S0, S) :- S1 is S0 + X, sum_acc(Xs, S1, S).
+```
+
+The accumulator follows a recurrence:
+
+$$
+S_0 = 0, \qquad S_k = S_{k-1} + x_k \quad (k = 1, \dots, n), \qquad \text{answer} = S_n
+$$
+
+where
+
+- $x_k$ is the $k$-th element of the list, and $n$ is the length of the list;
+- $S_k$ is the value of the accumulator after $k$ elements: the argument called `S0` on entry and `S1` on the way into the next call;
+- the answer is handed back unchanged by the base case `sum_acc([], S, S)`, which unifies the final accumulator with the result.
+
+Example for `[1, 2, 3]`: $S_0 = 0$, $S_1 = 0 + 1 = 1$, $S_2 = 1 + 2 = 3$, $S_3 = 3 + 3 = 6$, so the answer is 6, computed as $((0 + 1) + 2) + 3$.
+
+```text
+?- sum([1, 2, 3], S).
+S = 6.
+
+?- sum_acc([1, 2, 3], S).
+S = 6.
+```
+
+Both answers agree, but the recursive call in `sum_acc/3` is the **last** goal of its clause. Nothing is left to do after it returns, so Prolog can reuse the current frame instead of stacking a new one: the loop runs in constant stack space ([Recursion](04-recursion.qmd) introduced this last-call optimisation). The lab sums a list of one million numbers this way and checks the result against $\frac{10^6 (10^6 + 1)}{2}$. The extra argument pair, `S0` in and `S` out, is the whole pattern. Sterling and Shapiro call this "transforming recursion into iteration" (*The Art of Prolog*, Section 8.3).
+
+### Level 2: the same pattern for length
+
+Counting is summing ones. The accumulator starts at 0 and grows by 1 per element:
+
+```prolog
+% Level 2: length with an accumulator.
+len(Xs, N) :- len(Xs, 0, N).
+
+len([], N, N).
+len([_|Xs], N0, N) :- N1 is N0 + 1, len(Xs, N1, N).
+```
+
+```text
+?- len([a, b, c], N).
+N = 3.
+```
+
+A naming habit makes the pattern readable: `N0` is the value coming in, `N1` the next one, `N` the final one. The wrapper `len/2` hides the starting value, so callers never see the accumulator.
+
+### Level 3: reverse in linear time
+
+Reverse is where the accumulator pays off most. Pushing each element onto the **front** of the accumulator reverses the list as a side effect of walking it:
+
+```prolog
+% Level 3: reverse with an accumulator pushes each element on the front.
+rev(Xs, Rs) :- rev(Xs, [], Rs).
+
+rev([], Rs, Rs).
+rev([X|Xs], Acc, Rs) :- rev(Xs, [X|Acc], Rs).
+```
+
+```text
+?- rev([1, 2, 3], R).
+R = [3, 2, 1].
+```
+
+The accumulator grows `[]`, `[1]`, `[2, 1]`, `[3, 2, 1]`. Now count the steps. The lab counts **inferences** (calls to predicates) with `statistics(inferences, _)`:
+
+$$
+T_{\text{nrev}}(n) = (n + 1) + \sum_{k=0}^{n-1} (k + 1) = \frac{(n + 1)(n + 2)}{2}, \qquad T_{\text{rev}}(n) = n + 2
+$$
+
+where
+
+- $n$ is the length of the list being reversed;
+- $T(n)$ is the number of inferences;
+- in $T_{\text{nrev}}$, the $n + 1$ counts the calls of `nrev/2` itself (one per element plus the empty list), and the sum counts the calls of `append/3`: appending to a list of length $k$ takes $k + 1$ calls, for $k = 0, 1, \dots, n-1$;
+- in $T_{\text{rev}}$, the 2 counts `rev/2` and the final `rev([], Rs, Rs)`, and $n$ counts one `rev/3` call per element.
+
+Example with $n = 30$: $T_{\text{nrev}}(30) = \frac{31 \times 32}{2} = 496$ and $T_{\text{rev}}(30) = 30 + 2 = 32$. With $n = 1000$: $\frac{1001 \times 1002}{2} = 501{,}501$ against $1002$. The lab measures exactly these four numbers:
+
+```text
+?- numlist(1, 30, L), inferences(nrev(L, _), N1), inferences(rev(L, _), N2).
+L = [1, 2, 3, 4, 5, 6, 7, 8, 9|…],
+N1 = 496,
+N2 = 32.
+```
+
+The helper subtracts the one inference that the measurement itself costs:
+
+```prolog
+% The second statistics/2 call is itself one inference, so subtract it.
+inferences(Goal, N) :-
+    statistics(inferences, I0),
+    call(Goal),
+    statistics(inferences, I1),
+    N is I1 - I0 - 1.
+```
+
+The number 496 is famous: naive reverse of 30 elements is the classic Prolog benchmark, and speeds were quoted in LIPS (logical inferences per second) by dividing 496 by its run time.
+
+### Level 4: a difference list is a list with a hole
+
+An accumulator builds lists back to front. Sometimes you need front to back, and you need to add at the end. A **difference list** makes that cheap by keeping a variable for the end. The pair `[1, 2|T]-T` stands for the list `[1, 2]`: take the list `[1, 2|T]` and remove its unknown tail `T`. The `-` is just a convenient pair constructor; nothing is subtracted.
+
+$$
+\operatorname{list}(A - B) = \text{the elements of } A \text{ before its suffix } B, \qquad (A - B) \mathbin{+\!\!+} (B - C) = A - C
+$$
+
+where
+
+- $A$ is a list whose tail is $B$, and $B$ is often an unbound variable, the hole;
+- $\operatorname{list}(A - B)$ is the ordinary list that the pair represents;
+- $\mathbin{+\!\!+}$ is concatenation: if the first list ends where the second begins, the result runs from the start of the first to the end of the second.
+
+Example: with $A = [1, 2, 3, 4 \mid T_2]$, $B = [3, 4 \mid T_2]$ and $C = T_2$, the first pair represents $[1, 2]$, the second $[3, 4]$, and $A - C$ represents $[1, 2, 3, 4]$.
+
+That identity is a single clause, and appending becomes **one unification** instead of a walk:
+
+```prolog
+% Level 4: a difference list A-B is the list A without its tail B.
+append_dl(A-B, B-C, A-C).
+```
+
+```text
+?- append_dl([1, 2|T1]-T1, [3, 4|T2]-T2, R).
+T1 = [3, 4|T2],
+R = [1, 2, 3, 4|T2]-T2.
+
+?- append_dl([1, 2|T1]-T1, [3, 4|T2]-T2, L-[]).
+T1 = [3, 4],
+T2 = [],
+L = [1, 2, 3, 4].
+```
+
+Unifying the first pair's hole `T1` with the second list is what joins them, and it costs the same whatever the lengths: the lab measures 1 inference. The second query closes the result by unifying its hole with `[]`, which turns it back into an ordinary list.
+
+### Level 5: a queue in three clauses
+
+A queue takes elements out at the front and puts them in at the back. With a difference list `Front-Hole`, both ends are in reach:
+
+```prolog
+% Level 5: a queue is a difference list: take at the front, add at the hole.
+empty_queue(Q-Q).
+enqueue(X, Q-[X|T], Q-T).
+dequeue(X, [X|Q]-T, Q-T).
+```
+
+- `empty_queue(Q-Q)`: front and hole are the same variable, so the queue holds nothing.
+- `enqueue/3` fills the hole with `[X|T]` and makes `T` the new hole: constant time.
+- `dequeue/3` takes the first element off the front: constant time.
+
+```text
+?- empty_queue(Q0), enqueue(a, Q0, Q1), enqueue(b, Q1, Q2), dequeue(X, Q2, Q3).
+Q0 = [a, b|_A]-[a, b|_A],
+Q1 = [a, b|_A]-[b|_A],
+Q2 = [a, b|_A]-_A,
+X = a,
+Q3 = [b|_A]-_A.
+```
+
+The answer shows the trick: filling a hole changes every term that shares it, so even `Q0` now "contains" `a` and `b`, in the part between its front and its hole. Its front and hole are still the same term, so it still represents the empty queue. The lab adds `c` and checks that the elements leave in the order `a`, `b`, `c`. Sterling and Shapiro discuss difference-list queues in *The Art of Prolog*, Section 15.4.
+
+### Level 6: `foldl/4` is the accumulator loop, written once
+
+Every accumulator predicate in this chapter has the same shape: walk the list, update the accumulator with one step per element, hand back the last value. `library(apply)` captures the shape as `foldl/4`, and you supply only the step:
+
+```prolog
+% Level 6: the step of an accumulator loop, as a goal for foldl/4.
+add(X, S0, S) :- S is S0 + X.
+push(X, Acc, [X|Acc]).
+```
+
+$$
+\operatorname{foldl}(G, [x_1, \dots, x_n], v_0, v_n) \iff G(x_1, v_0, v_1) \land G(x_2, v_1, v_2) \land \dots \land G(x_n, v_{n-1}, v_n)
+$$
+
+where
+
+- $G$ is the step goal, called with an element, the accumulator before and the accumulator after;
+- $x_1, \dots, x_n$ are the list elements, visited left to right;
+- $v_0$ is the initial accumulator, $v_1, \dots, v_{n-1}$ the intermediate values, and $v_n$ the result;
+- $\land$ means "and": every step must succeed.
+
+Example with `add` and $v_0 = 0$ over `[1, 2, 3]`: `add(1, 0, 1)`, `add(2, 1, 3)`, `add(3, 3, 6)`, so $v_3 = 6$. With `push` and $v_0 = $ `[]`: `[1]`, then `[2, 1]`, then `[3, 2, 1]`, which is `rev/3` again.
+
+```text
+?- foldl(add, [1, 2, 3], 0, S).
+S = 6.
+
+?- foldl(push, [1, 2, 3], [], R).
+R = [3, 2, 1].
+```
+
+The built-in `plus/3` already has the right argument order, so `foldl(plus, [1, 2, 3], 0, S)` also gives 6. [All Solutions and Higher-Order](09-all-solutions-and-higher-order.qmd) continues with `maplist`, `include` and lambdas.
+
+## How it works underneath
+
+**Last-call optimisation.** A Prolog call normally pushes a frame on the local stack for the callee's variables. If the call is the last goal of the clause, and no choice point was created since the current frame was entered, the current frame is no longer needed and the callee can take it over. SWI-Prolog's virtual machine makes this check in `I_DEPART`, which its source comment calls "the entry point for last call optimisation": the condition is that the newest choice point is older than the current frame. `vm_list/1` shows the difference between the two sums (trimmed to the recursive clause):
+
+```text
+sum/2, clause 2:
+       8 i_call(sum/2)
+      18 i_depart((is)/2)
+
+sum_acc/3, clause 2:
+      13 i_call((is)/2)
+      15 l_nolco('L1')
+      23 i_tcall
+L1:   24 b_var(4)
+      29 i_depart(sum_acc/3)
+```
+
+In `sum/2` the recursive call is an ordinary `i_call`, because `is/2` still has to run afterwards; one frame per element stays on the stack until the end of the list. In `sum_acc/3` the recursive call is last: `l_nolco` checks that no choice point is in the way and, if so, `i_tcall` reuses the frame, turning the recursion into a loop; otherwise it jumps to `L1` and makes the call with `i_depart`. The lab captures these listings and checks for `i_call(sum/2)`, `l_nolco`, `i_tcall` and `i_depart(sum_acc/3)`.
+
+**Why no choice point is left.** Prolog systems index clauses on their first argument. A call with `[]` can only match the base clause and a call with `[X|Xs]` only the recursive one, so neither leaves a choice point, and the last-call condition holds on every step. SWI-Prolog also builds indexes on other arguments just in time, when the first one cannot decide, but keeping the list first is the portable habit.
+
+**Why a difference list is constant time.** A list cell `[X|T]` whose tail `T` is unbound points to a free variable cell. Unifying that variable with another list writes one pointer into the cell and records the change on the **trail**, so backtracking can undo it. No cells are copied and nothing is walked, whatever the list lengths. The price is that a hole can be filled only once on any one branch of the computation: the difference list is a data structure you use up, not a value you can reuse.
+
+**`foldl/4` is itself an accumulator loop.** Trimmed from `library(apply)`:
+
+```prolog
+% sketch: trimmed from library(apply), apply.pl
+foldl(Goal, List, V0, V) :-
+    foldl_(List, Goal, V0, V).
+
+foldl_([], _, V, V).
+foldl_([H|T], Goal, V0, V) :-
+    call(Goal, H, V0, V1),
+    foldl_(T, Goal, V1, V).
+```
+
+The list is the first argument of `foldl_/4`, exactly so that first-argument indexing and last-call optimisation apply.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Forgetting the base case `sum_acc([], S, S)` that hands the accumulator back | `false` | The base case must unify the final accumulator with the result |
+| Starting the accumulator at the wrong value | Off-by-one or wrong answer, for example 0 for a product | Start at the identity of the step: 0 for `+`, 1 for `*`, `[]` for lists |
+| Using an accumulator for a list that must keep its order | The result comes out reversed | Reverse once at the end, or build with a difference list |
+| Appending to the end with `append/3` in a loop | Quadratic run time: 496 inferences for 30 elements, 501,501 for 1,000 | Accumulate at the front, or keep a difference list |
+| Using the same difference list twice | The second use fails, or both uses share their elements | Fill each hole only once; copy the list if it is needed again |
+| `dequeue/3` on an empty queue | It succeeds and returns an element that does not exist yet: `Q1 = _A-[X|_A]` | Track the queue length, or check the queue is not empty first |
+| Calling the helper with an unbound accumulator, as in `sum_acc([1, 2], _, S)` | `Arguments are not sufficiently instantiated` | Start through the wrapper `sum_acc/2`, which passes the initial value |
+
+## Interview questions
+
+### 1. Why is naive reverse quadratic, and how does the accumulator fix it?
+
+**Answer.** `nrev` appends each element to the end of the already reversed rest, and `append/3` walks its whole first argument: $1 + 2 + \dots + n$ calls in total, so $T(n) = \frac{(n+1)(n+2)}{2}$, which is 496 for $n = 30$. The accumulator version pushes each element on the front of the result built so far, one call per element, so $T(n) = n + 2$, which is 32. The idea is that a Prolog list is cheap to extend only at the front, so the result is built front-first.
+
+### 2. What is last-call optimisation, and why does `sum_acc/3` benefit while `sum/2` does not?
+
+**Answer.** When the last goal of a clause is called and no choice point remains for the current clause, the caller's frame is no longer needed, and the callee reuses it. A recursive predicate whose recursive call is last therefore runs in constant stack space, like a loop. In `sum/2` the recursive call is followed by `S is S0 + X`, so every level must keep its frame until the deeper levels return. In `sum_acc/3` the addition happens first and the recursive call is last; `vm_list/1` shows it compiled to `i_tcall`, the frame-reusing call.
+
+### 3. What is a difference list, and why is its append constant time?
+
+**Answer.** A pair `A-B` where `B` is a suffix of `A`, usually an unbound variable, representing the elements of `A` before `B`. `append_dl(A-B, B-C, A-C)` joins two of them by unifying the first one's hole `B` with the start of the second. Unification binds one variable, whatever the lengths, and the lab measures 1 inference. The limits: the hole can be filled only once on a branch, and the representation is not checked, so passing an ordinary list where a pair is expected simply fails.
+
+### 4. How does a difference-list queue work, and what happens on an empty dequeue?
+
+**Answer.** The queue is `Front-Hole`. `enqueue(X, Q-[X|T], Q-T)` fills the hole with `X` and a new hole, and `dequeue(X, [X|Q]-T, Q-T)` takes the first element from the front; both are constant time. An empty queue is `Q-Q`. Dequeuing from it does not fail: unifying `Q` with `[X|Q1]` succeeds and creates a queue with "minus one" elements, `Q1 = _A-[X|_A]`, whose `X` will be the next element enqueued. Code that might dequeue from an empty queue must count the elements.
+
+### 5. How is the accumulator pattern related to `foldl/4`?
+
+**Answer.** They are the same loop. An accumulator predicate passes an "in" value and an "out" value through each step, and `foldl(G, Xs, V0, V)` calls `G(X, Vi, Vi+1)` for each element `X` from left to right with exactly that threading. `sum_acc/3` is `foldl(add, Xs, 0, S)`, and `rev/3` is `foldl(push, Xs, [], R)`. `foldl/4` itself is written with an accumulator and the list as the first argument of its helper, so it gets the same indexing and last-call benefits.
+
+## Summary
+
+$$
+T_{\text{nrev}}(n) = \frac{(n+1)(n+2)}{2}, \qquad T_{\text{rev}}(n) = n + 2, \qquad (A - B) \mathbin{+\!\!+} (B - C) = A - C
+$$
+
+where $n$ is the list length, $T(n)$ counts inferences, and $A - B$ is the difference list holding the elements of $A$ before its suffix $B$.
+
+Example: for $n = 30$, naive reverse takes $\frac{31 \times 32}{2} = 496$ inferences and accumulator reverse $30 + 2 = 32$. Joining `[1, 2|T1]-T1` with `[3, 4|T2]-T2` binds `T1 = [3, 4|T2]` in 1 inference and gives `[1, 2, 3, 4|T2]-T2`.
+
+- An accumulator is an extra pair of arguments: the value so far coming in, the final value going out.
+- With the recursive call last and the list first, Prolog runs the recursion in constant stack space.
+- Accumulators build lists back to front; that is why reverse becomes linear.
+- A difference list `A-B` keeps a hole at the end: append and enqueue cost one unification. Fill each hole once.
+- `foldl/4` is the accumulator loop with the step passed in as a goal.
+
+## References
+
+- SWI-Prolog manual: [library(lists)](https://www.swi-prolog.org/pldoc/man?section=lists), [library(apply)](https://www.swi-prolog.org/pldoc/man?section=apply) (`foldl/4-7`) and [vm_list/1](https://www.swi-prolog.org/pldoc/man?predicate=vm_list/1).
+- SWI-Prolog source: [src/pl-vmi.c](https://github.com/SWI-Prolog/swipl-devel/blob/master/src/pl-vmi.c), the `I_DEPART`, `L_NOLCO` and `I_TCALL` instructions.
+- Leon Sterling and Ehud Shapiro, *The Art of Prolog*, 2nd ed., MIT Press, 1994: Section 8.3 "Transforming Recursion into Iteration" and Chapter 15 "Incomplete Data Structures" (15.1 difference-lists, 15.4 queues).
+- Patrick Blackburn, Johan Bos and Kristina Striegnitz, *Learn Prolog Now!*: [Chapter 5: Arithmetic](https://www.let.rug.nl/bos/lpn/lpnpage.php?pagetype=html&pageid=lpn-htmlch5) (accumulators) and [Chapter 6: More Lists](https://www.let.rug.nl/bos/lpn/lpnpage.php?pagetype=html&pageid=lpn-htmlch6) (naive and accumulator reverse).
+- Alain Colmerauer and Philippe Roussel, [The Birth of Prolog](http://alain.colmerauer.free.fr/alcol/ArchivesPublications/PrologHistory/19november92.pdf) (1992), on the origin of difference lists.
+- ECLiPSe documentation, [library(lips)](https://www.eclipseclp.org/docs/7.1/bips/lib/lips/index.html): the naive-reverse benchmark and its 496 logical inferences.
+- Lab: [`labs/accumulators-and-difference-lists.pl`](labs/accumulators-and-difference-lists.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt accumulators-and-difference-lists.pl`.

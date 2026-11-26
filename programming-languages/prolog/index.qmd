@@ -1,0 +1,85 @@
+---
+title: "Prolog — Core Concepts"
+subtitle: "State what is true, then ask questions"
+description: "SWI-Prolog 10 from facts and unification to constraints and grammars: ten chapters on how Prolog searches for proofs and how to program with it, each with a lab that checks every result."
+aliases: ["../prolog.html"]
+---
+
+## What Prolog is for, and where it came from
+
+Prolog is a **logic programming** language. You do not write steps for the computer to follow; you write **facts** and **rules** about a problem, then ask **queries**, and Prolog searches for proofs. It is at its best wherever a problem is naturally a set of relations and a search: parsing and language processing, rule systems and expert systems, puzzles and scheduling with constraints, type checkers, and querying structured knowledge.
+
+Prolog was born in Marseille. Alain Colmerauer and Philippe Roussel tell the story in *The Birth of Prolog*: their project aimed "not at producing a programming language but at processing natural languages; in this case, French", and it "gave rise to a preliminary version of Prolog at the end of 1971 and a more definitive version at the end of 1972". The name was invented in Marseille in 1972; Roussel chose it as an abbreviation for "PROgrammation en LOGique".
+
+The theory came from Edinburgh. Robert Kowalski's paper *Predicate Logic as Programming Language* (IFIP Congress 1974, first circulated as an Edinburgh memo in 1973) gave Horn clauses a **procedural interpretation**: a clause can be read both as a statement of logic and as a procedure. Colmerauer and Roussel credit him for exactly this: "Robert Kowalski's contribution was to single out the concept of the 'Horn clause', which legitimized our principal heresy: a strategy of linear demonstration with backtracking and with unifications only at the heads of clauses." A Prolog rule is a Horn clause:
+
+$$
+A \leftarrow B_1 \land B_2 \land \dots \land B_n
+$$
+
+where
+
+- $A$ is the head, the statement being defined;
+- $B_1, \dots, B_n$ are the goals of the body, and $n$ may be 0, which makes the clause a fact;
+- $\leftarrow$ is "if" and $\land$ is "and". Prolog writes the clause as `A :- B1, ..., Bn.`
+
+Example with $n = 2$: `grandparent(X, Z) :- parent(X, Y), parent(Y, Z).` Read declaratively, Ann is Cy's grandparent if Ann is a parent of Bob and Bob is a parent of Cy. Read procedurally, to prove `grandparent(ann, cy)`, prove the two goals `parent(ann, Y)` and `parent(Y, cy)`, one after the other.
+
+Prolog was standardised as ISO/IEC 13211-1 in 1995. These pages use **SWI-Prolog**, a free implementation that Jan Wielemaker started at the University of Amsterdam in 1986 and still maintains; its name comes from the university's Social Science Informatics group (Sociaal-Wetenschappelijke Informatica).
+
+## The mental model
+
+A handful of ideas explain most of Prolog:
+
+1. **A program is a database of facts and rules, and running it is asking a question.** The same clause has a logical and a procedural reading. ([Facts, Rules and Queries](01-facts-rules-and-queries.qmd))
+2. **Unification is the only way data moves.** Matching two terms binds variables on both sides, so arguments are neither inputs nor outputs. ([Unification](02-unification.qmd))
+3. **Execution is depth-first search with backtracking.** Clause order and goal order are part of the program's behaviour. ([Resolution and Backtracking](03-resolution-and-backtracking.qmd))
+4. **Recursion replaces loops, and lists are the workhorse.** Termination needs a base case and a decreasing measure. ([Recursion](04-recursion.qmd), [Lists](05-lists.qmd))
+5. **Arithmetic and control break the pure relation; constraints restore it.** `is/2`, the cut and `\+` are one-way; `library(clpfd)` and `dif/2` work in every direction. ([Arithmetic and CLP(FD)](06-arithmetic-and-clpfd.qmd), [Cut and Negation](07-cut-and-negation.qmd))
+6. **A few idioms carry most real programs.** Accumulators, difference lists, all-solutions predicates, closures and grammars. ([Accumulators](08-accumulators-and-difference-lists.qmd), [All Solutions](09-all-solutions-and-higher-order.qmd), [DCGs](10-definite-clause-grammars.qmd))
+
+## The chapters
+
+### Part 1: How Prolog thinks
+
+1. [Facts, Rules and Queries](01-facts-rules-and-queries.qmd): Horn clauses, terms as the only data, queries that run in every direction, and the two readings of a clause.
+2. [Unification](02-unification.qmd): the unification rules, the most general unifier, the equality-like operators, and the occurs check.
+3. [Resolution and Backtracking](03-resolution-and-backtracking.qmd): SLD resolution, the search tree, choice points, the Byrd box model, and tabling.
+
+### Part 2: Recursion, lists and arithmetic
+
+4. [Recursion](04-recursion.qmd): base cases, termination measures, tail recursion, and the link to induction.
+5. [Lists](05-lists.qmd): the `[H|T]` cell, `member/2` and `append/3` in every direction, naive against accumulator reverse, and sorting.
+6. [Arithmetic and CLP(FD)](06-arithmetic-and-clpfd.qmd): `is/2` against `=`, why it runs one way, and constraints with domains, labeling, SEND + MORE = MONEY and N-queens.
+
+### Part 3: Control and idioms
+
+7. [Cut and Negation](07-cut-and-negation.qmd): what `!` prunes, green and red cuts, if-then-else, negation as failure, floundering and `dif/2`.
+8. [Accumulators and Difference Lists](08-accumulators-and-difference-lists.qmd): linear-time reverse with exact step counts, constant-time append, queues and `foldl/4`.
+9. [All Solutions and Higher-Order Predicates](09-all-solutions-and-higher-order.qmd): `findall`, `bagof`, `setof`, `aggregate_all`, `call/N`, `maplist` and `yall` lambdas.
+10. [Definite Clause Grammars](10-definite-clause-grammars.qmd): `-->` and its translation, aⁿbⁿ and the pumping lemma, an evaluating expression parser, and generating sentences.
+
+## How to run the labs
+
+Every chapter has one lab, `labs/<slug>.pl`, which defines `main/0`, checks every result its chapter quotes, and prints `OK` last. From `programming-languages/prolog/labs`:
+
+```bash
+swipl -q -g main -t halt arithmetic-and-clpfd.pl
+```
+
+Replace `arithmetic-and-clpfd` with any chapter's slug, such as `unification` or `definite-clause-grammars`. To explore a lab interactively, load it with `swipl arithmetic-and-clpfd.pl` and type the chapter's queries at the `?-` prompt. From the repository root, the checker verifies the chapters and runs every lab:
+
+```bash
+ONLY=prolog node --test programming-languages/check-languages.test.mjs
+```
+
+## Version and further reading
+
+These pages teach **SWI-Prolog 10** (10.0.0 was released in December 2025; the labs were run with 10.0.2). They use only libraries bundled with it, such as `library(clpfd)`, `library(yall)` and `library(dcg/basics)`, and point out where SWI-Prolog goes beyond the ISO standard.
+
+- [The SWI-Prolog Reference Manual](https://www.swi-prolog.org/pldoc/refman/): the definitive description of the system and its libraries.
+- Alain Colmerauer and Philippe Roussel, [The Birth of Prolog](http://alain.colmerauer.free.fr/alcol/ArchivesPublications/PrologHistory/19november92.pdf) (1992), and Robert Kowalski, [Predicate Logic as Programming Language](https://www.doc.ic.ac.uk/~rak/papers/IFIP%2074.pdf) (1974) and [Algorithm = Logic + Control](https://www.doc.ic.ac.uk/~rak/papers/algorithm%20=%20logic%20+%20control.pdf) (1979).
+- Leon Sterling and Ehud Shapiro, *The Art of Prolog*, 2nd ed., MIT Press, 1994: the classic book on Prolog programming technique.
+- Patrick Blackburn, Johan Bos and Kristina Striegnitz, [*Learn Prolog Now!*](https://www.let.rug.nl/bos/lpn/): a free introductory course.
+- Markus Triska, [*The Power of Prolog*](https://www.metalevel.at/prolog): modern, pure Prolog with constraints, by the author of `library(clpfd)`.
+- Jan Wielemaker, Tom Schrijvers, Markus Triska and Torbjörn Lager, [SWI-Prolog](https://doi.org/10.1017/S1471068411000494), *Theory and Practice of Logic Programming* 12(1–2), 2012.

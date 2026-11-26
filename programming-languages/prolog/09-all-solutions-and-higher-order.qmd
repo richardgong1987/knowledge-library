@@ -1,0 +1,381 @@
+---
+title: "All Solutions and Higher-Order Predicates"
+description: "Collecting answers with findall/3, bagof/3, setof/3 and aggregate_all/3, then passing goals as data with call/N, maplist, foldl, include and exclude, and yall lambdas."
+---
+
+## The problem
+
+A small database records who owns which pet:
+
+```prolog
+% Who owns which pet. Ann owns two pets; Ann and Cy both own a cat.
+owns(ann, cat).
+owns(ann, dog).
+owns(bob, fish).
+owns(cy, cat).
+```
+
+The query `owns(O, P)` gives four answers, but one at a time: you press `;` to get the next one, and each new answer forgets the previous one. Real questions need **all** the answers at once. Which kinds of pet are there? How many pets does each person own? Who is the oldest owner? And once you have a list, you want to do something to every element without writing a new recursive predicate each time.
+
+Prolog answers both needs with **second-order** predicates: predicates that take a *goal* as an argument. `findall/3`, `bagof/3`, `setof/3` and `aggregate_all/3` run a goal and collect what it finds. `call/N`, `maplist`, `foldl`, `include` and lambdas apply a goal to data. Sterling and Shapiro devote a chapter to them (*The Art of Prolog*, Chapter 16, "Second-Order Programming").
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A teacher with a register and a machine with a slot
+
+- **`findall`** is a teacher who asks "Who owns a pet? Say what it is!" and writes down every answer in the order she hears it, repeats included: cat, dog, fish, cat. If nobody answers, she writes an empty list.
+- **`setof`** is the same teacher making a tidy list: alphabetical, each pet once.
+- **`bagof`** writes one list per child: Ann's pets, then Bob's, then Cy's.
+- **`aggregate_all(count, ...)`** does not write names at all. She just counts the hands.
+- **`maplist`** is a machine on a conveyor belt that does the same job to every box that passes. **`call`** is the slot on the machine where you plug in the tool for the job. A **lambda** is a tool you make on the spot, for one job, without giving it a name.
+
+The SWI-Prolog lambda library says it implements "Logtalk's lambda expressions syntax"; its authors are Paulo Moura, who created Logtalk, and Jan Wielemaker, who created SWI-Prolog.
+:::
+
+## From simple to advanced
+
+### Level 1: `findall/3` collects every answer
+
+`findall(Template, Goal, List)` runs `Goal` to exhaustion and, for each solution, puts a copy of `Template` in `List`, in the order the solutions were found.
+
+```text
+?- findall(P, owns(_, P), Ps).
+Ps = [cat, dog, fish, cat].
+
+?- findall(P, owns(zoe, P), Ps).
+Ps = [].
+```
+
+$$
+\texttt{findall}(T, G, L) \iff L = [\,T\theta_1, T\theta_2, \dots, T\theta_k\,]
+$$
+
+where
+
+- $T$ is the template, the term you want collected, and $G$ is the goal;
+- $\theta_1, \dots, \theta_k$ are the answers of $G$ (each a set of variable bindings), in the order Prolog finds them;
+- $T\theta_i$ is the template with the $i$-th answer's bindings filled in;
+- $k$ is the number of answers, possibly 0.
+
+Example: `owns(_, P)` has $k = 4$ answers, binding `P` to `cat`, `dog`, `fish` and `cat`, so $L = [\texttt{cat}, \texttt{dog}, \texttt{fish}, \texttt{cat}]$. `owns(zoe, P)` has $k = 0$, so $L = [\,]$. In set-builder terms, `findall` lists the *bag* (multiset) $\lbrace P \mid \exists O\, \texttt{owns}(O, P) \rbrace$, with order and duplicates kept.
+
+### Level 2: `bagof/3` groups by the other variables
+
+`bagof/3` looks like `findall/3`, with two differences. It **fails** when there are no solutions, and it treats every variable of the goal that is not in the template as a **grouping key**: it produces one list per distinct value of those variables, on backtracking.
+
+```text
+?- bagof(P, owns(O, P), Ps).
+O = ann,
+Ps = [cat, dog] ;
+O = bob,
+Ps = [fish] ;
+O = cy,
+Ps = [cat].
+
+?- bagof(P, O^owns(O, P), Ps).
+Ps = [cat, dog, fish, cat].
+
+?- bagof(P, owns(zoe, P), Ps).
+false.
+```
+
+`O^Goal` reads "there exists an `O` such that `Goal`": the caret tells `bagof` not to group by `O`. The variables of the goal that are neither in the template nor behind a `^` are called its **free variables**:
+
+$$
+\texttt{bagof}(T, G, L) \text{ gives, for each value } w \text{ of the free variables } W, \quad L_w = [\,T\theta \mid \theta \text{ answers } G,\ W\theta = w\,]
+$$
+
+where
+
+- $W$ is the tuple of free variables of $G$: here $W = (O)$ in the first query, and nothing in the second, because of `O^`;
+- $w$ is one value that $W$ takes in some answer;
+- $L_w$ is the list of templates from exactly those answers, in solution order;
+- groups with no answers do not exist, so `bagof` fails when $G$ has no answers at all.
+
+Example: in `bagof(P, owns(O, P), Ps)` the free variable is $O$, taking the values `ann`, `bob` and `cy`. For $w = \texttt{ann}$, $L_w = [\texttt{cat}, \texttt{dog}]$; for `bob`, $[\texttt{fish}]$; for `cy`, $[\texttt{cat}]$. That is three answers. With `O^` there are no free variables, one group, and the same list as `findall`.
+
+### Level 3: `setof/3` gives a sorted set
+
+`setof/3` is `bagof/3` followed by sorting and removing duplicates, so its result is a true set in Prolog's standard order of terms:
+
+```text
+?- setof(P, O^owns(O, P), Ps).
+Ps = [cat, dog, fish].
+
+?- setof(O, owns(O, cat), Os).
+Os = [ann, cy].
+```
+
+$$
+\texttt{setof}(X, P(X), S) \iff S = \operatorname{sort}\big(\lbrace x \mid P(x) \rbrace\big) \;\land\; S \ne [\,]
+$$
+
+where
+
+- $P(x)$ is the goal, read as a property of $x$;
+- $\lbrace x \mid P(x) \rbrace$ is the set of all $x$ with that property: each element once;
+- $\operatorname{sort}$ lists the set in standard order (numbers before atoms, atoms alphabetically);
+- $S \ne [\,]$ says `setof` fails rather than return an empty set.
+
+Example: $\lbrace x \mid \exists o\, \texttt{owns}(o, x) \rbrace = \lbrace \texttt{cat}, \texttt{dog}, \texttt{fish} \rbrace$, and sorting gives `[cat, dog, fish]`; the second `cat` from Cy disappears. $\lbrace o \mid \texttt{owns}(o, \texttt{cat}) \rbrace = \lbrace \texttt{ann}, \texttt{cy} \rbrace$, so `Os = [ann, cy]`, which has $|S| = 2$ elements.
+
+### Level 4: `aggregate_all/3` counts, sums and finds the maximum
+
+Often you want a number, not a list. `library(aggregate)` computes it directly:
+
+```prolog
+age(ann, 31).
+age(bob, 25).
+age(cy, 40).
+```
+
+```text
+?- aggregate_all(count, owns(_, _), N).
+N = 4.
+
+?- aggregate_all(sum(A), age(_, A), S).
+S = 96.
+
+?- aggregate_all(max(A), age(_, A), M).
+M = 40.
+
+?- aggregate_all(max(A, Who), age(Who, A), M).
+M = max(40, cy).
+```
+
+$$
+\operatorname{count} = k, \qquad \operatorname{sum}(A) = \sum_{i=1}^{k} A\theta_i, \qquad \operatorname{max}(A) = \max_{1 \le i \le k} A\theta_i
+$$
+
+where
+
+- $k$ is the number of answers of the goal, and $\theta_i$ is the $i$-th answer;
+- $A\theta_i$ is the value of the expression `A` in that answer.
+
+Example: `age(_, A)` has $k = 3$ answers with $A = 31, 25, 40$. So $\operatorname{sum} = 31 + 25 + 40 = 96$ and $\max(31, 25, 40) = 40$; `max(A, Who)` also reports the witness, `cy`. Like `findall`, `aggregate_all` does not group by free variables. On no answers, `count` gives 0 but `max` fails, since an empty set has no maximum.
+
+### Level 5: `call/N` turns data into a goal
+
+In Prolog a goal is just a term, so it can be stored in a variable and run later with `call/1`. `call/N` goes one step further: it **adds** arguments to the end of the goal before calling it. A term with its last arguments missing is called a **closure**.
+
+```prolog
+% Level 5: a goal with its last arguments missing, for call/N.
+double(X, Y) :- Y is 2 * X.
+```
+
+```text
+?- call(double, 3, Y).
+Y = 6.
+
+?- G = double(4), call(G, Y).
+G = double(4),
+Y = 8.
+```
+
+$$
+\texttt{call}(p(a_1, \dots, a_j),\ b_1, \dots, b_m) \;\equiv\; p(a_1, \dots, a_j, b_1, \dots, b_m)
+$$
+
+where
+
+- $p$ is a predicate name and $a_1, \dots, a_j$ the arguments already in the closure ($j$ may be 0);
+- $b_1, \dots, b_m$ are the extra arguments given to `call`;
+- $\equiv$ means the two goals behave identically.
+
+Example: `call(double, 3, Y)` has $j = 0$ and $m = 2$, so it runs `double(3, Y)`, and $Y = 2 \times 3 = 6$. `call(plus(1), 2, P)` has $j = 1$ and $m = 2$, so it runs `plus(1, 2, P)`, and $P = 3$.
+
+### Level 6: `maplist`, `foldl`, `include` and `exclude`
+
+`library(apply)` uses `call/N` to apply a closure across lists. `maplist/2..5` calls it on corresponding elements of one to four lists and succeeds if every call succeeds:
+
+$$
+\texttt{maplist}(G, [x_1, \dots, x_n], [y_1, \dots, y_n]) \iff G(x_1, y_1) \land G(x_2, y_2) \land \dots \land G(x_n, y_n)
+$$
+
+where
+
+- $G$ is a closure that expects two more arguments;
+- $x_i$ and $y_i$ are the $i$-th elements of the two lists, which must have the same length $n$;
+- $\land$ means "and".
+
+Example: with $G = $ `double` and `[1, 2, 3]`, the calls are `double(1, 2)`, `double(2, 4)` and `double(3, 6)`, so the second list is `[2, 4, 6]`.
+
+```text
+?- maplist(double, [1, 2, 3], Ys).
+Ys = [2, 4, 6].
+
+?- maplist(plus, [1, 2], [10, 20], Zs).
+Zs = [11, 22].
+
+?- maplist(double, Xs, [2, 4, 6]).
+ERROR: Arguments are not sufficiently instantiated
+```
+
+The last query shows that `maplist` is only as reversible as its closure: `double/2` uses `is/2`, which runs one way ([Arithmetic and CLP(FD)](06-arithmetic-and-clpfd.qmd)). `maplist(integer, [1, 2, 3])` with one list simply tests every element.
+
+`foldl/4..6` is the accumulator loop of [Accumulators and Difference Lists](08-accumulators-and-difference-lists.qmd), over one to three lists. `foldl/6` with two lists computes a dot product, $1 \times 4 + 2 \times 5 + 3 \times 6 = 4 + 10 + 18 = 32$. `include/3` keeps the elements for which a closure succeeds, `exclude/3` drops them, and `partition/4` does both at once:
+
+```text
+?- foldl([X, Y, S0, S]>>(S is S0 + X * Y), [1, 2, 3], [4, 5, 6], 0, Dot).
+Dot = 32.
+
+?- include([X]>>(X > 2), [1, 2, 3, 4], L).
+L = [3, 4].
+
+?- exclude([X]>>(X > 2), [1, 2, 3, 4], L).
+L = [1, 2].
+
+?- partition([X]>>(X > 2), [1, 2, 3, 4], In, Out).
+In = [3, 4],
+Out = [1, 2].
+```
+
+### Level 7: `yall` lambdas, and what they share
+
+The closures above that start with `[X]>>` are **lambdas** from `library(yall)` ("Yet Another Lambda Library"). `[X1, ..., Xk]>>Body` is a goal with parameters: called with $k$ extra arguments, it unifies a fresh copy of the parameters with them and runs the copied body. That spares you a one-line helper predicate for every `maplist`:
+
+```text
+?- maplist([X, Y]>>(Y is X * X), [1, 2, 3], L).
+L = [1, 4, 9].
+```
+
+Copying has a consequence. A variable in the body that is not a parameter is, by default, **local** to each call: binding it inside does not bind it outside. To share a variable with the surrounding clause, list it in braces, `{V}/[X]>>Body`:
+
+```text
+?- maplist([X]>>(X = Z), [1, 1]).
+true.
+
+?- maplist({Z}/[X]>>(X = Z), [1, 1]).
+Z = 1.
+```
+
+The first query succeeds but leaves `Z` unbound: each call bound its own copy. The braces matter most in a **file**, where SWI-Prolog compiles each lambda ahead of time:
+
+```prolog
+% Level 7: a lambda in a file names the outer variables it shares in {}.
+add_all(N, Xs, Ys) :- maplist({N}/[X, Y]>>(Y is X + N), Xs, Ys).
+
+add_all_wrong(N, Xs, Ys) :- maplist([X, Y]>>(Y is X + N), Xs, Ys).
+```
+
+```text
+?- add_all(10, [1, 2], L).
+L = [11, 12].
+
+?- add_all_wrong(10, [1, 2], L).
+ERROR: Arguments are not sufficiently instantiated
+```
+
+Without `{N}`, the compiled lambda never sees `N`, so `X + N` has an unbound variable. At the toplevel the same lambda without braces happens to work, because the lambda is copied at call time, when `N` is already 10. Code that works at the toplevel and breaks in a file is the classic lambda bug. The rule is simple: every outer variable a lambda uses goes in `{}`.
+
+## How it works underneath
+
+**`findall/3` is a failure-driven loop.** Trimmed from SWI-Prolog's `boot/bags.pl`:
+
+```prolog
+% sketch: trimmed from boot/bags.pl
+findall_loop(Templ, Goal, List, Tail) :-
+    (   Goal,
+        '$add_findall_bag'(Templ)   % fails
+    ;   '$collect_findall_bag'(List, Tail)
+    ).
+```
+
+Each time `Goal` succeeds, `'$add_findall_bag'/1` copies the template into a bag kept outside the Prolog stacks, then **fails** on purpose, which backtracks into `Goal` for the next solution. Backtracking undoes every binding, so only the copies survive. When `Goal` has no more solutions, the second branch builds the list from the bag. Two consequences follow. The collected terms are copies, so unbound variables in them are fresh: `findall(X-Y, member(X, [1, 2]), L)` gives `L = [1-_, 2-_]` with two different new variables, which the lab checks. And the cost is one copy per solution: $k$ solutions of size $s$ cost about $k \cdot s$ in copying and memory.
+
+**`bagof/3` is `findall/3` plus a sort.** The same file defines it, in outline: compute the free variables $W$, collect `W-Template` pairs with `findall/3`, `keysort/2` them so equal keys become neighbours, then hand out one group per key on backtracking. `setof/3` does the same with `sort/2`, which also removes duplicates. Sorting $k$ pairs costs $O(k \log k)$, the price of grouping. That is why `^` matters: `O^` removes `O` from $W$, so there is one group.
+
+**`aggregate_all/3` does not build a list.** For `count` and `sum` it keeps a running total in a term and updates it with `nb_setarg/3`, an assignment that survives backtracking:
+
+```prolog
+% sketch: trimmed from library(aggregate), aggregate.pl
+aggregate_all(sum(X), Goal, Sum) :-
+    !,
+    State = state(0),
+    (  call(Goal),
+           arg(1, State, S0),
+           S is S0 + X,
+           nb_setarg(1, State, S),
+           fail
+    ;  arg(1, State, Sum)
+    ).
+```
+
+It is the same failure-driven loop as `findall`, with an accumulator instead of a bag, so counting a million solutions takes constant memory. `count` is defined as `sum(1)`.
+
+**Compiled lambdas.** When SWI-Prolog loads a file, a lambda passed to a known meta-predicate such as `maplist/3` is compiled into a helper predicate whose arguments are the `{}` variables followed by the parameters. The `library(yall)` documentation says of the `{Free}` part: "This is needed for compiling Lambda expressions." `listing/1` shows the result for the two predicates of Level 7:
+
+```text
+add_all_wrong(_, A, B) :-
+    maplist('__aux_yall_7c8e9e8fa87fc5ca9c691b96c77b8b0bcc359c57',
+            A,
+            B).
+
+add_all(A, B, C) :-
+    maplist('__aux_yall_ac192c42456f73b3beeebb9438c3ab5b37b53d15'(A),
+            B,
+            C).
+```
+
+In `add_all_wrong` the first argument became `_`: nothing uses `N` any more, because the helper's body has its own, unbound `N`. In `add_all` the helper is a closure that carries `A`, the value of `N`. The compiled form is also fast: it is an ordinary predicate call, with no copying at run time.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Forgetting `^` in `bagof`/`setof` | Several answers, one group per value of a variable you did not care about | Quantify it: `O^owns(O, P)` |
+| Expecting `bagof`/`setof` to return `[]` | `false` when there are no solutions | Use `findall/3`, or handle the failure |
+| `^` used outside `bagof`/`setof` | `Unknown procedure: (^)/2` and "^/2 can only appear as the 2nd argument of setof/3 and bagof/3" | Use `^` only in those two; elsewhere just call the goal |
+| Expecting `findall` to keep bindings or shared variables | Fresh variables in the results, as in `[1-_, 2-_]` | Bind what you need inside the goal; results are copies |
+| Building a list only to count it | Memory grows with the number of solutions | `aggregate_all(count, Goal, N)` |
+| `aggregate_all(max(X), ...)` with no solutions | `false` | Check for the empty case, or use `count` first |
+| Running `maplist` backwards through a one-way closure | `Arguments are not sufficiently instantiated` | Use a reversible closure, for example with `#=` |
+| A lambda in a file using an outer variable without `{}` | `Arguments are not sufficiently instantiated`, though it works at the toplevel | Declare it: `{N}/[X, Y]>>(Y is X + N)` |
+
+## Interview questions
+
+### 1. What are the differences between `findall/3`, `bagof/3` and `setof/3`?
+
+**Answer.** All three collect the instances of a template for the solutions of a goal. `findall/3` returns one list in solution order with duplicates, returns `[]` when there are no solutions, and ignores free variables. `bagof/3` fails when there are no solutions and backtracks over the values of the goal's free variables, one list per value: `bagof(P, owns(O, P), Ps)` gives `ann-[cat, dog]`, `bob-[fish]`, `cy-[cat]`. `setof/3` is `bagof/3` with each list sorted and duplicates removed: `setof(P, O^owns(O, P), Ps)` gives `[cat, dog, fish]`.
+
+### 2. What does `^` mean in `bagof(P, O^owns(O, P), Ps)`?
+
+**Answer.** It is existential quantification: "the pets P such that **some** O owns P". Without it, `O` is a free variable and `bagof` groups by it, giving one answer per owner. With it, `O` is local to the goal, and there is a single answer, `[cat, dog, fish, cat]`. `^` has this meaning only in the second argument of `bagof` and `setof`; called as an ordinary goal, SWI-Prolog raises an existence error for `(^)/2`.
+
+### 3. How do you count solutions without building a list, and how does it work?
+
+**Answer.** `aggregate_all(count, Goal, N)`. It runs a failure-driven loop: call `Goal`, increment a counter stored in a term with `nb_setarg/3` (a destructive update that backtracking does not undo), fail to get the next solution, and finally read the counter. Memory stays constant however many solutions there are, unlike `findall/3` followed by `length/2`, which stores every solution first. `aggregate_all(count, owns(_, _), N)` gives `N = 4`.
+
+### 4. What is a closure in Prolog, and how does `maplist/3` use it?
+
+**Answer.** A closure is a goal term missing its last arguments, such as `double` or `plus(1)`. `call(Closure, A1, ..., Am)` appends the arguments and calls the result, so `call(plus(1), 2, P)` runs `plus(1, 2, P)`. `maplist(G, Xs, Ys)` walks both lists and calls `call(G, X, Y)` for each pair: `maplist(plus(1), [1, 2, 3], L)` gives `[2, 3, 4]`. The closure must expect its extra arguments in last position; when the order does not fit, a lambda reorders them.
+
+### 5. Why does `maplist([X, Y]>>(Y is X + N), Xs, Ys)` fail in a file even though `N` is bound?
+
+**Answer.** In a file the lambda is compiled at load time into a helper predicate, and only its parameters and the variables listed in `{}` become the helper's arguments. `N` is neither, so the helper's `N` is a different, unbound variable, and `is/2` raises an instantiation error. `listing/1` shows the outer `N` turned into `_`. Writing `{N}/[X, Y]>>(Y is X + N)` passes it in. At the toplevel the lambda is copied at call time, after `N = 10`, so the bug hides there.
+
+## Summary
+
+$$
+\texttt{findall}(T, G, L) \iff L = [\,T\theta_1, \dots, T\theta_k\,], \qquad \texttt{setof}(X, P(X), S) \iff S = \operatorname{sort}\lbrace x \mid P(x) \rbrace \ne [\,]
+$$
+
+where $T$ is a template, $G$ a goal with answers $\theta_1, \dots, \theta_k$ in solution order, and $\lbrace x \mid P(x) \rbrace$ the set of values with property $P$.
+
+Example: `findall(P, owns(_, P), L)` has $k = 4$ answers and gives `[cat, dog, fish, cat]`; `setof(P, O^owns(O, P), S)` sorts the set $\lbrace \texttt{cat}, \texttt{dog}, \texttt{fish} \rbrace$ into `[cat, dog, fish]`.
+
+- `findall` collects everything, in order, and never fails; `bagof` groups by free variables and fails on none; `setof` also sorts and deduplicates.
+- Hide variables you do not want to group by with `Var^Goal`.
+- For numbers, `aggregate_all(count | sum(E) | max(E) | max(E, W), Goal, R)` avoids building a list.
+- `call/N` appends arguments to a closure; `maplist`, `foldl`, `include`, `exclude` and `partition` are built on it.
+- A `yall` lambda `{Free}/[Params]>>Body` copies itself per call; in a file, declare every shared outer variable in `{}`.
+
+## References
+
+- SWI-Prolog manual: [Finding all solutions to a goal](https://www.swi-prolog.org/pldoc/man?section=allsolutions), [library(aggregate)](https://www.swi-prolog.org/pldoc/man?section=aggregate), [Meta-call predicates](https://www.swi-prolog.org/pldoc/man?section=metacall), [library(apply)](https://www.swi-prolog.org/pldoc/man?section=apply) and [library(yall)](https://www.swi-prolog.org/pldoc/man?section=yall).
+- SWI-Prolog source: [boot/bags.pl](https://github.com/SWI-Prolog/swipl-devel/blob/master/boot/bags.pl) (`findall/3`, `bagof/3`, `setof/3`) and [library/aggregate.pl](https://github.com/SWI-Prolog/swipl-devel/blob/master/library/aggregate.pl).
+- Leon Sterling and Ehud Shapiro, *The Art of Prolog*, 2nd ed., MIT Press, 1994, Chapter 16 "Second-Order Programming" (16.1 all-solutions predicates).
+- Patrick Blackburn, Johan Bos and Kristina Striegnitz, *Learn Prolog Now!*, [Chapter 11: Database Manipulation and Collecting Solutions](https://www.let.rug.nl/bos/lpn/lpnpage.php?pagetype=html&pageid=lpn-htmlch11).
+- Logtalk, [lambda expression grammar](https://logtalk.org/manuals/refman/grammar.html#lambda-expressions), the syntax `library(yall)` implements.
+- Lab: [`labs/all-solutions-and-higher-order.pl`](labs/all-solutions-and-higher-order.pl). Run it from `programming-languages/prolog/labs` with `swipl -q -g main -t halt all-solutions-and-higher-order.pl`.
