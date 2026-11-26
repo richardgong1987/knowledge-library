@@ -1,75 +1,199 @@
 ---
 title: "Depth-First Search"
-description: "From a ball of string in a maze to interview level: recursive and explicit-stack DFS, the visited set, discovery and finish times, white/grey/black cycle detection in directed graphs, grid flood fill, the O(V + E) count, and hard problems (Number of Islands, Eventual Safe States, Longest Increasing Path in a Matrix) solved math-first."
+description: "DFS versus backtracking, an interactive binary tree, mathematical definitions, Java implementations, cycle detection and interview problems."
 ---
 
-Depth-first search (DFS) explores a graph by always going **deeper** first: walk through a door, then through a door of that room, and so on, and only step back when every door from the current room leads somewhere already seen. This lesson builds DFS from a maze walk, writes it with recursion and with an explicit stack, timestamps it, uses colours to find cycles, and applies it to grids.
-
-All code is in [`DepthFirstSearchLab.java`](DepthFirstSearchLab.java). Run it from this folder with `java DepthFirstSearchLab.java`; it checks every number on this page and prints `OK`.
+**Depth-first search (DFS) is a traversal strategy. Backtracking is a problem-solving strategy.** DFS answers how to explore a graph; backtracking answers how to construct, validate and restore a candidate solution. Backtracking commonly uses DFS as its exploration order.
 
 ## The problem
 
-A house has 6 rooms and 5 doors. Each door joins two rooms:
+Imagine starting at the root A of a binary tree. A has two children B and C; B has children D and E; C has children F and G. How can we visit every reachable vertex without losing track of which branch to explore next?
 
-```text
-   0 ──── 1
-   │      │
-   2      3
-    \    /
-     \  /
-      4          5
+Try the interactive tree below. Click Next step or drag the slider to see each recursive call and return. The orange node is current, green nodes have been visited, and grey nodes are unvisited. The orange edges show the active call path. A green node may still have unfinished neighbours.
+
+
+```{=html}
+<div id="dfs-tree-demo" class="border rounded p-3 my-3">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem"><strong>DFS simulation</strong><span data-step>Step 0 / 14</span></div>
+  <svg viewBox="0 0 700 340" width="100%" role="img" aria-label="Binary tree A with children B and C, and leaves D, E, F and G" style="display:block;max-width:740px;margin:auto">
+<line data-from="A" data-to="B" x1="350" y1="50" x2="180" y2="170" stroke="#94a3b8" stroke-width="3"/>
+<line data-from="A" data-to="C" x1="350" y1="50" x2="520" y2="170" stroke="#94a3b8" stroke-width="3"/>
+<line data-from="B" data-to="D" x1="180" y1="170" x2="95" y2="290" stroke="#94a3b8" stroke-width="3"/>
+<line data-from="B" data-to="E" x1="180" y1="170" x2="265" y2="290" stroke="#94a3b8" stroke-width="3"/>
+<line data-from="C" data-to="F" x1="520" y1="170" x2="435" y2="290" stroke="#94a3b8" stroke-width="3"/>
+<line data-from="C" data-to="G" x1="520" y1="170" x2="605" y2="290" stroke="#94a3b8" stroke-width="3"/>
+<g data-node="A"><circle cx="350" cy="50" r="32" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2.5"/><text x="350" y="50" dy=".35em" text-anchor="middle" font-size="26" font-weight="600" fill="#172033">A</text></g>
+<g data-node="B"><circle cx="180" cy="170" r="32" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2.5"/><text x="180" y="170" dy=".35em" text-anchor="middle" font-size="26" font-weight="600" fill="#172033">B</text></g>
+<g data-node="C"><circle cx="520" cy="170" r="32" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2.5"/><text x="520" y="170" dy=".35em" text-anchor="middle" font-size="26" font-weight="600" fill="#172033">C</text></g>
+<g data-node="D"><circle cx="95" cy="290" r="32" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2.5"/><text x="95" y="290" dy=".35em" text-anchor="middle" font-size="26" font-weight="600" fill="#172033">D</text></g>
+<g data-node="E"><circle cx="265" cy="290" r="32" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2.5"/><text x="265" y="290" dy=".35em" text-anchor="middle" font-size="26" font-weight="600" fill="#172033">E</text></g>
+<g data-node="F"><circle cx="435" cy="290" r="32" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2.5"/><text x="435" y="290" dy=".35em" text-anchor="middle" font-size="26" font-weight="600" fill="#172033">F</text></g>
+<g data-node="G"><circle cx="605" cy="290" r="32" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2.5"/><text x="605" y="290" dy=".35em" text-anchor="middle" font-size="26" font-weight="600" fill="#172033">G</text></g>
+  </svg>
+  <div style="display:flex;justify-content:center;gap:1rem;flex-wrap:wrap">
+    <span><span style="color:#d97706">●</span> Current</span>
+    <span><span style="color:#16a34a">●</span> Visited</span>
+    <span><span style="color:#94a3b8">●</span> Unvisited</span>
+  </div>
+  <hr>
+  <div aria-live="polite" aria-atomic="true">
+    <div><strong>Visited set:</strong> <code data-visited>∅</code></div>
+    <div><strong>Call stack (bottom → top):</strong> <code data-stack>Empty</code></div>
+    <div><strong>Discovery order:</strong> <code data-order>Empty</code></div>
+    <p data-message class="mt-2">Initially, no vertex has been visited.</p>
+  </div>
+  <label for="dfs-tree-slider">Traversal step</label>
+  <input id="dfs-tree-slider" type="range" min="0" max="14" value="0" class="form-range">
+  <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+    <button type="button" class="btn btn-outline-secondary" data-reset>Reset</button>
+    <button type="button" class="btn btn-outline-secondary" data-prev disabled>Previous</button>
+    <button type="button" class="btn btn-primary" data-next>Next step →</button>
+  </div>
+  <noscript>Enable JavaScript to step through the tree. Discovery order: A → B → D → E → C → F → G.</noscript>
+</div>
+<script>
+(() => {
+  const root = document.getElementById("dfs-tree-demo");
+  const q = selector => root.querySelector(selector);
+  const graph = { A: ["B", "C"], B: ["D", "E"], C: ["F", "G"], D: [], E: [], F: [], G: [] };
+  const visited = new Set(), stack = [], frames = [];
+  function record(message) {
+    frames.push({ visited: [...visited], stack: [...stack], message });
+  }
+  function dfs(v) {
+    visited.add(v);
+    stack.push(v);
+    record("Visit " + v + ". Add it to the visited set and call stack.");
+    for (const u of graph[v]) {
+      if (!visited.has(u)) dfs(u);
+    }
+    stack.pop();
+    record(stack.length
+      ? "Finish " + v + " and return to " + stack[stack.length - 1] + ". Keep " + v + " in the visited set."
+      : "Finish " + v + ". DFS is complete; every reachable vertex has been visited.");
+  }
+  record("Initially, no vertex has been visited.");
+  dfs("A");
+  const slider = q("#dfs-tree-slider");
+  let step = 0;
+  function render(index) {
+    step = Math.max(0, Math.min(frames.length - 1, index));
+    const frame = frames[step], current = frame.stack[frame.stack.length - 1];
+    for (const node of root.querySelectorAll("[data-node]")) {
+      const name = node.dataset.node, seen = frame.visited.includes(name);
+      const color = name === current ? "#d97706" : seen ? "#16a34a" : "#94a3b8";
+      node.querySelector("circle").setAttribute("fill", seen ? color : "#f1f5f9");
+      node.querySelector("circle").setAttribute("stroke", color);
+      node.querySelector("text").setAttribute("fill", seen ? "#fff" : "#172033");
+    }
+    for (const edge of root.querySelectorAll("[data-from]")) {
+      const active = frame.stack.includes(edge.dataset.from) && frame.stack.includes(edge.dataset.to);
+      edge.setAttribute("stroke", active ? "#d97706" : "#94a3b8");
+      edge.setAttribute("stroke-width", active ? "5" : "3");
+    }
+    q("[data-step]").textContent = "Step " + step + " / " + (frames.length - 1);
+    q("[data-visited]").textContent = frame.visited.length ? "{" + frame.visited.join(", ") + "}" : "∅";
+    q("[data-stack]").textContent = frame.stack.join(" → ") || "Empty";
+    q("[data-order]").textContent = frame.visited.join(" → ") || "Empty";
+    q("[data-message]").textContent = frame.message;
+    slider.value = String(step);
+    q("[data-prev]").disabled = step === 0;
+    q("[data-next]").disabled = step === frames.length - 1;
+  }
+  slider.max = String(frames.length - 1);
+  slider.addEventListener("input", () => render(Number(slider.value)));
+  q("[data-reset]").addEventListener("click", () => render(0));
+  q("[data-prev]").addEventListener("click", () => render(step - 1));
+  q("[data-next]").addEventListener("click", () => render(step + 1));
+  render(0);
+})();
+</script>
 ```
 
-The doors are 0–1, 0–2, 1–3, 2–4 and 3–4; room 5 has none. Starting in room 0, which rooms can you reach?
-
-- Wandering at random may go $0 \to 1 \to 0 \to 1 \to \dots$ forever, or stop before seeing room 4.
-- We need a method that visits every reachable room **exactly once** and knows when it is finished.
-- DFS does that, in $V + 2E = 6 + 10 = 16$ steps for this house, where $V$ is the number of rooms and $E$ the number of doors.
+Assuming left-to-right exploration, the discovery order is $A \to B \to D \to E \to C \to F \to G$. This is the order of first visits, not a single continuous graph path. Notice that after returning from D to B, D remains in the visited set.
 
 ## Explain it like I'm ten
 
-::: {.callout-tip}
-You are exploring a maze, and you have a ball of string and a piece of chalk.
+Imagine exploring rooms in a maze with chalk and a ball of string. Mark every room as soon as you enter. Follow one unexplored door as far as possible. If there is no unmarked neighbour, follow the string back to the previous room and try its next door. The chalk marks stay, even when the string is wound back.
 
-- Tie the string at the entrance and unroll it as you walk.
-- Chalk a mark in every room you enter.
-- At each room, take any door to a room **without** a chalk mark.
-- When every door leads to a marked room, follow the string **back** to the previous room and try its other doors.
-- When the string brings you back to the entrance and it has no unmarked doors left, you have seen every room you can reach.
+The chalk is the visited set; the string is the recursive call stack. That is the central idea of DFS.
 
-The chalk is the *visited set*, and the string is the *stack* of rooms you came through. This is Trémaux's method for solving mazes. Sedgewick and Wayne's *Algorithms* lectures tell it with Theseus, who escaped the Minotaur's labyrinth by following Ariadne's thread. When you write DFS as a recursive function, the call stack plays the part of the string.
-:::
+### DFS versus backtracking
+
+| Aspect | Ordinary graph DFS | Backtracking |
+| --- | --- | --- |
+| Goal | Explore reachable vertices | Find valid candidate solutions |
+| Main operation | Visit and explore | Choose, explore and undo |
+| State | Global visited set | Current partial solution |
+| On return | Retain the visited mark | Restore the previous candidate state |
+| Pruning | Not required for full traversal | Often used to reject impossible branches |
+
+For example, DFS explores B, D and E before moving to C. But if B represents an invalid partial solution in a backtracking problem, the entire subtree below B may be skipped, provided no valid solution can extend B.
+
+The distinction is not that DFS never returns: both strategies return from recursive calls. In ordinary graph DFS, discovery marks are permanent. In backtracking, a mutable partial solution must be restored (or each recursive call can receive an independent copy). See [Backtracking](../backtracking/index.qmd).
 
 ## From simple to advanced
 
-### Level 1: recursive DFS and the visited set
+### Level 1: the mathematical definition
 
-Store the graph as **adjacency lists**: for each vertex, the list of its neighbours. For the house, $N(0) = [1, 2]$, $N(1) = [0, 3]$, $N(2) = [0, 4]$, $N(3) = [1, 4]$, $N(4) = [2, 3]$ and $N(5) = []$.
+**1. Define the graph.**
 
 $$
-\text{DFS}(v): \ \text{mark } v, \ \text{then } \text{DFS}(u) \text{ for each } u \in N(v) \text{ that is not yet marked}
+\boxed{G=(V,E)}
 $$
 
-where:
+where $G$ is a finite graph, $V$ is the set of vertices, and $E$ is the set of edges.
 
-- $v$ is the current vertex (room);
-- $N(v)$ is the list of neighbours of $v$, the rooms one door away;
-- "mark" adds $v$ to the visited set, so no vertex is entered twice.
+Example: for the tree above, $V=\{A,B,C,D,E,F,G\}$ and $E=\{(A,B),(A,C),(B,D),(B,E),(C,F),(C,G)\}$. Treat these as directed edges from parent to child. There are 7 vertices and 6 edges.
 
-Example: start with $\text{DFS}(0)$.
+**2. Define the neighbours.**
 
-```text
-visit 0
-  visit 1          first unmarked neighbour of 0
-    visit 3        1's neighbour 0 is marked, so try 3
-      visit 4      3's neighbour 1 is marked, so try 4
-        visit 2    4's first neighbour; both of 2's neighbours are marked
-      back to 4    4's other neighbour, 3, is marked
-    back to 3, then 1
-  back to 0        0's other neighbour, 2, is marked
-```
+$$
+\boxed{N(v)=\{u\in V\mid(v,u)\in E\}}
+$$
 
-The visiting order is $0, 1, 3, 4, 2$. Room 5 is never marked: it is not reachable.
+where $v$ is the current vertex, $u$ is a candidate neighbour, $\in$ means belongs to, and the vertical bar means such that. $N(v)$ is the set of outgoing neighbours of $v$. In code, store them in an ordered adjacency list so that traversal order is deterministic.
+
+Example: $N(A)=\{B,C\}$, $N(B)=\{D,E\}$, $N(C)=\{F,G\}$, and $N(D)=\varnothing$, the empty set.
+
+**3. Define the visited set.**
+
+$$
+\boxed{S\subseteq V,\qquad S_0=\varnothing,\qquad S\leftarrow S\cup\{v\}}
+$$
+
+where $S$ is the shared set of visited vertices, $\subseteq$ means is a subset of, $S_0$ is the initial empty set, $\cup$ is set union and $\leftarrow$ means update the state.
+
+Example: if $S=\{A,B\}$ and we enter D, the new set is $\{A,B\}\cup\{D\}=\{A,B,D\}$. Returning from D does not remove D.
+
+**4. Define the exploration condition.**
+
+$$
+\boxed{u\in N(v)\land u\notin S}
+$$
+
+where $\land$ means logical AND, and $\notin$ means does not belong to. A neighbour must exist and must not already be visited.
+
+Example: at B with $S=\{A,B,D\}$, D is already in $S$ and is skipped; E is a neighbour and is not in $S$, so DFS enters E.
+
+**5. Put the rules together.**
+
+$$
+\boxed{
+\begin{aligned}
+\operatorname{DFS}(v):\quad & S\leftarrow S\cup\{v\}\\
+& \text{for each }u\in N(v)\text{ in list order}:\\
+&\quad\text{if }u\notin S:\\
+&\qquad\operatorname{DFS}(u)
+\end{aligned}
+}
+$$
+
+where $\operatorname{DFS}(v)$ is the recursive procedure, $S$ is shared by all calls, $N(v)$ is the neighbourhood, and the condition is evaluated again for each neighbour. Start with $S=\varnothing$ and call $\operatorname{DFS}(s)$ for a source $s\in V$.
+
+Example: starting at A, the first three calls are A, B, D. The stack is then $[A,B,D]$ and $S=\{A,B,D\}$. D has no outgoing neighbours, so its call returns. The stack becomes $[A,B]$, but $S$ is unchanged. Then the call for E grows $S$ to $\{A,B,D,E\}$.
+
+**From mathematics to Java.** A boolean array represents $S$ when vertices have consecutive integer indices: marking $v$ means setting the array element to true. The adjacency list supplies $N(v)$, and the conditional checks membership in $S$. The optional order list records discovery order.
 
 ```java
 static void dfs(List<List<Integer>> graph, int v, boolean[] visited, List<Integer> order) {
@@ -81,7 +205,24 @@ static void dfs(List<List<Integer>> graph, int v, boolean[] visited, List<Intege
 }
 ```
 
-Without `visited`, the call for 0 would call 1, which would call 0 again, and so on until the program crashes.
+Map A through G to indices 0 through 6. The tree's adjacency lists are [[1,2],[3,4],[5,6],[],[],[],[]], and calling DFS from index 0 records [0,1,3,4,2,5,6].
+
+### A graph with a cycle and an unreachable vertex
+
+The tree above has no cycles, so the visited set might look unnecessary. Now consider six rooms and five undirected doors:
+
+```text
+   0 ──── 1
+   │      │
+   2      3
+    \    /
+     \  /
+      4          5
+```
+
+The doors are 0–1, 0–2, 1–3, 2–4 and 3–4; room 5 is isolated. Start in room 0. The first visits are 0, 1, 3, 4, 2. Without visited marks, we could walk back and forth forever between rooms 0 and 1. Room 5 is not visited because it is unreachable. Starting another DFS from 5 would cover the whole graph.
+
+The following optional advanced levels and interview problems use this graph and other small examples. All Java code is in [DepthFirstSearchLab.java](DepthFirstSearchLab.java); run it from this folder with `java DepthFirstSearchLab.java`.
 
 ### Level 2: an explicit stack instead of recursion
 
@@ -239,7 +380,7 @@ On the grid `110 / 010 / 101`, `sink(grid, 0, 0)` sinks $(0, 0)$, $(0, 1)$ and $
 - *Everything reachable is marked:* suppose some reachable $v$ were never marked. Take a path $s = x_0, x_1, \dots, x_k = v$ and the first unmarked vertex $x_i$ on it. Its predecessor $x_{i-1}$ was marked, so DFS scanned all of $N(x_{i-1})$, which includes $x_i$, and it would have called DFS on $x_i$. That is a contradiction.
 - *It terminates:* each vertex is marked at most once, and each call scans one finite list.
 
-**Costs.** Each vertex is entered once, and each adjacency list is scanned once, when its vertex is entered:
+**Costs.** In a full traversal (restart from each unvisited vertex), each vertex is entered once, and each adjacency list is scanned once, when its vertex is entered:
 
 $$
 T = \sum_{v \in V} \big(1 + \deg(v)\big) = V + 2E \ \text{ (undirected)}, \qquad V + E \ \text{ (directed)}
@@ -250,7 +391,7 @@ where:
 - the 1 is the work of entering $v$, and $\deg(v)$ the work of scanning its list;
 - in a directed graph each arrow is in one list only, so the degrees add up to $E$.
 
-Example: the house has $V = 6$ and $E = 5$, so $T = 6 + 10 = 16$. A $4 \times 5$ grid has $V = 20$ cells and at most $4 \times 20 = 80$ neighbour checks. The extra space is $O(V)$ for the visited marks plus the stack, whose depth can reach $V$: the 300,000-room corridor.
+Example: a full traversal of the house, including isolated room 5, has $V = 6$ and $E = 5$, so $T = 6 + 10 = 16$. A search from room 0 alone has 5 reachable vertices and 10 adjacency entries, giving $5 + 10 = 15$ in this counting model. A $4 \times 5$ grid has $V = 20$ cells and at most $4 \times 20 = 80$ neighbour checks. The extra space is $O(V)$ for the visited marks plus the stack, whose depth can reach $V$: the 300,000-room corridor.
 
 | Version | Time | Extra space | Watch out for |
 | --- | --- | --- | --- |
@@ -428,19 +569,25 @@ static int longestFrom(int[][] m, int r, int c, int[][] memo) {
 
 ## Mathematical Abstraction
 
-DFS computes the set of vertices reachable from a start, and timestamps them so that the nesting of intervals mirrors the search tree:
+The essential difference between ordinary graph DFS and backtracking is what happens to the state when recursion returns.
 
 $$
-\text{Reach}(s) = \lbrace v : \exists \text{ path } s \leadsto v \rbrace, \qquad T_{\text{DFS}} = V + \sum_v \deg(v), \qquad \text{cycle} \iff \exists (u, v) : v \text{ is grey at } u
+\boxed{
+\begin{aligned}
+\text{DFS:}\quad & S\leftarrow S\cup\{v\}\\
+& \operatorname{DFS}(u)\quad\text{when }u\in N(v),\ u\notin S\\[4pt]
+\text{Backtracking:}\quad & P\leftarrow P+[c]\\
+& \operatorname{BT}(P)\\
+& P\leftarrow P[:-1]
+\end{aligned}
+}
 $$
 
-where:
+where $S$ is the global visited set, $v$ is the current vertex, $u$ an unvisited neighbour, $P$ is an ordered partial solution, $c$ is a feasible next choice, $P+[c]$ appends that choice and $P[:-1]$ removes the final choice. The backtracking lines describe one choose–explore–undo operation, not its full goal and pruning logic.
 
-- $\text{Reach}(s)$ is everything DFS from $s$ marks, and $s \leadsto v$ means "there is a path from $s$ to $v$";
-- $T_{\text{DFS}}$ counts the work: one entry per vertex and one look per list entry;
-- the last part is the cycle test of Level 4: an edge into a vertex on the current path.
+Example: DFS at D returns to B with the same $S=\{A,B,D\}$. Backtracking with $P=[A,B,D]$ returns to the parent candidate $P=[A,B]$ by undoing D. Thus the visited set grows monotonically, $S_0\subseteq S_1\subseteq\cdots\subseteq V$, while the candidate path grows and shrinks.
 
-Example: in the house, $\text{Reach}(0) = \lbrace 0, 1, 2, 3, 4 \rbrace$, $T_{\text{DFS}} = 6 + 10 = 16$, and the intervals $[1, 10] \supset [2, 9] \supset [3, 8] \supset [4, 7] \supset [5, 6]$ show the path $0 \to 1 \to 3 \to 4 \to 2$. In the directed graph $0 \to 1 \to 2 \to 0$, the edge $(2, 0)$ meets the grey vertex 0, so there is a cycle.
+For an adjacency-list graph, full DFS takes $O(|V|+|E|)$ time and recursive DFS uses $O(|V|)$ auxiliary space. A single-source search visits only the reachable portion. Remember the three actions: mark the vertex, choose an unvisited neighbour, and explore it recursively.
 
 ## References
 
