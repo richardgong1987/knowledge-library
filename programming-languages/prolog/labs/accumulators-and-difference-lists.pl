@@ -28,12 +28,13 @@ rev(Xs, Rs) :- rev(Xs, [], Rs).
 rev([], Rs, Rs).
 rev([X|Xs], Acc, Rs) :- rev(Xs, [X|Acc], Rs).
 
-% The second statistics/2 call is itself one inference, so subtract it.
-inferences(Goal, N) :-
-    statistics(inferences, I0),
-    call(Goal),
-    statistics(inferences, I1),
-    N is I1 - I0 - 1.
+% Count resolution steps: one for every call of a user-defined predicate.
+steps(Goal, N) :- solve(Goal, 0, N).
+
+solve(true, N, N) :- !.
+solve((A, B), N0, N) :- !, solve(A, N0, N1), solve(B, N1, N).
+solve(Goal, N, N) :- predicate_property(Goal, built_in), !, call(Goal).
+solve(Goal, N0, N) :- clause(Goal, Body), N1 is N0 + 1, solve(Body, N1, N).
 
 % Level 4: a difference list A-B is the list A without its tail B.
 append_dl(A-B, B-C, A-C).
@@ -42,6 +43,12 @@ append_dl(A-B, B-C, A-C).
 empty_queue(Q-Q).
 enqueue(X, Q-[X|T], Q-T).
 dequeue(X, [X|Q]-T, Q-T).
+
+% Underneath: does Goal succeed in a thread that may use only Bytes of stack?
+fits_in_stack(Goal, Bytes) :-
+    thread_create(catch(Goal, error(resource_error(_), _), fail), Id, [stack_limit(Bytes)]),
+    thread_join(Id, Status),
+    Status == true.
 
 % Level 6: the step of an accumulator loop, as a goal for foldl/4.
 add(X, S0, S) :- S is S0 + X.
@@ -54,7 +61,7 @@ main :-
     check_difference_lists,
     check_queue,
     check_foldl,
-    check_last_call,
+    check_constant_stack,
     format("OK~n").
 
 % Level 1: both sums give 6; only the accumulator version is a loop.
@@ -74,7 +81,7 @@ check_length :-
     len([a, b, c], N),
     assertion(N == 3).
 
-% Level 3: (n+1)(n+2)/2 inferences against n+2.
+% Level 3: (n+1)(n+2)/2 resolution steps against n+2.
 check_reverse_steps :-
     rev([1, 2, 3], R3),
     assertion(R3 == [3, 2, 1]),
@@ -82,14 +89,14 @@ check_reverse_steps :-
     nrev(L30, Naive),
     rev(L30, Acc),
     assertion(Naive == Acc),
-    inferences(nrev(L30, _), Naive30),
-    inferences(rev(L30, _), Acc30),
+    steps(nrev(L30, _), Naive30),
+    steps(rev(L30, _), Acc30),
     assertion(Naive30 =:= 31 * 32 // 2),
     assertion(Naive30 == 496),
     assertion(Acc30 == 32),
     numlist(1, 1000, L1000),
-    inferences(nrev(L1000, _), Naive1000),
-    inferences(rev(L1000, _), Acc1000),
+    steps(nrev(L1000, _), Naive1000),
+    steps(rev(L1000, _), Acc1000),
     assertion(Naive1000 == 501501),
     assertion(Acc1000 == 1002).
 
@@ -99,7 +106,7 @@ check_difference_lists :-
     assertion(DL = [1, 2, 3, 4|T2]-T2),
     DL = List-[],
     assertion(List == [1, 2, 3, 4]),
-    inferences(append_dl([a|U1]-U1, [b|U2]-U2, _), Steps),
+    steps(append_dl([a|U1]-U1, [b|U2]-U2, _), Steps),
     assertion(Steps == 1).
 
 % Level 5: first in, first out.
@@ -129,11 +136,8 @@ check_foldl :-
     foldl(plus, [1, 2, 3], 0, PlusSum),
     assertion(PlusSum == 6).
 
-% Underneath: the accumulator call is the last call, so it can reuse the frame.
-check_last_call :-
-    with_output_to(string(SumCode), vm_list(sum/2)),
-    with_output_to(string(AccCode), vm_list(sum_acc/3)),
-    assertion(sub_string(SumCode, _, _, _, "i_call(sum/2)")),
-    assertion(sub_string(AccCode, _, _, _, "l_nolco")),
-    assertion(sub_string(AccCode, _, _, _, "i_tcall")),
-    assertion(sub_string(AccCode, _, _, _, "i_depart(sum_acc/3)")).
+% Underneath: with the recursive call last, the stack does not grow with the list.
+check_constant_stack :-
+    numlist(1, 300000, Numbers),
+    assertion(fits_in_stack(sum_acc(Numbers, _), 25000000)),
+    assertion(\+ fits_in_stack(sum(Numbers, _), 25000000)).

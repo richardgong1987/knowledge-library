@@ -110,16 +110,32 @@ where
 
 Every recursive call of `add` goes from the head `add(s(X), ...)` to the call `add(X, ...)`, so the measure drops by exactly 1. A natural number cannot drop below 0, so after at most $\mu$ calls the base case must be reached.
 
-Example: in `add(s(s(0)), s(0), Sum)` the measure goes $2 \to 1 \to 0$, so there are 2 recursive calls plus the first one, 3 calls in all. The lab checks that a budget of 3 inferences is enough and 2 is not:
+Example: in `add(s(s(0)), s(0), Sum)` the measure goes $2 \to 1 \to 0$, so there are 2 recursive calls plus the first one, 3 calls in all.
+
+The lab counts those calls with a **meta-interpreter**: a small Prolog program that runs another Prolog program. `solve(Goal, Steps)` proves `Goal` the way Prolog does, looking up each clause with `clause/2`, and counts one step per clause it uses:
 
 ```prolog
+% A counting meta-interpreter: Steps is the number of resolution steps,
+% one for every call of a predicate defined in this file.
+solve(true, 0).
+solve((A, B), Steps) :-
+    solve(A, StepsA),
+    solve(B, StepsB),
+    Steps is StepsA + StepsB.
+solve(Goal, Steps) :-
+    Goal \= true,
+    Goal \= (_, _),
+    clause(Goal, Body),
+    solve(Body, BodySteps),
+    Steps is BodySteps + 1.
+
 % Level 3: the measure of the first argument falls 2, 1, 0: exactly 3 calls.
 level3_measure :-
-    call_with_inference_limit(add(s(s(0)), s(0), _), 3, Enough),
-    assertion(Enough == !),
-    call_with_inference_limit(add(s(s(0)), s(0), _), 2, TooFew),
-    assertion(TooFew == inference_limit_exceeded).
+    solve(add(s(s(0)), s(0), Sum), Steps),
+    assertion(Sum-Steps == s(s(s(0)))-3).
 ```
+
+Read the three clauses as a definition of cost: `true` costs nothing, `A, B` costs the cost of `A` plus the cost of `B`, and any other goal costs one step plus the cost of the body of the clause it matched. SWI-Prolog also has a built-in inference counter, but its exact figures are an implementation detail that differs between releases, so the lab counts with its own interpreter.
 
 The measure depends on how the predicate is called. In `add(X, Y, s(s(0)))` the first argument is unknown, but the **third** shrinks from `s(Z)` in the head to `Z` in the call, so that query terminates too. In `add(X, s(0), Z)` neither shrinks, and Prolog lists `X = 0`, `X = s(0)`, `X = s(s(0))` and so on forever: there really are infinitely many answers. For `ancestor(X, Z)` with `X` known, the measure is the **height** of X, the length of the longest chain of parent facts going down from it: Tom 3, Bob 2, Pat 1, Jim 0. Each recursive call moves from a person to their child, so the height falls.
 

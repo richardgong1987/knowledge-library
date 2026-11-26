@@ -304,7 +304,7 @@ aggregate_all(sum(X), Goal, Sum) :-
 
 It is the same failure-driven loop as `findall`, with an accumulator instead of a bag, so counting a million solutions takes constant memory. `count` is defined as `sum(1)`.
 
-**Compiled lambdas.** When SWI-Prolog loads a file, a lambda passed to a known meta-predicate such as `maplist/3` is compiled into a helper predicate whose arguments are the `{}` variables followed by the parameters. The `library(yall)` documentation says of the `{Free}` part: "This is needed for compiling Lambda expressions." `listing/1` shows the result for the two predicates of Level 7:
+**Compiled lambdas.** When SWI-Prolog loads a file, a lambda passed to a known meta-predicate such as `maplist/3` is compiled into a helper predicate whose arguments are the `{}` variables followed by the parameters. The `library(yall)` documentation says of the `{Free}` part: "This is needed for compiling Lambda expressions." On SWI-Prolog 10.0.2, `listing/1` shows the result for the two predicates of Level 7 (the helper names are hashes and may differ between releases):
 
 ```text
 add_all_wrong(_, A, B) :-
@@ -318,7 +318,7 @@ add_all(A, B, C) :-
             C).
 ```
 
-In `add_all_wrong` the first argument became `_`: nothing uses `N` any more, because the helper's body has its own, unbound `N`. In `add_all` the helper is a closure that carries `A`, the value of `N`. The compiled form is also fast: it is an ordinary predicate call, with no copying at run time.
+In `add_all_wrong` the first argument became `_`: nothing uses `N` any more, because the helper's body has its own, unbound `N`. In `add_all` the helper is a closure that carries `A`, the value of `N`. The lab checks this structure with `clause/2` rather than the printed text: the helper in `add_all_wrong` is a bare atom, and the one in `add_all` has exactly one argument, `N`. The compiled form is also fast: it is an ordinary predicate call, with no copying at run time.
 
 ## Common mistakes
 

@@ -121,8 +121,8 @@ check_lambdas :-
     assertion(var(Z)),
     maplist({Shared}/[X]>>(X = Shared), [1, 1]),
     assertion(Shared == 1),
-    % Underneath: the compiled lambda helper receives only the {} variables.
-    with_output_to(string(Wrong), listing(add_all_wrong)),
-    assertion(sub_string(Wrong, _, _, _, "add_all_wrong(_, A, B)")),
-    with_output_to(string(Right), listing(add_all)),
-    assertion(sub_string(Right, _, _, _, "'(A),")).
+    % Underneath: the compiled helper receives N only when it is declared in {}.
+    clause(add_all_wrong(_, _, _), maplist(WrongHelper, _, _)),
+    assertion(atom(WrongHelper)),
+    clause(add_all(N, _, _), maplist(RightHelper, _, _)),
+    assertion(RightHelper =.. [_, N]).

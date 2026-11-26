@@ -52,6 +52,19 @@ sibling(X, Y) :- dif(X, Y), parent(P, X), parent(P, Y).
 
 sibling_naf(X, Y) :- \+ X = Y, parent(P, X), parent(P, Y).
 
+% Underneath: does Goal's first answer leave a choice point behind?
+leaves_choice_point(Goal) :-
+    call(Goal),
+    deterministic(Det),
+    !,
+    Det == false.
+
+% Underneath: \+ G succeeds exactly when ( G -> fail ; true ) does.
+same_as_if_then_else(G) :-
+    ( \+ G -> Not = true ; Not = false ),
+    ( ( G -> fail ; true ) -> Ite = true ; Ite = false ),
+    Not == Ite.
+
 main :-
     check_cut,
     check_red_and_green_cuts,
@@ -59,7 +72,7 @@ main :-
     check_negation_as_failure,
     check_floundering,
     check_dif,
-    check_vm_code,
+    check_choice_points,
     format("OK~n").
 
 % Level 1: one answer instead of three.
@@ -134,13 +147,10 @@ check_dif :-
     P = c,
     assertion(var(Q)).
 
-% Underneath: the virtual-machine code of cut, \+ and if-then-else.
-check_vm_code :-
-    with_output_to(string(CutCode), vm_list(first_color)),
-    assertion(sub_string(CutCode, _, _, _, "i_cut")),
-    with_output_to(string(NotCode), vm_list(flies)),
-    assertion(sub_string(NotCode, _, _, _, "c_not(1,'L1')")),
-    assertion(sub_string(NotCode, _, _, _, "c_cut(1)")),
-    assertion(sub_string(NotCode, _, _, _, "c_fail")),
-    with_output_to(string(IteCode), vm_list(grade_ite)),
-    assertion(sub_string(IteCode, _, _, _, "c_ifthenelse")).
+% Underneath: the cut and the arrow remove choice points; \+ is a local cut.
+check_choice_points :-
+    assertion(leaves_choice_point(color(_))),
+    assertion(\+ leaves_choice_point(first_color(_))),
+    assertion(leaves_choice_point((member(X, [1, 2, 3]), X > 1))),
+    assertion(\+ leaves_choice_point((member(Y, [1, 2, 3]), Y > 1 -> true ; true))),
+    assertion(forall(member(G, [penguin(pingu), penguin(tweety), bird(_)]), same_as_if_then_else(G))).

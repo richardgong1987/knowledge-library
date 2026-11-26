@@ -210,16 +210,27 @@ reverse_acc([], Acc, Acc).
 reverse_acc([H|T], Acc, R) :- reverse_acc(T, [H|Acc], R).
 ```
 
-`reverse_acc/2` and `reverse_acc/3` are different predicates, because arity is part of the name. The cost is one call to `reverse_acc/2` plus $n + 1$ calls to `reverse_acc/3`: $n + 2$, linear. For $n = 30$ that is $32$ instead of $496$. The lab proves both numbers **exactly**: it runs each goal with `call_with_inference_limit/3` and checks that the stated budget is enough and one fewer is not.
+`reverse_acc/2` and `reverse_acc/3` are different predicates, because arity is part of the name. The cost is one call to `reverse_acc/2` plus $n + 1$ calls to `reverse_acc/3`: $n + 2$, linear. For $n = 30$ that is $32$ instead of $496$.
+
+The lab proves both numbers **exactly** with the counting meta-interpreter from [Recursion](04-recursion.qmd). It runs a goal the way Prolog does, looking up each clause with `clause/2`, and counts one step per clause used, which is precisely the textbook's logical inference:
 
 ```prolog
-% Exactly Limit calls succeed and Limit - 1 calls are not enough.
-costs_exactly(Goal, Limit) :-
-    call_with_inference_limit(Goal, Limit, Result),
-    Result \== inference_limit_exceeded,
-    Fewer is Limit - 1,
-    call_with_inference_limit(Goal, Fewer, inference_limit_exceeded).
+% A counting meta-interpreter: Steps is the number of resolution steps,
+% one for every call of a predicate defined in this file.
+solve(true, 0).
+solve((A, B), Steps) :-
+    solve(A, StepsA),
+    solve(B, StepsB),
+    Steps is StepsA + StepsB.
+solve(Goal, Steps) :-
+    Goal \= true,
+    Goal \= (_, _),
+    clause(Goal, Body),
+    solve(Body, BodySteps),
+    Steps is BodySteps + 1.
 ```
+
+For 30 elements it reports 496 for naive reverse, which is 31 `naive_reverse` steps plus $1 + 2 + \dots + 30 = 465$ `my_append` steps, and 32 for the accumulator version. SWI-Prolog's built-in inference counter is not used, because its exact figures are an implementation detail that differs between releases.
 
 The library's `reverse/2` uses the accumulator method, and the lab checks that all three versions agree.
 
@@ -309,7 +320,7 @@ So `append` costs $O(\lvert X \rvert)$ time and memory, independent of the lengt
 
 ### 2. Why is naive reverse quadratic, and how do you make it linear?
 
-**Answer.** It appends each head at the end of the already-reversed tail, and appending to a list of length $k$ walks all $k$ cells. Summing $k + 1$ for $k = 0, \dots, n - 1$ plus the $n + 1$ reverse calls gives $T(n) = \frac{(n+1)(n+2)}{2}$, so 496 inferences for 30 elements. The accumulator version pushes each element onto the front of an accumulator, an $O(1)$ step, so it needs $n + 2$ calls: 32 for 30 elements. Both counts are verified exactly in the lab with `call_with_inference_limit/3`.
+**Answer.** It appends each head at the end of the already-reversed tail, and appending to a list of length $k$ walks all $k$ cells. Summing $k + 1$ for $k = 0, \dots, n - 1$ plus the $n + 1$ reverse calls gives $T(n) = \frac{(n+1)(n+2)}{2}$, so 496 inferences for 30 elements. The accumulator version pushes each element onto the front of an accumulator, an $O(1)$ step, so it needs $n + 2$ calls: 32 for 30 elements. Both counts are verified exactly in the lab with a counting meta-interpreter, which makes them independent of the Prolog version.
 
 ### 3. What is the difference between `sort/2`, `msort/2` and `sort/4`?
 

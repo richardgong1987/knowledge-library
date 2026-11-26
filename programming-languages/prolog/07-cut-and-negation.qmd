@@ -314,7 +314,7 @@ false.
 
 **Choice points and the cut barrier.** Prolog keeps a stack of **choice points**, the bookmarks of the analogy: each records a goal that still has untried clauses or alternatives. Every call frame remembers which choice point was newest when the predicate was entered. The SWI-Prolog virtual machine comments its cut instruction as: "I_CUT: !. Task is to destroy all choicepoints newer then the current frame." That one sentence explains both effects in Level 1: the choice points of goals to the left of the cut, and the one holding the predicate's remaining clauses, are all newer than the frame, so all of them go.
 
-**If-then-else and `\+` are a local cut.** `( C -> T ; E )` first pushes a choice point that leads to `E`, and remembers it. If `C` succeeds, a local cut removes everything back to and including that choice point, which throws away both the other solutions of `C` and the `E` branch. If `C` fails, backtracking reaches the choice point and runs `E`. `\+ G` is compiled as `( G -> fail ; true )`. You can see this with `vm_list/1`, which prints a predicate's virtual-machine code; for `flies/1` (trimmed to the clause):
+**If-then-else and `\+` are a local cut.** `( C -> T ; E )` first pushes a choice point that leads to `E`, and remembers it. If `C` succeeds, a local cut removes everything back to and including that choice point, which throws away both the other solutions of `C` and the `E` branch. If `C` fails, backtracking reaches the choice point and runs `E`. `\+ G` is compiled as `( G -> fail ; true )`. You can see this with `vm_list/1`, which prints a predicate's virtual-machine code. SWI-Prolog 10.0.2 prints this for `flies/1` (trimmed to the clause; the instruction names are internal and may change between releases):
 
 ```text
        0 i_enter
@@ -328,7 +328,26 @@ false.
 L1:   13 i_exit
 ```
 
-`c_not` saves the current choice point in slot 1 and pushes one that jumps to `L1`. If `penguin(B)` succeeds, `c_cut(1)` removes every choice point back to slot 1, including the jump, and `c_fail` fails: the negation fails. If `penguin(B)` fails, backtracking takes the jump to `L1` and the clause exits: the negation succeeds. `first_color/1` compiles to `i_call(color/1)` followed by a plain `i_cut`, and `grade_ite/2` to a chain of `c_ifthenelse` and `c_cut` instructions. The lab captures these listings and checks the instruction names.
+`c_not` saves the current choice point in slot 1 and pushes one that jumps to `L1`. If `penguin(B)` succeeds, `c_cut(1)` removes every choice point back to slot 1, including the jump, and `c_fail` fails: the negation fails. If `penguin(B)` fails, backtracking takes the jump to `L1` and the clause exits: the negation succeeds. `first_color/1` compiles to `i_call(color/1)` followed by a plain `i_cut`, and `grade_ite/2` to a chain of `c_ifthenelse` and `c_cut` instructions.
+
+The lab does not check instruction names, which belong to one release. It checks the behaviour they implement, which every version must keep. `deterministic/1` tells whether a choice point newer than the current clause still exists:
+
+```prolog
+% Underneath: does Goal's first answer leave a choice point behind?
+leaves_choice_point(Goal) :-
+    call(Goal),
+    deterministic(Det),
+    !,
+    Det == false.
+
+% Underneath: \+ G succeeds exactly when ( G -> fail ; true ) does.
+same_as_if_then_else(G) :-
+    ( \+ G -> Not = true ; Not = false ),
+    ( ( G -> fail ; true ) -> Ite = true ; Ite = false ),
+    Not == Ite.
+```
+
+`color(_)` leaves a choice point after `red`, and `first_color(_)` does not: the cut removed it. `member(X, [1, 2, 3]), X > 1` leaves one, and the same goal as the condition of `->` does not: the local cut removed it. And `same_as_if_then_else/1` holds for `penguin(pingu)`, `penguin(tweety)` and `bird(_)`.
 
 **`dif/2` uses attributed variables**, the same hook that [CLP(FD)](06-arithmetic-and-clpfd.qmd) uses. `dif(X, a)` attaches to `X` a note saying which terms it must differ from. When `X` is unified, the system calls the attribute's unification hook, which re-runs the comparison and fails, succeeds, or narrows the note. For compound terms the note can mention several variables: `dif(f(X, b), f(a, Y))` means "$X \ne a$ or $Y \ne b$", which the toplevel prints as `dif(f(X, Y), f(a, b))`. Binding `X = c` satisfies it completely and the note disappears; binding `X = a` and then `Y = b` makes it fail.
 
@@ -385,7 +404,7 @@ Example: `first_color(C)` has $A = $ `color(C)` with $\theta_1$ binding `C = red
 
 ## References
 
-- SWI-Prolog manual: [Control predicates](https://www.swi-prolog.org/pldoc/man?section=control) (cut, `->`, `*->`, `\+`), [Meta-call predicates](https://www.swi-prolog.org/pldoc/man?section=metacall) (`once/1`, `forall/2`), [dif/2](https://www.swi-prolog.org/pldoc/man?predicate=dif/2) and [vm_list/1](https://www.swi-prolog.org/pldoc/man?predicate=vm_list/1).
+- SWI-Prolog manual: [Control predicates](https://www.swi-prolog.org/pldoc/man?section=control) (cut, `->`, `*->`, `\+`), [Meta-call predicates](https://www.swi-prolog.org/pldoc/man?section=metacall) (`once/1`, `forall/2`), [dif/2](https://www.swi-prolog.org/pldoc/man?predicate=dif/2), [deterministic/1](https://www.swi-prolog.org/pldoc/man?predicate=deterministic/1) and [vm_list/1](https://www.swi-prolog.org/pldoc/man?predicate=vm_list/1).
 - SWI-Prolog source: [src/pl-vmi.c](https://github.com/SWI-Prolog/swipl-devel/blob/master/src/pl-vmi.c), the `I_CUT`, `C_NOT` and `C_IFTHENELSE` instructions.
 - Robert Kowalski, [Algorithm = Logic + Control](https://www.doc.ic.ac.uk/~rak/papers/algorithm%20=%20logic%20+%20control.pdf), *Communications of the ACM* 22(7), 1979 ([doi:10.1145/359131.359136](https://doi.org/10.1145/359131.359136)).
 - Keith L. Clark, [Negation as Failure](https://www.doc.ic.ac.uk/~klc/NegAsFailure.pdf), in *Logic and Data Bases*, Plenum, 1978 ([doi:10.1007/978-1-4684-3384-5_11](https://doi.org/10.1007/978-1-4684-3384-5_11)).

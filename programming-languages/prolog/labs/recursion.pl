@@ -59,12 +59,24 @@ level2_peano :-
     once(findnsols(3, N, nat(N), Firsts)),
     assertion(Firsts == [0, s(0), s(s(0))]).
 
+% A counting meta-interpreter: Steps is the number of resolution steps,
+% one for every call of a predicate defined in this file.
+solve(true, 0).
+solve((A, B), Steps) :-
+    solve(A, StepsA),
+    solve(B, StepsB),
+    Steps is StepsA + StepsB.
+solve(Goal, Steps) :-
+    Goal \= true,
+    Goal \= (_, _),
+    clause(Goal, Body),
+    solve(Body, BodySteps),
+    Steps is BodySteps + 1.
+
 % Level 3: the measure of the first argument falls 2, 1, 0: exactly 3 calls.
 level3_measure :-
-    call_with_inference_limit(add(s(s(0)), s(0), _), 3, Enough),
-    assertion(Enough == !),
-    call_with_inference_limit(add(s(s(0)), s(0), _), 2, TooFew),
-    assertion(TooFew == inference_limit_exceeded).
+    solve(add(s(s(0)), s(0), Sum), Steps),
+    assertion(Sum-Steps == s(s(s(0)))-3).
 
 level3_base_case_first :-
     assertion(nat_bad(s(s(0)))),  % checking a given number still works

@@ -23,12 +23,19 @@ reverse_acc(List, Reversed) :- reverse_acc(List, [], Reversed).
 reverse_acc([], Acc, Acc).
 reverse_acc([H|T], Acc, R) :- reverse_acc(T, [H|Acc], R).
 
-% Exactly Limit calls succeed and Limit - 1 calls are not enough.
-costs_exactly(Goal, Limit) :-
-    call_with_inference_limit(Goal, Limit, Result),
-    Result \== inference_limit_exceeded,
-    Fewer is Limit - 1,
-    call_with_inference_limit(Goal, Fewer, inference_limit_exceeded).
+% A counting meta-interpreter: Steps is the number of resolution steps,
+% one for every call of a predicate defined in this file.
+solve(true, 0).
+solve((A, B), Steps) :-
+    solve(A, StepsA),
+    solve(B, StepsB),
+    Steps is StepsA + StepsB.
+solve(Goal, Steps) :-
+    Goal \= true,
+    Goal \= (_, _),
+    clause(Goal, Body),
+    solve(Body, BodySteps),
+    Steps is BodySteps + 1.
 
 level1_cells :-
     [1, 2, 3] = [H|T],
@@ -74,9 +81,10 @@ level5_reverse :-
     reverse_acc(L, R2),
     reverse(L, R3),
     assertion((R1 == R2, R2 == R3)),
-    assertion(costs_exactly(naive_reverse(L, _), 496)),
-    assertion(costs_exactly(reverse_acc(L, _), 32)),
-    assertion(costs_exactly(naive_reverse([1, 2, 3], _), 10)).
+    solve(naive_reverse(L, _), Naive30),
+    solve(reverse_acc(L, _), Acc30),
+    solve(naive_reverse([1, 2, 3], _), Naive3),
+    assertion([Naive30, Acc30, Naive3] == [496, 32, 10]).
 
 level6_index_and_sort :-
     nth0(1, [a, b, c], Zero),

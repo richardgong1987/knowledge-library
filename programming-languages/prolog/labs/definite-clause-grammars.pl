@@ -80,12 +80,12 @@ check_phrase :-
 
 % Level 2: the translation adds two list arguments.
 check_translation :-
-    with_output_to(string(Listing), listing(greeting)),
-    assertion(Listing == "greeting([hello|A], B) :-\n    who(A, B).\n\n"),
+    clause(greeting(In, Out), Greeting),
+    assertion(In-Greeting =@= [hello|A]-who(A, Out)),
     dcg_translate_rule((anbn --> [a], anbn, [b]), Clause),
     assertion(Clause =@= (anbn(S0, S) :- S0 = [a|S1], anbn(S1, S2), S2 = [b|S])),
-    with_output_to(string(AnbnListing), listing(anbn)),
-    assertion(sub_string(AnbnListing, _, _, _, "anbn([a|A], B) :-\n    anbn(A, C),\n    C=[b|B].")).
+    clause(anbn(Start, End), (Call, Unify)),
+    assertion(Start-Call-Unify =@= [a|Mid]-anbn(Mid, Rest)-(Rest = [b|End])).
 
 % Level 3: balanced parentheses; 5 balanced strings of 3 pairs.
 check_parens :-

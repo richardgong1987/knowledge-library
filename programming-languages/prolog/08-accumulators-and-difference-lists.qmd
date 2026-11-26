@@ -13,7 +13,7 @@ nrev([], []).
 nrev([X|Xs], Rs) :- nrev(Xs, R0), append(R0, [X], Rs).
 ```
 
-It gives the right answer, but `append(R0, [X], Rs)` must walk all of `R0` to find its end, and it does that once per element. For a list of 30 elements SWI-Prolog counts 496 inferences (predicate calls); for 1,000 elements it counts 501,501. Doubling the list roughly quadruples the work. The same reverse written with an **accumulator** takes 32 and 1,002 inferences.
+It gives the right answer, but `append(R0, [X], Rs)` must walk all of `R0` to find its end, and it does that once per element. For a list of 30 elements that is 496 resolution steps (calls of a predicate); for 1,000 elements it is 501,501. Doubling the list roughly quadruples the work. The same reverse written with an **accumulator** takes 32 and 1,002 steps.
 
 The deeper problem is that a Prolog list can only be extended cheaply at the **front**. This chapter shows the two classic ways around that: an **accumulator** builds the result as you walk forwards, and a **difference list** keeps a pointer to the end of a list so that adding there costs one step.
 
@@ -111,7 +111,7 @@ rev([X|Xs], Acc, Rs) :- rev(Xs, [X|Acc], Rs).
 R = [3, 2, 1].
 ```
 
-The accumulator grows `[]`, `[1]`, `[2, 1]`, `[3, 2, 1]`. Now count the steps. The lab counts **inferences** (calls to predicates) with `statistics(inferences, _)`:
+The accumulator grows `[]`, `[1]`, `[2, 1]`, `[3, 2, 1]`. Now count the work. The lab counts **resolution steps**, one for every call of a predicate, with a small meta-interpreter shown below:
 
 $$
 T_{\text{nrev}}(n) = (n + 1) + \sum_{k=0}^{n-1} (k + 1) = \frac{(n + 1)(n + 2)}{2}, \qquad T_{\text{rev}}(n) = n + 2
@@ -120,29 +120,32 @@ $$
 where
 
 - $n$ is the length of the list being reversed;
-- $T(n)$ is the number of inferences;
+- $T(n)$ is the number of resolution steps;
 - in $T_{\text{nrev}}$, the $n + 1$ counts the calls of `nrev/2` itself (one per element plus the empty list), and the sum counts the calls of `append/3`: appending to a list of length $k$ takes $k + 1$ calls, for $k = 0, 1, \dots, n-1$;
 - in $T_{\text{rev}}$, the 2 counts `rev/2` and the final `rev([], Rs, Rs)`, and $n$ counts one `rev/3` call per element.
 
 Example with $n = 30$: $T_{\text{nrev}}(30) = \frac{31 \times 32}{2} = 496$ and $T_{\text{rev}}(30) = 30 + 2 = 32$. With $n = 1000$: $\frac{1001 \times 1002}{2} = 501{,}501$ against $1002$. The lab measures exactly these four numbers:
 
 ```text
-?- numlist(1, 30, L), inferences(nrev(L, _), N1), inferences(rev(L, _), N2).
+?- numlist(1, 30, L), steps(nrev(L, _), N1), steps(rev(L, _), N2).
 L = [1, 2, 3, 4, 5, 6, 7, 8, 9|…],
 N1 = 496,
 N2 = 32.
 ```
 
-The helper subtracts the one inference that the measurement itself costs:
+`steps/2` runs a goal the way Prolog does, one clause at a time, and adds 1 each time it uses a clause of a user-defined predicate. Built-in predicates are simply called and not counted:
 
 ```prolog
-% The second statistics/2 call is itself one inference, so subtract it.
-inferences(Goal, N) :-
-    statistics(inferences, I0),
-    call(Goal),
-    statistics(inferences, I1),
-    N is I1 - I0 - 1.
+% Count resolution steps: one for every call of a user-defined predicate.
+steps(Goal, N) :- solve(Goal, 0, N).
+
+solve(true, N, N) :- !.
+solve((A, B), N0, N) :- !, solve(A, N0, N1), solve(B, N1, N).
+solve(Goal, N, N) :- predicate_property(Goal, built_in), !, call(Goal).
+solve(Goal, N0, N) :- clause(Goal, Body), N1 is N0 + 1, solve(Body, N1, N).
 ```
+
+`solve/3` is itself an accumulator predicate: `N0` is the count so far coming in, `N` the final count going out. Counting resolution steps gives the textbook figures on any Prolog system. SWI-Prolog's built-in counter, `statistics(inferences, _)`, measures the same kind of work, but it is an implementation detail whose exact numbers can differ between releases, so the lab does not rely on it.
 
 The number 496 is famous: naive reverse of 30 elements is the classic Prolog benchmark, and speeds were quoted in LIPS (logical inferences per second) by dividing 496 by its run time.
 
@@ -180,7 +183,7 @@ T2 = [],
 L = [1, 2, 3, 4].
 ```
 
-Unifying the first pair's hole `T1` with the second list is what joins them, and it costs the same whatever the lengths: the lab measures 1 inference. The second query closes the result by unifying its hole with `[]`, which turns it back into an ordinary list.
+Unifying the first pair's hole `T1` with the second list is what joins them, and it costs the same whatever the lengths: the lab counts 1 step. The second query closes the result by unifying its hole with `[]`, which turns it back into an ordinary list.
 
 ### Level 5: a queue in three clauses
 
@@ -243,7 +246,7 @@ The built-in `plus/3` already has the right argument order, so `foldl(plus, [1, 
 
 ## How it works underneath
 
-**Last-call optimisation.** A Prolog call normally pushes a frame on the local stack for the callee's variables. If the call is the last goal of the clause, and no choice point was created since the current frame was entered, the current frame is no longer needed and the callee can take it over. SWI-Prolog's virtual machine makes this check in `I_DEPART`, which its source comment calls "the entry point for last call optimisation": the condition is that the newest choice point is older than the current frame. `vm_list/1` shows the difference between the two sums (trimmed to the recursive clause):
+**Last-call optimisation.** A Prolog call normally pushes a frame on the local stack for the callee's variables. If the call is the last goal of the clause, and no choice point was created since the current frame was entered, the current frame is no longer needed and the callee can take it over. SWI-Prolog's virtual machine makes this check in `I_DEPART`, which its source comment calls "the entry point for last call optimisation": the condition is that the newest choice point is older than the current frame. On SWI-Prolog 10.0.2, `vm_list/1` shows the difference between the two sums (trimmed to the recursive clause; instruction names are internal and vary between releases, so 9.2 prints `i_call(user:sum/2)`, for example):
 
 ```text
 sum/2, clause 2:
@@ -258,7 +261,27 @@ L1:   24 b_var(4)
       29 i_depart(sum_acc/3)
 ```
 
-In `sum/2` the recursive call is an ordinary `i_call`, because `is/2` still has to run afterwards; one frame per element stays on the stack until the end of the list. In `sum_acc/3` the recursive call is last: `l_nolco` checks that no choice point is in the way and, if so, `i_tcall` reuses the frame, turning the recursion into a loop; otherwise it jumps to `L1` and makes the call with `i_depart`. The lab captures these listings and checks for `i_call(sum/2)`, `l_nolco`, `i_tcall` and `i_depart(sum_acc/3)`.
+In `sum/2` the recursive call is an ordinary `i_call`, because `is/2` still has to run afterwards; one frame per element stays on the stack until the end of the list. In `sum_acc/3` the recursive call is last: `l_nolco` checks that no choice point is in the way and, if so, `i_tcall` reuses the frame, turning the recursion into a loop; otherwise it jumps to `L1` and makes the call with `i_depart`.
+
+The lab checks the effect rather than the instruction names. It runs each sum in a thread whose stacks may use at most 25 MB:
+
+```prolog
+% Underneath: does Goal succeed in a thread that may use only Bytes of stack?
+fits_in_stack(Goal, Bytes) :-
+    thread_create(catch(Goal, error(resource_error(_), _), fail), Id, [stack_limit(Bytes)]),
+    thread_join(Id, Status),
+    Status == true.
+```
+
+```text
+?- numlist(1, 300000, Ns), fits_in_stack(sum_acc(Ns, _), 25000000).
+Ns = [1, 2, 3, 4, 5, 6, 7, 8, 9|…].
+
+?- numlist(1, 300000, Ns), fits_in_stack(sum(Ns, _), 25000000).
+false.
+```
+
+Both threads hold the same 300,000-element list. `sum_acc/3` needs no more stack than that, while `sum/2` adds one frame per element and runs out.
 
 **Why no choice point is left.** Prolog systems index clauses on their first argument. A call with `[]` can only match the base clause and a call with `[X|Xs]` only the recursive one, so neither leaves a choice point, and the last-call condition holds on every step. SWI-Prolog also builds indexes on other arguments just in time, when the first one cannot decide, but keeping the list first is the portable habit.
 
@@ -286,7 +309,7 @@ The list is the first argument of `foldl_/4`, exactly so that first-argument ind
 | Forgetting the base case `sum_acc([], S, S)` that hands the accumulator back | `false` | The base case must unify the final accumulator with the result |
 | Starting the accumulator at the wrong value | Off-by-one or wrong answer, for example 0 for a product | Start at the identity of the step: 0 for `+`, 1 for `*`, `[]` for lists |
 | Using an accumulator for a list that must keep its order | The result comes out reversed | Reverse once at the end, or build with a difference list |
-| Appending to the end with `append/3` in a loop | Quadratic run time: 496 inferences for 30 elements, 501,501 for 1,000 | Accumulate at the front, or keep a difference list |
+| Appending to the end with `append/3` in a loop | Quadratic run time: 496 steps for 30 elements, 501,501 for 1,000 | Accumulate at the front, or keep a difference list |
 | Using the same difference list twice | The second use fails, or both uses share their elements | Fill each hole only once; copy the list if it is needed again |
 | `dequeue/3` on an empty queue | It succeeds and returns an element that does not exist yet: `Q1 = _A-[X|_A]` | Track the queue length, or check the queue is not empty first |
 | Calling the helper with an unbound accumulator, as in `sum_acc([1, 2], _, S)` | `Arguments are not sufficiently instantiated` | Start through the wrapper `sum_acc/2`, which passes the initial value |
@@ -299,11 +322,11 @@ The list is the first argument of `foldl_/4`, exactly so that first-argument ind
 
 ### 2. What is last-call optimisation, and why does `sum_acc/3` benefit while `sum/2` does not?
 
-**Answer.** When the last goal of a clause is called and no choice point remains for the current clause, the caller's frame is no longer needed, and the callee reuses it. A recursive predicate whose recursive call is last therefore runs in constant stack space, like a loop. In `sum/2` the recursive call is followed by `S is S0 + X`, so every level must keep its frame until the deeper levels return. In `sum_acc/3` the addition happens first and the recursive call is last; `vm_list/1` shows it compiled to `i_tcall`, the frame-reusing call.
+**Answer.** When the last goal of a clause is called and no choice point remains for the current clause, the caller's frame is no longer needed, and the callee reuses it. A recursive predicate whose recursive call is last therefore runs in constant stack space, like a loop. In `sum/2` the recursive call is followed by `S is S0 + X`, so every level must keep its frame until the deeper levels return. In `sum_acc/3` the addition happens first and the recursive call is last; on SWI-Prolog 10, `vm_list/1` shows it compiled to `i_tcall`, the frame-reusing call. The lab shows the effect: limited to 25 MB of stack, `sum_acc/3` sums 300,000 numbers and `sum/2` runs out.
 
 ### 3. What is a difference list, and why is its append constant time?
 
-**Answer.** A pair `A-B` where `B` is a suffix of `A`, usually an unbound variable, representing the elements of `A` before `B`. `append_dl(A-B, B-C, A-C)` joins two of them by unifying the first one's hole `B` with the start of the second. Unification binds one variable, whatever the lengths, and the lab measures 1 inference. The limits: the hole can be filled only once on a branch, and the representation is not checked, so passing an ordinary list where a pair is expected simply fails.
+**Answer.** A pair `A-B` where `B` is a suffix of `A`, usually an unbound variable, representing the elements of `A` before `B`. `append_dl(A-B, B-C, A-C)` joins two of them by unifying the first one's hole `B` with the start of the second. Unification binds one variable, whatever the lengths, and the lab counts 1 step. The limits: the hole can be filled only once on a branch, and the representation is not checked, so passing an ordinary list where a pair is expected simply fails.
 
 ### 4. How does a difference-list queue work, and what happens on an empty dequeue?
 
@@ -319,9 +342,9 @@ $$
 T_{\text{nrev}}(n) = \frac{(n+1)(n+2)}{2}, \qquad T_{\text{rev}}(n) = n + 2, \qquad (A - B) \mathbin{+\!\!+} (B - C) = A - C
 $$
 
-where $n$ is the list length, $T(n)$ counts inferences, and $A - B$ is the difference list holding the elements of $A$ before its suffix $B$.
+where $n$ is the list length, $T(n)$ counts resolution steps, and $A - B$ is the difference list holding the elements of $A$ before its suffix $B$.
 
-Example: for $n = 30$, naive reverse takes $\frac{31 \times 32}{2} = 496$ inferences and accumulator reverse $30 + 2 = 32$. Joining `[1, 2|T1]-T1` with `[3, 4|T2]-T2` binds `T1 = [3, 4|T2]` in 1 inference and gives `[1, 2, 3, 4|T2]-T2`.
+Example: for $n = 30$, naive reverse takes $\frac{31 \times 32}{2} = 496$ steps and accumulator reverse $30 + 2 = 32$. Joining `[1, 2|T1]-T1` with `[3, 4|T2]-T2` binds `T1 = [3, 4|T2]` in 1 step and gives `[1, 2, 3, 4|T2]-T2`.
 
 - An accumulator is an extra pair of arguments: the value so far coming in, the final value going out.
 - With the recursive call last and the list first, Prolog runs the recursion in constant stack space.
@@ -331,7 +354,7 @@ Example: for $n = 30$, naive reverse takes $\frac{31 \times 32}{2} = 496$ infere
 
 ## References
 
-- SWI-Prolog manual: [library(lists)](https://www.swi-prolog.org/pldoc/man?section=lists), [library(apply)](https://www.swi-prolog.org/pldoc/man?section=apply) (`foldl/4-7`) and [vm_list/1](https://www.swi-prolog.org/pldoc/man?predicate=vm_list/1).
+- SWI-Prolog manual: [library(lists)](https://www.swi-prolog.org/pldoc/man?section=lists), [library(apply)](https://www.swi-prolog.org/pldoc/man?section=apply) (`foldl/4-7`), [clause/2](https://www.swi-prolog.org/pldoc/man?predicate=clause/2), [thread_create/3](https://www.swi-prolog.org/pldoc/man?predicate=thread_create/3) and [vm_list/1](https://www.swi-prolog.org/pldoc/man?predicate=vm_list/1).
 - SWI-Prolog source: [src/pl-vmi.c](https://github.com/SWI-Prolog/swipl-devel/blob/master/src/pl-vmi.c), the `I_DEPART`, `L_NOLCO` and `I_TCALL` instructions.
 - Leon Sterling and Ehud Shapiro, *The Art of Prolog*, 2nd ed., MIT Press, 1994: Section 8.3 "Transforming Recursion into Iteration" and Chapter 15 "Incomplete Data Structures" (15.1 difference-lists, 15.4 queues).
 - Patrick Blackburn, Johan Bos and Kristina Striegnitz, *Learn Prolog Now!*: [Chapter 5: Arithmetic](https://www.let.rug.nl/bos/lpn/lpnpage.php?pagetype=html&pageid=lpn-htmlch5) (accumulators) and [Chapter 6: More Lists](https://www.let.rug.nl/bos/lpn/lpnpage.php?pagetype=html&pageid=lpn-htmlch6) (naive and accumulator reverse).
