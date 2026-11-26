@@ -1,231 +1,357 @@
 ---
 title: "Sliding Window"
-description: "From a caterpillar on a branch to interview level: fixed and variable windows, the window invariant, why each index enters and leaves at most once (at most 2n moves), counting windows, the at-most-k trick, and hard problems (Minimum Window Substring, Subarrays with K Different Integers) solved math-first."
+description: "Classical sliding window: mathematical notation, fixed-size windows, longest and shortest valid windows, explicit for and while pseudocode, simple Python examples and amortised analysis."
 ---
-
-A sliding window is a stretch of consecutive elements, `a[left..right]`, that moves along an array. Instead of recomputing everything for each new stretch, you **add the element that enters** on the right and **remove the element that leaves** on the left. This lesson starts with windows of a fixed size, then lets the window grow and shrink, and ends with counting windows and two hard problems.
-
-All code is in [`SlidingWindowLab.java`](SlidingWindowLab.java). Run it from this folder with `java SlidingWindowLab.java`; it checks every number on this page and prints `OK`.
 
 ## The problem
 
-A museum counted its visitors for 6 days:
+Given $A=[2,1,5,3,4]$, find the maximum sum of three consecutive elements.
 
-```text
-day:       0   1   2   3   4   5
-visitors:  2   1   5   1   3   2
-```
-
-Which 3 days in a row had the most visitors?
-
-- The obvious method adds up every 3-day stretch from scratch: 4 stretches of 3 numbers, so 12 additions. For 100,000 days and stretches of 1,000 days that is about 99 million additions.
-- Neighbouring stretches share almost everything. Days 0–2 and days 1–3 share days 1 and 2.
-- A sliding window updates the total with one addition and one subtraction per move: here 3 + 6 = 9 operations, and about 199,000 for the big case.
+The three possible sums are 8, 9 and 12. Computing every window from scratch repeats work: the first two windows both contain 1 and 5. Instead, remove the outgoing element and add the incoming element. This is the central idea of sliding window.
 
 ## Explain it like I'm ten
 
 ::: {.callout-tip}
-Watch a caterpillar crawl along a branch covered in leaves. Its **head** moves forward and eats a new leaf. When it has eaten too much, its **tail** moves forward and lets a leaf go. The head never moves backwards, and neither does the tail. So however long the branch, each leaf is eaten once and let go once.
+Imagine looking through a train window and counting the houses you can see. As the train moves, one house disappears on the left and another appears on the right. You do not count every house again.
 
-That is a sliding window: the head is `right`, the tail is `left`, and the leaves between them are the window. Codility's training lessons call exactly this the *caterpillar method*.
-
-Another picture: you sit on a train and count the houses you can see through the window. When the train moves, one house appears at the front and one disappears at the back. You do not count all the houses again; you add one and take one away.
+A variable-size window is like a caterpillar: its head moves forward to include something new, and its tail moves forward when the window needs to shrink. Neither end moves backwards.
 :::
 
 ## From simple to advanced
 
-### Level 1: a fixed window
+### Level 1: Definition and mathematical notation
 
-A window of exactly $k$ elements moves one step at a time. Its sum changes by what enters and what leaves:
+Sliding Window is an algorithmic technique for efficiently processing **contiguous** sections of a sequence, such as subarrays or substrings.
+
+Instead of recalculating information for every possible window, it maintains a window and updates its state incrementally as its boundaries move.
+
+There are two main types: fixed-size windows and variable-size windows. The latter has two important patterns: longest valid window and shortest valid window.
+
+| Symbol | Meaning |
+|---|---|
+| $A=[a_0,\ldots,a_{n-1}]$ | Input sequence |
+| $n$ | Sequence length |
+| $l$ | Left boundary |
+| $r$ | Right boundary |
+| $W(l,r)$ | Current contiguous window |
+| $k$ | Required window size, if fixed |
+| $S$ | Maintained window state (sum, frequencies, etc.) |
+| $S_0$ | Initial empty window state |
+| $V(S)$ | Whether the state satisfies the constraint |
+| $M$ | Best result found so far |
+
+We use inclusive boundaries throughout:
 
 $$
-S_r = S_{r-1} + a_r - a_{r-k}
+\boxed{W(l,r)=[a_l,\ldots,a_r],\qquad |W(l,r)|=r-l+1}
 $$
 
-where:
+where $a_i$ is the element at index $i$, $l$ and $r$ are the boundaries, and $|W|$ is the number of elements. The empty window has $l=r+1$ and length zero.
 
-- $a_0, \dots, a_{n-1}$ are the values and $k$ is the window size;
-- $S_r$ is the sum of the window that **ends** at index $r$, that is $a_{r-k+1} + \dots + a_r$;
-- $a_r$ is the element that enters and $a_{r-k}$ the one that leaves.
+Example: in $A=[2,1,5,3,4]$, take $l=1$, $r=3$. The window is $[1,5,3]$, and its length is $3-1+1=3$.
 
-Example: $a = [2, 1, 5, 1, 3, 2]$, $k = 3$.
+### Level 2: Fixed-size sliding window
 
-- $S_2 = 2 + 1 + 5 = 8$, the first window, computed directly.
-- $S_3 = 8 + a_3 - a_0 = 8 + 1 - 2 = 7$.
-- $S_4 = 7 + a_4 - a_1 = 7 + 3 - 1 = 9$.
-- $S_5 = 9 + a_5 - a_2 = 9 + 2 - 5 = 6$.
+The window always contains exactly $k$ elements, so $r-l+1=k$ and $r=l+k-1$.
 
-The best is $\max(8, 7, 9, 6) = 9$, for days 2–4.
+Suppose we maintain its sum:
 
-```java
-static int maxSumOfK(int[] a, int k) {
-    int sum = 0;
-    for (int i = 0; i < k; i++) sum += a[i];
-    int best = sum;
-    for (int right = k; right < a.length; right++) {
-        sum += a[right] - a[right - k];     // a[right] enters, a[right - k] leaves
-        best = Math.max(best, sum);
-    }
-    return best;
+$$
+S(l,r)=\sum_{i=l}^{r}a_i,\qquad
+\boxed{S(l+1,r+1)=S(l,r)-a_l+a_{r+1}}
+$$
+
+where $S(l,r)$ is the current sum, $\sum$ means summation, $a_l$ is the outgoing element and $a_{r+1}$ is the incoming element.
+
+Example: with $A=[2,1,5,3,4]$ and $k=3$, the initial sum is $2+1+5=8$. The next sum is $8-2+3=9$, and the following sum is $9-1+4=12$.
+
+The complete recurrence for windows starting at $l$ is $S_0=\sum_{i=0}^{k-1}a_i$ and $S_{l+1}=S_l-a_l+a_{l+k}$ for $0\le l<n-k$. A sum is just one possible state: a frequency map or another suitable structure can be maintained instead.
+
+#### Mathematical pseudocode
+
+For the maximum sum of a fixed-size window:
+
+$$
+\boxed{
+\begin{aligned}
+&l\leftarrow0\\
+&r\leftarrow k-1\\
+&S\leftarrow\sum_{i=0}^{k-1}a_i\\
+&M\leftarrow S\\[4pt]
+&\text{for }r=k,\ldots,n-1:\\
+&\quad S\leftarrow S+a_r &&\text{Add}\\
+&\quad S\leftarrow S-a_l &&\text{Remove}\\
+&\quad l\leftarrow l+1 &&\text{Slide}\\
+&\quad M\leftarrow\max(M,S) &&\text{Update}\\[4pt]
+&\text{return }M
+\end{aligned}
 }
-```
-
-The cost is $k$ additions for the first window and 2 operations for each of the other $n - k$ moves: $k + 2(n - k) = 3 + 6 = 9$ here, against $(n - k + 1) \cdot k = 4 \times 3 = 12$ for starting over each time. This is LeetCode 643, *Maximum Average Subarray I* (Easy), up to a division by $k$.
-
-### Level 2: a window that grows and shrinks
-
-Now the size is not given. Find the **shortest** stretch whose sum is at least a target (LeetCode 209, *Minimum Size Subarray Sum*). The right end moves forward one step at a time; while the window is valid, record it and pull the left end in to look for a shorter one.
-
-This only works because the values are **positive**, which makes sums monotone:
-
-$$
-a_i > 0 \implies \text{sum}(l, r) < \text{sum}(l, r + 1) \ \text{ and } \ \text{sum}(l + 1, r) < \text{sum}(l, r)
 $$
 
-where:
+where $l,r$ are the boundaries, $n$ is the input length, $k$ is the fixed size, $S$ is the sum, $M$ is the largest sum, and $\leftarrow$ denotes assignment. Assume $1\le k\le n$.
 
-- $\text{sum}(l, r) = a_l + a_{l+1} + \dots + a_r$ is the window from $l$ to $r$, both included;
-- growing on the right makes the sum bigger, and shrinking on the left makes it smaller;
-- consequence: if the window starting at $l$ is valid when it ends at $r$, it stays valid for every later end. So the best start for a later end is never to the left of the best start for an earlier one, and `left` never has to move back.
+Example: initially $l=0$, $r=2$, $S=M=8$. At $r=3$, add 3 and remove 2, move $l$ to 1 and set $M=\max(8,9)=9$. At $r=4$, add 4 and remove 1, giving $S=M=12$.
 
-Example: $a = [2, 3, 1, 2, 4, 3]$, target 7.
+~~~text
+[2  1  5] 3  4     S = 8
+ 2 [1  5  3] 4     S = 8 + 3 - 2 = 9
+ 2  1 [5  3  4]    S = 9 + 4 - 1 = 12
+~~~
 
-| `right` | Value added | Window after adding | Sum | Valid windows recorded while shrinking | Best so far |
-| --- | --- | --- | --- | --- | --- |
-| 0–2 | 2, 3, 1 | `2 3 1` | 6 | none | — |
-| 3 | 2 | `2 3 1 2` | 8 | `2 3 1 2` (length 4) | 4 |
-| 4 | 4 | `3 1 2 4` | 10 | `3 1 2 4` (4), `1 2 4` (3) | 3 |
-| 5 | 3 | `2 4 3` | 9 | `2 4 3` (3), `4 3` (2) | **2** |
+#### From mathematics to Python
 
-The answer is 2, the window `[4, 3]`.
+| Mathematical operation | Python |
+|---|---|
+| $\sum_{i=0}^{k-1}a_i$ | `sum(nums[i] for i in range(k))` |
+| $\text{for }r=k,\ldots,n-1$ | `for right in range(k, n):` |
+| $S\leftarrow S+a_r$ | `total += nums[right]` |
+| $S\leftarrow S-a_l$ | `total -= nums[left]` |
+| $l\leftarrow l+1$ | `left += 1` |
+| $M\leftarrow\max(M,S)$ | `maximum = max(maximum, total)` |
 
-```java
-static int shortestWithSumAtLeast(int[] a, int target) {   // every a[i] > 0
-    int left = 0, sum = 0, best = Integer.MAX_VALUE;
-    for (int right = 0; right < a.length; right++) {
-        sum += a[right];
-        while (sum >= target) {                     // valid: record it, then try a shorter one
-            best = Math.min(best, right - left + 1);
-            sum -= a[left++];
-        }
-    }
-    return best == Integer.MAX_VALUE ? 0 : best;
+~~~python
+def max_window_sum(nums, k):
+    n = len(nums)
+    if not 1 <= k <= n:
+        raise ValueError("Invalid window size")
+
+    left = 0
+    total = sum(nums[i] for i in range(k))
+    maximum = total
+
+    for right in range(k, n):
+        total += nums[right]
+        total -= nums[left]
+        left += 1
+        maximum = max(maximum, total)
+
+    return maximum
+
+
+print(max_window_sum([2, 1, 5, 3, 4], 3))
+# 12
+~~~
+
+Using a generator for the initial sum avoids allocating a temporary slice. The auxiliary space is $O(1)$. For comparison, the existing Java lab's visitor example $[2,1,5,1,3,2]$ gives 9 for $k=3$.
+
+### Level 3: Variable-size sliding window — longest valid window
+
+A variable-size window expands and shrinks according to its constraint. Define $V(S)$ to be true when the current window is valid.
+
+The state operations are $S\leftarrow\operatorname{add}(S,a_r)$ when an element enters, and $S\leftarrow\operatorname{remove}(S,a_l)$ when an element leaves. These operations may update counts rather than perform arithmetic.
+
+For the **longest valid window** pattern, expand, shrink while invalid, and update the answer after restoring validity.
+
+#### Mathematical pseudocode
+
+$$
+\boxed{
+\begin{aligned}
+&l\leftarrow0\\
+&S\leftarrow S_0\\
+&M\leftarrow0\\[4pt]
+&\text{for }r=0,\ldots,n-1:\\
+&\quad S\leftarrow\operatorname{add}(S,a_r)
+&&\text{Expand}\\
+&\quad\text{while }\neg V(S):\\
+&\qquad S\leftarrow\operatorname{remove}(S,a_l)\\
+&\qquad l\leftarrow l+1 &&\text{Shrink}\\
+&\quad M\leftarrow\max(M,r-l+1)
+&&\text{Update}\\[4pt]
+&\text{return }M
+\end{aligned}
 }
-```
-
-With a negative number the monotone rule breaks: adding $-5$ makes a longer window smaller. Then use prefix sums and a hash map instead, as in LeetCode 560 in the [Hash Table](../hash-table/index.qmd) lesson.
-
-### Level 3: a window that keeps counts
-
-Many windows must know **what** is inside them, not just a sum. Keep a map from each value to how many times it is in the window. Find the longest stretch of a string with at most $k$ different letters:
-
-$$
-\text{moves} = \underbrace{n}_{\texttt{right}\ \text{moves}} + \underbrace{\#\lbrace \texttt{left}\ \text{moves} \rbrace}_{\le\, n} \le 2n
 $$
 
-where:
+where $l,r$ are the boundaries, $n$ is the sequence length, $S_0$ is the empty state, $S$ is the current state, $V$ is the validity predicate, $\neg$ means not, and $M$ is the maximum valid length.
 
-- $n$ is the length of the string;
-- `right` moves exactly once per index: every letter **enters** the window once;
-- `left` only moves forward and never passes `right`, so every letter **leaves** at most once;
-- $\#\lbrace \dots \rbrace$ means "how many", so the whole loop does at most $2n$ moves, even though it has a `while` inside a `for`.
+Example: read `abcad`. After reading `abc`, $M=3$. Adding the second `a` makes the window invalid. Remove the first `a` to restore validity, then add `d`. The window `bcad` has length $4-1+1=4$, so $M=4$.
 
-Example: `eceba` with $k = 2$.
+This template assumes the empty window is valid, shrinking preserves validity, and an invalid window cannot become valid merely by expanding. These properties justify permanently discarding earlier starting positions.
 
-- `e`, `c`, `e` enter: counts $\lbrace e{:}2, c{:}1 \rbrace$, 2 kinds, window `ece` of length 3.
-- `b` enters: 3 kinds. `left` drops `e` (now $e{:}1$), still 3 kinds, then drops `c` (gone): window `eb`.
-- `a` enters: 3 kinds again; `left` drops `e`: window `ba`.
+#### Validity condition: no repeated characters
 
-The best is 3. `right` moved 5 times and `left` 3 times: $8 \le 2 \times 5 = 10$.
+Define the frequency of a character inside the current window:
 
-```java
-static int longestWithAtMostKDistinct(String s, int k) {
-    Map<Character, Integer> count = new HashMap<>();
-    int left = 0, best = 0;
-    for (int right = 0; right < s.length(); right++) {
-        count.merge(s.charAt(right), 1, Integer::sum);
-        while (count.size() > k) {                  // too many kinds: drop letters from the left
-            char out = s.charAt(left++);
-            if (count.merge(out, -1, Integer::sum) == 0) count.remove(out);
-        }
-        best = Math.max(best, right - left + 1);
-    }
-    return best;
+$$
+f_W(x)=\sum_{i=l}^{r}\mathbf{1}_{a_i=x},
+\qquad V(S)\iff\forall x,\ f_W(x)\leq1
+$$
+
+where $f_W(x)$ is the count of character $x$, $\mathbf{1}_{a_i=x}$ is 1 if the element equals $x$ and 0 otherwise, $\forall$ means for every, and $\iff$ means if and only if.
+
+Example: for `abca`, $f_W(a)=2$ and the window is invalid. Removing the first `a` makes all frequencies at most 1. The valid window is `bca`.
+
+| Step | Window | Valid? | Best length |
+|---|---|---|---|
+| Add a | a | Yes | 1 |
+| Add b | ab | Yes | 2 |
+| Add c | abc | Yes | 3 |
+| Add a | abca | No | 3 |
+| Remove first a | bca | Yes | 3 |
+| Add d | bcad | Yes | 4 |
+
+#### From mathematics to Python
+
+| Mathematical operation | Python |
+|---|---|
+| $\text{for }r=0,\ldots,n-1$ | `for right in range(n):` |
+| $\operatorname{add}(S,a_r)$ | `add(A[right])` |
+| $\text{while }\neg V(S)$ | `while not valid():` |
+| $\operatorname{remove}(S,a_l)$ | `remove(A[left])` |
+| $l\leftarrow l+1$ | `left += 1` |
+| $M\leftarrow\max(M,r-l+1)$ | `maximum = max(maximum, right-left+1)` |
+
+The general operations depend on the problem. Here is a complete runnable example for the no-repeated-characters constraint:
+
+~~~python
+def longest_substring(s):
+    left = 0
+    maximum = 0
+    freq = {}
+
+    for right, x in enumerate(s):
+        freq[x] = freq.get(x, 0) + 1
+
+        while freq[x] > 1:
+            freq[s[left]] -= 1
+            left += 1
+
+        maximum = max(maximum, right - left + 1)
+
+    return maximum
+
+
+print(longest_substring("abcad"))
+# 4
+~~~
+
+Only the newly added character can introduce a duplicate because the previous window was valid. This is why the code only checks `freq[x]`. The map may keep zero counts; that is safe here because validity does not use the map's size.
+
+### Level 4: Variable-size sliding window — shortest valid window
+
+For the **shortest valid window** pattern, the logic is reversed: expand until valid, then record the answer and shrink while it remains valid.
+
+#### Mathematical pseudocode
+
+$$
+\boxed{
+\begin{aligned}
+&l\leftarrow0\\
+&S\leftarrow S_0\\
+&M\leftarrow+\infty\\[4pt]
+&\text{for }r=0,\ldots,n-1:\\
+&\quad S\leftarrow\operatorname{add}(S,a_r)\\
+&\quad\text{while }l\leq r\land V(S):\\
+&\qquad M\leftarrow\min(M,r-l+1)\\
+&\qquad S\leftarrow\operatorname{remove}(S,a_l)\\
+&\qquad l\leftarrow l+1\\[4pt]
+&\text{return }M
+\end{aligned}
 }
-```
-
-Removing a letter whose count reaches 0 matters: otherwise `count.size()` would still count it as a kind in the window. LeetCode 904, *Fruit Into Baskets* (Medium), is this function with $k = 2$.
-
-### Level 4: counting windows, and "exactly" from "at most"
-
-Sometimes we want **how many** windows are valid. If shrinking a valid window always leaves it valid ("at most $k$ kinds" has this property), then once `left` is settled for a given `right`, *every* window ending at `right` and starting at or after `left` is valid:
-
-$$
-N_{\le k} = \sum_{r=0}^{n-1} (r - l_r + 1), \qquad N_{=k} = N_{\le k} - N_{\le k-1}
 $$
 
-where:
+where $l,r$ are the boundaries, $n$ is the input length, $S_0$ is the empty state, $V(S)$ tests validity, $\land$ means and, and $M$ stores the shortest length. $+\infty$ represents no answer yet.
 
-- $l_r$ is the position of `left` after the window ending at $r$ has been made valid;
-- $r - l_r + 1$ counts the windows $a[l_r..r], a[l_r + 1..r], \dots, a[r..r]$;
-- $N_{\le k}$ is that count for the property "at most $k$ different values", and $N_{=k}$ is the number of windows with exactly $k$;
-- "exactly $k$" is not preserved by shrinking, so it cannot be counted directly. But a window with exactly $k$ kinds is one with at most $k$ kinds and not at most $k - 1$, which gives the subtraction.
+Example: for $A=[2,3,1,2,4,3]$ and target 7, the window $[2,3,1,2]$ first reaches sum 8, so $M=4$. Later $[1,2,4]$ reaches 7, so $M=3$. Finally $[4,3]$ reaches 7, so $M=2$.
 
-Example: $a = [1, 2, 1, 2, 3]$.
+This pattern applies when a valid window stays valid under expansion, and removing elements cannot turn an invalid window into a valid one. For a positive-number sum with a positive target, adding an element increases the sum and removing one decreases it.
 
-- For $k = 2$: $l_r = 0, 0, 0, 0, 3$, so the count is $1 + 2 + 3 + 4 + 2 = 12$. (Check: there are 15 windows, and only `1 2 1 2 3`, `2 1 2 3` and `1 2 3` have 3 kinds; $15 - 3 = 12$.)
-- For $k = 1$: every window of length 1, and no longer one, so 5.
-- $N_{=2} = 12 - 5 = 7$.
+#### Python implementation
 
-```java
-static int countAtMostKDistinct(int[] a, int k) {
-    Map<Integer, Integer> count = new HashMap<>();
-    int left = 0, total = 0;
-    for (int right = 0; right < a.length; right++) {
-        count.merge(a[right], 1, Integer::sum);
-        while (count.size() > k) {
-            int out = a[left++];
-            if (count.merge(out, -1, Integer::sum) == 0) count.remove(out);
-        }
-        total += right - left + 1;                  // the windows a[i..right] for i = left..right
-    }
-    return total;
-}
-```
+~~~python
+def shortest_window(nums, target):
+    left = 0
+    total = 0
+    minimum = float("inf")
+
+    for right, x in enumerate(nums):
+        total += x
+
+        while left <= right and total >= target:
+            minimum = min(minimum, right - left + 1)
+            total -= nums[left]
+            left += 1
+
+    return 0 if minimum == float("inf") else minimum
+
+
+print(shortest_window([2, 3, 1, 2, 4, 3], 7))
+# 2
+~~~
+
+This example assumes positive numbers and a positive target; the function returns 0 if no qualifying non-empty window exists.
+
+| | Longest valid window | Shortest valid window |
+|---|---|---|
+| Shrink while | $\neg V(S)$ | $V(S)$ |
+| Objective | $\max$ | $\min$ |
+| Update | After shrinking | Before removing |
+| Initial answer | 0 | $+\infty$ |
+
+### Level 5: Optional extension — counting valid windows
+
+The three patterns above are the core of sliding window. A useful extension is to count all windows satisfying a shrinking-preserved constraint, rather than only recording the maximum length.
+
+$$
+N_{\leq k}=\sum_{r=0}^{n-1}(r-l_r+1),
+\qquad N_{=k}=N_{\leq k}-N_{\leq k-1}
+$$
+
+where $l_r$ is the earliest valid left boundary after processing $r$, $N_{\leq k}$ counts windows with at most $k$ distinct values, and $N_{=k}$ counts windows with exactly $k$ distinct values (for $k\geq1$).
+
+Example: for $[1,2,1,2,3]$, the earliest left boundaries for at most two kinds are $0,0,0,0,3$. Thus $N_{\leq2}=1+2+3+4+2=12$. With at most one kind there are five windows, so exactly two kinds gives $12-5=7$.
+
+The only change to the longest-window loop is to accumulate $r-l+1$ instead of taking the maximum. Each valid suffix ending at $r$ is counted once. The corresponding Java implementation remains in the lab for LeetCode 992 below.
 
 ## Why it works and what it costs
 
-**The window invariant.** For a "longest" problem such as Level 3, the invariant is: *after processing `right`, the window `a[left..right]` is valid, and no valid window ending at `right` starts before `left`.*
+For a fixed-size window, the invariant is that $S$ describes exactly the $k$ elements in the current window. Adding the incoming element and removing the outgoing one preserves this invariant.
 
-- *Why `left` never moves back:* the property is preserved by shrinking, and broken windows stay broken when they grow. If `a[l..r]` has too many kinds, so does `a[l..r']` for every $r' > r$, because adding letters never removes a kind. So a start that failed once can be thrown away for good.
-- *Why the answer is found:* the best window ends at some $r^{\ast}$. When `right` $= r^{\ast}$, the invariant says the code's window is the longest valid one ending there, so `best` records it.
+For a longest valid window, after shrinking, the state represents a valid window ending at $r$, and no earlier start can be valid at that endpoint. If validity is preserved by shrinking, a rejected earlier start stays rejected when the right boundary grows. The longest valid window ending at each right boundary is therefore considered.
 
-For a "shortest" problem such as Level 2, the roles swap: a valid window stays valid when it grows, so the code records it and then shrinks.
+For a shortest valid window, each time a window is valid, its length is recorded before its left boundary advances. Reusing that old start at any later endpoint would produce a longer window, so discarding it cannot lose a better answer.
 
-**Costs.** Each index enters once and leaves at most once, so every version is linear. This is *aggregate* amortised analysis: one `while` may run many times, but all of them together are bounded by $n$.
+These arguments require the appropriate monotonicity of the validity predicate. They do not apply to arbitrary constraints. For example, with $[1,-1,5]$ and target 5, a naive shortest-sum window may record length 3 and stop shrinking when the sum drops to 4, missing the length-1 window $[5]$. A prefix-sum and monotonic-deque approach can handle arbitrary signed values for this particular problem.
 
-| Version | Moves | Time | Extra space | On the examples |
-| --- | --- | --- | --- | --- |
-| Fixed window (Level 1) | $n$ | $O(n)$ | $O(1)$ | 9 operations for 6 days |
-| Grow and shrink (Level 2) | $\le 2n$ | $O(n)$ | $O(1)$ | at most 12 moves for 6 values |
-| With counts (Levels 3, 4) | $\le 2n$ | $O(n)$ expected | $O(\sigma)$ | 8 moves for `eceba` |
+### Time and space complexity
 
-Here $\sigma$ is the number of different values that can be in the window, at most 26 for lowercase letters.
+Let $N_l$ count left-boundary advances and $N_r$ count elements processed by the right boundary.
+
+$$
+\boxed{N_l\leq n,\qquad N_r\leq n,\qquad N_l+N_r\leq2n}
+$$
+
+where $n$ is the sequence length and each element enters once and leaves at most once.
+
+Example: in `abcad`, the right boundary processes five characters and the left boundary advances once, for six operations, which is at most $2\times5=10$.
+
+This is aggregate **amortised analysis**. Even though there is a `while` inside a `for`, the total number of shrink operations is at most $n$.
+
+With constant amortised cost per state update and validity check, the total time is $\boxed{O(n)}$. For a fixed-size sum, $k$ initial additions and $2(n-k)$ subsequent updates also give linear time: in our example, $3+2(5-3)=7$ arithmetic updates, instead of nine additions from scratch when counting accumulation from zero.
+
+| Maintained state | Auxiliary space |
+|---|---|
+| Running sum or counter | $O(1)$ |
+| Frequency map | $O(n)$ worst case, or $O(\sigma)$ for alphabet size $\sigma$ |
+
+Hash-map operations take expected constant time. An expensive validity check or state update can increase the overall time beyond $O(n)$.
 
 ## Common mistakes
 
 | Mistake | Symptom | Fix |
-| --- | --- | --- |
-| A sum window over negative numbers | Misses answers: shrinking can raise the sum | Prefix sums with a hash map, or a monotonic deque |
-| Leaving zero counts in the map | `count.size()` overcounts the kinds, so the window shrinks too much | Remove a key when its count reaches 0 |
-| In LeetCode 3, jumping `left` to `last[c] + 1` without checking that it is ahead | `abba` gives 3 instead of 2, because `left` moves backwards | Only jump if `last[c] >= left` (that is, take the maximum) |
-| Window length as `right - left` | Every answer is one too short | Inclusive ends: `right - left + 1` |
-| Recording `best` before restoring validity in a "longest" problem | Reports an invalid, too-long window | Shrink first, then record |
-| Counting "exactly $k$" with one window | Undercounts, because "exactly" is not preserved by shrinking | `atMost(k) - atMost(k - 1)` |
+|---|---|---|
+| Using $r-l$ for the length | Answer is one too small | Use $r-l+1$ for inclusive boundaries |
+| Updating before shrinking in longest-window problems | Invalid result | Restore validity first |
+| Updating after shrinking in shortest-window problems | Misses a valid candidate | Record before removing |
+| Allowing the left pointer to move backwards | Incorrect results or repeated work | Keep boundaries monotone |
+| Using a sum constraint with negative numbers without checking monotonicity | Misses answers | Choose an appropriate prefix-sum method |
+| Leaving zero counts when checking map size | Overcounts distinct elements | Remove keys when their count becomes zero |
+| Treating every contiguous problem as a sliding-window problem | Incorrect algorithm | Prove that discarded starting positions are safe |
 
 ## Interview problems
 
-Each solution starts with the mathematics: what makes a window valid, and why can `left` only move forward?
+The main lesson is complete. These optional exercises apply the same mathematical patterns using the existing Java lab, [SlidingWindowLab.java](SlidingWindowLab.java). Run `java SlidingWindowLab.java` for its self-checks.
 
 ### 1. LeetCode 3: Longest Substring Without Repeating Characters (Medium)
 
@@ -349,20 +475,27 @@ static int subarraysWithKDistinct(int[] nums, int k) {
 
 ## Mathematical Abstraction
 
-A sliding window is a pair of indices that only move forward, together with a window property that survives shrinking:
+The three classical patterns differ in when the window shrinks and when it records the answer.
 
 $$
-0 \le l_r \le r + 1, \qquad l_{r} \le l_{r+1}, \qquad P(l, r) \implies P(l + 1, r), \qquad \text{total moves} \le 2n
+\boxed{
+\begin{aligned}
+&\text{Fixed size:}\quad S_{l+1}=S_l-a_l+a_{l+k}\\
+&\text{Longest:}\quad
+\text{shrink while }\neg V(S),\quad
+M\leftarrow\max(M,r-l+1)\\
+&\text{Shortest:}\quad
+\text{while }V(S),\ \text{record then shrink},\quad
+M\leftarrow\min(M,r-l+1)
+\end{aligned}
+}
 $$
 
-where:
+where $S$ is the maintained state (a sum for the fixed-size recurrence), $k$ the fixed length, $V$ the validity condition, $l,r$ the window boundaries and $M$ the best result.
 
-- $l_r$ is the left end chosen for the right end $r$ (with $l_r = r + 1$ meaning an empty window);
-- the second part says the left end never moves back;
-- $P(l, r)$ is the validity property ("sum at most $S$ with positive values", "at most $k$ kinds", "no repeats"), and the third part says shrinking keeps a valid window valid;
-- together they bound the work by $n$ moves of each end.
+Example: the fixed-size sums 8, 9 and 12 give maximum 12. The longest no-repeat window in `abcad` is `bcad`, of length 4. The shortest positive-number window reaching 7 in $[2,3,1,2,4,3]$ is $[4,3]$, of length 2.
 
-Example: on `eceba` with "at most 2 kinds", the left ends are $l_r = 0, 0, 0, 2, 3$, never decreasing, and the moves total $5 + 3 = 8 \le 10$. The longest valid window is $\max_r (r - l_r + 1) = 3$, and the number of valid windows is $\sum_r (r - l_r + 1) = 1 + 2 + 3 + 2 + 2 = 10$.
+**The essence of sliding window is to maintain a contiguous range, reuse its previous state and advance its boundaries without unnecessary repeated computation.** The full mathematical pseudocode for each of the three patterns is given in Levels 2–4.
 
 ## References
 
