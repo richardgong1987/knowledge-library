@@ -1,0 +1,417 @@
+---
+title: "Names, Objects and References"
+description: "How Python variables really work: objects with identity, type and value, names bound to objects, is versus ==, mutability, call by sharing, the tuple += puzzle, shallow and deep copies, and CPython's small-int cache."
+---
+
+## The problem
+
+A teacher keeps a list of marks, `scores = [90, 85]`. Before adding a new mark she makes a "backup" with `backup = scores`, then runs `scores.append(70)`. She opens the backup to undo the change and finds `[90, 85, 70]` in it too. Nothing was backed up.
+
+A second teacher builds a 3 × 3 seating chart with `grid = [[0] * 3] * 3` and marks one seat with `grid[0][0] = 1`. Every row now starts with a 1: `[[1, 0, 0], [1, 0, 0], [1, 0, 0]]`.
+
+Both bugs come from one fact. In Python, a variable is not a box that holds a value. It is a **name** that refers to an **object**, and `=` never copies the object. Once you know which objects exist and which names point at them, both results are obvious, and so is the fix.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Name tags on toys
+
+- An **object** is a toy on the shelf. It has a shelf position that never changes (its **identity**), a kind, such as "teddy bear" (its **type**), and a state, such as "wearing a red scarf" (its **value**).
+- A **name** is a paper tag tied to a toy with string. `backup = scores` ties a second tag to the **same** toy. It does not buy a second toy.
+- If you put a hat on the toy, everyone holding either tag sees the hat. If you move the `scores` tag to a different toy, the `backup` tag stays where it was.
+
+The Python reference manual starts its data model with the same picture: *"Every object has an identity, a type and a value."* Ned Batchelder's PyCon 2015 talk *Facts and myths about Python names and values* puts the rule in four words: *"Assignment never copies data."* Luciano Ramalho's *Fluent Python* (2nd ed.) gives the whole of chapter 6, "Object References, Mutability, and Recycling", to this picture.
+:::
+
+## From simple to advanced
+
+### Level 1: identity, type and value
+
+Every object carries three things. Two of them never change:
+
+$$
+o = \bigl(\operatorname{id}(o),\ \operatorname{type}(o),\ \operatorname{value}(o)\bigr), \qquad a \texttt{ is } b \iff \operatorname{id}(a) = \operatorname{id}(b)
+$$
+
+where
+
+- $o$ is any object: a list, an int, a function, a class;
+- $\operatorname{id}(o)$ is its identity, an integer that is fixed for the object's whole life (in CPython, its memory address);
+- $\operatorname{type}(o)$ is its type, also fixed;
+- $\operatorname{value}(o)$ is its contents, which can change only if the type is mutable;
+- `is` compares identities, and $\iff$ means "exactly when".
+
+```python
+def identity_type_value():
+    x = [1, 2]
+    before = id(x)
+    x.append(3)  # the value changes ...
+    return id(x) == before, type(x) is list, x  # ... the identity and the type do not
+```
+
+Example: `identity_type_value()` returns `(True, True, [1, 2, 3])`. The value went from $[1, 2]$ to $[1, 2, 3]$, while $\operatorname{id}$ and $\operatorname{type}$ stayed the same.
+
+`==` is a different question. It asks "do these have equal values?" and is answered by the type's `__eq__` method:
+
+```python
+def equal_but_not_identical():
+    first = [1, 2]
+    second = [1, 2]  # a new list that happens to hold the same value
+    return first == second, first is second
+```
+
+It returns `(True, False)`: two separate toys that look the same.
+
+### Level 2: assignment binds a name; it never copies
+
+Think of the program's names as a table that maps each name to an object. Assignment only changes that table:
+
+$$
+\texttt{b = a} \quad\Longrightarrow\quad \operatorname{env}(b) \leftarrow \operatorname{env}(a)
+$$
+
+where
+
+- $\operatorname{env}$ is the namespace, a map from names to objects (a function's locals, or a module's globals);
+- $\operatorname{env}(a)$ is the object the name $a$ refers to right now;
+- $\leftarrow$ means "now refers to"; no object is created or copied.
+
+```python
+def alias_a_list():
+    scores = [90, 85]
+    backup = scores  # a second name, not a second list
+    scores.append(70)
+    return backup, backup is scores
+```
+
+Example, with $L_1$ for the list object:
+
+1. `scores = [90, 85]` creates $L_1$ and sets $\operatorname{env}(\texttt{scores}) = L_1$.
+2. `backup = scores` sets $\operatorname{env}(\texttt{backup}) \leftarrow \operatorname{env}(\texttt{scores}) = L_1$.
+3. `scores.append(70)` changes the value of $L_1$ to $[90, 85, 70]$.
+4. Both names refer to $L_1$, so the function returns `([90, 85, 70], True)`. That is the teacher's bug.
+
+Rebinding is different from mutating. `+` builds a **new** list, and assignment moves only the name on its left:
+
+```python
+def rebind_a_name():
+    scores = [90, 85]
+    backup = scores
+    scores = scores + [70]  # + builds a new list; only `scores` moves to it
+    return backup, scores
+```
+
+It returns `([90, 85], [90, 85, 70])`. A real backup is `backup = scores.copy()` (or `list(scores)`, or `scores[:]`).
+
+### Level 3: mutable and immutable objects
+
+A list, dict or set can change its value; an int, str, tuple or frozenset cannot. This decides what `+=` does:
+
+$$
+\texttt{x += y} \quad\equiv\quad
+\begin{cases}
+x \leftarrow \operatorname{iadd}(x, y) & \text{if } \operatorname{type}(x) \text{ defines an in-place add} \\
+x \leftarrow x + y & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $x$ is a name (or an item or attribute) and $y$ is any object;
+- $\operatorname{iadd}$ is the type's `__iadd__` method, which changes $x$'s object in place and returns that same object;
+- $x + y$ calls `__add__`, which builds a new object;
+- in both cases the result is bound back to $x$.
+
+```python
+def augmented_on_list():
+    a = [1]
+    b = a
+    a += [2]  # list.__iadd__ extends the same list
+    return b, a is b
+
+
+def augmented_on_str():
+    s = "hi"
+    t = s
+    s += "!"  # str has no __iadd__: Python builds "hi!" and rebinds s
+    return t, s, t is s
+```
+
+Example: for the list, the first case applies, the shared list becomes $[1, 2]$, and `augmented_on_list()` returns `([1, 2], True)`. For the str, the second case applies: `"hi" + "!"` builds a new object, `s` moves to it, and `t` still refers to `"hi"`, so the result is `("hi", "hi!", False)`.
+
+Immutable objects are therefore safe to share. No one can change `"hi"` behind your back, which is why the language can freely reuse such objects (Level 7).
+
+### Level 4: call by sharing
+
+A function call binds each parameter to the argument's object, exactly like an assignment:
+
+$$
+f(a) \quad\Longrightarrow\quad \operatorname{env}_f(p) \leftarrow \operatorname{env}(a)
+$$
+
+where
+
+- $f$ is a function whose parameter is named $p$;
+- $\operatorname{env}$ is the caller's namespace and $\operatorname{env}_f$ is the new namespace of this call;
+- $a$ is the argument the caller passes.
+
+```python
+def add_bonus(marks):
+    marks.append(5)  # mutates the caller's list
+
+
+def replace_marks(marks):
+    marks = [0]  # rebinds the local name only
+    return marks
+
+
+def call_by_sharing():
+    marks = [7]
+    add_bonus(marks)
+    replace_marks(marks)
+    return marks
+```
+
+Example: the caller's list $L = [7]$. In `add_bonus`, $\operatorname{env}_f(\texttt{marks}) = L$, so `append` turns $L$ into $[7, 5]$. In `replace_marks`, the parameter first refers to $L$ too, but `marks = [0]` rebinds only the local name. The caller's list is untouched, and `call_by_sharing()` returns `[7, 5]`.
+
+This is neither "pass by value" (the list was not copied) nor "pass by reference" (the function could not make the caller's name point elsewhere). The Python FAQ says *"arguments are passed by assignment"*; the classic name is **call by sharing**.
+
+### Level 5: the `+=` puzzle
+
+What does this do?
+
+```python
+def tuple_puzzle():
+    t = (1, [2, 3])
+    try:
+        t[1] += [4]
+    except TypeError as error:
+        return t, str(error)
+```
+
+It raises `TypeError: 'tuple' object does not support item assignment`, and **also** changes the tuple's list: the function returns `((1, [2, 3, 4]), "'tuple' object does not support item assignment")`. Level 3 explains both. An augmented assignment to an item is three steps:
+
+$$
+\texttt{t[1] += y} \quad\equiv\quad v \leftarrow t[1];\quad v \leftarrow \operatorname{iadd}(v, y);\quad t[1] \leftarrow v
+$$
+
+where
+
+- $t$ is the tuple and $t[1]$ is its second item, the list;
+- $v$ is a hidden temporary on the interpreter's stack;
+- $y$ is `[4]`.
+
+Example: step 1 loads the list $[2, 3]$. Step 2 calls `list.__iadd__`, which extends that list in place to $[2, 3, 4]$; this succeeds. Step 3 stores the result back into item 1 of the tuple, and a tuple has no item assignment, so it raises. The disassembly (trimmed, with notes on the right) shows the add happening before the store:
+
+```text
+BINARY_OP               26 ([])     load t[1]
+BUILD_LIST               1          build [4]
+BINARY_OP               13 (+=)     list.__iadd__: the list is now [2, 3, 4]
+STORE_SUBSCR                        t[1] = ...: raises TypeError
+```
+
+The tuple did not change: it still holds the same two objects. One of those objects changed its value. The reference manual says exactly this: an immutable container can contain a mutable object.
+
+### Level 6: shallow and deep copies
+
+Now the seating chart. `[[0] * 3] * 3` repeats the **reference** to one row three times:
+
+```python
+def shared_rows():
+    grid = [[0] * 3] * 3  # three references to ONE row
+    grid[0][0] = 1
+    return grid
+
+
+def separate_rows():
+    grid = [[0] * 3 for _ in range(3)]  # three different rows
+    grid[0][0] = 1
+    return grid
+```
+
+`shared_rows()` returns `[[1, 0, 0], [1, 0, 0], [1, 0, 0]]`; `separate_rows()` returns `[[1, 0, 0], [0, 0, 0], [0, 0, 0]]`, because the comprehension runs `[0] * 3` once per row. Copying has the same two depths:
+
+$$
+\begin{aligned}
+s = \operatorname{copy}(a) &\;\Longrightarrow\; s \texttt{ is not } a \;\land\; \forall i:\ s[i] \texttt{ is } a[i] \\
+d = \operatorname{deepcopy}(a) &\;\Longrightarrow\; d \texttt{ is not } a \;\land\; \forall i:\ d[i] = a[i] \text{ in value, with mutable } d[i] \text{ new}
+\end{aligned}
+$$
+
+where
+
+- $a$ is the original container and $i$ ranges over its positions;
+- $s$ is a **shallow** copy (`copy.copy`, `list(a)`, `a[:]`): a new outer object whose items are the same objects;
+- $d$ is a **deep** copy (`copy.deepcopy`): new copies of every mutable object reachable from $a$;
+- $\forall i$ means "for every position $i$" and $\land$ means "and".
+
+```python
+def shallow_vs_deep():
+    original = [[1, 2], [3]]
+    shallow = copy.copy(original)  # new outer list, same inner lists
+    deep = copy.deepcopy(original)  # new lists all the way down
+    original[0].append(99)
+    return shallow, deep
+```
+
+Example: `shallow[0] is original[0]` holds, so appending 99 to `original[0]` shows up in the shallow copy: `[[1, 2, 99], [3]]`. The deep copy made a new `[1, 2]`, so it stays `[[1, 2], [3]]`.
+
+### Level 7: the small-int cache is an implementation detail
+
+```python
+def small_int_cache():
+    # int() runs at run time, so the compiler cannot share one constant object
+    return int("256") is int("256"), int("257") is int("257")
+```
+
+On CPython 3.14 this returns `(True, False)`. CPython creates the integers from $-5$ to $256$ once, at start-up, and hands out the same object every time:
+
+$$
+\texttt{int(s) is int(s)} \text{ on CPython 3.14} \iff -5 \le n \le 256
+$$
+
+where
+
+- `s` is a string of digits and $n$ is the integer it spells;
+- $-5$ and $256$ are the bounds of CPython 3.14's cache, from `_PY_NSMALLNEGINTS = 5` and `_PY_NSMALLPOSINTS = 257` in `Include/internal/pycore_runtime_structs.h`.
+
+Example: for $n = 256$, $-5 \le 256 \le 256$ holds, so both calls return the cached object and `is` gives `True`. For $n = 257$ the bound fails, each call builds a fresh int, and `is` gives `False`. The lab also checks the lower edge: $-5$ is cached and $-6$ is not.
+
+Treat this as trivia, never as a rule. The language does not promise it, other implementations (PyPy) behave differently, and CPython 3.15 widened the cache to $-5 \ldots 1024$, so `int("257") is int("257")` is `True` there. Two literals `257` in one function can also be the same object, because the compiler stores equal constants once. The compiler even warns when you write `x is 1`: `SyntaxWarning: "is" with 'int' literal. Did you mean "=="?`. Use `is` only for singletons such as `None`, and `==` for values.
+
+## How it works underneath
+
+Every CPython object is a C struct that starts with the same header. Simplified from `Include/object.h` in the 3.14 default build:
+
+```text
+struct _object {
+    Py_ssize_t    ob_refcnt;   /* how many references point here */
+    PyTypeObject *ob_type;     /* the object's type: fixed for life */
+};
+```
+
+A Python variable is a slot that holds a `PyObject *`, a pointer to such a struct. Inside a function the slots are an array in the frame, indexed by position (`f.__code__.co_varnames` lists the names); at module level they are entries in the module's dict, `globals()`. `backup = scores` compiles to two instructions that copy one pointer from slot 0 to slot 1:
+
+```text
+LOAD_FAST                0 (scores)
+STORE_FAST               1 (backup)
+```
+
+Nothing is allocated; the list's reference count goes up by one:
+
+$$
+\operatorname{rc}'(o) = \operatorname{rc}(o) + 1
+$$
+
+where
+
+- $o$ is the object a new name now refers to;
+- $\operatorname{rc}(o)$ is its reference count, `ob_refcnt`, before the binding;
+- $\operatorname{rc}'(o)$ is the count after it.
+
+```python
+def one_more_reference():
+    obj = []
+    before = sys.getrefcount(obj)
+    alias = obj  # binding a name copies a pointer, not the list
+    return sys.getrefcount(obj) - before, alias is obj
+```
+
+Example: `one_more_reference()` returns `(1, True)`, so $\operatorname{rc}' - \operatorname{rc} = 1$. The lab compares a difference because the absolute number from `sys.getrefcount` depends on temporary references and changes between versions. When the count drops to 0, CPython frees the object at once ([Memory and Garbage Collection](11-memory-and-garbage-collection.qmd)).
+
+Some objects never die. Since Python 3.12 ([PEP 683](https://peps.python.org/pep-0683/)), `None`, `True`, `False` and the small ints are **immortal**: their count is pinned to a huge constant that CPython never updates. That avoids data races and needless memory writes when threads or interpreters share them. Python 3.14 added `sys._is_immortal()` to ask; the lab checks it returns `True` for `None` and `5`.
+
+`id()` returns the struct's address. Once an object is freed, a new object may be placed at the same address, so two objects that were alive at **different** times can have equal ids. Compare ids only of objects that are both alive.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `backup = scores` to keep a copy | The "backup" changes with the original | `scores.copy()`, `list(scores)` or `scores[:]` |
+| `[[0] * 3] * 3` for a grid | Setting one cell changes the whole column | `[[0] * 3 for _ in range(3)]` |
+| `copy.copy` of nested data | Inner lists still shared | `copy.deepcopy`, or build new inner lists |
+| `x is 1` or `name is "Ann"` | `SyntaxWarning: "is" with 'int' literal. Did you mean "=="?`, and results that depend on caching | `==` for values; `is` only for `None` and other singletons |
+| `x == None` | Wrong answer when `__eq__` is overridden (interview question 1) | `x is None` |
+| A function mutates its parameter | The caller's list changes unexpectedly | Copy inside the function, or return a new object |
+| `t[1] += [4]` on a list inside a tuple | `TypeError: 'tuple' object does not support item assignment`, yet the list changed | `t[1].extend([4])`, which never assigns to the tuple |
+
+## Interview questions
+
+### 1. What is the difference between `is` and `==`?
+
+**Answer.** `a is b` compares identities, $\operatorname{id}(a) = \operatorname{id}(b)$; it is one pointer comparison and cannot be overloaded. `a == b` calls `a.__eq__(b)`, which each type defines. They can disagree in both directions:
+
+```python
+def nan_identity():
+    nan = float("nan")
+    return nan == nan, nan is nan, [nan] == [nan]
+
+
+class Anything:
+    def __eq__(self, other):
+        return True  # claims to equal everything
+```
+
+`nan_identity()` returns `(False, True, True)`. IEEE 754 says NaN is unequal to itself, yet the list comparison is `True`, because built-in containers check `is` before `==` for each element (the reference manual: they "assume identical objects are equal to themselves"). And `Anything() == None` is `True` while `Anything() is None` is `False`. That is why PEP 8 says to compare with `None` using `is`.
+
+### 2. Is Python pass-by-value or pass-by-reference?
+
+**Answer.** Neither: it is **call by sharing**, which the FAQ calls "passed by assignment". The parameter becomes a new name bound to the caller's object (Level 4). Mutating that object is visible to the caller (`add_bonus` makes `[7]` into `[7, 5]`); rebinding the parameter is not (`replace_marks` leaves it alone). In "pass by reference" the callee could rebind the caller's variable, and in "pass by value" it would get a copy; neither happens. To return several results, return a tuple.
+
+### 3. Why does `t[1] += [4]` both fail and succeed?
+
+**Answer.** Because `+=` on an item is load, in-place add, store (Level 5). `list.__iadd__` extends the list in the tuple, which is legal: the tuple still holds the same list object. Then the store `t[1] = result` runs `tuple.__setitem__`, which does not exist, so `TypeError` is raised **after** the mutation. `tuple_puzzle()` shows `t == (1, [2, 3, 4])`. The Python FAQ has an entry for exactly this.
+
+### 4. How does `deepcopy` copy a list that contains itself?
+
+**Answer.** It keeps a **memo** dict from `id(original)` to its copy. Before copying an object, it looks the id up; if the object was already copied, it reuses that copy. This both stops infinite recursion on cycles and keeps the shape of sharing:
+
+```python
+def deepcopy_keeps_sharing():
+    row = [0]
+    pair = [row, row]  # one row, two references
+    clone = copy.deepcopy(pair)
+    return clone[0] is clone[1], clone[0] is row
+
+
+def deepcopy_a_cycle():
+    loop = [1]
+    loop.append(loop)  # the list contains itself
+    clone = copy.deepcopy(loop)
+    return clone[1] is clone, clone is loop
+```
+
+Both return `(True, False)`: the copy has one new row referenced twice, and the copied cycle points at itself, not at the original. A class can control this with `__deepcopy__(self, memo)`.
+
+### 5. Why is `int("256") is int("256")` true but `int("257") is int("257")` false?
+
+**Answer.** CPython 3.14 pre-creates the ints from $-5$ to $256$ and returns the cached object; 257 is outside that range, so each call allocates a new int (Level 7). It is an implementation detail: CPython 3.15 caches up to 1024, PyPy compares ints by value even for `is`, and the compiler may merge equal constants in one code object. Correct code never depends on it.
+
+## Summary
+
+$$
+\texttt{b = a} \;\Longrightarrow\; \operatorname{env}(b) \leftarrow \operatorname{env}(a) \;\Longrightarrow\; b \texttt{ is } a
+$$
+
+where $\operatorname{env}$ maps names to objects and `is` compares identities. Assignment, parameter passing, `for` loops and `import` all bind names this way, and none of them copies.
+
+Example: after `backup = scores`, both names refer to the one list $L_1$; `scores.append(70)` changes $L_1$, so `backup` shows $[90, 85, 70]$.
+
+- An object has an identity, a type and a value; only the value can change, and only for mutable types.
+- `=` binds a name. It never copies. Copy explicitly: `.copy()`, `copy.copy`, `copy.deepcopy`.
+- Mutating an object is visible through every name; rebinding a name affects only that name.
+- `+=` mutates mutable objects in place and rebinds names of immutable ones.
+- Functions receive references to the caller's objects: call by sharing.
+- Use `is` for `None` and other singletons, `==` for everything else; small-int caching is a CPython detail.
+
+## References
+
+- The Python Language Reference: [Objects, values and types](https://docs.python.org/3.14/reference/datamodel.html#objects-values-and-types), [Naming and binding](https://docs.python.org/3.14/reference/executionmodel.html#naming-and-binding), [Augmented assignment statements](https://docs.python.org/3.14/reference/simple_stmts.html#augmented-assignment-statements), [Value comparisons](https://docs.python.org/3.14/reference/expressions.html#value-comparisons).
+- The [`copy` module](https://docs.python.org/3.14/library/copy.html) and [`sys._is_immortal`](https://docs.python.org/3.14/library/sys.html#sys._is_immortal).
+- Python FAQ: [Why did changing list 'y' also change list 'x'?](https://docs.python.org/3.14/faq/programming.html#why-did-changing-list-y-also-change-list-x), [call by reference](https://docs.python.org/3.14/faq/programming.html#how-do-i-write-a-function-with-output-parameters-call-by-reference), [Why does a_tuple\[i\] += \['item'\] raise an exception?](https://docs.python.org/3.14/faq/programming.html#why-does-a-tuple-i-item-raise-an-exception-when-the-addition-works), [Why does id() appear to be not unique?](https://docs.python.org/3.14/faq/programming.html#why-does-the-result-of-id-appear-to-be-not-unique).
+- The C API: [`PyLong_FromLong`](https://docs.python.org/3.14/c-api/long.html#c.PyLong_FromLong) (3.14: cache from -5 to 256) and the [3.15 version](https://docs.python.org/3.15/c-api/long.html#c.PyLong_FromLong) (-5 to 1024).
+- [PEP 683: Immortal Objects, Using a Fixed Refcount](https://peps.python.org/pep-0683/) and [PEP 8: Programming Recommendations](https://peps.python.org/pep-0008/#programming-recommendations).
+- Ned Batchelder, [Facts and myths about Python names and values](https://nedbatchelder.com/text/names.html) (PyCon 2015).
+- Luciano Ramalho, *Fluent Python*, 2nd ed. (O'Reilly, 2022), ch. 6 "Object References, Mutability, and Recycling" ([example code](https://github.com/fluentpython/example-code-2e)).
+- CPython source: [Include/object.h](https://github.com/python/cpython/blob/3.14/Include/object.h), [Include/internal/pycore_runtime_structs.h](https://github.com/python/cpython/blob/3.14/Include/internal/pycore_runtime_structs.h).
+- Lab: [`labs/names-objects-and-references.py`](labs/names-objects-and-references.py). Run it from `programming-languages/python/labs` with `python3 -I names-objects-and-references.py`.

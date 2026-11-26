@@ -1,0 +1,274 @@
+---
+title: "Memory and Garbage Collection"
+description: "How CPython frees memory, from the first reference count to interview level: sys.getrefcount, the cycle collector and its generations (and the 3.14 incremental collector that was reverted), weakref, __del__ pitfalls, sys.getsizeof, interning and immortal objects."
+---
+
+## The problem
+
+A photo app keeps `Node` objects for a family tree: each child points to its parent, each parent to its children. A user closes the tree. Is the memory given back?
+
+In C you would call `free` yourself, and a forgotten call leaks while a double call crashes. Python never asks you to free anything, so it must decide on its own **when an object can no longer be used**. It uses two mechanisms:
+
+1. **Reference counting.** Every object counts how many references point to it. When the count reaches 0, the object is freed at once.
+2. **The cycle collector.** A parent and child that point to each other keep both counts at 1 forever, even when nothing else can reach them. A separate collector finds such islands from time to time.
+
+Getting this wrong shows up as memory that only grows: a cache that keeps every image ever loaded, or a file that closes "eventually" instead of now. The lab checks each mechanism on CPython 3.14.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Balloons on strings
+
+Every object is a **balloon**, and every reference is a **string** someone holds. The balloon's tag says how many strings are tied to it: that is the **reference count**.
+
+- When the last child lets go of the last string, the balloon floats away **at that very moment**. Nobody has to come and check.
+- Now tie two balloons to **each other**, and let every child let go. Each balloon still has one string tied to it, from the other balloon, so neither tag says 0. They drift around together forever, unless the **park keeper** (the cycle collector) walks by, notices two balloons that no child is holding, and cuts them loose.
+- A **weak reference** is like pointing at a balloon instead of holding its string: you can see it while it is there, but you do not stop it floating away.
+
+The park keeper has a history: Python 2.0's release notes say the cycle algorithm was suggested by Eric Tiedemann, implemented separately by Guido van Rossum and Neil Schemenauer, and merged by Neil.
+:::
+
+## From simple to advanced
+
+### Level 1: reference counting frees objects at once
+
+`sys.getrefcount(x)` reports `x`'s current count:
+
+```python
+def count_references():
+    node = Node("a")
+    alone = sys.getrefcount(node)
+    alias = node
+    with_alias = sys.getrefcount(node)
+    del alias
+    pair = [node, node]
+    in_list = sys.getrefcount(node)
+    return alone, with_alias, in_list, len(pair)
+```
+
+On CPython 3.14 it returns `(1, 2, 3, 2)`:
+
+$$
+\operatorname{rc}(o) = \text{number of references to } o, \qquad \operatorname{rc}(o) = 0 \implies o \text{ is freed immediately}
+$$
+
+where
+
+- $o$ is an object;
+- a **reference** is anything that points to it: a variable, a list slot, an attribute of another object, an argument on the interpreter's stack;
+- $\operatorname{rc}(o)$ is the reference count stored inside $o$.
+
+Example, following `count_references`:
+
+1. `node = Node("a")`: one variable points to it, $\operatorname{rc} = 1$.
+2. `alias = node`: a second variable, $\operatorname{rc} = 2$.
+3. `del alias` removes a **name**, not the object: $\operatorname{rc} = 1$.
+4. `pair = [node, node]`: the list holds two more references, $\operatorname{rc} = 1 + 2 = 3$.
+
+When the function returns, `node` and `pair` disappear, the list's count reaches 0, the list is freed, which drops the node's count to 0, and the node is freed too. `freed_at_once` checks this with a weak reference: right after `del node`, the probe returns `None`.
+
+The documentation warns that `getrefcount` is "generally one higher than you might expect" because its own argument is a reference. On Python 3.14 that is no longer true for a local variable: the interpreter now **borrows** references when it loads a local onto its stack (the `LOAD_FAST_BORROW` instruction), so the call adds nothing and `alone` is 1, where Python 3.13 gave 2. For a global it is still one higher. The differences (+1 for `alias`, +2 for the list) are what you can rely on.
+
+### Level 2: cycles, and how the collector finds them
+
+```python
+def leak_a_cycle():
+    a, b = Node("a"), Node("b")
+    a.partner, b.partner = b, a  # each keeps the other's count at 1
+    return weakref.ref(a)
+```
+
+After the function returns, no variable points to `a` or `b`, yet the weak reference still finds `a` alive. Then `gc.collect()` returns 2 (the two `Node` objects it freed), and the probe returns `None`. The lab disables automatic collection first, so that nothing runs between the steps.
+
+The collector cannot see variables directly; it only knows the objects it tracks (containers such as lists, dicts and class instances) and their counts. Its trick is to subtract the references that come from **inside** the group being examined:
+
+$$
+g(o) = \operatorname{rc}(o) - \operatorname{in}(o)
+$$
+
+where
+
+- $o$ is a tracked object in the generation being collected;
+- $\operatorname{rc}(o)$ is its reference count;
+- $\operatorname{in}(o)$ is the number of references to $o$ from other objects in that same generation, found by asking every object for its references (the `tp_traverse` slot in C);
+- $g(o)$ is what remains: references from **outside**, such as variables. An object with $g(o) > 0$ is a root; everything reachable from a root survives, and the rest is garbage.
+
+Example, the cycle after `leak_a_cycle` returns:
+
+1. $\operatorname{rc}(a) = 1$ (from `b.partner`) and $\operatorname{in}(a) = 1$, so $g(a) = 0$. Likewise $g(b) = 1 - 1 = 0$.
+2. No root exists, so neither is reachable: both are freed, and `gc.collect()` returns 2.
+3. In the lab's second run, `kept = probe()` adds an outside reference: $\operatorname{rc}(a) = 2$, $\operatorname{in}(a) = 1$, $g(a) = 1 > 0$. Now `a` is a root, `b` is reachable from it, and `gc.collect()` returns 0. After `del kept`, the next collection returns 2.
+
+Atomic objects such as `int` and `str` cannot point to anything, so they can never be part of a cycle and the collector does not track them: `gc.is_tracked(1)` is `False`, `gc.is_tracked([])` is `True`.
+
+### Level 3: generations
+
+Scanning every container on every collection would be slow. CPython uses the **weak generational hypothesis** ("most objects die young"): new containers start in generation 0, and each collection promotes survivors to the next generation, which is scanned less often. The lab watches one object move:
+
+```python
+def in_generation(obj, generation):
+    return any(o is obj for o in gc.get_objects(generation=generation))
+```
+
+A new `Node` is in generation 0; after `gc.collect(0)` it is in generation 1; after `gc.collect(1)`, in generation 2. When collections start is set by `gc.get_threshold()`, which is `(2000, 10, 10)`:
+
+$$
+N_{\text{full}} \gtrsim t_0 \cdot t_1 \cdot t_2
+$$
+
+where
+
+- $t_0 = 2000$: generation 0 is collected when allocations minus deallocations of tracked objects exceed $t_0$;
+- $t_1 = 10$: generation 1 is also collected after every $t_1$ collections of generation 0;
+- $t_2 = 10$: generation 2 is considered after every $t_2$ collections of generation 1, and then **only** if the objects waiting to be examined exceed 25% of all long-lived objects;
+- $N_{\text{full}}$ is the number of net allocations between two full collections.
+
+Example: $2000 \times 10 \times 10 = 200{,}000$. A program that keeps creating containers gets a cheap young collection about every 2000 new objects, a middle one about every 20,000, and a full one at most about every 200,000, less often as the heap grows because of the 25% rule. That rule keeps building a big list of objects linear rather than quadratic.
+
+**What changed in 3.14.** Python 3.14.0 shipped an **incremental** collector by Mark Shannon, with only two generations, in which `gc.collect(1)` performed "an increment" of collection. After "a number of reports of significant memory pressure in production environments" it was reverted in **3.14.5** to the generational collector of 3.13. The lab therefore checks the 3.14.5+ behaviour: three generations (`len(gc.get_stats()) == 3`) and the thresholds above. The free-threaded build has its own collector that does not use generations at all.
+
+### Level 4: weak references
+
+A cache must not keep objects alive just because they are cached. `weakref.WeakValueDictionary` holds its values through weak references:
+
+```python
+cache = weakref.WeakValueDictionary()
+
+
+def load(name):
+    image = cache.get(name)
+    if image is None:
+        image = Image(name)
+        cache[name] = image
+    return image
+```
+
+Two calls to `load("logo")` return the same object and the cache has 1 entry. After `del first, second`, the image's count reaches 0, it is freed, and the cache entry vanishes by itself: `len(cache) == 0`. A plain `dict` would have kept every image forever.
+
+`weakref.finalize(obj, function, *args)` registers clean-up that runs when `obj` dies: in the lab, `log.append("closed")` runs at `del image`. Not every object can be weakly referenced: `weakref.ref(3)` raises `TypeError: cannot create weak reference to 'int' object`, and a class with `__slots__` needs a `"__weakref__"` slot.
+
+### Level 5: `__del__` and why to avoid it
+
+`__del__` is called when an object is about to be destroyed:
+
+```python
+class Noisy:
+    def __init__(self, log):
+        self.log = log
+
+    def __del__(self):
+        self.log.append("del")
+```
+
+With no cycle, `del noisy` drops the count to 0 and the log is `["del"]` **immediately**: this is CPython behaviour, not a language promise. Put the object in a cycle (`noisy.me = noisy`) and `del noisy` does nothing visible; `__del__` runs only when the collector finds the cycle, and the lab checks that `gc.collect()` returns 1 and only then appends the second `"del"`. Since Python 3.4 (PEP 442, Antoine Pitrou) the collector can free cycles that contain `__del__` methods; before that they were moved to `gc.garbage` and leaked.
+
+The data model reference lists the remaining traps: `__del__` may run at any moment, in any thread, so taking a lock in it can deadlock; it may run during interpreter shutdown when globals are already `None`; it is "not guaranteed" to run at all for objects alive at exit; and an exception inside it is not raised, only printed, as `Exception ignored while calling deallocator <function Bad.__del__ at 0x...>`. Use `with` for resources ([Exceptions and Context Managers](08-exceptions-and-context-managers.qmd)) and `weakref.finalize` for clean-up tied to an object's life.
+
+### Level 6: sizes, sharing and immortal objects
+
+`sys.getsizeof` reports the bytes of **one** object, not of what it points to. For integers, CPython stores the value in 30-bit digits:
+
+```python
+def int_size(n):
+    digits = max(1, -(-n.bit_length() // 30))  # 30-bit digits, rounded up
+    return 24 + 4 * digits
+```
+
+$$
+\operatorname{size}(n) = 24 + 4 \cdot \max\left(1, \left\lceil \frac{b(n)}{30} \right\rceil\right)
+$$
+
+where
+
+- $n$ is a non-negative integer and $b(n)$ is `n.bit_length()`, the number of bits needed to write it;
+- 24 is the header in bytes: reference count, type pointer, and a tag holding the sign and the digit count, 8 bytes each;
+- 4 is the bytes per digit, each holding 30 bits;
+- $\lceil x \rceil$ rounds up, and at least one digit is stored, even for 0.
+
+Example: $b(0) = 0$, so $24 + 4 \cdot 1 = 28$. $b(2^{30}) = 31$ and $\lceil 31/30 \rceil = 2$, so $24 + 8 = 32$. $b(2^{60}) = 61$ and $\lceil 61/30 \rceil = 3$, so $24 + 12 = 36$. The lab checks the formula against `sys.getsizeof` for six values. Containers are shallow: `sys.getsizeof(["b"])` and `sys.getsizeof(["b" * 1000])` are both 64, because the list holds 8-byte pointers and the string lives elsewhere.
+
+Some objects are **shared** instead of created again:
+
+- **Small integers** from -5 to 256 are cached: `int("256") is int("256")` is `True`, `int("257") is int("257")` is `False`.
+- **Interned strings**: identifiers and many string constants are stored once. Strings built at run time are not: two `"".join(["py", "thon"])` results are equal but distinct, until `sys.intern` maps both to one object.
+
+Since Python 3.12 (PEP 683, Eric Snow and Eddie Elizondo), objects such as `None`, `True`, the small integers and many interned strings are **immortal**: their count is fixed and never changes. On 3.14, `sys.getrefcount(None)` is $3 \cdot 2^{30} = 3221225472$, and it stays that number after building `[None] * 1000`, because increments and decrements skip immortal objects. `sys._is_immortal(None)` (new in 3.14) is `True`; `sys._is_immortal(int("1000"))` is `False`. PEP 683 gives the reason: a reference count update is a memory write, so even "immutable" objects were constantly written to. That invalidates CPU caches shared between cores, races without a lock, and forces copy-on-write pages after `fork`. An object that is never written avoids all three.
+
+## How it works underneath
+
+**Every object starts with a header.** In the default build, `PyObject_HEAD` is the reference count and a pointer to the type, 8 bytes each: `sys.getsizeof(object()) == 16`. An object the collector tracks has a second header **in front of** it, `PyGC_Head`, two pointers that link it into its generation's doubly linked list. That is why an empty list is 56 bytes: 16 for `PyGC_Head`, then 40 for the list itself (header, length, pointer to the items, allocated capacity).
+
+**`Py_INCREF` and `Py_DECREF`** are the C operations behind every reference. `Py_DECREF` that reaches 0 calls the type's deallocator, which decrements everything the object refers to, which may free those too: a chain reaction, all at once, with no pause. Since 3.12, both first check whether the object is immortal and do nothing if it is. The 3.14 header file defines the starting count of an immortal object as `3ULL << 30` on 64-bit builds, the number the lab sees.
+
+**Small objects come from pymalloc.** Allocations of up to 512 bytes are served by CPython's own allocator from "arenas" of 1 MiB on 64-bit platforms (256 KiB on 32-bit), split into pools of equal-sized blocks; larger requests go to the system `malloc`. Freed blocks return to their pool for reuse, so a Python process often does not give memory back to the operating system right away even after objects die. The free-threaded build uses mimalloc instead.
+
+**A collection, step by step,** following CPython's `InternalDocs/garbage_collector.md`:
+
+1. Copy each tracked object's reference count into a scratch field (`gc_ref`).
+2. For every object in the generation, visit what it refers to and subtract 1 from each target's `gc_ref`. Afterwards $g(o) > 0$ exactly for objects referenced from outside (Level 2).
+3. Starting from those roots, mark everything reachable; whatever is left is unreachable. This is a breadth-first search that needs no extra memory, because the lists are threaded through the objects' own headers.
+4. Destroy the unreachable set carefully: clear weak references to it (running callbacks of weakrefs that are themselves reachable), call finalizers such as `__del__` once, re-check in case a finalizer **resurrected** an object by storing a reference to it, then call each object's `tp_clear` to break its references so the counts fall to 0 and ordinary deallocation frees them.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Relying on `__del__` to close files or sockets | Closed late (at the next collection, if in a cycle) or never at exit | `with` blocks, or `weakref.finalize` |
+| Raising inside `__del__` | The error is lost; stderr shows `Exception ignored while calling deallocator <function Bad.__del__ at 0x...>` | Keep finalizers trivial and never let them raise |
+| A plain `dict` as an object cache | Memory grows with every object ever cached | `weakref.WeakValueDictionary`, or `functools.lru_cache(maxsize=...)` |
+| A weak reference to a built-in value | `TypeError: cannot create weak reference to 'int' object` | Weak-reference the object that owns the value; give `__slots__` classes a `"__weakref__"` slot |
+| Comparing numbers or strings with `is` | `int("256") is int("256")` is `True` but `int("257") is int("257")` is `False` | Compare values with `==`; keep `is` for `None` and sentinels |
+| Treating `sys.getsizeof` as the total size | `sys.getsizeof(["b" * 1000])` is only 64 | Add up the parts recursively, or measure with `tracemalloc` |
+| Asserting exact `getrefcount` values | Different numbers across versions: 2 on 3.13, 1 on 3.14; 3221225472 for immortal objects | Compare differences, or use weak references to test that an object died |
+
+## Interview questions
+
+### 1. How does CPython decide when to free an object?
+
+**Answer.** Mainly by reference counting: each object stores how many references point to it, and when the count reaches 0 it is freed on the spot, which recursively drops the counts of whatever it referenced. Reference counting cannot free cycles, so a second mechanism, the generational cycle collector in the `gc` module, periodically examines tracked container objects and frees groups that are unreachable from outside. Other Python implementations (PyPy, for example) use only a tracing collector, which is why "freed immediately" is a CPython detail and not a language guarantee.
+
+### 2. How does the cycle collector find garbage without knowing your variables?
+
+**Answer.** By subtraction. For each tracked object it computes $g(o) = \operatorname{rc}(o) - \operatorname{in}(o)$, the count minus the references coming from other objects in the generation. Whatever is left must come from outside (variables, the stack, objects in older generations), so objects with $g(o) > 0$ are roots. Everything reachable from a root survives; the rest is freed. For the two-node cycle, $g = 1 - 1 = 0$ for both, so `gc.collect()` returns 2; one outside reference makes $g(a) = 1$ and saves both.
+
+### 3. Why does the collector use generations, and what happened in Python 3.14?
+
+**Answer.** Most objects die young, so scanning the young ones often and the old ones rarely finds most garbage for little work. With thresholds `(2000, 10, 10)`, young collections run about every 2000 net allocations and full ones at most about every $2000 \times 10 \times 10 = 200{,}000$, and only when the pending long-lived objects exceed 25% of all long-lived ones, which keeps total cost linear. Python 3.14.0 to 3.14.4 shipped an incremental collector with two generations to cut pause times; because of memory-pressure reports in production, 3.14.5 reverted to the three-generation collector of 3.13.
+
+### 4. When does `__del__` run, and why is it a poor place for clean-up?
+
+**Answer.** In CPython, when the reference count reaches 0, or, if the object is in a cycle, whenever the collector next finds that cycle. It may therefore run late, in an arbitrary thread, during interpreter shutdown, or never for objects alive at exit; exceptions inside it are printed and discarded. Since PEP 442 (Python 3.4) cycles with `__del__` are at least collectable. For deterministic clean-up use a context manager; for "run this when the object goes away", `weakref.finalize`, which also runs at exit.
+
+### 5. What are immortal objects, and why were they added?
+
+**Answer.** Objects whose reference count is pinned (PEP 683, Python 3.12), such as `None`, `True`, small integers and many interned strings. Increments and decrements check for immortality and skip them, so `sys.getrefcount(None)` stays at 3221225472 on 3.14 however many references exist. Without this, every use of `None` would write to its count, invalidating CPU cache lines across cores, racing between threads or interpreters that share it, and un-sharing copy-on-write memory after `fork`. Immortality makes truly immutable objects truly read-only, which subinterpreters and the free-threaded build both rely on.
+
+### 6. Why is `a is b` true for 256 but false for 257?
+
+**Answer.** CPython keeps one shared object for every integer from -5 to 256, so any computation that produces 256 returns that same object. 257 is created fresh each time, so two equal results are different objects. `is` compares identity, not value; it is an implementation detail which values are shared, so use `==` for numbers and strings and keep `is` for `None` and sentinel objects.
+
+## Summary
+
+$$
+\operatorname{rc}(o) = 0 \implies o \text{ freed now}, \qquad g(o) = \operatorname{rc}(o) - \operatorname{in}(o) > 0 \implies o \text{ is a root}
+$$
+
+where $\operatorname{rc}(o)$ is the reference count of $o$, $\operatorname{in}(o)$ the number of references to it from inside the generation being collected, and a root is an object referenced from outside; everything not reachable from a root is garbage.
+
+Example: after `del alias`, the node's count goes from 2 to 1 and it lives; in the two-node cycle, $g = 1 - 1 = 0$ for both, so `gc.collect()` frees 2.
+
+- CPython frees most objects the moment their count reaches 0.
+- Cycles need the generational collector; on 3.14.5+ its thresholds are `(2000, 10, 10)`.
+- Weak references (`WeakValueDictionary`, `finalize`) observe an object without keeping it alive.
+- Do not use `__del__` for clean-up; use `with` or `weakref.finalize`.
+- `sys.getsizeof` is shallow; integers cost $24 + 4$ bytes per 30-bit digit.
+- `None`, `True`, small integers and many interned strings are shared and, since 3.12, immortal.
+
+## References
+
+- Python 3.14 documentation: [gc](https://docs.python.org/3.14/library/gc.html), [weakref](https://docs.python.org/3.14/library/weakref.html), [sys](https://docs.python.org/3.14/library/sys.html) (`getrefcount`, `getsizeof`, `intern`, `_is_immortal`), [`object.__del__`](https://docs.python.org/3.14/reference/datamodel.html#object.__del__), [Memory Management](https://docs.python.org/3.14/c-api/memory.html) (pymalloc), and [What's New in Python 3.14](https://docs.python.org/3.14/whatsnew/3.14.html) (the incremental collector and its revert in 3.14.5).
+- CPython internals: [Garbage collector design](https://github.com/python/cpython/blob/3.14/InternalDocs/garbage_collector.md) and [Include/refcount.h](https://github.com/python/cpython/blob/3.14/Include/refcount.h).
+- PEPs: [442, Safe object finalization](https://peps.python.org/pep-0442/) (Antoine Pitrou); [683, Immortal Objects, Using a Fixed Refcount](https://peps.python.org/pep-0683/) (Eric Snow, Eddie Elizondo).
+- [What's New in Python 2.0](https://docs.python.org/3.14/whatsnew/2.0.html), "Garbage Collection of Cycles", for the history.
+- Luciano Ramalho, [*Fluent Python*](https://www.fluentpython.com/), 2nd ed. (O'Reilly, 2022), chapter 6, "Object References, Mutability, and Recycling".
+- Lab: [`labs/memory-and-garbage-collection.py`](labs/memory-and-garbage-collection.py). Run it from `programming-languages/python/labs` with `python3 -I memory-and-garbage-collection.py`.

@@ -1,0 +1,76 @@
+---
+title: "Python — Core Concepts"
+subtitle: "Names for objects, protocols for everything, one interpreter underneath"
+description: "Python 3.14 from names and objects to the GIL and asyncio: thirteen chapters on what the language guarantees and how CPython implements it, each with a lab that checks every result."
+aliases: ["../python.html"]
+---
+
+## What Python is for, and where it came from
+
+Python is a dynamically typed, garbage-collected language that puts **readability first**. It is used for scripting, web back ends, data analysis, machine learning and teaching, often as the "glue" between libraries written in C. The reference implementation, **CPython**, compiles source code to bytecode and runs it on an interpreter, which is what most chapters look underneath.
+
+**Guido van Rossum** started it as a hobby. In his foreword to Mark Lutz's *Programming Python* he wrote that *"in December 1989, I was looking for a 'hobby' programming project that would keep me occupied during the week around Christmas"*, and that he decided to write an interpreter for *"a descendant of ABC that would appeal to Unix/C hackers"*. He was working at **CWI** in Amsterdam, where he had helped implement **ABC**, an interpreted language designed there. The Python FAQ quotes his reasons: ABC gave Python its indentation and very-high-level data types, but *"it was impossible to extend the ABC language"*, and his **Amoeba** operating system group *"needed a better way to do system administration than by writing either C programs or Bourne shell scripts"*. The name comes from *Monty Python's Flying Circus*.
+
+Version **0.9.0** was posted to the `alt.sources` newsgroup on **20 February 1991**; Python 1.0 followed in January 1994, 2.0 in 2000 and 3.0 in 2008. The design philosophy was written down by Tim Peters as the *Zen of Python*, PEP 20, nineteen aphorisms that `import this` still prints, from *"Beautiful is better than ugly."* and *"Readability counts."* to *"There should be one-- and preferably only one --obvious way to do it."*
+
+## The mental model
+
+A handful of ideas explain most of Python:
+
+1. **Every value is an object, and a variable is a name for one.** Assignment never copies; it ties another name to the same object. ([Names, Objects and References](01-names-objects-and-references.qmd))
+2. **The built-in collections are a dynamic array and hash tables.** Their costs follow from that: appends are cheap, lookups by key are constant time, and keys must be hashable. ([Built-in Collections](02-built-in-collections.qmd))
+3. **Functions are objects too.** They capture their surroundings in closures, and a decorator is just a function that takes and returns one. ([Functions, Scope and Closures](03-functions-scope-and-closures.qmd), [Decorators](05-decorators.qmd))
+4. **The language runs on protocols.** `for` calls `iter` and `next`, `+` calls `__add__`; implement the special method and your object joins in. ([Iterators and Generators](04-iterators-and-generators.qmd), [Classes and the Data Model](06-classes-and-the-data-model.qmd), [Inheritance, MRO and Protocols](07-inheritance-mro-and-protocols.qmd))
+5. **Errors are exceptions, and resources belong to `with`.** Try first and handle failure ("easier to ask forgiveness than permission"). ([Exceptions and Context Managers](08-exceptions-and-context-managers.qmd))
+6. **Types are optional and checked by tools, not by the interpreter.** ([Type Hints](09-type-hints.qmd))
+7. **A module is an object, run once and cached.** ([Modules and Imports](10-modules-and-imports.qmd))
+8. **One interpreter manages memory and threads.** Reference counts free most objects at once, the GIL runs one thread's bytecode at a time, and asyncio overlaps waits in one thread. ([Memory and Garbage Collection](11-memory-and-garbage-collection.qmd), [Threads, Processes and the GIL](12-threads-processes-and-the-gil.qmd), [Asyncio](13-coroutines-and-asyncio.qmd))
+
+## The chapters
+
+### Part 1: Objects, data and functions
+
+1. [Names, Objects and References](01-names-objects-and-references.qmd): identity, type and value, `is` versus `==`, mutability, call by sharing, and shallow and deep copies.
+2. [Built-in Collections](02-built-in-collections.qmd): the list's over-allocation, the compact ordered dict and its probing, hashability, and `deque`, `Counter` and `defaultdict`.
+3. [Functions, Scope and Closures](03-functions-scope-and-closures.qmd): LEGB lookup, `global` and `nonlocal`, cells, late binding, defaults evaluated once, and parameter kinds.
+4. [Iterators and Generators](04-iterators-and-generators.qmd): the iteration protocol, frames suspended at `yield`, lazy pipelines, `yield from` and `send()`.
+5. [Decorators](05-decorators.qmd): what `@` does, `functools.wraps`, decorators with arguments, stacking, caching, and `property`.
+
+### Part 2: Classes, errors, types and modules
+
+6. [Classes and the Data Model](06-classes-and-the-data-model.qmd): classes as objects, `__new__` and `__init__`, special methods, descriptors, method binding and `__slots__`.
+7. [Inheritance, MRO and Protocols](07-inheritance-mro-and-protocols.qmd): `super()`, the C3 method resolution order, mixins, abstract base classes and structural typing.
+8. [Exceptions and Context Managers](08-exceptions-and-context-managers.qmd): the order of `try` blocks, the hierarchy, `raise ... from`, EAFP, `with` desugared, `ExitStack` and `except*`.
+9. [Type Hints](09-type-hints.qmd): gradual typing, unions and narrowing, the 3.12 generics syntax, `Protocol`, `TypedDict`, variance, and 3.14's lazy annotations.
+10. [Modules and Imports](10-modules-and-imports.qmd): `sys.modules`, `__main__` and `-m`, packages, `sys.path`, finders and loaders, and circular imports.
+
+### Part 3: The runtime: memory and concurrency
+
+11. [Memory and Garbage Collection](11-memory-and-garbage-collection.qmd): reference counts, the generational cycle collector, `weakref`, `__del__`, object sizes and immortal objects.
+12. [Threads, Processes and the GIL](12-threads-processes-and-the-gil.qmd): the GIL, lost updates and locks, queues, pools, free-threaded Python, subinterpreters and Amdahl's law.
+13. [Asyncio](13-coroutines-and-asyncio.qmd): coroutines, the event loop, tasks, `TaskGroup` versus `gather`, cancellation, blocking calls and `to_thread`.
+
+## How to run the labs
+
+Every chapter has one lab, `labs/<slug>.py`, which uses only the standard library, checks every result its chapter quotes, and prints `OK` last. From `programming-languages/python/labs`:
+
+```bash
+python3 -I coroutines-and-asyncio.py
+```
+
+Replace `coroutines-and-asyncio` with any chapter's slug, such as `type-hints`. The `-I` flag ("isolated mode") keeps the lab's folder off the import path, so nothing in it can shadow a standard-library module. From the repository root, the checker verifies the chapters and runs every lab:
+
+```bash
+ONLY=python node --test programming-languages/check-languages.test.mjs
+```
+
+## Version and further reading
+
+These pages teach **Python 3.14** (3.14.0 was released on 7 October 2025) as implemented by CPython, and say when a feature arrived, such as exception groups in 3.11, the type parameter syntax in 3.12, the free-threaded build in 3.13 and lazy annotations in 3.14. Implementation-specific numbers, such as object sizes, are those of 64-bit CPython 3.14.5 or later.
+
+- [The Python Tutorial](https://docs.python.org/3.14/tutorial/index.html), [The Python Language Reference](https://docs.python.org/3.14/reference/index.html) and its [Data model](https://docs.python.org/3.14/reference/datamodel.html) chapter: the definitive rules.
+- [What's New in Python 3.14](https://docs.python.org/3.14/whatsnew/3.14.html) and the [General Python FAQ](https://docs.python.org/3.14/faq/general.html).
+- Guido van Rossum, [Foreword for "Programming Python" (1st ed.)](https://www.python.org/doc/essays/foreword/) and [A Brief Timeline of Python](https://python-history.blogspot.com/2009/01/brief-timeline-of-python.html) (2009); Tim Peters, [PEP 20, The Zen of Python](https://peps.python.org/pep-0020/).
+- Luciano Ramalho, [*Fluent Python*](https://www.fluentpython.com/), 2nd ed. (O'Reilly, 2022): the data model and the language in depth.
+- Brett Slatkin, [*Effective Python*](https://effectivepython.com/), 3rd ed. (Addison-Wesley, 2024): 125 best practices.
+- David Beazley, [*Python Distilled*](https://www.dabeaz.com/python-distilled/) (Addison-Wesley, 2021), and Raymond Hettinger, [Transforming Code into Beautiful, Idiomatic Python](https://www.youtube.com/watch?v=OSGv2VnC0go) (PyCon US 2013).

@@ -1,0 +1,461 @@
+---
+title: "Exceptions and Context Managers"
+description: "Python exceptions from the first try block to interview level: the order of try, except, else and finally, the class hierarchy, chaining with raise from, EAFP, the with statement desugared, ExitStack, and ExceptionGroup with except*."
+---
+
+## The problem
+
+A shop reads its settings from a text file. One line says `port=8080`, another says `port=eighty`. Turning the text into a number with `int("eighty")` cannot succeed, and Python says so:
+
+```text
+ValueError: invalid literal for int() with base 10: 'eighty'
+```
+
+Two things must now go right.
+
+1. **The error must reach someone who can decide.** The parser does not know whether to stop, use the default port 80, or ask the user. C-style code returns a special value such as `-1`, and callers forget to check it. Python **raises an exception**: normal execution stops, and the exception travels up the call stack until a handler catches it.
+2. **Whatever was opened must be closed.** The shop withdraws 30 from a balance of 100, then the card is declined. If the code stops halfway, the balance is left at 70. Files, locks and transactions have the same problem: the clean-up after the failure point never runs.
+
+`try` and `except` solve the first problem. `finally` and the `with` statement solve the second.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A fire drill and a library book
+
+- **Raising an exception** is pulling the fire alarm. Everyone stops what they are doing at once. The alarm goes up the corridors, floor by floor (that is the **call stack**), until it reaches a teacher who knows the plan for that alarm (an **`except`** handler).
+- **`finally`** is the rule "switch off the cooker before you leave the kitchen, whatever happens". Fire or no fire, it runs.
+- **A context manager** is a library book. The `with` statement is a librarian who hands you the book (`__enter__`) and promises to take it back (`__exit__`) when you leave the room, even if you leave running.
+
+Python's glossary calls the habit of trying first and handling failure afterwards **EAFP**: "Easier to ask for forgiveness than permission". The saying was popularised by Grace Hopper, who was quoted with it in the U.S. Navy's *Chips Ahoy* magazine in July 1986, although Quote Investigator traces older versions. The `with` statement comes from PEP 343 by Guido van Rossum and Alyssa Coghlan.
+:::
+
+## From simple to advanced
+
+### Level 1: the order of `try`, `except`, `else` and `finally`
+
+A `try` statement has up to four parts. The body goes in `try`; `except` runs if the body raised a matching exception; `else` runs only if the body raised **nothing**; `finally` runs in every case.
+
+```python
+def run_steps(text):
+    steps = []
+    try:
+        steps.append("try")
+        int(text)
+    except ValueError:
+        steps.append("except")
+    else:
+        steps.append("else")
+    finally:
+        steps.append("finally")
+    return steps
+```
+
+`run_steps("42")` returns `["try", "else", "finally"]` and `run_steps("forty")` returns `["try", "except", "finally"]`. There is a third case: an exception that no handler matches. `finally` still runs, and then the exception keeps travelling:
+
+```python
+def unmatched(steps):
+    try:
+        steps.append("try")
+        {}["port"]  # KeyError, which the handler below does not match
+    except ValueError:
+        steps.append("except")
+    finally:
+        steps.append("finally")
+```
+
+When the caller catches the `KeyError` and appends `"caller"`, the list is `["try", "finally", "caller"]`. The three cases are one rule:
+
+$$
+\operatorname{steps}(t) =
+\begin{cases}
+(\text{try}, \text{else}, \text{finally}) & \text{if the body raises nothing} \\
+(\text{try}, \text{except}, \text{finally}) & \text{if a handler matches the exception} \\
+(\text{try}, \text{finally}) \text{ then propagate} & \text{if no handler matches}
+\end{cases}
+$$
+
+where
+
+- $t$ is the input given to the body;
+- $\operatorname{steps}(t)$ is the list of blocks that run, in order;
+- "propagate" means the same exception object continues to the caller after `finally` has finished.
+
+Example:
+
+1. $t = \texttt{"42"}$: `int("42")` succeeds, so the first case gives `["try", "else", "finally"]`.
+2. $t = \texttt{"forty"}$: `int` raises `ValueError`, the handler matches, so the second case gives `["try", "except", "finally"]`.
+3. In `unmatched`, the body raises `KeyError`, no handler matches, so the third case runs `try` and `finally`, then the caller's handler appends `"caller"`.
+
+`finally` even runs when the body **returns**: the lab's `finally_beats_return` returns `"from try"`, and its `finally` appends `"finally ran"` before the function leaves.
+
+### Level 2: the class hierarchy decides which handler matches
+
+Every exception is an object, and its class sits in a tree. The roots are:
+
+```text
+BaseException
+ ├── KeyboardInterrupt, SystemExit, GeneratorExit   (not errors: "stop now" signals)
+ └── Exception                                     (every ordinary error)
+      ├── ArithmeticError → ZeroDivisionError, OverflowError
+      ├── LookupError     → KeyError, IndexError
+      ├── ValueError, TypeError, OSError, ...
+```
+
+A handler `except E` matches an exception whose class is `E` **or a subclass** of `E`, and the handlers are tried from top to bottom:
+
+```python
+def classify(error):
+    try:
+        raise error
+    except ZeroDivisionError:
+        return "zero division"
+    except ArithmeticError:
+        return "arithmetic"
+    except Exception:
+        return "other"
+```
+
+The rule, from the language reference:
+
+$$
+\operatorname{handler}(e) = \min \lbrace i : E_i \in \operatorname{mro}(\operatorname{type}(e)) \rbrace
+$$
+
+where
+
+- $e$ is the raised exception object and $\operatorname{type}(e)$ its class;
+- $\operatorname{mro}(C)$ is the tuple `C.__mro__`: the class $C$ followed by all of its base classes ([Inheritance, MRO and Protocols](07-inheritance-mro-and-protocols.qmd));
+- $E_i$ is the class named by the $i$-th `except` clause, counting from the top;
+- $\min$ picks the first clause that matches. If the set is empty, no handler matches and the exception propagates.
+
+Example, with the three clauses $E_1 = \texttt{ZeroDivisionError}$, $E_2 = \texttt{ArithmeticError}$, $E_3 = \texttt{Exception}$:
+
+1. `OverflowError()` has $\operatorname{mro} = (\texttt{OverflowError}, \texttt{ArithmeticError}, \texttt{Exception}, \texttt{BaseException}, \texttt{object})$. $E_1$ is not in it; $E_2$ is, so the handler is $i = 2$ and `classify` returns `"arithmetic"`.
+2. `ZeroDivisionError()` contains all three classes in its MRO, so $\min \lbrace 1, 2, 3 \rbrace = 1$: `"zero division"`.
+3. `KeyboardInterrupt()` has $\operatorname{mro} = (\texttt{KeyboardInterrupt}, \texttt{BaseException}, \texttt{object})$. None of $E_1, E_2, E_3$ is in it, so the set is empty and the exception escapes. The lab checks that `classify(KeyboardInterrupt())` raises. This is why `except Exception` never swallows Ctrl-C.
+
+Your own errors join the tree by subclassing. Give a library one base class, then one subclass per business failure, and store the facts on the object:
+
+```python
+class BankError(Exception):
+    """Base class for every error this module raises."""
+
+
+class InsufficientFundsError(BankError):
+    def __init__(self, balance, amount):
+        super().__init__(f"cannot withdraw {amount} from a balance of {balance}")
+        self.balance = balance
+        self.amount = amount
+
+
+def withdraw(balance, amount):
+    if amount > balance:
+        raise InsufficientFundsError(balance, amount)
+    return balance - amount
+```
+
+`withdraw(100, 30)` returns 70. `withdraw(100, 130)` raises an error whose message is `cannot withdraw 130 from a balance of 100`. A caller can catch every bank problem with `except BankError`, or this one with `except InsufficientFundsError`, and compute the shortfall from the attributes: $130 - 100 = 30$.
+
+### Level 3: chaining with `raise ... from`
+
+A low-level error often needs translating into a business one. `raise NewError(...) from error` does that and keeps the original attached:
+
+```python
+def read_port(text):
+    try:
+        return int(text)
+    except ValueError as error:
+        raise ConfigError(f"port must be a number, got {text!r}") from error
+```
+
+Every exception has three attributes for this, set by PEP 3134 (Ka-Ping Yee):
+
+| How it was raised | `__cause__` | `__context__` | `__suppress_context__` | Traceback says |
+|---|---|---|---|---|
+| `raise New(...)` inside `except` | `None` | the `ValueError` | `False` | "During handling of the above exception, another exception occurred:" |
+| `raise New(...) from error` | the `ValueError` | the `ValueError` | `True` | "The above exception was the direct cause of the following exception:" |
+| `raise New(...) from None` | `None` | the `ValueError` | `True` | only the new error |
+
+The lab checks every cell for `read_port`, `read_port_implicit` and `read_port_quiet`. The first row is the accident: the traceback reads as if a second bug happened while handling the first. The second row is the intent: "this happened *because of* that". `from None` hides the cause from the printout, but `__context__` still records it for debuggers.
+
+Sometimes you only want to add a fact and re-raise the same error. Python 3.11 added notes (PEP 678, Zac Hatfield-Dodds):
+
+```python
+def parse_line(number, text):
+    try:
+        return int(text)
+    except ValueError as error:
+        error.add_note(f"while parsing line {number}")
+        raise
+```
+
+A bare `raise` re-raises the exception being handled, with its original traceback. `parse_line(3, "x")` raises a `ValueError` whose `__notes__` is `["while parsing line 3"]`, and the default traceback prints the note under the message.
+
+### Level 4: ask forgiveness, or look before you leap
+
+Two ways to read an optional setting:
+
+```python
+def port_lbyl(config):
+    if "port" in config:
+        return config["port"]
+    return 80
+
+
+def port_eafp(config):
+    try:
+        return config["port"]
+    except KeyError:
+        return 80
+```
+
+Both return 8080 for `{"port": 8080}` and 80 for `{}`. **LBYL** ("look before you leap") checks first; **EAFP** tries and handles the failure. Python favours EAFP for two reasons:
+
+- **No gap between looking and leaping.** The glossary's own example: with threads, `if key in mapping: return mapping[key]` can fail if another thread removes the key between the test and the lookup. The same gap exists for files: `os.path.exists(path)` followed by `open(path)` races with anything that deletes the file. Just `open` it and catch `FileNotFoundError`.
+- **A `try` that does not raise costs nothing.** Python 3.11's "zero-cost" exceptions removed "the cost of try statements when no exception is raised" (see below). Only actually raising costs something, so EAFP is fastest when failure is rare.
+
+For a plain dictionary default, `config.get("port", 80)` is shorter than both. EAFP is a habit, not a law: LBYL is still right when failure is the common case, or when a failed attempt has side effects that cannot be undone.
+
+### Level 5: the `with` statement and context managers
+
+A **context manager** is any object with two methods: `__enter__` runs at the start of the `with` block, and `__exit__` runs at the end, however the block ends.
+
+```python
+class Tracked:
+    def __init__(self, log, suppress=False):
+        self.log = log
+        self.suppress = suppress
+
+    def __enter__(self):
+        self.log.append("enter")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.log.append(("exit", exc_type))
+        return self.suppress  # a true value swallows the exception
+```
+
+The lab runs it three ways:
+
+| Block | Log | What happens next |
+|---|---|---|
+| ends normally | `["enter", "body", ("exit", None)]` | continues after `with` |
+| raises `ValueError` | `["enter", ("exit", ValueError)]` | the `ValueError` propagates |
+| raises, `suppress=True` | `["enter", ("exit", ValueError)]` | continues after `with`, error gone |
+
+`__exit__` receives the exception's class, the exception itself and its traceback, or three `None`s. If it returns a true value, the exception is **suppressed**. `contextlib.suppress(ValueError)` is exactly such a manager.
+
+Writing a class is often more than you need. `contextlib.contextmanager` turns a generator into a context manager ([Iterators and Generators](04-iterators-and-generators.qmd)): the code before `yield` is `__enter__`, the code after is `__exit__`, and an exception in the block is re-raised **at the `yield`**:
+
+```python
+@contextlib.contextmanager
+def transaction(account):
+    snapshot = dict(account)
+    try:
+        yield account
+    except Exception:
+        account.clear()
+        account.update(snapshot)  # roll back, then let the error continue
+        raise
+```
+
+This fixes the problem from the start of the chapter. Withdrawing 30 inside `with transaction(account)` and then raising `ValueError("card declined")` leaves the account at `{"balance": 100}`; without the error it ends at `{"balance": 70}`.
+
+When the number of resources is only known at run time, `contextlib.ExitStack` enters them one by one and exits all of them:
+
+```python
+@contextlib.contextmanager
+def resource(name, log):
+    log.append(f"open {name}")
+    try:
+        yield name
+    finally:
+        log.append(f"close {name}")
+
+
+def use_all(names, log):
+    with contextlib.ExitStack() as stack:
+        opened = [stack.enter_context(resource(name, log)) for name in names]
+        log.append(f"using {len(opened)}")
+```
+
+`use_all(["a", "b", "c"], log)` logs `open a, open b, open c, using 3, close c, close b, close a`. Exits run in **reverse** order, like a stack of plates:
+
+$$
+\operatorname{close}_k = \operatorname{open}_{n + 1 - k}, \qquad k = 1, 2, \dots, n
+$$
+
+where
+
+- $n$ is the number of resources entered;
+- $\operatorname{open}_k$ is the $k$-th resource entered;
+- $\operatorname{close}_k$ is the $k$-th resource exited.
+
+Example with $n = 3$ and $\operatorname{open} = (a, b, c)$: $\operatorname{close}_1 = \operatorname{open}_{3+1-1} = \operatorname{open}_3 = c$, then $\operatorname{close}_2 = \operatorname{open}_2 = b$, then $\operatorname{close}_3 = \operatorname{open}_1 = a$. Reverse order matters because a later resource may depend on an earlier one, such as a cursor on a connection. If entering `b` had failed, the stack would still have closed `a`.
+
+### Level 6: several errors at once with `ExceptionGroup` and `except*`
+
+A form check wants to report **every** problem, not only the first. Python 3.11 added `ExceptionGroup` and `except*` (PEP 654, by Irit Katriel, Yury Selivanov and Guido van Rossum):
+
+```python
+def validate(form):
+    errors = []
+    if not form.get("name"):
+        errors.append(ValueError("name is required"))
+    if not isinstance(form.get("age"), int):
+        errors.append(TypeError("age must be an int"))
+    if errors:
+        raise ExceptionGroup("invalid form", errors)
+
+
+def report(form):
+    handled = []
+    try:
+        validate(form)
+    except* ValueError as group:
+        handled.append(("value", len(group.exceptions)))
+    except* TypeError as group:
+        handled.append(("type", len(group.exceptions)))
+    return handled
+```
+
+`report({"name": "", "age": "ten"})` returns `[("value", 1), ("type", 1)]`: **both** handlers ran, which plain `except` never does. Each `except*` clause takes the matching part of the group:
+
+$$
+G_i = \lbrace e \in G \setminus (G_1 \cup \dots \cup G_{i-1}) : \operatorname{type}(e) \text{ is } E_i \text{ or a subclass} \rbrace
+$$
+
+where
+
+- $G$ is the set of exceptions inside the raised group;
+- $E_i$ is the class named by the $i$-th `except*` clause;
+- $G_i$ is the subgroup that clause $i$ receives. The clause runs once if $G_i$ is not empty, and not at all if it is;
+- whatever is left, $G \setminus (G_1 \cup \dots \cup G_m)$ for $m$ clauses, is re-raised as a new group.
+
+Example:
+
+1. $G = \lbrace \texttt{ValueError}, \texttt{TypeError} \rbrace$: $G_1 = \lbrace \texttt{ValueError} \rbrace$ and $G_2 = \lbrace \texttt{TypeError} \rbrace$, so both clauses run with one exception each, and nothing is left.
+2. `report({"name": "", "age": 10})`: $G = \lbrace \texttt{ValueError} \rbrace$, $G_1 = \lbrace \texttt{ValueError} \rbrace$, $G_2 = \emptyset$, so only the first clause runs: `[("value", 1)]`.
+
+The method behind it is `group.split(ValueError)`, which returns the matching and non-matching subgroups. `str(group)` is `invalid form (2 sub-exceptions)`. [Asyncio](13-coroutines-and-asyncio.qmd) uses groups for real: a `TaskGroup` whose tasks fail raises all their errors together.
+
+## How it works underneath
+
+**Zero-cost `try`.** Up to Python 3.10, entering a `try` ran a `SETUP_FINALLY` instruction that pushed a handler onto a block stack, and leaving it ran `POP_BLOCK`. Since 3.11 there is no block stack. The compiler writes an **exception table** beside the bytecode instead: a list of instruction ranges and the handler for each. `dis.dis` on a small function shows it:
+
+```python
+# sketch: disassembled with dis.dis on Python 3.14, not part of the lab
+def parse(text):
+    try:
+        return int(text)
+    except ValueError:
+        return None
+```
+
+```text
+   2           RESUME                   0
+   3           NOP
+   4   L1:     LOAD_GLOBAL              1 (int + NULL)
+               LOAD_FAST_BORROW         0 (text)
+               CALL                     1
+       L2:     RETURN_VALUE
+
+  --   L3:     PUSH_EXC_INFO
+   5           LOAD_GLOBAL              2 (ValueError)
+               CHECK_EXC_MATCH
+               POP_JUMP_IF_FALSE        5 (to L5)
+...
+ExceptionTable:
+  L1 to L2 -> L3 [0]
+```
+
+The `NOP` only gives debuggers a place to stop on the `try:` line. The happy path from `L1` to `L2` is the same bytecode as without `try`. Only when `CALL` raises does the interpreter look up the current instruction in the table, find `L3`, unwind the value stack to depth 0, and jump. `CHECK_EXC_MATCH` is the Level 2 rule; if it fails, `RERAISE` sends the exception on to the caller's frame, which repeats the lookup in its own table. That walk up the frames is **stack unwinding**, and each frame it passes is recorded in the traceback, a linked list reached through `error.__traceback__.tb_next`.
+
+**`with` is a `try` in disguise.** The language reference gives the exact translation of `with EXPRESSION as TARGET: SUITE`:
+
+```python
+# sketch: the translation from the Python language reference
+manager = (EXPRESSION)
+enter = manager.__enter__
+exit = manager.__exit__
+value = enter()
+hit_except = False
+
+try:
+    TARGET = value
+    SUITE
+except:
+    hit_except = True
+    if not exit(*sys.exc_info()):
+        raise
+finally:
+    if not hit_except:
+        exit(None, None, None)
+```
+
+Read it against Level 5: `__exit__` is called exactly once if `__enter__` returned; a false return value re-raises; a true one swallows. If `__enter__` itself raises, the `try` is never entered, so `__exit__` does not run. That is why a context manager acquires its resource in `__enter__` and not before.
+
+**The `as` name is deleted.** The reference says `except E as N: foo` behaves like `except E as N: try: foo finally: del N`. An exception holds its traceback, the traceback holds the frame, and the frame holds the local `N`: a reference cycle that would keep every local alive until the cycle collector runs ([Memory and Garbage Collection](11-memory-and-garbage-collection.qmd)). Deleting `N` breaks the cycle. The lab's `name_after_except` shows the consequence: using `error` after the block raises `UnboundLocalError`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| A bare `except:` (or `except BaseException`) that does not re-raise | Ctrl-C and `sys.exit()` are swallowed; the program will not stop | Catch `Exception` or, better, the specific class you can handle |
+| A general handler above a specific one | The specific handler never runs (Level 2: the first match wins) | Order handlers from most specific to most general |
+| Raising a new error inside `except` without `from` | Traceback says "During handling of the above exception, another exception occurred:", which looks like a second bug | `raise NewError(...) from error` |
+| `return`, `break` or `continue` inside `finally` | The in-flight exception is silently discarded; Python 3.14 reports `SyntaxWarning: 'return' in a 'finally' block` (PEP 765) | Return after the `try` statement instead |
+| `@contextmanager` without `try`/`finally` around `yield` | The clean-up after `yield` is skipped when the block raises; the lab's log stays `["open"]` | Put the clean-up in `finally` (as in `resource`) |
+| Mixing `except` and `except*` on one `try` | `SyntaxError: cannot have both 'except' and 'except*' on the same 'try'` | Use one kind per `try` |
+| Using the exception after its `except` block | `UnboundLocalError: cannot access local variable 'error' where it is not associated with a value` | Assign it to another name inside the block |
+
+## Interview questions
+
+### 1. In what order do `try`, `except`, `else` and `finally` run, and why does `else` exist?
+
+**Answer.** `try` runs first. If it raises an exception that a handler matches, that one `except` block runs; if it raises nothing, `else` runs; `finally` runs last in every case, including a `return` from the body and an exception no handler matches, which then propagates after `finally`. The lab's `run_steps` returns `["try", "else", "finally"]` and `["try", "except", "finally"]`. `else` exists to keep the `try` body minimal: code in `else` runs only on success, but its own exceptions are **not** caught by the handlers above it, so a bug there is not mistaken for the expected failure.
+
+### 2. What is the difference between `__cause__` and `__context__`?
+
+**Answer.** `__context__` is set automatically whenever an exception is raised while another is being handled: "this happened during that". `__cause__` is set only by `raise New from old`: "this happened because of that", and it also sets `__suppress_context__ = True` so the traceback prints the cause with "The above exception was the direct cause of the following exception:". `raise New from None` sets `__cause__ = None` and `__suppress_context__ = True`, so the old error is hidden from the printout but still stored in `__context__`. The lab checks all three variants of `read_port`.
+
+### 3. How does `with` work, and how can a context manager swallow an exception?
+
+**Answer.** `with m as x:` calls `m.__enter__()` and binds its result to `x`, runs the block inside a `try`, and calls `m.__exit__(exc_type, exc, tb)` exactly once afterwards, with three `None`s on a normal exit. If the block raised and `__exit__` returns a true value, the exception is suppressed; otherwise it propagates. The methods are looked up on the type, not the instance. `Tracked(log, suppress=True)` and `contextlib.suppress` work this way; `@contextmanager` builds both methods from a generator and re-raises the block's exception at the `yield`.
+
+### 4. Why is `except Exception` preferred to a bare `except`?
+
+**Answer.** A bare `except` matches `BaseException`, which includes `KeyboardInterrupt`, `SystemExit`, `GeneratorExit` and, since Python 3.8, `asyncio.CancelledError`. Those are control-flow signals, not errors, so catching them breaks Ctrl-C, `sys.exit()`, generator clean-up and task cancellation. `Exception` is the root of real errors only; by the MRO rule, `classify(KeyboardInterrupt())` escapes `except Exception`. Even better is catching only the class you can actually handle.
+
+### 5. When do you need `except*` instead of `except`?
+
+**Answer.** When code raises an `ExceptionGroup`, several unrelated errors at once, as `asyncio.TaskGroup` does when several tasks fail. `except ValueError` would not match a group at all, because a group is not a `ValueError`. `except* ValueError` splits the group and receives only the `ValueError` part; every clause whose part is non-empty runs, once; anything unmatched is re-raised as a smaller group. In the lab, one form with two problems runs both clauses: `[("value", 1), ("type", 1)]`.
+
+## Summary
+
+$$
+\operatorname{handler}(e) = \min \lbrace i : E_i \in \operatorname{mro}(\operatorname{type}(e)) \rbrace, \qquad \operatorname{close}_k = \operatorname{open}_{n+1-k}
+$$
+
+where $e$ is the raised exception, $\operatorname{mro}(\operatorname{type}(e))$ its class followed by its base classes, $E_i$ the class of the $i$-th `except` clause, and $\operatorname{open}_k$, $\operatorname{close}_k$ the $k$-th resource entered and exited among $n$.
+
+Example: `OverflowError` against clauses `ZeroDivisionError`, `ArithmeticError`, `Exception` picks $i = 2$; three resources `a, b, c` close as `c, b, a`.
+
+- An exception unwinds the stack until the first matching handler; `finally` and `__exit__` run on the way out.
+- Catch the narrowest class you can handle; give your own library one base exception class.
+- Translate errors with `raise ... from error`; add facts with `add_note` and a bare `raise`.
+- Prefer EAFP: no check-then-act race, and a `try` that does not raise is free.
+- Own every resource with `with`; use `@contextmanager` with `try`/`finally`, and `ExitStack` for a variable number.
+- `ExceptionGroup` carries several errors; `except*` handles each type once.
+
+## References
+
+- Python 3.14 documentation: [Errors and Exceptions](https://docs.python.org/3.14/tutorial/errors.html) (tutorial), [Built-in Exceptions](https://docs.python.org/3.14/library/exceptions.html) (the full hierarchy), [The try statement](https://docs.python.org/3.14/reference/compound_stmts.html#the-try-statement) and [The with statement](https://docs.python.org/3.14/reference/compound_stmts.html#the-with-statement) (language reference), [contextlib](https://docs.python.org/3.14/library/contextlib.html).
+- Python glossary: [EAFP](https://docs.python.org/3.14/glossary.html#term-EAFP) and [LBYL](https://docs.python.org/3.14/glossary.html#term-LBYL).
+- [What's New in Python 3.11](https://docs.python.org/3.14/whatsnew/3.11.html): zero-cost exceptions, exception groups and notes.
+- PEPs: [343, The "with" Statement](https://peps.python.org/pep-0343/) (Guido van Rossum, Alyssa Coghlan); [3134, Exception Chaining and Embedded Tracebacks](https://peps.python.org/pep-3134/) (Ka-Ping Yee); [654, Exception Groups and except*](https://peps.python.org/pep-0654/) (Irit Katriel, Yury Selivanov, Guido van Rossum); [678, Enriching Exceptions with Notes](https://peps.python.org/pep-0678/) (Zac Hatfield-Dodds); [765, Disallow return/break/continue that exit a finally block](https://peps.python.org/pep-0765/) (Python 3.14).
+- Raymond Hettinger, [Transforming Code into Beautiful, Idiomatic Python](https://www.youtube.com/watch?v=OSGv2VnC0go) (PyCon US 2013), on factoring out temporary contexts with context managers, including the `ignored` helper that shipped in Python 3.4 as `contextlib.suppress` (see the [talk notes](https://github.com/JeffPaine/beautiful_idiomatic_python)).
+- Luciano Ramalho, [*Fluent Python*](https://www.fluentpython.com/), 2nd ed. (O'Reilly, 2022), chapter 18, "with, match, and else Blocks".
+- Quote Investigator, [It's Easier To Ask Forgiveness Than To Get Permission](https://quoteinvestigator.com/2018/06/19/forgive/).
+- Lab: [`labs/exceptions-and-context-managers.py`](labs/exceptions-and-context-managers.py). Run it from `programming-languages/python/labs` with `python3 -I exceptions-and-context-managers.py`.

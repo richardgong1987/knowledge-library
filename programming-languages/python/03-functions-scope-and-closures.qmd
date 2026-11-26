@@ -1,0 +1,366 @@
+---
+title: "Functions, Scope and Closures"
+description: "Python functions as objects: LEGB name lookup, global and nonlocal, closures and cell objects, late binding in loops, default values evaluated once, *args and **kwargs, positional-only and keyword-only parameters, and lambda."
+---
+
+## The problem
+
+A bakery wants a ticket machine: each call should hand out the next number, 1, 2, 3. The first attempt keeps the number in a module variable:
+
+```python
+count = 0
+
+
+def increment():
+    count += 1  # assignment makes count local to the whole function
+    return count
+```
+
+The first call crashes with `UnboundLocalError: cannot access local variable 'count' where it is not associated with a value`, although `count` plainly has a value. A second attempt builds three buttons in a loop, `[lambda: i for i in range(3)]`, and every button prints 2 instead of 0, 1 and 2.
+
+Both surprises have one cause. Python decides **where** a name lives when it compiles the function, and a nested function captures **variables**, not values. Learn those two rules, plus how a function object stores its defaults and its captured variables, and every one of these puzzles has a one-line explanation.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Looking for your shoes
+
+When you need your shoes, you look in **your room** first, then **the rest of the house**, then the **school lost-and-found**, then you **buy them in town**. You stop at the first place that has them. Python looks for a name the same way: **L**ocal, **E**nclosing, **G**lobal, **B**uilt-in, or LEGB.
+
+A **closure** is a recipe card that a cook wrote in someone's kitchen, with a small backpack tied to it. The backpack holds the very jars from that kitchen, not photos of them. If someone refills a jar later, the recipe uses the new contents.
+
+Guido van Rossum wrote on his *History of Python* blog: *"One of my goals for Python was to make it so that all objects were 'first class.'"* Functions are such objects: you can store them, pass them and return them, like numbers.
+:::
+
+## From simple to advanced
+
+### Level 1: a function is an object
+
+`def` is an executable statement. When it runs, it builds a function object and binds it to a name, just as `=` would.
+
+```python
+def shout(text):
+    return text.upper() + "!"
+
+
+def apply_twice(func, value):
+    return func(func(value))
+```
+
+`apply_twice` receives a function as an argument and calls it twice, which is function composition:
+
+$$
+\operatorname{twice}(f, x) = f\bigl(f(x)\bigr) = (f \circ f)(x)
+$$
+
+where
+
+- $\operatorname{twice}$ is `apply_twice`;
+- $f$ is any function of one argument and $x$ is its input;
+- $f \circ f$ ("$f$ after $f$") is the function that applies $f$ and then applies $f$ again.
+
+Example: with $f = $ `shout` and $x = $ `"hi"`, $f(\texttt{"hi"}) = \texttt{"HI!"}$, then $f(\texttt{"HI!"}) = \texttt{"HI!!"}$. The lab also stores `shout` in a dict and calls it from there, and checks `shout.__name__ == "shout"` and `type(shout).__name__ == "function"`.
+
+### Level 2: LEGB, decided at compile time
+
+Python looks a name up in four kinds of scope, in this order: the **L**ocal scope of the current function, the scopes of **E**nclosing functions, the module's **G**lobal scope, and the **B**uilt-in scope (`len`, `print`). Which of these a name belongs to is fixed when the function is compiled:
+
+$$
+\operatorname{scope}_f(n) =
+\begin{cases}
+\text{local} & \text{if } f \text{ assigns to } n \text{ anywhere and has no } \texttt{global} \text{ or } \texttt{nonlocal} \text{ for it} \\
+\text{free} & \text{otherwise, if an enclosing function binds } n \\
+\text{global, then built-in} & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $f$ is the function being compiled and $n$ is a name it uses;
+- "assigns" includes `=`, `+=`, `for n in`, `import n`, `def n` and being a parameter;
+- **free** means "belongs to an enclosing function": it is read through that function's variable.
+
+```python
+place = "global"
+
+
+def outer():
+    place = "enclosing"
+
+    def inner():
+        return place, len("abc")  # place: found in E; len: found in B
+
+    return inner()
+```
+
+Example: `inner` never assigns `place`, and `outer` does, so the second case makes `place` free in `inner`, and it reads `"enclosing"`. Nothing binds `len` in `inner`, `outer` or the module, so the last case applies: the global lookup misses and the built-in one finds the `len` function. `outer()` returns `("enclosing", 3)`.
+
+Now the ticket machine of The problem. `increment` contains `count += 1`, an assignment, so the first case makes `count` **local for the whole body**, including the read on the right-hand side of `+=`. The read happens before any local value exists, hence `UnboundLocalError`. The global `count = 0` is never consulted.
+
+### Level 3: `global` and `nonlocal`
+
+To **rebind** a name in an outer scope, declare it. `global` points at the module scope, and `nonlocal` at the nearest enclosing function:
+
+```python
+visits = 0
+
+
+def record_visit():
+    global visits  # rebind the module's name
+    visits += 1
+    return visits
+
+
+def make_counter():
+    count = 0
+
+    def next_ticket():
+        nonlocal count  # rebind the enclosing function's name
+        count += 1
+        return count
+
+    return next_ticket
+```
+
+`record_visit()` twice returns 1, then 2, and the module's `visits` is 2. `tickets = make_counter()` gives a ticket machine: `tickets()` returns 1, 2, 3 on three calls. A second `make_counter()` starts again at 1, because each call of `make_counter` creates a fresh `count`. That is the bakery's machine, with no global state at all. `nonlocal` arrived in Python 3.0 ([PEP 3104](https://peps.python.org/pep-3104/)); before it, people stored the counter in a one-item list to dodge the "assignment makes it local" rule.
+
+Reading an outer name needs no declaration; only rebinding does. Mutating an outer object (`items.append(x)`) is not rebinding either, so it needs none.
+
+### Level 4: closures and cell objects
+
+A function that uses a free variable is a **closure**. The variable cannot live in the enclosing function's frame, because that frame is gone after `make_multiplier` returns. CPython moves it into a small heap object called a **cell**, and both functions refer to the cell:
+
+```python
+def make_multiplier(factor):
+    def multiply(x):
+        return x * factor
+
+    return multiply
+```
+
+$$
+\operatorname{closure} = \bigl\langle\, \text{code},\ \lbrace\, v \mapsto \operatorname{cell}(v) : v \text{ free in the code} \,\rbrace \,\bigr\rangle
+$$
+
+where
+
+- "code" is the compiled body, shared by every function made from this `def`;
+- $v$ ranges over the free variables, listed in `__code__.co_freevars`;
+- $\operatorname{cell}(v)$ is the cell object holding $v$'s current value, found in `__closure__`.
+
+Example: `triple = make_multiplier(3)` is $\langle \texttt{multiply}, \lbrace \texttt{factor} \mapsto \operatorname{cell}(3) \rbrace \rangle$, so `triple(5)` computes $5 \times 3 = 15$. The lab inspects every piece:
+
+```text
+triple.__code__.co_freevars           ('factor',)   free in multiply
+make_multiplier.__code__.co_cellvars  ('factor',)   kept in a cell by make_multiplier
+type(triple.__closure__[0]).__name__  'cell'
+triple.__closure__[0].cell_contents   3
+```
+
+### Level 5: late binding in loops
+
+A cell holds a **variable**, so a closure sees the variable's value at **call** time, not at definition time:
+
+```python
+def late_binding():
+    callbacks = [lambda: i for i in range(3)]
+    return [f() for f in callbacks]
+```
+
+It returns `[2, 2, 2]`. All three lambdas close over the same `i`:
+
+$$
+f_k() = \operatorname{contents}(c_i) \text{ at the moment } f_k \text{ is called}
+$$
+
+where
+
+- $f_0, f_1, f_2$ are the three lambdas;
+- $c_i$ is the single cell that holds the loop variable `i`;
+- $\operatorname{contents}$ reads what the cell holds now.
+
+Example: the loop sets $c_i$ to 0, then 1, then 2, and stops. Only afterwards are the lambdas called, so $f_0() = f_1() = f_2() = \operatorname{contents}(c_i) = 2$. The lab checks `callbacks[0].__closure__[0] is callbacks[2].__closure__[0]`: three closures, one cell.
+
+The fix is to capture the **value** at definition time. A default value does that, because defaults are evaluated when the function is created (Level 6):
+
+```python
+def early_binding():
+    callbacks = [lambda i=i: i for i in range(3)]  # the default is evaluated now
+    return [f() for f in callbacks]
+```
+
+It returns `[0, 1, 2]`. `functools.partial(func, i)` is the other common fix. The Python FAQ answers this exact question: *Why do lambdas defined in a loop with different values all return the same result?*
+
+### Level 6: default values are evaluated once
+
+The reference manual is precise: *"Default parameter values are evaluated from left to right when the function definition is executed."* The value is stored on the function object, in `__defaults__`, and the **same object** is used on every call that omits the argument:
+
+```python
+def add_mark(mark, marks=[]):
+    marks.append(mark)  # the same list object on every call
+    return marks
+```
+
+Example: `def` runs once and stores one empty list $d$ in `add_mark.__defaults__`. `add_mark(1)` appends to $d$ and returns `[1]`. `add_mark(2)` appends to the **same** $d$ and returns `[1, 2]`, and now `add_mark.__defaults__ == ([1, 2],)`. The standard fix uses `None` as a "not given" marker and creates the list inside the call:
+
+```python
+def add_mark_safely(mark, marks=None):
+    if marks is None:
+        marks = []  # a new list on every call
+    marks.append(mark)
+    return marks
+```
+
+`add_mark_safely(1)` and `add_mark_safely(2)` return `[1]` and `[2]`. Immutable defaults such as `0`, `"cm"` or `None` are safe, because nobody can change them.
+
+### Level 7: `*args`, `**kwargs`, `/` and `*`
+
+`*numbers` collects extra positional arguments into a tuple; `**labels` collects extra keyword arguments into a dict. At a call site, `*` and `**` do the reverse and unpack:
+
+```python
+def total(*numbers, **labels):
+    return sum(numbers), labels
+```
+
+`total(1, 2, 3, unit="cm")` returns `(6, {"unit": "cm"})`, and `total(*[1, 2], **{"unit": "kg"})` returns `(3, {"unit": "kg"})`.
+
+A bare `/` and a bare `*` in a signature control **how** each parameter may be passed. Parameters before `/` are positional-only ([PEP 570](https://peps.python.org/pep-0570/), Python 3.8); parameters after `*` are keyword-only ([PEP 3102](https://peps.python.org/pep-3102/), Python 3.0):
+
+```python
+def ratio(numerator, denominator, /, *, rounded=False):
+    value = numerator / denominator
+    return round(value) if rounded else value
+```
+
+| Call | Result |
+|---|---|
+| `ratio(7, 2)` | `3.5` |
+| `ratio(7, 2, rounded=True)` | `4` (`round` rounds half to even) |
+| `ratio(numerator=7, denominator=2)` | `TypeError: ratio() got some positional-only arguments passed as keyword arguments: 'numerator, denominator'` |
+| `ratio(7, 2, True)` | `TypeError: ratio() takes 2 positional arguments but 3 were given` |
+
+Positional-only parameters let a library rename them later without breaking callers, and many built-ins already work this way: `len(obj=[])` raises `TypeError: len() takes no keyword arguments`. Keyword-only parameters force readable calls: `rounded=True` says what `True` means.
+
+`lambda` is a function written as one expression, handy for short `key=` functions:
+
+```python
+def lambdas():
+    by_length = sorted(["pear", "fig", "banana"], key=lambda word: len(word))
+    return by_length, (lambda: 0).__name__
+```
+
+It returns `(["fig", "pear", "banana"], "<lambda>")`. A lambda is an ordinary function object; it just has no statements and no real name.
+
+## How it works underneath
+
+The compiler builds a **symbol table** for every function and classifies each name as local, cell (local, but captured by an inner function), free (captured from outside) or global. That classification picks the bytecode. Trimmed `dis` output for `make_counter` and `next_ticket` on CPython 3.14:
+
+```text
+make_counter:
+  MAKE_CELL                1 (count)       count lives in a cell, not a plain slot
+  LOAD_SMALL_INT           0
+  STORE_DEREF              1 (count)       count = 0, written through the cell
+  LOAD_FAST_BORROW         1 (count)       load the cell object itself
+  BUILD_TUPLE              1               the closure tuple: (cell,)
+  LOAD_CONST               1 (<code object next_ticket ...>)
+  MAKE_FUNCTION
+  SET_FUNCTION_ATTRIBUTE   8 (closure)     attach the tuple as __closure__
+
+next_ticket:
+  COPY_FREE_VARS           1               copy the cell into this frame
+  LOAD_DEREF               0 (count)       read through the cell
+  LOAD_SMALL_INT           1
+  BINARY_OP               13 (+=)
+  STORE_DEREF              0 (count)       write through the cell: nonlocal
+```
+
+| Kind of name | Load instruction | Where the value is |
+|---|---|---|
+| Local | `LOAD_FAST` | A slot in the frame's array, by index |
+| Cell or free | `LOAD_DEREF` | Inside a cell object, shared with other functions |
+| Global or built-in | `LOAD_GLOBAL` | The module dict, then the builtins dict |
+| Module or class body | `LOAD_NAME` | The current namespace dict, then globals, then builtins |
+
+The cell is the backpack from the analogy. From `Include/cpython/cellobject.h`:
+
+```text
+typedef struct {
+    PyObject_HEAD
+    PyObject *ob_ref;   /* content of the cell, or NULL when empty */
+} PyCellObject;
+```
+
+A function object (`Include/cpython/funcobject.h`) bundles everything a call needs: `func_code` (the code object), `func_globals` and `func_builtins` (where LEGB's last two steps look), `func_defaults` and `func_kwdefaults` (evaluated once by `def`), and `func_closure`, a tuple of cells matching `co_freevars`. The header's own comment says it best: function objects are created by executing `def`, and one code object can be shared by many function objects. `make_multiplier(3)` and `make_multiplier(4)` are two function objects with one code object and two different cells.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `count += 1` on a module variable inside a function | `UnboundLocalError: cannot access local variable 'count' where it is not associated with a value` | `global count`, or better, a closure with `nonlocal`, or a class |
+| `nonlocal` to rebind a module variable | `SyntaxError: no binding for nonlocal 'count' found` | `nonlocal` is for enclosing functions; use `global` for the module |
+| Lambdas created in a loop | Every lambda sees the last value, `[2, 2, 2]` | `lambda i=i: i`, or `functools.partial` |
+| A mutable default such as `marks=[]` | Values pile up across calls: `[1]`, then `[1, 2]` | `marks=None`, then `if marks is None: marks = []` |
+| A method uses a class attribute by bare name | `NameError: name 'limit' is not defined` | Write `self.limit` or `type(self).limit` (interview question 5) |
+| Shadowing a built-in, such as `list = [1, 2]` | Later `list("ab")` fails: `TypeError: 'list' object is not callable` | Choose another name; `del list` restores the built-in |
+| Passing a positional-only parameter by name | `TypeError: ratio() got some positional-only arguments passed as keyword arguments: ...` | Pass it positionally |
+
+## Interview questions
+
+### 1. What is a closure, and how does CPython implement one?
+
+**Answer.** A closure is a function together with the variables it uses from an enclosing function's scope. The compiler sees that `factor` is assigned in `make_multiplier` and used in `multiply`, so it marks `factor` as a **cell variable** in the outer function (`co_cellvars`) and a **free variable** in the inner one (`co_freevars`). At run time the outer function stores `factor` in a cell object, `MAKE_FUNCTION` attaches a tuple of those cells as `__closure__`, and the inner function reads and writes through them with `LOAD_DEREF` and `STORE_DEREF`. The cell outlives the outer frame because the closure still refers to it.
+
+### 2. Why does `[lambda: i for i in range(3)]` give 2, 2, 2?
+
+**Answer.** All three lambdas close over the same variable `i`, stored in one cell, and they read it when called. By then the loop has finished and the cell holds 2 (Level 5). It is not a bug in lambdas: a `def` inside the loop behaves the same way. To freeze each value, bind it at creation time: `lambda i=i: i` stores it as a default, and `functools.partial(f, i)` stores it in the partial object. Both give `[0, 1, 2]`.
+
+### 3. Why are mutable default arguments a problem?
+
+**Answer.** Defaults are evaluated **once**, when `def` runs, and stored in `__defaults__`. Every call that omits the argument receives that same object. With a list, each call's `append` lands in the one shared list: `add_mark(1)` returns `[1]` and `add_mark(2)` returns `[1, 2]`. Use `None` as the default and create the list in the body. The same evaluation-at-`def` rule is what makes `lambda i=i: i` work, so it is a feature, not an accident.
+
+### 4. What is the difference between `global` and `nonlocal`?
+
+**Answer.** Both tell the compiler "this name is not local, so assignments rebind the outer variable". `global n` binds to the module's namespace dict (`STORE_GLOBAL`). `nonlocal n` binds to the nearest **enclosing function** that has `n`, through a cell (`STORE_DEREF`), and it is a `SyntaxError` if no enclosing function has it. `nonlocal` is the cleaner tool for private state such as the ticket counter, because each call of `make_counter` gets its own cell, while a global is one shared variable for the whole module.
+
+### 5. Why can't a method see a class attribute by its bare name?
+
+**Answer.** A class body is not an enclosing scope for the functions defined in it. The reference manual says the scope of names defined in a class block *"does not extend to the code blocks of methods"*. So inside `broken`, LEGB skips the class: `limit` is not local, there is no enclosing function, and there is no global `limit`, so it raises `NameError: name 'limit' is not defined`. Methods reach class attributes through the instance or the class, `self.limit`, which uses attribute lookup ([Classes and the Data Model](06-classes-and-the-data-model.qmd)), not name lookup.
+
+```python
+class Config:
+    limit = 3
+
+    def broken(self):
+        return limit  # NameError: the class scope is skipped
+
+    def fixed(self):
+        return self.limit
+```
+
+## Summary
+
+$$
+\operatorname{resolve}(n) = \text{the first of } L, E_1, \ldots, E_k, G, B \text{ that binds } n
+$$
+
+where $n$ is a name, $L$ is the local scope, $E_1, \ldots, E_k$ are the enclosing function scopes from the innermost outwards, $G$ is the module's globals and $B$ the built-ins. Assignment anywhere in a function pins $n$ to $L$ for the whole function.
+
+Example: in `inner`, `place` is not in $L$, is in $E_1$ (`outer`), so it resolves to `"enclosing"`; `len` is in none of $L$, $E_1$, $G$, so it resolves to $B$'s `len`.
+
+- `def` creates a function object at run time; functions can be stored, passed and returned.
+- Scope is decided at compile time: an assignment makes a name local everywhere in that function.
+- `global` rebinds a module name; `nonlocal` rebinds an enclosing function's name.
+- Closures capture variables in cells, so they see later changes: late binding.
+- Defaults are evaluated once; never use a mutable default unless you want shared state.
+- `/` marks positional-only parameters, `*` starts keyword-only ones; `*args` and `**kwargs` collect the rest.
+
+## References
+
+- The Python Language Reference: [Naming and binding](https://docs.python.org/3.14/reference/executionmodel.html#naming-and-binding), [Function definitions](https://docs.python.org/3.14/reference/compound_stmts.html#function-definitions), [The `global` statement](https://docs.python.org/3.14/reference/simple_stmts.html#the-global-statement), [The `nonlocal` statement](https://docs.python.org/3.14/reference/simple_stmts.html#the-nonlocal-statement), [Lambdas](https://docs.python.org/3.14/reference/expressions.html#lambda).
+- The tutorial: [Python Scopes and Namespaces](https://docs.python.org/3.14/tutorial/classes.html#python-scopes-and-namespaces) and [More on Defining Functions](https://docs.python.org/3.14/tutorial/controlflow.html#more-on-defining-functions).
+- Python FAQ: [Why am I getting an UnboundLocalError?](https://docs.python.org/3.14/faq/programming.html#why-am-i-getting-an-unboundlocalerror-when-the-variable-has-a-value), [Why do lambdas defined in a loop all return the same result?](https://docs.python.org/3.14/faq/programming.html#why-do-lambdas-defined-in-a-loop-with-different-values-all-return-the-same-result), [Why are default values shared between objects?](https://docs.python.org/3.14/faq/programming.html#why-are-default-values-shared-between-objects).
+- [PEP 227: Statically Nested Scopes](https://peps.python.org/pep-0227/), [PEP 3104: Access to Names in Outer Scopes](https://peps.python.org/pep-3104/), [PEP 3102: Keyword-Only Arguments](https://peps.python.org/pep-3102/), [PEP 570: Positional-Only Parameters](https://peps.python.org/pep-0570/).
+- Guido van Rossum, [First-class Everything](https://python-history.blogspot.com/2009/02/first-class-everything.html), *The History of Python* (2009).
+- Luciano Ramalho, *Fluent Python*, 2nd ed. (O'Reilly, 2022), ch. 7 "Functions as First-Class Objects" and ch. 9 "Decorators and Closures".
+- CPython source: [Include/cpython/funcobject.h](https://github.com/python/cpython/blob/3.14/Include/cpython/funcobject.h), [Include/cpython/cellobject.h](https://github.com/python/cpython/blob/3.14/Include/cpython/cellobject.h), and the [`dis` module](https://docs.python.org/3.14/library/dis.html).
+- Lab: [`labs/functions-scope-and-closures.py`](labs/functions-scope-and-closures.py). Run it from `programming-languages/python/labs` with `python3 -I functions-scope-and-closures.py`.

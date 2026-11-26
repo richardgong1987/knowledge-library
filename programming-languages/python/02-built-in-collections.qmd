@@ -1,0 +1,393 @@
+---
+title: "Built-in Collections"
+description: "How list, tuple, dict and set really work in CPython: the dynamic array and its over-allocation formula, the compact ordered hash table and its probing, hashability and the hash/eq contract, complexity, comprehensions, and deque, Counter and defaultdict."
+---
+
+## The problem
+
+A school keeps 1,000 student IDs and checks each visitor at the gate with `if visitor in ids`. With `ids` as a **list**, Python compares the visitor with the first ID, then the second, and so on. The lab counts the comparisons: finding the last ID takes **1000** of them. With `ids` as a **set**, the same check takes **1** comparison. With a million IDs and a busy gate, that is the difference between a program that keeps up and one that does not.
+
+Picking a collection is picking a data structure, and each one makes some operations cheap and others expensive. To choose well you need to know what is inside: a list is a resizable array, a dict and a set are hash tables, and a deque is a chain of blocks.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Lockers, a library and a queue
+
+- A **list** is a row of numbered lockers. Locker 7 is found instantly by walking to position 7. But to find *the locker holding a red ball*, you open them one by one.
+- A **dict** is a library whose librarian has a rule that turns a book's title into a shelf number. You go straight to that shelf. If two titles give the same shelf, a second rule says which shelf to try next.
+- A **deque** is a queue at the school canteen: people join at the back and leave at the front, and nobody has to shuffle along.
+
+Raymond Hettinger, the core developer who maintains Python's sets and proposed today's compact dict, tells this story in his PyCon 2017 talk *Modern Python Dictionaries: A confluence of a dozen great ideas*. The probing rule inside the dict was tuned by Tim Peters; his experiments are described in the comments of `Objects/dictobject.c`.
+:::
+
+## From simple to advanced
+
+### Level 1: a list is a dynamic array
+
+A list stores an array of pointers to objects. `items[k]` is one address calculation, so it is $O(1)$. `append` is fast because CPython allocates **more slots than it needs** and fills the spare ones later. The lab measures the number of slots after each append with `sys.getsizeof`:
+
+```python
+def list_capacities(count):
+    empty = sys.getsizeof([])
+    items, capacities = [], []
+    for value in range(count):
+        items.append(value)
+        slots = (sys.getsizeof(items) - empty) // 8  # one 8-byte pointer per slot
+        if not capacities or capacities[-1] != slots:
+            capacities.append(slots)
+    return capacities
+```
+
+`list_capacities(80)` returns `[4, 8, 16, 24, 32, 40, 52, 64, 76, 92]`. Those numbers come from one line of `list_resize` in `Objects/listobject.c`, which runs when a list of $n - 1$ items needs room for $n$:
+
+$$
+a(n) = \Bigl(n + \bigl\lfloor n / 8 \bigr\rfloor + 6\Bigr) \text{ rounded down to a multiple of } 4
+$$
+
+where
+
+- $n$ is the new number of items (`newsize` in the C code);
+- $\lfloor n / 8 \rfloor$ is $n$ shifted right by 3 bits (`newsize >> 3`), about 12.5% extra room;
+- $6$ gives small lists a head start;
+- "rounded down to a multiple of 4" is `& ~3`, which clears the two lowest bits;
+- $a(n)$ is the new number of slots (`new_allocated`).
+
+```python
+def new_allocated(new_size):
+    # list_resize in Objects/listobject.c: about 1/8 extra, plus 6, rounded down to a multiple of 4
+    return (new_size + (new_size >> 3) + 6) & ~3
+```
+
+Example, one resize at a time:
+
+1. Appending to `[]`: $n = 1$, $1 + 0 + 6 = 7$, rounded down to $4$.
+2. The 5th append: $n = 5$, $5 + 0 + 6 = 11 \to 8$.
+3. The 9th: $n = 9$, $9 + 1 + 6 = 16 \to 16$.
+4. The 17th: $n = 17$, $17 + 2 + 6 = 25 \to 24$.
+5. The 53rd: $n = 53$, $53 + 6 + 6 = 65 \to 64$.
+
+The lab checks that the formula reproduces every measured capacity. (The C code has one extra rule: if a single `extend` asks for far more room than the formula gives, it allocates just what was asked for.)
+
+Why is that enough to make `append` cheap? A resize may move every item to a new block of memory, but resizes get rarer as the list grows. Each new capacity is about $r = 9/8$ times the last, so the moves add up to a geometric series:
+
+$$
+M(n) \;\le\; n\left(1 + \frac{1}{r} + \frac{1}{r^2} + \cdots\right) = n \cdot \frac{r}{r - 1}
+$$
+
+where
+
+- $M(n)$ is the total number of item moves caused by $n$ appends in the worst case, where `realloc` can never grow the block in place;
+- $r$ is the growth ratio between consecutive capacities;
+- the series sums the sizes at each resize, from the last (at most $n$) back to the first.
+
+Example: with $r = 9/8$, $\frac{r}{r-1} = \frac{9/8}{1/8} = 9$, so $M(10^6) \le 9 \times 10^6$. The lab simulates a million appends with `new_allocated` and counts **8,445,096** moves, about 8.4 per append. A constant per append is what "amortised $O(1)$" means. Inserting at the **front** is different: `items.insert(0, x)` shifts every item one place, $O(n)$ every time.
+
+### Level 2: a tuple is a fixed record
+
+A tuple is an immutable array: same $O(1)$ indexing, but no append, no item assignment, and no spare slots. Because its items can never be replaced, a tuple whose items are all hashable is itself hashable, so it can be a dict key:
+
+```python
+def tuple_as_key():
+    distance = {("York", "Leeds"): 40}
+    origin, destination = ("York", "Leeds")  # unpacking
+    return distance[(origin, destination)]
+```
+
+It returns 40. Immutability is shallow, though: `hash((1, [2]))` raises `TypeError: unhashable type: 'list'`, because the list inside could change ([Names, Objects and References](01-names-objects-and-references.qmd), Level 5).
+
+### Level 3: a dict is a hash table with probing
+
+A dict turns each key into a number with `hash(key)`, then uses the lowest bits of that number to pick a **slot** in a table whose size is a power of 2. Two keys can want the same slot. CPython then probes other slots in a fixed pseudo-random order (open addressing):
+
+$$
+i_0 = h \bmod 2^m, \qquad p_0 = h, \qquad p_{k+1} = \Bigl\lfloor \frac{p_k}{2^5} \Bigr\rfloor, \qquad i_{k+1} = \bigl(5\, i_k + 1 + p_{k+1}\bigr) \bmod 2^m
+$$
+
+where
+
+- $h$ is `hash(key)` and $2^m$ is the number of slots, so $h \bmod 2^m$ is `h & mask` with `mask` $= 2^m - 1$;
+- $i_k$ is the slot tried at step $k$;
+- $p_k$ is `perturb`, which starts as the whole hash and loses 5 bits each step (`PERTURB_SHIFT = 5`), so the high bits of $h$ gradually steer the search;
+- $5\, i_k + 1$ alone visits every slot exactly once before repeating, so once $p$ reaches 0 the search is sure to find a free slot.
+
+```python
+def build_index(keys, size):
+    index = [None] * size  # slot -> position of the key in the entries list
+    for position, key in enumerate(keys):
+        mask, perturb = size - 1, hash(key)
+        i = perturb & mask
+        while index[i] is not None:  # occupied: probe the next slot
+            perturb >>= 5
+            i = (i * 5 + perturb + 1) & mask
+        index[i] = position
+    return index
+```
+
+Example, inserting the int keys 8, 16, 24 and 40 into 8 slots ($m = 3$). An int's hash is the int itself, and all four have $h \bmod 8 = 0$:
+
+1. Key 8: $i_0 = 0$, free. Slot 0.
+2. Key 16: slot 0 is taken. $p_1 = \lfloor 16 / 32 \rfloor = 0$, so $i_1 = (5 \cdot 0 + 1 + 0) \bmod 8 = 1$. Slot 1.
+3. Key 24: slots 0 and 1 are taken. $p_1 = p_2 = 0$, so $i_2 = (5 \cdot 1 + 1 + 0) \bmod 8 = 6$. Slot 6.
+4. Key 40: slot 0 is taken. $p_1 = \lfloor 40 / 32 \rfloor = 1$, so $i_1 = (0 + 1 + 1) \bmod 8 = 2$. The high bit of 40 sent it to slot 2, away from the crowd at 1.
+
+`build_index([8, 16, 24, 40], 8)` returns `[0, 1, 3, None, None, None, 2, None]`: slot 0 holds entry 0 (key 8), slot 1 entry 1, slot 2 entry 3, slot 6 entry 2. With $p = 0$ throughout, the probe order from slot 0 is $0, 1, 6, 7, 4, 5, 2, 3$, exactly the order printed in the source comment; the lab checks it too. This is a model in Python of the C loop in `lookdict_index`: you cannot watch real slots from Python code.
+
+### Level 4: the table grows at two-thirds full
+
+Probing stays short only while the table has many empty slots, so CPython never lets it fill up:
+
+$$
+\operatorname{usable}(N) = \Bigl\lfloor \frac{2N}{3} \Bigr\rfloor, \qquad N' = \min\bigl\lbrace 2^j : 2^j \ge 3u \bigr\rbrace
+$$
+
+where
+
+- $N$ is the number of slots (at least 8, `PyDict_MINSIZE`);
+- $\operatorname{usable}(N)$ is how many keys fit before a resize (`USABLE_FRACTION`);
+- $u$ is the number of keys stored when the table is full;
+- $N'$ is the new number of slots: the smallest power of 2 that is at least $3u$ (`GROWTH_RATE`).
+
+```python
+def dict_resize_points(count):
+    table, points = {}, []
+    size = sys.getsizeof(table)
+    for key in range(1, count + 1):
+        table[key] = key
+        if sys.getsizeof(table) != size:
+            points.append(key)
+            size = sys.getsizeof(table)
+    return points
+```
+
+Example: `dict_resize_points(24)` returns `[1, 6, 11, 22]`.
+
+1. The 1st key allocates $N = 8$ slots, and $\operatorname{usable}(8) = \lfloor 16/3 \rfloor = 5$.
+2. The 6th key finds $u = 5$: $3u = 15$, so $N' = 16$ and $\operatorname{usable}(16) = 10$.
+3. The 11th key finds $u = 10$: $3u = 30$, so $N' = 32$ and $\operatorname{usable}(32) = 21$.
+4. The 22nd key finds $u = 21$: $3u = 63$, so $N' = 64$.
+
+A resize reinserts every key, $O(n)$, but like the list's over-allocation it happens after a geometric number of inserts, so inserting stays $O(1)$ on average.
+
+### Level 5: hashability and the hash/eq contract
+
+A lookup first finds slots by hash, then confirms with `==`. That only works if equal keys land in the same place:
+
+$$
+a == b \;\Longrightarrow\; \operatorname{hash}(a) = \operatorname{hash}(b)
+$$
+
+where $a$ and $b$ are any two objects, `==` calls `__eq__`, and $\operatorname{hash}$ calls `__hash__`. The reverse need not hold: different keys may share a hash, and probing handles that.
+
+Example: `1 == 1.0 == True`, so Python makes `hash(1) == hash(1.0) == hash(True) == 1`. The three keys below are **one** key, and the last value wins:
+
+```python
+def equal_keys_collide():
+    return {1: "a", 1.0: "b", True: "c"}
+```
+
+It returns `{1: "c"}`: the key object stays the first one inserted, `1`, and the value is replaced.
+
+The contract also means a key's hash must not change while it is in a dict or set. A class whose hash reads a mutable field breaks this:
+
+```python
+class Seat:
+    def __init__(self, row):
+        self.row = row
+
+    def __eq__(self, other):
+        return self.row == other.row
+
+    def __hash__(self):
+        return hash(self.row)  # depends on a field that can change
+
+
+def lost_key():
+    seat = Seat(1)
+    booked = {seat}
+    seat.row = 2  # the hash changes, but the set filed the seat under the old one
+    return seat in booked, len(booked)
+```
+
+`lost_key()` returns `(False, 1)`: the seat is in the set, but the lookup goes to the slot for hash 2, finds it empty, and gives up. This is why `list` and `dict` define no hash at all, and why a class that defines `__eq__` without `__hash__` gets `__hash__ = None`: putting it in a set raises `TypeError: cannot use 'EqOnly' as a set element (unhashable type: 'EqOnly')`. That wording is new in Python 3.14; earlier versions said only `TypeError: unhashable type: 'EqOnly'`. [Classes and the Data Model](06-classes-and-the-data-model.qmd) shows how to write a correct pair.
+
+A **set** is the same kind of table holding keys only, with the familiar algebra: `{1, 2, 3} & {2, 3, 4} == {2, 3}`, `|` for union, `-` for difference, `^` for symmetric difference. And `{}` is an empty **dict**; an empty set is `set()`.
+
+### Level 6: comprehensions
+
+A comprehension builds a collection from a rule, the way a maths teacher writes set-builder notation:
+
+$$
+\texttt{[f(x) for x in S if p(x)]} \;=\; \bigl[\, f(x) : x \in S,\ p(x) \,\bigr]
+$$
+
+where $S$ is any iterable, $x$ runs over its items in order, $p(x)$ is the optional filter, and $f(x)$ is the item produced.
+
+```python
+def comprehensions():
+    squares = [n * n for n in range(5)]
+    even_squares = [n * n for n in range(5) if n % 2 == 0]
+    lengths = {word: len(word) for word in ("ox", "cat")}
+    initials = {name[0] for name in ("ann", "amy", "bob")}
+    return squares, even_squares, lengths, initials
+```
+
+Example: with $f(n) = n^2$, $S = (0, 1, 2, 3, 4)$ and $p(n) = $ "$n$ is even", the kept items are $0, 2, 4$ and the result is $[0, 4, 16]$. The four results are `[0, 1, 4, 9, 16]`, `[0, 4, 16]`, `{"ox": 2, "cat": 3}` and `{"a", "b"}`. The loop variable `n` does not leak out of the comprehension. Since Python 3.12 ([PEP 709](https://peps.python.org/pep-0709/)) CPython inlines list, dict and set comprehensions instead of calling a hidden function, which makes them faster, and the variable stays isolated.
+
+### Level 7: deque, Counter and defaultdict
+
+The `collections` module fills the gaps:
+
+```python
+def queue_with_deque():
+    line = deque(["ann", "bob"])
+    line.append("cy")  # join at the back: O(1)
+    first = line.popleft()  # leave at the front: O(1), unlike list.pop(0)
+    return first, list(line)
+
+
+def recent_pages():
+    last_three = deque(maxlen=3)
+    for page in [1, 2, 3, 4, 5]:
+        last_three.append(page)  # the oldest page falls off the front
+    return list(last_three)
+```
+
+They return `("ann", ["bob", "cy"])` and `[3, 4, 5]`. A `Counter` is a dict from item to count, and a `defaultdict` calls a factory for a missing key instead of raising `KeyError`:
+
+```python
+def tally_votes():
+    votes = Counter("abcab")  # counts each item
+    return votes.most_common(1), votes["z"]  # a missing key counts as 0
+
+
+def group_by_initial():
+    groups = defaultdict(list)  # a missing key gets a fresh empty list
+    for name in ["ann", "bob", "amy"]:
+        groups[name[0]].append(name)
+    return dict(groups)
+```
+
+They return `([("a", 2)], 0)` and `{"a": ["ann", "amy"], "b": ["bob"]}`.
+
+The costs, from the official page *Time complexity of operations on built-in types* and the `deque` documentation ($n$ is the length, $k$ an index):
+
+| Operation | `list` | `deque` | `dict` / `set` |
+|---|---|---|---|
+| Get or set by index `s[k]` | $O(1)$ | $O(1)$ at the ends, $O(n)$ in the middle | — |
+| Add or remove at the end | $O(1)$ amortised | $O(1)$ | — |
+| Add or remove at the front | $O(n)$ | $O(1)$ | — |
+| Insert or pop at position $k$ | $O(n - k)$ | $O(n)$ | — |
+| `x in s` | $O(n)$ | $O(n)$ | $O(1)$ average, $O(n)$ worst |
+| Get, set, delete by key | — | — | $O(1)$ average, $O(n)$ worst |
+| Iterate, copy | $O(n)$ | $O(n)$ | $O(n)$ |
+| Sort | $O(n \log n)$ | — | — |
+
+## How it works underneath
+
+A list is a small header plus a separate array of pointers. From `Include/cpython/listobject.h`:
+
+```text
+typedef struct {
+    PyObject_VAR_HEAD        /* ob_size: len(list) */
+    PyObject **ob_item;      /* the array of pointers to the items */
+    Py_ssize_t allocated;    /* slots in ob_item: 0 <= ob_size <= allocated */
+} PyListObject;
+```
+
+The items themselves live elsewhere; the list holds only references. That is why a list can hold mixed types, and why `[[0] * 3] * 3` copies references, not rows.
+
+A dict since Python 3.6 is **compact**. Before, the table was a sparse array of 24-byte entries (hash, key, value), mostly empty. Hettinger's 2012 proposal split it in two: a sparse array of small **indices** and a dense array of **entries** in insertion order. For `{8: "x", 16: "y", 24: "z"}`, using the slots from Level 3:
+
+```text
+indices:  [ 0,  1, -1, -1, -1, -1,  2, -1 ]      -1 = empty, 1 byte each
+entries:  [ (hash 8,  key 8,  "x"),               0
+            (hash 16, key 16, "y"),               1
+            (hash 24, key 24, "z") ]              2
+```
+
+Iteration walks `entries` from the top, so it yields keys in insertion order. Deleting a key writes `-2` (dummy) into its index slot so later probes keep walking past it. The memory for the keys table follows directly:
+
+$$
+B(N) = 32 + N \cdot b + \Bigl\lfloor \frac{2N}{3} \Bigr\rfloor \cdot e
+$$
+
+where
+
+- $B(N)$ is the size in bytes of the keys table for $N$ slots;
+- $32$ is the table's header (`dk_refcnt`, sizes, `dk_version`, `dk_usable`, `dk_nentries`);
+- $b$ is the size of one index: 1 byte while $N \le 128$;
+- $e$ is the size of one entry: 24 bytes (hash, key, value), or 16 bytes when every key is a str, because a str caches its own hash.
+
+Example: for $N = 8$ and int keys, $B = 32 + 8 \cdot 1 + 5 \cdot 24 = 32 + 8 + 120 = 160$; for str keys, $32 + 8 + 5 \cdot 16 = 120$. The lab confirms both with `sys.getsizeof({1: 1}) - sys.getsizeof({})` and the same for `{"a": 1}` on 64-bit CPython 3.14. The old layout spent $8 \cdot 24 = 192$ bytes on entries alone. The 3.6 release notes report dicts 20% to 25% smaller. Insertion order was an implementation detail in 3.6 and became a language guarantee in 3.7.
+
+A set (`Objects/setobject.c`) uses the same perturbation idea, with two differences: each probe first checks up to 9 neighbouring slots (`LINEAR_PROBES`), which is kind to the CPU cache, and the table grows when it is 60% full (`fill*5 >= mask*3`). A deque (`Modules/_collectionsmodule.c`) is a doubly linked list of blocks of 64 pointers, which is why both ends are $O(1)$ and the middle is $O(n)$.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `if x in big_list` inside a loop | Slow: $O(n)$ per check, $O(n \cdot m)$ in all | Build a `set` once, then test membership |
+| `items.pop(0)` or `items.insert(0, x)` as a queue | Gets slower as the queue grows | `collections.deque` with `append` and `popleft` |
+| A list as a dict key | `TypeError: cannot use 'list' as a dict key (unhashable type: 'list')` | Use a tuple: `tuple(items)` |
+| A key whose hash reads a mutable field | `key in d` is `False` for a key that is in `d` | Hash only immutable fields; use a frozen dataclass |
+| `__eq__` without `__hash__` | `TypeError: cannot use 'EqOnly' as a set element (unhashable type: 'EqOnly')` | Define `__hash__` from the same fields as `__eq__` |
+| Adding keys while looping over a dict | `RuntimeError: dictionary changed size during iteration` | Loop over `list(d)`, or build a new dict |
+| `{}` for an empty set | It is a dict | `set()` |
+| `1` and `True` as different keys | `{1: "a", True: "b"}` has one key | Use keys of one type, or strings |
+
+## Interview questions
+
+### 1. Why is dict lookup $O(1)$ on average, and when is it $O(n)$?
+
+**Answer.** The hash sends the lookup straight to a slot, and the table is kept at most two-thirds full, so the expected number of probes is a small constant that does not depend on $n$. The cost becomes $O(n)$ when many keys share a hash, because every lookup then walks the same probe chain and calls `==` on each key it meets:
+
+```python
+class ClashingId(StudentId):
+    def __hash__(self):
+        return 0
+```
+
+With 100 such keys in a dict, the lab counts **100** `==` calls to find the last one, against **1** for normal IDs. Hash-flooding attacks exploited this by sending web servers many string keys with colliding hashes. Python 3.3 therefore turned on hash randomisation by default, so str and bytes hashes change from process to process, and [PEP 456](https://peps.python.org/pep-0456/) (3.4) moved them to the SipHash family (`sys.hash_info.algorithm` is `'siphash13'` on 3.14). Ints are not randomised, which is why the lab can predict their slots.
+
+### 2. How does a dict remember insertion order?
+
+**Answer.** Keys are appended to a dense `entries` array in insertion order, and the hash table proper is a separate array of small indices into it (Underneath). Iteration walks `entries`, skipping deleted ones. Ordering fell out of the compact layout in CPython 3.6, which was designed to save memory, and Python 3.7 made it part of the language. Re-assigning an existing key keeps its position; deleting and re-inserting moves it to the end.
+
+### 3. What is `{1: "a", 1.0: "b", True: "c"}`?
+
+**Answer.** `{1: "c"}`. The three keys are equal (`1 == 1.0 == True`), and the contract $a == b \Rightarrow \operatorname{hash}(a) = \operatorname{hash}(b)$ gives them the same hash, 1. The second and third insertions find the existing key and replace only the value. The key object stays the first one, `1`.
+
+### 4. Why is `list.append` amortised $O(1)$ when resizing copies the whole list?
+
+**Answer.** Because the capacity grows by a constant factor, about $9/8$ (Level 1), so the copies form a geometric series: at most $n \cdot \frac{r}{r-1} = 9n$ moves for $n$ appends, a constant per append. The lab measures 8,445,096 moves for $10^6$ appends. Growing by a fixed **number** of slots instead would make the total $O(n^2)$. CPython picks a small factor to waste little memory; the `+ 6` makes tiny lists grow faster.
+
+### 5. Why can a tuple be a dict key but a list cannot?
+
+**Answer.** A key's hash must stay the same while it is stored (Level 5). A list can change, so a hash computed from its contents would go stale, and `list.__hash__` is `None`. A tuple cannot change, so it hashes its items; that works only if they are hashable too, which is why `(1, [2])` fails with `unhashable type: 'list'`.
+
+## Summary
+
+$$
+\operatorname{cost}(x \in \texttt{list}) = \Theta(n), \qquad \operatorname{cost}(x \in \texttt{set}) = \Theta(1) \text{ on average}
+$$
+
+where $n$ is the number of items, $\Theta$ means "grows exactly like", and "on average" assumes hashes that spread the keys over the table.
+
+Example: for $n = 1000$ student IDs the lab counts 1000 comparisons in the list and 1 in the set.
+
+- `list`: a dynamic array; $O(1)$ index and amortised append, $O(n)$ at the front and for `in`.
+- `tuple`: an immutable array; hashable when its items are.
+- `dict` and `set`: open-addressing hash tables kept at most 2/3 (dict) or 3/5 (set) full; dicts keep insertion order.
+- Equal keys must have equal hashes, and a key's hash must never change while it is stored.
+- Use `deque` for queues, `Counter` for tallies, `defaultdict` for grouping.
+
+## References
+
+- Python documentation: [Sequence types](https://docs.python.org/3.14/library/stdtypes.html#sequence-types-list-tuple-range), [Mapping types](https://docs.python.org/3.14/library/stdtypes.html#mapping-types-dict), [Set types](https://docs.python.org/3.14/library/stdtypes.html#set-types-set-frozenset), [`object.__hash__`](https://docs.python.org/3.14/reference/datamodel.html#object.__hash__), [the `collections` module](https://docs.python.org/3.14/library/collections.html).
+- [Time complexity of operations on built-in types](https://docs.python.org/3.14/builtins/time-complexity.html), and the design FAQ: [How are lists implemented?](https://docs.python.org/3.14/faq/design.html#how-are-lists-implemented-in-cpython), [How are dictionaries implemented?](https://docs.python.org/3.14/faq/design.html#how-are-dictionaries-implemented-in-cpython).
+- [What's New in Python 3.6](https://docs.python.org/3.14/whatsnew/3.6.html) (compact dict) and [What's New in Python 3.7](https://docs.python.org/3.14/whatsnew/3.7.html) (order guaranteed); [PEP 709: Inlined comprehensions](https://peps.python.org/pep-0709/).
+- CPython 3.14 source: [Objects/listobject.c](https://github.com/python/cpython/blob/3.14/Objects/listobject.c) (`list_resize`), [Objects/dictobject.c](https://github.com/python/cpython/blob/3.14/Objects/dictobject.c) (probing, `USABLE_FRACTION`, `GROWTH_RATE`), [Objects/setobject.c](https://github.com/python/cpython/blob/3.14/Objects/setobject.c), [Modules/_collectionsmodule.c](https://github.com/python/cpython/blob/3.14/Modules/_collectionsmodule.c).
+- Raymond Hettinger, [More compact dictionaries with faster iteration](https://mail.python.org/pipermail/python-dev/2012-December/123028.html) (python-dev, 2012) and [Modern Python Dictionaries: A confluence of a dozen great ideas](https://www.youtube.com/watch?v=npw4s1QTmPg) (PyCon 2017).
+- Luciano Ramalho, *Fluent Python*, 2nd ed. (O'Reilly, 2022), ch. 2 "An Array of Sequences" and ch. 3 "Dictionaries and Sets".
+- Lab: [`labs/built-in-collections.py`](labs/built-in-collections.py). Run it from `programming-languages/python/labs` with `python3 -I built-in-collections.py`.

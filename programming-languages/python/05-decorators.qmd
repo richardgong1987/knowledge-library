@@ -1,0 +1,374 @@
+---
+title: "Decorators"
+description: "Python decorators from the ground up: functions that take and return functions, what @ really does, functools.wraps, decorators with arguments, stacking as function composition, class decorators, functools.cache and lru_cache, and property, classmethod and staticmethod."
+---
+
+## The problem
+
+The textbook Fibonacci function is two lines long and painfully slow:
+
+```python
+@counted
+def fib(n):
+    """The n-th Fibonacci number, the slow way."""
+    return n if n < 2 else fib(n - 1) + fib(n - 2)
+```
+
+`fib(30)` returns 832,040, but the lab counts **2,692,537 calls** to get there, because the same small values are recomputed over and over. Remembering earlier answers would fix it. So would timing it, logging it, or checking permissions before it runs. The question is how to add such behaviour to `fib`, and to twenty other functions, **without editing their bodies** and without pasting the same lines into each one.
+
+A **decorator** is the answer. The `@counted` line above already is one: it wraps `fib` in a function that counts calls, while `fib`'s own code says nothing about counting. Replace it with `@functools.cache` and `fib(30)` takes **59** calls instead.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Gift wrapping
+
+A decorator is **gift wrapping**. The present inside (your function) does not change. The wrapping adds something around it: a bow, a card, a "do not open before Monday" label. Whoever receives it handles the wrapped present, and the wrapping can choose to open it, look inside, or hand back something it saved earlier.
+
+You can wrap a present twice. The paper put on **last** is the one you tear off **first**.
+
+The name was argued over. [PEP 318](https://peps.python.org/pep-0318/), which added `@` in Python 2.4, admits the complaint that it is "not consistent with its use in the GoF book" and says the name "probably owes more to its use in the compiler area – a syntax tree is walked and annotated." Luciano Ramalho's *Fluent Python* teaches decorators and closures in one chapter, since most decorators are built from closures.
+:::
+
+## From simple to advanced
+
+### Level 1: functions that take and return functions
+
+Because functions are objects ([Functions, Scope and Closures](03-functions-scope-and-closures.qmd)), a function can receive one and return a new one. The new one is a closure that remembers the original:
+
+```python
+def shout_result(func):
+    def wrapper(*args, **kwargs):
+        return func(*args, **kwargs).upper()
+
+    return wrapper
+
+
+def greet(name):
+    return f"hello, {name}"
+
+
+loud_greet = shout_result(greet)
+```
+
+`loud_greet("ann")` returns `"HELLO, ANN"`. `wrapper` accepts any arguments with `*args, **kwargs` and passes them through unchanged, so one decorator fits any function. `greet` itself is untouched; `loud_greet` is a different function that calls it.
+
+### Level 2: what `@` means
+
+Writing `@shout_result` above a `def` does the same thing and rebinds the **same** name:
+
+$$
+\texttt{@}d\ \ \texttt{def } f \ldots \quad\equiv\quad \texttt{def } f \ldots;\quad f \leftarrow d(f)
+$$
+
+where
+
+- $d$ is the decorator: any expression that evaluates to a callable;
+- $f$ is the name being defined;
+- $d(f)$ is called **once**, right after `def` builds the function, and whatever it returns is bound to $f$.
+
+```python
+@shout_result
+def welcome(name):
+    """Say welcome."""
+    return f"welcome, {name}"
+```
+
+Example: `def` builds the function, $d$ = `shout_result` returns `wrapper`, and the name `welcome` is bound to `wrapper`. So `welcome("bo")` returns `"WELCOME, BO"`.
+
+"Once, right after `def`" means a decorator runs at **definition time**, typically when the module is imported, not when the function is called. A registry shows it:
+
+```python
+registry = []
+
+
+def register(func):
+    registry.append(func.__name__)  # runs once, when def runs
+    return func  # hand back the same function
+
+
+@register
+def home():
+    return "home page"
+```
+
+Before anyone calls `home()`, `registry` is already `["home"]`. Web frameworks use exactly this to collect route handlers. And `register` returns `func` itself: a decorator does not have to wrap anything.
+
+### Level 3: `functools.wraps`
+
+There is a flaw in `welcome`. The lab finds `welcome.__name__ == "wrapper"` and `welcome.__doc__ is None`: the name and docstring belong to the wrapper now, which confuses debuggers, `help()` and logs. `functools.wraps` copies them across:
+
+```python
+def counted(func):
+    @functools.wraps(func)  # copy __name__, __doc__, ... and set __wrapped__
+    def wrapper(*args, **kwargs):
+        wrapper.calls += 1
+        return func(*args, **kwargs)
+
+    wrapper.calls = 0
+    return wrapper
+```
+
+With it, `fib.__name__ == "fib"`, the docstring survives, and `fib.__wrapped__` is the original undecorated function (`fib.__wrapped__(10) == 55`). In Python 3.14 `wraps` copies `__module__`, `__name__`, `__qualname__`, `__doc__`, `__annotate__` and `__type_params__`, and merges `__dict__`.
+
+`counted` also explains The problem's number. `fib`'s body calls the global name `fib`, which is now the counting wrapper, so every recursive call is counted:
+
+$$
+C(n) = C(n-1) + C(n-2) + 1, \quad C(0) = C(1) = 1 \qquad\Longrightarrow\qquad C(n) = 2F(n+1) - 1
+$$
+
+where
+
+- $C(n)$ is the number of calls that `fib(n)` makes, including itself;
+- the $+1$ is the call to `fib(n)`, and $C(n-1)$ and $C(n-2)$ are its two recursive calls;
+- $F(k)$ is the $k$-th Fibonacci number: $F(0) = 0$, $F(1) = 1$, $F(k) = F(k-1) + F(k-2)$.
+
+Example: for $n = 5$, $F(6) = 8$, so $C(5) = 2 \times 8 - 1 = 15$. For $n = 30$, $F(31) = 1{,}346{,}269$, so $C(30) = 2 \times 1{,}346{,}269 - 1 = 2{,}692{,}537$. The lab's `calls_for_fib` returns `(5, 15)` and `(832040, 2692537)`.
+
+### Level 4: decorators with arguments
+
+`@repeat(3)` is not a decorator; it is a **call** that returns one. So a decorator with arguments has three layers: the outer function takes the arguments, the middle one takes the function, the inner one runs on each call:
+
+```python
+def repeat(times):
+    def decorate(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            return [func(*args, **kwargs) for _ in range(times)]
+
+        return wrapper
+
+    return decorate
+
+
+@repeat(3)
+def roll():
+    return "six"
+```
+
+$$
+\texttt{@}d(a)\ \ \texttt{def } f \ldots \quad\equiv\quad f \leftarrow \bigl(d(a)\bigr)(f)
+$$
+
+where $d$ is the factory (`repeat`), $a$ its argument (`3`), and $d(a)$ the real decorator (`decorate`), which then receives $f$.
+
+Example: `repeat(3)` returns `decorate` with `times = 3` in its closure; `decorate(roll)` returns `wrapper`; so `roll()` returns `["six", "six", "six"]`, and `roll.__name__` is still `"roll"`.
+
+### Level 5: stacking is function composition
+
+Several decorators stack. The one **nearest** the `def` is applied first:
+
+$$
+\texttt{@}a\ \ \texttt{@}b\ \ \texttt{def } f \ldots \quad\equiv\quad f \leftarrow a\bigl(b(f)\bigr) = (a \circ b)(f)
+$$
+
+where
+
+- $a$ is the upper decorator and $b$ the lower one;
+- $a \circ b$ ("$a$ after $b$") means "apply $b$, then apply $a$ to the result".
+
+```python
+def tag(name):
+    def decorate(func):
+        @functools.wraps(func)
+        def wrapper():
+            return f"<{name}>{func()}</{name}>"
+
+        return wrapper
+
+    return decorate
+
+
+@tag("b")
+@tag("i")
+def hello():
+    return "hi"
+```
+
+Example: $b = $ `tag("i")` wraps `hello` first, giving a function that returns `"<i>hi</i>"`. Then $a = $ `tag("b")` wraps that, so `hello()` returns `"<b><i>hi</i></b>"`. At call time the **outer** wrapper runs first and finishes last, like the gift wrap. Swapping the two lines gives `"<i><b>hi</b></i>"`: composition is not commutative, $a \circ b \ne b \circ a$. Order matters in practice too: `@app.route(...)` above `@login_required` protects the route; the other way round, the framework registers the unprotected function.
+
+### Level 6: class decorators
+
+A decorator can receive a **class** ([PEP 3129](https://peps.python.org/pep-3129/), Python 3.0). It may modify the class and return it:
+
+```python
+def with_repr(cls):
+    def __repr__(self):
+        fields = ", ".join(f"{name}={value!r}" for name, value in vars(self).items())
+        return f"{cls.__name__}({fields})"
+
+    cls.__repr__ = __repr__
+    return cls
+
+
+@with_repr
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+```
+
+`repr(Point(1, 2))` is `"Point(x=1, y=2)"`. This is the same idea, much extended, behind `@dataclasses.dataclass`, which reads the class's annotations and writes `__init__`, `__repr__` and `__eq__` for it ([Classes and the Data Model](06-classes-and-the-data-model.qmd)).
+
+### Level 7: `functools.cache` and `lru_cache`
+
+The standard library's most useful decorator remembers results by argument (memoisation). `@functools.cache` (Python 3.9) keeps everything; `@functools.lru_cache(maxsize=n)` (Python 3.2) keeps the $n$ most recently used:
+
+```python
+@functools.cache
+def fib_cached(n):
+    return n if n < 2 else fib_cached(n - 1) + fib_cached(n - 2)
+```
+
+`fib_cached(30)` is 832,040, and `fib_cached.cache_info()` reports `CacheInfo(hits=28, misses=31, maxsize=None, currsize=31)`. Each value is computed once, and the second recursive call always finds its answer stored:
+
+$$
+\operatorname{misses}(n) = n + 1, \qquad \operatorname{hits}(n) = n - 2 \quad (n \ge 2)
+$$
+
+where
+
+- $\operatorname{misses}(n)$ counts calls that had to run the body: one for each of $0, 1, \ldots, n$;
+- $\operatorname{hits}(n)$ counts calls answered from the cache: the call `fib_cached(k - 2)` inside `fib_cached(k)` for $k = 3, \ldots, n$, because `fib_cached(k - 1)` has just computed it.
+
+Example: for $n = 30$, misses $= 31$ and hits $= 28$, so $59$ calls in all, against $2{,}692{,}537$ without the cache.
+
+An LRU cache with a small `maxsize` forgets the **least recently used** entry when it is full:
+
+```python
+@functools.lru_cache(maxsize=2)
+def square(n):
+    return n * n
+
+
+def lru_story():
+    square.cache_clear()
+    for n in [1, 2, 1, 3, 2]:  # 3 evicts 2, then 2 evicts 1
+        square(n)
+    return square.cache_info()
+```
+
+Step by step: 1 is a miss; 2 is a miss; 1 is a hit (now 2 is the least recent); 3 is a miss and evicts 2; 2 is a miss and evicts 1. `lru_story()` gives hits 1, misses 4, maxsize 2, currsize 2. The cache is a dict, so arguments must be hashable: `square([1])` raises `TypeError: unhashable type: 'list'`.
+
+### Level 8: `property`, `classmethod` and `staticmethod`
+
+Three built-ins are decorators you use inside classes:
+
+```python
+class Temperature:
+    def __init__(self, celsius):
+        self.celsius = celsius
+
+    @property
+    def fahrenheit(self):  # read like an attribute, computed on access
+        return self.celsius * 9 / 5 + 32
+
+    @fahrenheit.setter
+    def fahrenheit(self, value):
+        self.celsius = (value - 32) * 5 / 9
+
+    @classmethod
+    def from_fahrenheit(cls, value):  # receives the class: an alternative constructor
+        return cls((value - 32) * 5 / 9)
+
+    @staticmethod
+    def is_freezing(celsius):  # receives neither self nor cls
+        return celsius <= 0
+```
+
+The property applies the conversion formula on every read:
+
+$$
+F = \frac{9}{5}\,C + 32, \qquad C = \frac{5}{9}\,(F - 32)
+$$
+
+where $C$ is the temperature in degrees Celsius (the stored attribute `celsius`) and $F$ in degrees Fahrenheit (the computed property).
+
+Example: `Temperature(100).fahrenheit` is $\frac{9}{5} \times 100 + 32 = 180 + 32 = 212.0$. Assigning `t.fahrenheit = 32` runs the setter: $C = \frac{5}{9}(32 - 32) = 0.0$. `Temperature.from_fahrenheit(212).celsius` is $\frac{5}{9} \times 180 = 100.0$, and `Temperature.is_freezing(-1)` is `True`.
+
+`@property` replaces the function with a `property` object (the lab checks `type(Temperature.__dict__["fahrenheit"]) is property`), and `@fahrenheit.setter` returns a copy of that property with a setter added, bound to the same name. All three work through the descriptor protocol, which [Classes and the Data Model](06-classes-and-the-data-model.qmd) explains. Stacking `@classmethod` on top of `@property` was allowed in 3.9, deprecated in 3.11 and removed in 3.13.
+
+## How it works underneath
+
+There is no special decorator object in CPython: `@` is compiled into ordinary calls. The disassembly of the stacked `hello` on CPython 3.14, trimmed:
+
+```text
+LOAD_NAME       tag
+LOAD_CONST      'b'
+CALL            1        tag("b")  evaluated first, top to bottom
+LOAD_NAME       tag
+LOAD_CONST      'i'
+CALL            1        tag("i")
+LOAD_CONST      <code object hello>
+MAKE_FUNCTION            the function object is built only now
+CALL            0        apply tag("i")'s decorator: the nearest one
+CALL            0        apply tag("b")'s decorator
+STORE_NAME      hello    bind the final result to the name
+```
+
+So the decorator **expressions** are evaluated top to bottom, before the function exists, and then **applied** bottom to top. The reference manual gives the equivalence `func = f1(arg)(f2(func))` for `@f1(arg) @f2 def func(): pass`, "except that the original function is not temporarily bound to the name `func`". Since Python 3.9 ([PEP 614](https://peps.python.org/pep-0614/)) any expression may follow `@`, such as `@buttons[0].on_click`; before that, only dotted names with an optional call were allowed.
+
+`functools.wraps(func)` is equivalent to `functools.partial(update_wrapper, wrapped=func)` with the default attribute lists. `update_wrapper` copies the attributes in `WRAPPER_ASSIGNMENTS`, updates the wrapper's `__dict__` from the original's, and sets `wrapper.__wrapped__ = func`. Tools follow `__wrapped__`: `inspect.signature(fib)` reports `(n)`, the original's signature, not the wrapper's `(*args, **kwargs)`.
+
+`lru_cache` is implemented in C (`_functools._lru_cache_wrapper`), with a pure-Python twin in `Lib/functools.py` that shows the design. A dict maps a key built from the arguments (`_make_key`: the positional arguments, a marker, then the keyword pairs) to a node in a circular doubly linked list ordered by recency. A hit moves its node to the front; a miss at full size drops the node at the back. Both are $O(1)$. Because keyword order is part of the key, `f(a=1, b=2)` and `f(b=2, a=1)` may be cached separately, as the documentation warns.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Forgetting `@functools.wraps` | `welcome.__name__ == "wrapper"`, the docstring is `None`, and logs show the wrong name | Decorate every wrapper with `@functools.wraps(func)` |
+| The wrapper forgets `return func(...)` | The decorated function returns `None` | `return func(*args, **kwargs)` |
+| `@repeat` without the call, for a decorator that needs arguments | `repeat(roll)` sets `times` to the function, and `roll()` raises `TypeError: repeat.<locals>.decorate() missing 1 required positional argument: 'func'` | `@repeat(3)`; a decorator factory always needs parentheses |
+| Expecting the decorator to run on every call | Set-up code runs once at import | Put per-call work inside `wrapper` |
+| Stacking in the wrong order | A route registered before the login check, so the check never runs | The nearest decorator is applied first; put the wrapper that must run first on top |
+| `@lru_cache` on a function taking a list | `TypeError: unhashable type: 'list'` | Pass a tuple, or cache a helper that takes hashable arguments |
+| `@lru_cache` on a method | Every `self` is kept alive by the cache | `functools.cached_property`, or a cache stored on the instance |
+
+## Interview questions
+
+### 1. What exactly does `@decorator` do, and when does it run?
+
+**Answer.** `@d` above `def f` is shorthand for `f = d(f)` right after the `def` statement executes (Level 2). The decorator runs **once, at definition time**, usually during import, and the name is bound to whatever it returns, which can be a wrapper, the same function (`register`), or anything else. The wrapper, if there is one, runs on every call. The bytecode is just `MAKE_FUNCTION` followed by a `CALL` of the decorator.
+
+### 2. In what order are stacked decorators applied?
+
+**Answer.** Bottom up: `@a @b def f` is `f = a(b(f))`, the composition $a \circ b$. The decorator expressions themselves are evaluated top down before the function is created; then the nearest one is applied first. At call time the outermost wrapper runs first. `@tag("b") @tag("i")` gives `"<b><i>hi</i></b>"`, and swapping them gives `"<i><b>hi</b></i>"`.
+
+### 3. Why should a decorator use `functools.wraps`?
+
+**Answer.** Without it, the decorated name refers to the inner `wrapper` function, so `__name__`, `__qualname__`, `__doc__` and `__module__` describe `wrapper`, and `help()`, logging and test reports all show the wrong thing. `wraps` copies those attributes, merges `__dict__`, and sets `__wrapped__` to the original function, which `inspect.signature` and `inspect.unwrap` follow, and which lets you call the undecorated function, as in `fib.__wrapped__(10)`.
+
+### 4. Write a decorator that takes an argument.
+
+**Answer.** It needs three nested functions, because `@repeat(3)` first **calls** `repeat(3)`, and the result is applied to the function: $f \leftarrow (d(a))(f)$. The outer function stores the argument in a closure, the middle one receives `func`, the inner one runs per call. `repeat` in Level 4 is the standard shape, and `roll()` returns `["six", "six", "six"]`. A decorator that works both with and without parentheses must check whether its first argument is a function, as `lru_cache` does; that is clever but harder to read.
+
+### 5. How does `lru_cache` work, and what are its pitfalls?
+
+**Answer.** It maps a hashable key built from the call's arguments to the result, in a dict, and keeps the entries in a doubly linked list by recency so that both a hit and an eviction are $O(1)$. `fib_cached(30)` needs 31 misses and 28 hits instead of 2,692,537 calls. The pitfalls: arguments must be hashable (`unhashable type: 'list'`); results are shared, so returning a mutable object lets callers corrupt the cache; on methods the cache keeps every `self` alive; keyword order can create duplicate entries; and an unbounded `@cache` grows forever. `cache_info()` and `cache_clear()` help monitor and reset it.
+
+## Summary
+
+$$
+\texttt{@}a\ \ \texttt{@}b\ \ \texttt{def } f\ldots \quad\equiv\quad f \leftarrow a\bigl(b(f)\bigr)
+$$
+
+where $a$ and $b$ are decorator expressions, evaluated top to bottom, and applied bottom to top right after `def` creates $f$.
+
+Example: with $a = $ `tag("b")` and $b = $ `tag("i")`, $b(f)$ returns `"<i>hi</i>"` when called, and $a(b(f))$ returns `"<b><i>hi</i></b>"`.
+
+- A decorator is a callable that takes a function (or class) and returns a replacement.
+- It runs once at definition time; its wrapper runs on every call.
+- Always use `functools.wraps` in a wrapping decorator.
+- Decorators with arguments are factories: three nested functions.
+- Stacked decorators compose, and the order changes the result.
+- `cache`, `lru_cache`, `property`, `classmethod`, `staticmethod` and `dataclass` are all decorators.
+
+## References
+
+- The Python Language Reference: [Function definitions](https://docs.python.org/3.14/reference/compound_stmts.html#function-definitions) (decorators) and [Class definitions](https://docs.python.org/3.14/reference/compound_stmts.html#class-definitions); the glossary entry [decorator](https://docs.python.org/3.14/glossary.html#term-decorator).
+- The [`functools` module](https://docs.python.org/3.14/library/functools.html): `wraps`, `update_wrapper`, `cache`, `lru_cache`, `cached_property`; and the built-ins [`property`](https://docs.python.org/3.14/library/functions.html#property), [`classmethod`](https://docs.python.org/3.14/library/functions.html#classmethod), [`staticmethod`](https://docs.python.org/3.14/library/functions.html#staticmethod).
+- [PEP 318: Decorators for Functions and Methods](https://peps.python.org/pep-0318/), [PEP 3129: Class Decorators](https://peps.python.org/pep-3129/), [PEP 614: Relaxing Grammar Restrictions On Decorators](https://peps.python.org/pep-0614/).
+- [What's New in Python 3.13](https://docs.python.org/3.14/whatsnew/3.13.html) (chained classmethod descriptors removed).
+- Luciano Ramalho, *Fluent Python*, 2nd ed. (O'Reilly, 2022), ch. 9 "Decorators and Closures".
+- CPython source: [Lib/functools.py](https://github.com/python/cpython/blob/3.14/Lib/functools.py) (`update_wrapper`, `_make_key`, the pure-Python LRU cache).
+- Lab: [`labs/decorators.py`](labs/decorators.py). Run it from `programming-languages/python/labs` with `python3 -I decorators.py`.

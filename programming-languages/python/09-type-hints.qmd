@@ -1,0 +1,350 @@
+---
+title: "Type Hints"
+description: "Python type hints from the first annotation to interview level: gradual typing and Any, unions and narrowing, generics with the 3.12 syntax, Protocol, TypedDict, Literal, overload, Callable variance, and the deferred annotations of Python 3.14."
+---
+
+## The problem
+
+A pricing module has a function that doubles a quantity:
+
+```python
+def double(x: int) -> int:
+    return x * 2
+```
+
+`double(21)` is 42. But the quantity comes from a web form, so somebody calls `double("21")`, and Python happily returns `"2121"`: multiplying a string by 2 repeats it. Nothing crashes. The wrong value flows on into an invoice, and the bug is found weeks later, far from its cause.
+
+The `: int` and `-> int` are **type hints**. The surprise for most newcomers is that Python itself **does not check them**: the lab confirms that `double("21") == "2121"` even with the hints in place. Hints are read by separate tools, **static type checkers** such as mypy and pyright, which analyse the source without running it. For this call mypy reports an `[arg-type]` error, in the format its documentation shows: `Argument 1 to "double" has incompatible type "str"; expected "int"`. The bug is caught before the code ever ships.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Labels on moving boxes
+
+When a family moves house, every box gets a label: "kitchen: plates", "bedroom: books". The label does not stop anyone from putting shoes in the plates box. The **removal van drives off either way**: that is Python running your program.
+
+But before the van leaves, an **inspector** walks along the boxes, reads every label, and peeks at what is going in: "this box says plates, and you are packing shoes". That inspector is the type checker. It works on the labels, before the journey, and the journey itself never looks at them.
+
+You may also leave some boxes unlabelled. The inspector simply skips them. That is **gradual typing**, the idea Jeremy Siek and Walid Taha introduced in 2006. Jukka Lehtosalo began mypy in 2012 as a PhD student at Cambridge, building on their work, and wrote PEP 484, the standard for Python's hints, with Guido van Rossum and Łukasz Langa.
+:::
+
+## From simple to advanced
+
+### Level 1: a hint is a note, and `Any` switches checking off
+
+An annotation is an ordinary expression stored on the function. Python evaluates it (lazily, see Level 6), keeps it, and ignores it when calling:
+
+```python
+assert double("21") == "2121"  # wrong type, no error: hints are not enforced
+assert annotationlib.get_annotations(double) == {"x": int, "return": int}
+```
+
+A checker decides whether a value of one type may go where another type is declared. PEP 483 defines that relation, **is-consistent-with**, by three rules:
+
+$$
+t_1 \sim t_2 \iff t_1 <: t_2 \;\lor\; t_1 = \texttt{Any} \;\lor\; t_2 = \texttt{Any}
+$$
+
+where
+
+- $t_1$ is the type of the value being passed or assigned;
+- $t_2$ is the declared type of the parameter or variable;
+- $t_1 <: t_2$ means "$t_1$ is a subtype of $t_2$": every $t_1$ value can be used as a $t_2$, as a `bool` can be used as an `int`;
+- $\texttt{Any}$ is the "unchecked" type, what a value has when nobody annotated it;
+- $\sim$ means "consistent": the checker accepts it. $\lor$ means "or".
+
+Example:
+
+1. `double("21")`: $t_1 = \texttt{str}$, $t_2 = \texttt{int}$. `str` is not a subtype of `int`, and neither is `Any`, so $\texttt{str} \not\sim \texttt{int}$ and the checker reports an error.
+2. `double(True)`: $\texttt{bool} <: \texttt{int}$ (the lab checks `issubclass(bool, int)`), so it is accepted, and indeed `double(True) == 2`.
+3. A value from an unannotated function has type `Any`, so $\texttt{Any} \sim \texttt{int}$ and it is accepted without checking. That is the "gradual" part: unannotated code is trusted, not rejected.
+4. $\sim$ is **not transitive**: $\texttt{int} \sim \texttt{Any}$ and $\texttt{Any} \sim \texttt{str}$, but $\texttt{int} \not\sim \texttt{str}$. `Any` is a hole in checking, not a common ancestor. The type that really means "any object" is `object`, and the checker lets you do almost nothing with it.
+
+### Level 2: unions and narrowing
+
+A value that may be one of several types is a **union**, written `int | None` since Python 3.10 (PEP 604):
+
+```python
+def parse_age(text: str) -> int | None:
+    return int(text) if text.isdigit() else None
+
+
+def describe(age: int | None) -> str:
+    if age is None:
+        return "unknown"
+    return f"{age} years"  # here the checker knows that age is an int
+```
+
+A type can be read as the set of values it allows:
+
+$$
+\operatorname{vals}(A \mid B) = \operatorname{vals}(A) \cup \operatorname{vals}(B), \qquad \operatorname{vals}(\texttt{None}) = \lbrace \texttt{None} \rbrace
+$$
+
+where
+
+- $\operatorname{vals}(T)$ is the set of values a variable of type $T$ may hold;
+- $A \mid B$ is the union type, written `A | B` in Python;
+- $\cup$ is set union.
+
+Example: $\operatorname{vals}(\texttt{int} \mid \texttt{None}) = \lbrace \dots, -1, 0, 1, \dots \rbrace \cup \lbrace \texttt{None} \rbrace$. `parse_age("36")` returns 36, which is in the first part; `parse_age("old")` returns `None`, the second part. Inside `describe`, after `if age is None: return`, the remaining possibilities are $\operatorname{vals}(\texttt{int} \mid \texttt{None}) \setminus \lbrace \texttt{None} \rbrace = \operatorname{vals}(\texttt{int})$, so the checker lets you use `age` as an `int`. Removing cases with `is None`, `isinstance` or `==` checks is called **narrowing**. `Optional[int]` is an older spelling of exactly `int | None`; it does **not** mean "optional argument".
+
+Unions also exist at run time: `isinstance(3, int | str)` is `True`. Parameterized generics do not: `isinstance([1], list[int])` raises `TypeError: isinstance() argument 2 cannot be a parameterized generic`, because a list does not remember what it was declared to hold.
+
+### Level 3: generics and the Python 3.12 syntax
+
+`first` returns whatever the list holds. Writing `-> object` would lose that information; a **type parameter** keeps it:
+
+```python
+def first[T](items: list[T]) -> T:
+    return items[0]
+
+
+def longest[T: Sized](a: T, b: T) -> T:
+    return a if len(a) >= len(b) else b
+
+
+class Box[T]:
+    def __init__(self, item: T) -> None:
+        self.item = item
+
+    def get(self) -> T:
+        return self.item
+
+
+type Pair[T] = tuple[T, T]
+```
+
+The brackets after the name are PEP 695 syntax (Eric Traut), new in Python 3.12. `[T: Sized]` adds a **bound**: `T` may only be a type that has `len`. The `type` statement declares an alias. Before 3.12 the same function needed a module-level `TypeVar`:
+
+```python
+# sketch: the pre-3.12 spelling of first, still valid
+from typing import TypeVar
+T = TypeVar("T")
+def first(items: list[T]) -> T: ...
+```
+
+A generic function has one type for every choice of $T$:
+
+$$
+\texttt{first} : \forall T.\; \texttt{list}[T] \to T
+$$
+
+where
+
+- $\forall T$ means "for every type $T$";
+- $\texttt{list}[T] \to T$ is a function type: it takes a list of $T$ and returns a $T$.
+
+Example: for `first([3, 1, 2])` the checker sees a `list[int]`, solves $T = \texttt{int}$, and concludes the result is an `int`; at run time the result is 3. For `first(["a"])`, $T = \texttt{str}$. For `longest("ab", "abc")`, $T = \texttt{str}$ satisfies the bound because `str` has `len`, and the result is `"abc"`; `longest(3, 4)` would be rejected because `int` is not `Sized`.
+
+At run time `T` is a real object: `first.__type_params__` is a tuple holding one `typing.TypeVar` named `"T"`, and `longest`'s has `__bound__` equal to `Sized`. `Pair` is a `typing.TypeAliasType`, not a class, so `Pair((1, 2))` raises `TypeError: 'typing.TypeAliasType' object is not callable`.
+
+### Level 4: structural types with `Protocol`, `TypedDict` and `Literal`
+
+Python code is full of duck typing: "anything with a `greet` method will do". `Protocol` (PEP 544) lets the checker express exactly that:
+
+```python
+class Greeter(Protocol):
+    def greet(self) -> str: ...
+
+
+class English:  # never mentions Greeter
+    def greet(self) -> str:
+        return "hello"
+
+
+def welcome(greeter: Greeter) -> str:
+    return greeter.greet() + "!"
+```
+
+`welcome(English())` returns `"hello!"`, and the checker accepts it although `English` never inherits from `Greeter`. That is **structural** subtyping:
+
+$$
+C <: P \iff \forall m \in \operatorname{members}(P) :\; m \in \operatorname{members}(C) \text{ with a compatible type}
+$$
+
+where
+
+- $P$ is the protocol and $C$ is the candidate class;
+- $\operatorname{members}(X)$ is the set of methods and attributes $X$ declares;
+- "compatible" means the member's type in $C$ is a subtype of its type in $P$.
+
+Example: $\operatorname{members}(\texttt{Greeter}) = \lbrace \texttt{greet} : () \to \texttt{str} \rbrace$. `English` has `greet` with type $() \to \texttt{str}$, so the single condition holds and $\texttt{English} <: \texttt{Greeter}$. A class whose `greet` returned `int` would fail the "compatible" part. The opposite, **nominal** subtyping, is what classes and ABCs use: you are a subtype only if you inherit ([Inheritance, MRO and Protocols](07-inheritance-mro-and-protocols.qmd)).
+
+Protocols are for the checker. `isinstance(English(), Greeter)` raises `TypeError: Instance and class checks can only be used with @runtime_checkable protocols`. With `@runtime_checkable`, `isinstance` works but only checks that the method **names** exist: `isinstance(io.StringIO(), Closable)` is `True` and `isinstance(3, Closable)` is `False`, with no signature check at all.
+
+Two more shapes describe data rather than behaviour:
+
+```python
+class Movie(TypedDict):
+    title: str
+    year: int
+
+
+type Mode = Literal["r", "w"]
+```
+
+A `TypedDict` (PEP 589) is a dictionary with a fixed set of keys, each with its own type. `Literal` (PEP 586) allows only the listed values. Both vanish at run time: `Movie(title="Up", year="2009")` is a plain `dict` with the string `"2009"` inside, and `open_mode("x")` returns `"x"`. A checker rejects both: for the movie, mypy reports a `[typeddict-item]` error because item `"year"` must be an `int`, and for the mode, `"x"` is not one of the allowed literals.
+
+### Level 5: `overload` and `Callable`
+
+`scale(3, 2)` returns an `int` and `scale("ab", 2)` a `str`. A return type of `int | str` would force every caller to narrow again. `@overload` gives each argument type its own signature:
+
+```python
+@overload
+def scale(value: int, factor: int) -> int: ...
+@overload
+def scale(value: str, factor: int) -> str: ...
+def scale(value, factor):
+    return value * factor
+```
+
+The checker reads the two `@overload` stubs and picks the first that matches the call. At run time only the last, real definition exists; `typing.get_overloads(scale)` (Python 3.11+) returns the 2 stubs for tools.
+
+Functions are values, so they need types too. `Callable[[int], int]` is "a function taking one `int` and returning an `int`":
+
+```python
+def apply_twice(f: Callable[[int], int], value: int) -> int:
+    return f(f(value))
+
+
+def count_digits(x: object) -> int:  # accepts more than an int: fine as a callback
+    return len(str(x))
+```
+
+`apply_twice(double, 5)` is 20 and `apply_twice(count_digits, 12345)` is 1, since 12345 has 5 digits and 5 has 1. Why is `count_digits`, which takes an `object`, acceptable where a function of `int` is expected? The rule for function types is:
+
+$$
+\texttt{Callable}[[A], R] <: \texttt{Callable}[[A'], R'] \iff A' <: A \;\land\; R <: R'
+$$
+
+where
+
+- $A$ and $R$ are the parameter and return types of the function you have;
+- $A'$ and $R'$ are those of the function type that is expected;
+- $\land$ means "and".
+
+Example with `count_digits` passed as `f`: $A = \texttt{object}$, $R = \texttt{int}$, $A' = \texttt{int}$, $R' = \texttt{int}$. Is $\texttt{int} <: \texttt{object}$? Yes. Is $\texttt{int} <: \texttt{int}$? Yes. So it is accepted. A function taking only `bool` would fail: $\texttt{int} <: \texttt{bool}$ is false, because `apply_twice` may pass it 5. Parameters go the **opposite** way (contravariant), results the same way (covariant).
+
+### Level 6: Python 3.14 evaluates annotations lazily
+
+Until Python 3.13, annotations were evaluated when the `def` ran. A method that mentions its own class failed, because the class name is bound only after the class body finishes:
+
+```python
+class Node:
+    def link(self, other: Node) -> Node:  # Node is not defined yet: fine in 3.14
+        return other
+```
+
+On Python 3.13 this raises `NameError: name 'Node' is not defined. Did you mean: 'None'?`, and people wrote `"Node"` in quotes or added `from __future__ import annotations`. Python 3.14 implements PEP 649 (Larry Hastings) and PEP 749 (Jelle Zijlstra): annotations are compiled into a function and evaluated **only when someone asks**, then cached:
+
+```python
+def label(name):
+    evaluated.append(name)
+    return str
+
+
+def greet(name: label("name")) -> label("return"):
+    return f"hi {name}"
+```
+
+The lab counts how often `label` runs:
+
+$$
+\operatorname{len}(\texttt{evaluated}) = 2 \cdot \min(k, 1)
+$$
+
+where
+
+- $k$ is the number of times `greet.__annotations__` has been read;
+- 2 is the number of annotation expressions on `greet` (one parameter, one return);
+- $\min(k, 1)$ is 0 before the first read and 1 forever after, because the result is cached.
+
+Example: right after the `def`, $k = 0$ and the list is empty, $2 \cdot 0 = 0$. After the first read, $k = 1$ and it holds `["name", "return"]`, $2 \cdot 1 = 2$. After a second read, $k = 2$ but $2 \cdot \min(2, 1) = 2$: nothing ran again.
+
+The new `annotationlib` module can also read annotations that refer to names which do not exist yet, in three formats. For `def load(path: Missing) -> None`:
+
+| `annotationlib.get_annotations(load, format=...)` | Result |
+|---|---|
+| `Format.VALUE` (the default) | raises `NameError: name 'Missing' is not defined` |
+| `Format.FORWARDREF` | `path` maps to a `ForwardRef` proxy for `"Missing"` |
+| `Format.STRING` | `{"path": "Missing", "return": "None"}` |
+
+The `type` statement is lazy the same way: `type Later = NotDefinedYet` succeeds, and only reading `Later.__value__` raises `NameError`.
+
+## How it works underneath
+
+**Two separate programs read your hints.** CPython compiles annotations and stores them; it never compares a value with a hint. The checker parses the source, builds a type for every expression, and applies rules like the ones above: consistency (Level 1), narrowing (Level 2), solving type parameters (Level 3), structural matching (Level 4) and function variance (Level 5). The rules are written down in the [typing specification](https://typing.python.org/en/latest/spec/), which mypy, pyright and other checkers follow. Because the checker never runs your code, it cannot see what `eval` or a monkeypatch does; and because Python never reads the hints, a wrong hint is never caught at run time.
+
+**Generic containers have a variance.** Function parameters are contravariant (Level 5). For containers, the question is whether `list[bool]` may be used as a `list[int]`. Since `bool <: int`, it looks safe, but a function `def add_zero(xs: list[int]) -> None: xs.append(0)` would then put the `int` 0 into a list that must hold only `bool`s. So `list` is **invariant**: `list[bool]` and `list[int]` are unrelated, and mypy's documentation lists exactly this as a common issue. Read-only `Sequence[int]` cannot be appended to, so it is **covariant**: a `list[bool]` is a valid `Sequence[int]`. With the 3.12 syntax (`class Box[T]`), checkers infer each parameter's variance from how the class uses it.
+
+**PEP 649's annotate functions.** For every annotated function, class and module, the 3.14 compiler generates a hidden function `__annotate__(format)`. The `__annotations__` attribute is a descriptor: on first access it calls `__annotate__(Format.VALUE)`, stores the dictionary, and returns the stored copy afterwards, which is the $\min(k, 1)$ in Level 6. A compiler-generated `__annotate__` supports only `VALUE`; the lab checks that `greet.__annotate__(Format.STRING)` raises `NotImplementedError`. For `STRING` and `FORWARDREF`, `annotationlib` re-runs the annotate function in a "fake globals" environment in which every unknown name turns into a proxy object that records what was done with it. That is how `Missing` becomes `"Missing"` without ever being defined.
+
+**Type parameters are runtime objects.** `def first[T]` creates a `TypeVar` named `T` in a small hidden scope (an "annotation scope") that exists only for the function's signature, so `T` does not leak into the module. `class Box[T]` implicitly inherits from `typing.Generic`: the lab checks that `Box.__mro__ == (Box, typing.Generic, object)`. Subscripting `Box[int]` builds an alias object whose `__origin__` is `Box` and whose `__args__` is `(int,)`; it is still `Box` that creates instances.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Expecting Python to enforce hints | No error; a wrong result such as `"2121"` | Run mypy or pyright in CI; validate untrusted input explicitly at the boundary |
+| `isinstance(x, list[int])` | `TypeError: isinstance() argument 2 cannot be a parameterized generic` | `isinstance(x, list)`, then check the elements if you must |
+| `isinstance` with a plain `Protocol` | `TypeError: Instance and class checks can only be used with @runtime_checkable protocols` | Add `@runtime_checkable`, and remember it checks method names only |
+| Reading `Optional[int]` as "may be omitted" | For `def set_limit(limit: Optional[int])`, calling `set_limit()` raises `TypeError: set_limit() missing 1 required positional argument: 'limit'` | `Optional[int]` only means "an `int` or `None`"; a default value (`= None`) is what makes an argument omittable |
+| Passing `list[bool]` where `list[int]` is declared | The checker reports an incompatible argument because `list` is invariant | Declare the parameter as `Sequence[int]` if the function only reads |
+| Calling a `type` alias like a class | `TypeError: 'typing.TypeAliasType' object is not callable` | Construct the underlying type: `tuple(...)`, or use a class |
+| Reading `obj.__annotations__` by hand on 3.14 | `NameError` for forward references | `annotationlib.get_annotations(obj, format=Format.FORWARDREF)` |
+| Adding `from __future__ import annotations` to new 3.14 code | All annotations become strings | Not needed on 3.14; the 3.14 docs call it deprecated, with removal not before 3.13 reaches end of life in 2029 |
+
+## Interview questions
+
+### 1. Are type hints checked when the program runs?
+
+**Answer.** No. CPython stores annotations (lazily, since 3.14) and never compares them with values, so `double("21")` returns `"2121"`. Checking is done before running, by separate tools such as mypy and pyright. Libraries can *read* hints at run time through `annotationlib.get_annotations` or `typing.get_type_hints` (dataclasses and validation libraries do), but that is their choice, not the language's.
+
+### 2. What is the difference between `Any` and `object`?
+
+**Answer.** Both accept every value as an argument, but they are opposites for the checker. `object` is the top of the subtype hierarchy: every value is an `object`, so it can be passed in, but you may only use what every object has, and passing an `object` where an `int` is expected is an error. `Any` is outside the hierarchy: by the consistency rule $t \sim \texttt{Any}$ and $\texttt{Any} \sim t$ for every $t$, so an `Any` value can be passed anywhere and used for anything. `Any` turns checking off; `object` keeps it strict.
+
+### 3. How does a `Protocol` differ from an abstract base class?
+
+**Answer.** An ABC is **nominal**: a class counts only if it inherits from the ABC or is registered with it. A `Protocol` is **structural**: a class counts if it has the required members with compatible types, as `English` satisfies `Greeter` without mentioning it. Protocols are mainly for the static checker; at run time `isinstance` needs `@runtime_checkable` and then checks only that the member names exist. Use a protocol to describe what a function needs from its argument, and an ABC when you also want to share implementation or force subclasses to implement methods.
+
+### 4. Why is `list[bool]` not a `list[int]`, when `bool` is a subtype of `int`?
+
+**Answer.** Because lists are mutable. If `list[bool]` were a `list[int]`, a function declared to take `list[int]` could append the `int` 0, and the caller's list of `bool`s would then contain a non-`bool`. So `list` is invariant. `Sequence` is read-only and therefore covariant: `list[bool]` is a valid `Sequence[int]`. Function types add the third case, contravariance in parameters: $\texttt{Callable}[[A], R] <: \texttt{Callable}[[A'], R']$ needs $A' <: A$, which is why `count_digits(x: object)` is a valid `Callable[[int], int]`.
+
+### 5. What changed about annotations in Python 3.14?
+
+**Answer.** PEPs 649 and 749: annotations are no longer evaluated when the `def` or `class` runs. The compiler wraps them in an `__annotate__` function, and `__annotations__` calls it on first access and caches the result. Forward references such as `other: Node` inside `class Node` now just work, defining annotated functions is cheaper, and the new `annotationlib` module can return annotations as values, as `ForwardRef` proxies, or as strings. `from __future__ import annotations` still works but is deprecated.
+
+### 6. When do you use `@overload` instead of a union return type?
+
+**Answer.** When the return type depends on the argument types. With `def scale(value: int | str, factor: int) -> int | str`, the checker forgets that `scale(3, 2)` is an `int`, and every caller must narrow. With two overloads, it knows `scale(3, 2)` is `int` and `scale("ab", 2)` is `str`. If the return type is the same for every input, a union parameter is simpler; if it simply follows the argument, a type parameter (`def f[T](x: T) -> T`) is simpler still.
+
+## Summary
+
+$$
+t_1 \sim t_2 \iff t_1 <: t_2 \lor t_1 = \texttt{Any} \lor t_2 = \texttt{Any}, \qquad \texttt{Callable}[[A], R] <: \texttt{Callable}[[A'], R'] \iff A' <: A \land R <: R'
+$$
+
+where $t_1$ is the type of the value given, $t_2$ the declared type, $<:$ is "is a subtype of", $\sim$ is "the checker accepts it", and $A, R$ and $A', R'$ are the parameter and return types of the function given and the function type expected.
+
+Example: `str` given for `int` is rejected; `bool` for `int` is accepted; `count_digits`, with $A = \texttt{object}$ and $R = \texttt{int}$, is accepted for $\texttt{Callable}[[\texttt{int}], \texttt{int}]$ because $\texttt{int} <: \texttt{object}$ and $\texttt{int} <: \texttt{int}$.
+
+- Hints are for tools; Python stores them and never enforces them.
+- `Any` switches checking off; `object` keeps it strict.
+- `X | Y` is a union; `is None` and `isinstance` checks narrow it.
+- Use `def f[T]`, `class C[T]` and `type Alias = ...` (3.12+) for generics and aliases.
+- `Protocol` is structural, ABCs are nominal; `TypedDict` and `Literal` vanish at run time.
+- Mutable containers are invariant; parameters are contravariant; results are covariant.
+- Python 3.14 evaluates annotations lazily and caches them; read them with `annotationlib`.
+
+## References
+
+- Python 3.14 documentation: [typing](https://docs.python.org/3.14/library/typing.html), [annotationlib](https://docs.python.org/3.14/library/annotationlib.html), [Annotations Best Practices](https://docs.python.org/3.14/howto/annotations.html), [Type parameter lists](https://docs.python.org/3.14/reference/compound_stmts.html#type-params), and [What's New in Python 3.14](https://docs.python.org/3.14/whatsnew/3.14.html) (deferred annotations).
+- [Specification for the Python type system](https://typing.python.org/en/latest/spec/), the rules that checkers implement.
+- PEPs: [484, Type Hints](https://peps.python.org/pep-0484/) (Guido van Rossum, Jukka Lehtosalo, Łukasz Langa); [483, The Theory of Type Hints](https://peps.python.org/pep-0483/) (Guido van Rossum, Ivan Levkivskyi); [544, Protocols](https://peps.python.org/pep-0544/); [589, TypedDict](https://peps.python.org/pep-0589/); [586, Literal Types](https://peps.python.org/pep-0586/); [604, Union types as X | Y](https://peps.python.org/pep-0604/); [695, Type Parameter Syntax](https://peps.python.org/pep-0695/) (Eric Traut); [649, Deferred Evaluation Of Annotations](https://peps.python.org/pep-0649/) (Larry Hastings); [749, Implementing PEP 649](https://peps.python.org/pep-0749/) (Jelle Zijlstra).
+- mypy documentation: [Error codes enabled by default](https://mypy.readthedocs.io/en/stable/error_code_list.html) and [Common issues: invariance vs covariance](https://mypy.readthedocs.io/en/stable/common_issues.html#invariance-vs-covariance); [About mypy](https://mypy-lang.org/about.html).
+- Jeremy Siek, [What is Gradual Typing](https://jsiek.github.io/home/WhatIsGradualTyping.html).
+- Luciano Ramalho, [*Fluent Python*](https://www.fluentpython.com/), 2nd ed. (O'Reilly, 2022), chapters 8, "Type Hints in Functions", and 15, "More About Type Hints".
+- Lab: [`labs/type-hints.py`](labs/type-hints.py). Run it from `programming-languages/python/labs` with `python3 -I type-hints.py`.

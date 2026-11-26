@@ -1,0 +1,312 @@
+---
+title: "Threads, Processes and the GIL"
+description: "Python concurrency from the first thread to interview level: the GIL and why it exists, I/O-bound versus CPU-bound work, why counter += 1 is not atomic, locks and queues, thread, process and interpreter pools, the free-threaded build of 3.13 and 3.14, subinterpreters, and Amdahl's law."
+---
+
+## The problem
+
+A price checker must download 8 product pages. Each download spends about 50 ms **waiting** for the network. One after another, that is $8 \times 50 = 400$ ms. Then it must count the prime numbers below 10,000 four times for a report, which is pure **computing**.
+
+The natural tool for "several things at once" is a thread. With 8 threads the downloads finish in about 50 ms. But 4 threads for the prime counting are no faster than 1 on standard CPython, because of the **global interpreter lock** (GIL): only one thread at a time may run Python bytecode. Worse, if the threads share a counter, `counter += 1` can lose updates, and the total comes out too small.
+
+This chapter explains what the GIL is, which kind of work it slows down, how to share data safely, and the tools for real parallelism: processes, the new subinterpreters of Python 3.14, and the free-threaded build.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A kitchen with one knife
+
+Several cooks (threads) share one kitchen (the process). There is only **one knife** (the GIL), and you may only chop while holding it.
+
+- A cook who puts a pot of water on to boil (waiting for the network or a disk) **lays the knife down** while waiting. Another cook picks it up and chops. With lots of boiling and little chopping, many cooks really do help.
+- If every cook only chops (pure computing), they just pass the knife around. Four cooks chop no faster than one.
+- **Separate kitchens** (processes), each with its own knife, can all chop at once, but carrying food between kitchens takes time.
+- The **free-threaded build** gives every cook a knife. Now they truly chop together, so they must take care not to grab the same carrot: that is why locks still matter.
+
+Guido van Rossum explained in 2007, in "It isn't Easy to Remove the GIL", that an earlier attempt to replace it with fine-grained locks had made single-threaded code nearly twice as slow. David Beazley's PyCon 2010 talk *Understanding the Python GIL* showed how threads pass it around. Sam Gross's PEP 703, accepted in October 2023, finally made it optional in Python 3.13.
+:::
+
+## From simple to advanced
+
+### Level 1: threads overlap waiting
+
+A thread runs a function alongside the rest of the program. `start` begins it and `join` waits for it to finish:
+
+```python
+def fetch(page, results):
+    time.sleep(0.05)  # stands in for a network call; sleeping releases the GIL
+    results[page] = f"page {page}"
+
+
+def fetch_all(pages):
+    results = {}
+    threads = [threading.Thread(target=fetch, args=(page, results)) for page in pages]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return results
+```
+
+`fetch_all(range(8))` returns all 8 pages, and the lab checks that it takes well under 300 ms; in practice it takes a little over 50. While a thread waits, it holds no GIL, so the waits overlap:
+
+$$
+T_{\text{one by one}} = \sum_{i=1}^{n} t_i, \qquad T_{\text{threads}} \approx \max_{i} t_i \quad \text{(waiting work)}
+$$
+
+where
+
+- $n$ is the number of tasks;
+- $t_i$ is how long task $i$ waits;
+- $\sum$ adds them up, and $\max$ picks the longest.
+
+Example: with $n = 8$ and every $t_i = 50$ ms, one by one takes $8 \times 50 = 400$ ms, while threads take about $\max = 50$ ms, eight times faster. The lab's bound of 300 ms leaves plenty of room for a slow machine and still proves the waits overlapped.
+
+### Level 2: the GIL and CPU-bound work
+
+The GIL is a single lock inside the interpreter. A thread must hold it to execute Python bytecode. It exists because CPython's memory management, and much C extension code, assumes that only one thread touches objects at a time. Reference counts in particular ([Memory and Garbage Collection](11-memory-and-garbage-collection.qmd)) are changed on almost every line; without the GIL, each change would need an atomic instruction or a lock. The glossary puts it this way: it makes "the object model (including critical built-in types such as dict) implicitly safe against concurrent access", "at the expense of much of the parallelism afforded by multi-processor machines".
+
+Threads take turns. A thread that wants the GIL waits for the **switch interval**, then asks the holder to let go:
+
+```python
+assert sys.getswitchinterval() == 0.005  # 5 ms
+```
+
+The GIL is always released around blocking I/O and `time.sleep`, and some C code releases it during long computations (`hashlib`, `zlib`). Pure Python computation never releases it except at those 5 ms switches. So, for work that computes rather than waits:
+
+$$
+T_{\text{threads}} \approx \sum_{i=1}^{n} c_i, \qquad T_{\text{processes}} \approx \max_i c_i + o \quad \text{(computing work, with the GIL)}
+$$
+
+where
+
+- $c_i$ is the CPU time task $i$ needs;
+- $o$ is the extra cost of processes: starting them and copying arguments and results between them.
+
+Example: if each of $n = 4$ prime counts needs $c_i = 100$ ms of CPU, 4 threads still take about $4 \times 100 = 400$ ms, because only one computes at a time. Four processes on four cores take about $100 + o$ ms. Threads are for waiting; processes (or the free-threaded build) are for computing.
+
+`gil_status()` in the lab reports two facts: whether this is a free-threaded build (`sysconfig.get_config_var("Py_GIL_DISABLED")`), and whether the GIL is on right now (`sys._is_gil_enabled()`, new in 3.13). On the standard build both say "GIL": the lab checks that `sys._is_gil_enabled()` is `True` there.
+
+### Level 3: `counter += 1` is not atomic
+
+The GIL makes each **bytecode instruction** atomic, not each line. Disassembling `counter += 1` on Python 3.14 shows four:
+
+```python
+# sketch: disassembled with dis.dis on Python 3.14, not part of the lab
+def increment():
+    global counter
+    counter += 1
+```
+
+```text
+LOAD_GLOBAL              0 (counter)
+LOAD_SMALL_INT           1
+BINARY_OP               13 (+=)
+STORE_GLOBAL             0 (counter)
+```
+
+A switch can happen after the load and before the store. Two threads then both read the old value and both write old + 1. Waiting for that by chance makes a flaky demo, so the lab forces the bad interleaving with a `Barrier`, which lets both threads pass only when both have arrived:
+
+```python
+def racy_increment(barrier):
+    global counter
+    value = counter  # 1. read
+    barrier.wait()  # both threads have now read the same value
+    counter = value + 1  # 2. write: one of the two updates is lost
+```
+
+`lost_update()` runs it in two threads starting from 0 and gets 1, every time. A lock makes the read and the write one indivisible step:
+
+```python
+lock = threading.Lock()
+
+
+def safe_add(times):
+    global counter
+    for _ in range(times):
+        with lock:  # read and write happen with no other thread in between
+            counter += 1
+```
+
+$$
+\text{final} = N \cdot k - L
+$$
+
+where
+
+- $N$ is the number of threads;
+- $k$ is how many increments each thread makes;
+- $L$ is the number of lost updates, one for every pair of overlapping read-modify-writes.
+
+Example: in the barrier demo, $N = 2$, $k = 1$ and both reads see 0, so $L = 1$ and the final value is $2 \cdot 1 - 1 = 1$. With the lock, $L = 0$: `locked_total(4, 100_000)` is exactly $4 \cdot 100{,}000 - 0 = 400{,}000$. The Python FAQ lists single operations on built-in types such as `L.append(x)` and `D[x] = y` as atomic, and compound ones such as `i = i+1` and `D[x] = D[x] + 1` as not. Its advice: "When in doubt, use a mutex!"
+
+### Level 4: queues hand work between threads
+
+Sharing as little as possible is easier than locking well. `queue.Queue` is a thread-safe pipe with all the locking inside:
+
+```python
+def producer(jobs, numbers):
+    for n in numbers:
+        jobs.put(n)  # blocks while the queue is full
+    jobs.put(None)  # sentinel: no more work
+
+
+def consumer(jobs, totals):
+    total = 0
+    while (n := jobs.get()) is not None:
+        total += n
+    totals.append(total)
+```
+
+`queue_total(range(1, 11))` connects one producer and one consumer through `queue.Queue(maxsize=2)` and returns $1 + 2 + \dots + 10 = 55$. Only the consumer touches `total`, so it needs no lock. `maxsize=2` gives **back-pressure**: a fast producer blocks in `put` rather than filling memory. The `None` sentinel is how the consumer learns that the work is over. This is the same idea as a Go channel ([Go: Channels](../go/10-channels.qmd)).
+
+### Level 5: pools of threads, processes and interpreters
+
+Starting threads by hand gets repetitive. `concurrent.futures` (PEP 3148, Brian Quinlan) offers pools behind one interface, `submit` and `map`:
+
+| Pool | Runs on | Good for | Arguments and results |
+|---|---|---|---|
+| `ThreadPoolExecutor` | threads, one GIL | waiting (network, disk) | shared directly |
+| `ProcessPoolExecutor` | separate processes | computing | pickled and copied |
+| `InterpreterPoolExecutor` (3.14) | subinterpreters in one process, one GIL each | computing | copied between interpreters |
+
+`pool.map` returns results **in input order**, whatever order they finish in: mapping `len` over `["a", "bb", "ccc"]` gives `[1, 2, 3]`. The CPU-bound function:
+
+```python
+def count_primes(limit):  # uses no module globals, so another interpreter can run it
+    return sum(1 for n in range(2, limit) if all(n % d for d in range(2, int(n**0.5) + 1)))
+```
+
+`count_primes(10_000)` is 1229. A `ProcessPoolExecutor(max_workers=2)` mapping it over four limits returns `[1229] * 4`, computed on two cores at once. Processes do **not share memory**: `visit(5)` adds 5 to a global in the child, returns 5, and the parent's `visits` is still 0. Each process starts from a fresh copy of the module. On macOS and Windows, children are started with **spawn**: a new interpreter imports your main module from scratch. Python 3.14 made **forkserver** the default on Linux and the other POSIX platforms, replacing `fork`. Both import your main module again in the child, which is why the code that starts processes must sit under `if __name__ == "__main__":` ([Modules and Imports](10-modules-and-imports.qmd)).
+
+The lower-level `multiprocessing` module (PEP 371) has the same parts as `threading`, but for processes:
+
+```python
+def primes_in_process(limit):
+    results = multiprocessing.Queue()
+    process = multiprocessing.Process(target=prime_worker, args=(results, limit))
+    process.start()
+    answer = results.get()
+    process.join()
+    return answer, process.exitcode
+```
+
+It returns `(1229, 0)`: the answer came back through a process-safe queue, and the child exited with code 0.
+
+### Level 6: free threading, subinterpreters, and Amdahl's law
+
+**The free-threaded build** (PEP 703, Sam Gross) is a separate CPython build, usually installed as `python3.14t`, in which the GIL is disabled. Its status changed between releases:
+
+- **3.13**: "experimental support", not enabled by default, with "a substantial single-threaded performance hit" (What's New in 3.13).
+- **3.14**: "now supported and no longer experimental", the start of phase II in PEP 779, but **still optional**. The single-threaded penalty is "now roughly 5-10%". Making it the default (phase III) is undecided.
+
+On that build, `sys._is_gil_enabled()` returns `False`, and the lab's `count_primes` threads would run on several cores. The GIL can be switched back on with `PYTHON_GIL=1` or `-X gil=1`, and it is re-enabled automatically, with a printed warning, when a C extension that has not declared free-threading support is imported. Code that was racy with the GIL stays racy without it; built-in containers lock themselves internally, but `counter += 1` still needs a `Lock`.
+
+**Subinterpreters** (PEP 734, Eric Snow) are several independent Python interpreters inside one process. Since Python 3.12 (PEP 684) each has its **own GIL**, and Python 3.14 exposes them in the `concurrent.interpreters` module:
+
+```python
+def primes_in_interpreter(limit):
+    interp = interpreters.create()
+    try:
+        return interp.call(count_primes, limit)
+    finally:
+        interp.close()
+```
+
+It returns 1229, computed in a fresh interpreter that shares no objects with the caller. What's New in 3.14 describes this as "the isolation of processes with the efficiency of threads", and lists current limits: interpreters are slow to start, use more memory than necessary, and many third-party C extensions do not support them yet. `InterpreterPoolExecutor` puts a pool in front: mapping `count_primes` over `[1_000, 10_000]` gives `[168, 1229]`.
+
+**How much can more workers help?** Usually part of a program cannot be split. Gene Amdahl's 1967 argument gives the limit:
+
+```python
+def amdahl(parallel_fraction, workers):
+    return 1 / ((1 - parallel_fraction) + parallel_fraction / workers)
+```
+
+$$
+S(N) = \frac{1}{(1 - p) + \dfrac{p}{N}}
+$$
+
+where
+
+- $p$ is the fraction of the running time that can be split across workers, between 0 and 1;
+- $1 - p$ is the part that must run on one worker;
+- $N$ is the number of workers (cores);
+- $S(N)$ is the speed-up: old running time divided by new running time.
+
+Example: with $p = 0.9$ and $N = 4$, $S = 1 / (0.1 + 0.9/4) = 1 / (0.1 + 0.225) = 1 / 0.325 \approx 3.077$. Even with a million workers, $S \approx 1 / (0.1 + 0.0000009) \approx 10.0$: the serial 10% caps the speed-up at 10 times. On the standard build, CPU-bound Python threads act as if $p \approx 0$, so $S(N) \approx 1$ however large $N$ is. The lab checks these numbers, and $S(8) \approx 4.71$ from interview question 5.
+
+## How it works underneath
+
+**The GIL is a flag, a mutex and a condition variable.** From the notes at the top of CPython's `Python/ceval_gil.c`: "The GIL is just a boolean variable (locked) whose access is protected by a mutex (gil_mutex), and whose changes are signalled by a condition variable (gil_cond)." A thread that wants the GIL waits on the condition variable for `interval` (the 5 ms switch interval). If the wait times out and the holder has not let go, it sets `gil_drop_request`. The holder's evaluation loop checks a combined flag, the **eval breaker**, at regular points (function calls and the backward jumps of loops), sees the request, releases the GIL, and waits until another thread has actually taken it, so that it cannot immediately grab it back. This "new GIL" is Antoine Pitrou's design from Python 3.2, which replaced counting bytecodes with a time interval. C code that is about to block (`read`, `sleep`, `select`) releases the GIL itself with `Py_BEGIN_ALLOW_THREADS` and takes it back with `Py_END_ALLOW_THREADS`. That is the "lays the knife down" of the analogy.
+
+**What the free-threaded build changes,** following PEP 703:
+
+1. **Biased reference counting.** Each object records an owning thread. The owner updates a "local" count with ordinary instructions; other threads update a "shared" count with atomic instructions. Most objects are only touched by their creator, so most updates stay cheap.
+2. **Immortalization and deferred counting.** Objects such as `None`, small integers and interned strings are immortal, so no thread writes their counts at all; some objects, such as functions and modules, use deferred reference counting.
+3. **mimalloc** replaces pymalloc, because pymalloc is not thread-safe without the GIL. Walking mimalloc's heaps also lets the garbage collector find every object without a linked list.
+4. **Per-object locks.** `dict`, `list` and other mutable built-ins lock themselves (one byte, `ob_mutex`, in every object header) through "critical sections", and read without locking where it is safe. The cycle collector stops all threads while it runs and does not use generations.
+
+**Processes communicate by copying.** `ProcessPoolExecutor` pickles the function by reference (module name plus function name) and the arguments by value, sends them to a worker, and pickles the result back. That is why a lambda fails: it has no importable name. Subinterpreters copy most objects with pickle too, but share some (such as `memoryview` buffers) directly.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Threads for CPU-bound Python on the standard build | No speed-up; sometimes slower, from the switching | `ProcessPoolExecutor`, `InterpreterPoolExecutor`, or the free-threaded build |
+| `counter += 1` from several threads | Lost updates: the barrier demo gives 1 instead of 2 | `threading.Lock`, or let each thread count alone and combine the results |
+| Starting processes without the main guard | `RuntimeError: An attempt has been made to start a new process before the current process has finished its bootstrapping phase.`, then `BrokenProcessPool` | Start pools and processes under `if __name__ == "__main__":` |
+| Sending a lambda to a process pool | `_pickle.PicklingError: Can't pickle <function <lambda> at 0x...>: it's not found as __main__.<lambda>` | Use a module-level function |
+| A function sent to a subinterpreter that uses module globals | `ExecutionFailed: NameError: name 'math' is not defined` | Keep the function self-contained, or import inside it |
+| Expecting processes to share a global | The child's change is invisible: `visits` stays 0 in the parent | Return results, or use a `multiprocessing.Queue` |
+| Assuming the free-threaded build fixes races | The same lost updates, now more often | Locks and queues are still required |
+
+## Interview questions
+
+### 1. What is the GIL, and why does CPython have it?
+
+**Answer.** A single lock that a thread must hold to execute Python bytecode, so only one thread runs Python code at a time per interpreter. It makes CPython's internals simple and fast: reference counts and built-in containers such as `dict` need no per-object locking, and C extensions can assume exclusive access. The cost is that CPU-bound Python threads cannot use more than one core. It is released for blocking I/O and by some C code, and handed over every 5 ms (`sys.getswitchinterval()`) when another thread asks. Since 3.13 there is a free-threaded build without it, officially supported but optional in 3.14.
+
+### 2. When do you use threads, processes, or asyncio?
+
+**Answer.** Threads for blocking I/O, especially with libraries that are not async: the GIL is released while waiting, so the waits overlap ($T \approx \max t_i$). Processes (or subinterpreters, or the free-threaded build) for CPU-bound work, because each has its own GIL; the cost is start-up and pickling ($T \approx \max c_i + o$). asyncio for very many concurrent waits in one thread, such as thousands of sockets, where a thread each would be too heavy ([Asyncio](13-coroutines-and-asyncio.qmd)).
+
+### 3. Is `counter += 1` thread-safe in CPython?
+
+**Answer.** No. It compiles to a load, an add and a store, and a thread switch between the load and the store loses an update. The lab's barrier forces exactly that and gets 1 instead of 2. Single operations on built-ins, such as `list.append`, are atomic under the GIL, and the free-threaded build keeps them safe with per-object locks, but read-modify-write sequences need a `Lock` (or a design where only one thread owns the value, such as a queue).
+
+### 4. What is free-threaded Python, and what is its status?
+
+**Answer.** A build of CPython with the GIL disabled (PEP 703), so threads run Python code in parallel. It uses biased and deferred reference counting, immortal objects, mimalloc and per-object locks to stay safe. In 3.13 it was experimental; in 3.14 it is officially supported (PEP 779, phase II) but not the default, with a single-threaded slowdown of roughly 5-10%. `sys._is_gil_enabled()` tells whether the GIL is active, because it can be re-enabled by `PYTHON_GIL=1` or by importing an extension that does not support free threading.
+
+### 5. Eight cores and 90% parallel code: what speed-up do you expect?
+
+**Answer.** Amdahl's law: $S(8) = 1 / (0.1 + 0.9/8) = 1 / 0.2125 \approx 4.71$, not 8. With 4 cores it is $1 / 0.325 \approx 3.08$, and no number of cores beats $1/0.1 = 10$. Overheads such as process start-up and pickling lower it further, so first make the serial part smaller.
+
+## Summary
+
+$$
+S(N) = \frac{1}{(1 - p) + p/N}, \qquad T_{\text{threads}} \approx \begin{cases} \max_i t_i & \text{waiting work} \\ \sum_i c_i & \text{computing work, with the GIL} \end{cases}
+$$
+
+where $p$ is the parallel fraction, $N$ the number of workers, $S(N)$ the speed-up, $t_i$ the waiting time and $c_i$ the CPU time of task $i$.
+
+Example: 8 waits of 50 ms take about 50 ms with threads instead of 400 ms; $p = 0.9$ on $N = 4$ cores gives $S \approx 3.077$, capped at 10.
+
+- The GIL lets one thread at a time run Python bytecode; it is released while waiting.
+- Threads for waiting; processes, subinterpreters or the free-threaded build for computing.
+- `counter += 1` is a read and a write; protect it with a `Lock`, or share nothing and use a `Queue`.
+- Pools from `concurrent.futures` keep result order; process pools pickle, so use module-level functions and a main guard.
+- 3.13 made the GIL optional (experimental); 3.14 supports the free-threaded build officially and adds `concurrent.interpreters`.
+- Amdahl's law caps the speed-up at $1/(1-p)$.
+
+## References
+
+- Python 3.14 documentation: [threading](https://docs.python.org/3.14/library/threading.html), [queue](https://docs.python.org/3.14/library/queue.html), [concurrent.futures](https://docs.python.org/3.14/library/concurrent.futures.html), [multiprocessing](https://docs.python.org/3.14/library/multiprocessing.html), [concurrent.interpreters](https://docs.python.org/3.14/library/concurrent.interpreters.html), [Python support for free threading](https://docs.python.org/3.14/howto/free-threading-python.html), the glossary entry [global interpreter lock](https://docs.python.org/3.14/glossary.html#term-global-interpreter-lock), and the FAQ [What kinds of global value mutation are thread-safe?](https://docs.python.org/3.14/faq/library.html#what-kinds-of-global-value-mutation-are-thread-safe).
+- What's New: [3.14](https://docs.python.org/3.14/whatsnew/3.14.html) (free threading supported, multiple interpreters, forkserver default), [3.13](https://docs.python.org/3.14/whatsnew/3.13.html) (experimental free threading), [3.2](https://docs.python.org/3.14/whatsnew/3.2.html) (the new GIL).
+- PEPs: [703, Making the Global Interpreter Lock Optional](https://peps.python.org/pep-0703/) (Sam Gross); [779, Criteria for supported status for free-threaded Python](https://peps.python.org/pep-0779/); [684, A Per-Interpreter GIL](https://peps.python.org/pep-0684/); [734, Multiple Interpreters in the Stdlib](https://peps.python.org/pep-0734/) (Eric Snow); [3148, futures](https://peps.python.org/pep-3148/) (Brian Quinlan); [371, multiprocessing](https://peps.python.org/pep-0371/).
+- The source: [Python/ceval_gil.c](https://github.com/python/cpython/blob/3.14/Python/ceval_gil.c).
+- Gene M. Amdahl, "Validity of the single processor approach to achieving large scale computing capabilities", *AFIPS Spring Joint Computer Conference*, 1967, [doi:10.1145/1465482.1465560](https://doi.org/10.1145/1465482.1465560).
+- Guido van Rossum, [It isn't Easy to Remove the GIL](https://www.artima.com/weblogs/viewpost.jsp?thread=214235) (2007).
+- David Beazley, [Understanding the Python GIL](https://www.youtube.com/watch?v=Obt-vMVdM8s) (PyCon 2010).
+- Luciano Ramalho, [*Fluent Python*](https://www.fluentpython.com/), 2nd ed. (O'Reilly, 2022), chapters 19, "Concurrency Models in Python", and 20, "Concurrent Executors".
+- Lab: [`labs/threads-processes-and-the-gil.py`](labs/threads-processes-and-the-gil.py). Run it from `programming-languages/python/labs` with `python3 -I threads-processes-and-the-gil.py`.

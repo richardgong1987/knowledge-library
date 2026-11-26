@@ -1,0 +1,377 @@
+---
+title: "Iterators and Generators"
+description: "The iteration protocol behind every for loop, generators that suspend their frame at yield, generator expressions and memory, lazy pipelines and infinite sequences, yield from, send(), and itertools."
+---
+
+## The problem
+
+A server writes an endless log. You want the **first 3 lines that contain `ERROR`**. Reading the whole log into a list first is impossible, because it never ends; even for a finite log of ten million lines it would hold every line in memory just to look at a dozen.
+
+The same waste shows up with numbers. `sum([n * n for n in range(1_000_000)])` builds a list of a million results and then adds them. On CPython 3.14 that list object, its header and its array of pointers, is **8,448,728 bytes**, before counting the int objects themselves. `sum(n * n for n in range(1_000_000))`, without the square brackets, gives the same answer, 333,332,833,333,500,000, using a generator of **208 bytes**.
+
+What is needed is a way to produce values **one at a time, on demand**, and to stop the producer as soon as the consumer has enough. In Python that is the iterator protocol, and generators are the easy way to write iterators.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A sweet dispenser and a storyteller
+
+- An **iterator** is a sweet dispenser. Each press of the button (`next`) gives you one sweet. When it is empty, it says "no more" (`StopIteration`). It never shows you all the sweets at once.
+- A **generator** is a storyteller who stops in the middle of a sentence when you leave the room and carries on from exactly that word when you come back and say "and then?". She remembers where she was and everything she had said.
+- A **pipeline** is a line of children passing a ball: the second child only asks the first for a ball when the third asks the second for one.
+
+Generators came to Python 2.2 with [PEP 255](https://peps.python.org/pep-0255/), by Neil Schemenauer, Tim Peters and Magnus Lie Hetland. David Beazley's PyCon tutorial trilogy, starting with *Generator Tricks for Systems Programmers* (2008), showed how to build whole data-processing pipelines out of them.
+:::
+
+## From simple to advanced
+
+### Level 1: the iteration protocol
+
+An **iterable** is anything you can loop over: `iter(obj)` returns an **iterator** for it. An iterator has one job: each `next(it)` returns the next item, and when there are none left it raises `StopIteration`:
+
+$$
+\operatorname{next}(it) =
+\begin{cases}
+x_k & \text{on the } k\text{-th call, if } k \le n \\
+\text{raise } \texttt{StopIteration} & \text{if } k > n
+\end{cases}
+$$
+
+where
+
+- $it$ is an iterator over the items $x_1, x_2, \ldots, x_n$;
+- $k$ counts the calls to `next` on this iterator;
+- $n$ is the number of items, which may be unknown or infinite.
+
+```python
+def walk_by_hand():
+    it = iter([10, 20])
+    first = next(it)
+    second = next(it)
+    try:
+        next(it)
+    except StopIteration:
+        return first, second, "StopIteration"
+```
+
+Example: for `[10, 20]`, $n = 2$. Call 1 gives $x_1 = 10$, call 2 gives $x_2 = 20$, and call 3 has $k = 3 > 2$, so it raises. `walk_by_hand()` returns `(10, 20, "StopIteration")`.
+
+A `for` loop is exactly this protocol. The reference manual says the iterable "is evaluated once" and "an iterator is created for that iterable", then items are taken until the iterator "is exhausted". Written out by hand:
+
+```python
+def for_loop_by_hand(iterable):
+    seen = []
+    it = iter(iterable)  # for calls iter() once ...
+    while True:
+        try:
+            item = next(it)  # ... then next() until StopIteration
+        except StopIteration:
+            break
+        seen.append(item)
+    return seen
+```
+
+`for_loop_by_hand("abc")` returns `["a", "b", "c"]`. To make your own iterator, a class needs `__iter__` (return the iterator) and `__next__` (return the next item or raise `StopIteration`):
+
+```python
+class Countdown:
+    def __init__(self, start):
+        self.current = start
+
+    def __iter__(self):
+        return self  # an iterator is its own iterable
+
+    def __next__(self):
+        if self.current == 0:
+            raise StopIteration
+        self.current -= 1
+        return self.current + 1
+```
+
+`list(Countdown(3))` is `[3, 2, 1]`. The difference between iterable and iterator matters: an iterator is **used up**. The lab calls `list()` twice on one `Countdown` and gets `[3, 2, 1]`, then `[]`. A list is an iterable but not an iterator, and `iter(numbers) is not iter(numbers)`: every loop gets a fresh iterator, so you can loop over a list many times.
+
+### Level 2: a generator pauses at `yield`
+
+Writing `__next__` by hand means storing your position in attributes. A **generator function** lets Python store it for you. Any function containing `yield` is one. Calling it runs **none** of its body; it returns a generator object, an iterator whose `next()` runs the body up to the next `yield`:
+
+```python
+def countdown(start):
+    while start > 0:
+        yield start  # pause here; resume on the next next()
+        start -= 1
+```
+
+`list(countdown(3))` is `[3, 2, 1]`, like the class, in four lines. The order of events shows the pausing:
+
+```python
+def two_steps(log):
+    log.append("started")
+    yield 1
+    log.append("resumed")
+    yield 2
+    log.append("finished")
+
+
+def run_two_steps():
+    log = []
+    gen = two_steps(log)
+    log.append("created")  # nothing in the body has run yet
+    log.append(next(gen))
+    log.append(next(gen))
+    log.append(next(gen, "exhausted"))
+    return log
+```
+
+It returns `["created", "started", 1, "resumed", 2, "finished", "exhausted"]`. `"created"` comes before `"started"`, so the call `two_steps(log)` ran nothing. Each `next` runs to the following `yield`, and the third one falls off the end of the body, which raises `StopIteration`; `next(gen, "exhausted")` turns that into a default value. `inspect.getgeneratorstate` names the stages: a fresh generator is `GEN_CREATED`, one paused at a `yield` is `GEN_SUSPENDED`, one that is running is `GEN_RUNNING`, and a finished one is `GEN_CLOSED`. The lab checks the sequence `GEN_CREATED`, `GEN_SUSPENDED`, `GEN_CLOSED` for `countdown(2)`.
+
+### Level 3: generator expressions and memory
+
+A generator expression is a comprehension in round brackets. It builds the generator, not the results:
+
+```python
+def memory_of_squares():
+    as_list = [n * n for n in range(1_000_000)]
+    as_generator = (n * n for n in range(1_000_000))
+    return sys.getsizeof(as_list), sys.getsizeof(as_generator), sum(as_generator)
+```
+
+$$
+\operatorname{size}(\text{list}) = 56 + 8a, \quad a \ge n, \qquad \operatorname{size}(\text{generator}) = \text{a constant, whatever } n \text{ is}
+$$
+
+where
+
+- $n$ is the number of results;
+- $a$ is the number of slots the list allocated, a little more than $n$ ([Built-in Collections](02-built-in-collections.qmd), Level 1);
+- $56$ is the size of an empty list object and $8$ bytes is one pointer, on 64-bit CPython 3.14;
+- `sys.getsizeof` counts the container only, not the int objects the slots point to.
+
+Example: for $n = 10^6$, appending a million results leaves $a = 1{,}056{,}084$ slots, so the list is $56 + 8 \times 1{,}056{,}084 = 8{,}448{,}728$ bytes. The generator is 208 bytes, and would be 208 bytes for $n = 10^9$ too. Both give the same sum, which the lab checks against the closed form:
+
+$$
+\sum_{n=0}^{N-1} n^2 = \frac{(N-1)\,N\,(2N-1)}{6}
+$$
+
+where $N$ is the number of terms, here `range(1_000_000)`, so $N = 10^6$.
+
+Example: $\frac{999{,}999 \times 1{,}000{,}000 \times 1{,}999{,}999}{6} = 333{,}332{,}833{,}333{,}500{,}000$.
+
+Use a list when you need the results more than once, need `len`, or need indexing; a generator has none of those (`len(countdown(1))` raises `TypeError: object of type 'generator' has no len()`). Use a generator when you consume the results once, in order.
+
+### Level 4: lazy pipelines and infinite sequences
+
+Generators chain like pipes: each stage pulls from the one before only when asked. Here is The problem, with an endless log that records every line it produces:
+
+```python
+def log_lines(read):
+    for n in count(1):  # an endless log
+        read.append(n)
+        yield f"{n} ERROR" if n % 4 == 0 else f"{n} ok"
+
+
+def errors_only(lines):
+    for line in lines:
+        if "ERROR" in line:
+            yield line
+
+
+def first_errors(how_many):
+    read = []
+    found = list(islice(errors_only(log_lines(read)), how_many))
+    return found, len(read)
+```
+
+`first_errors(3)` returns `(["4 ERROR", "8 ERROR", "12 ERROR"], 12)`. In this log every 4th line is an error, so finding $k$ errors reads exactly
+
+$$
+L(k) = 4k
+$$
+
+lines, where $k$ is the number of errors requested and $4$ is the spacing of error lines in this log.
+
+Example: $L(3) = 4 \times 3 = 12$, and the lab confirms that `log_lines` produced 12 lines of an infinite stream. `islice` stopped asking after the third error, so nothing upstream ran any further. That is laziness: work happens only when the consumer pulls.
+
+An infinite generator is a normal tool, as long as something downstream stops it. The Fibonacci numbers, $F_{k+2} = F_{k+1} + F_k$ with $F_0 = 0$ and $F_1 = 1$:
+
+```python
+def fibonacci():
+    a, b = 0, 1
+    while True:
+        yield a
+        a, b = b, a + b
+```
+
+`list(islice(fibonacci(), 10))` is `[0, 1, 1, 2, 3, 5, 8, 13, 21, 34]`. The `itertools` module provides the standard pipeline parts, all lazy:
+
+```python
+def itertools_tour():
+    evens = list(islice(count(0, 2), 4))  # an infinite sequence, cut to 4
+    small_squares = list(takewhile(lambda n: n < 10, (n * n for n in count(1))))
+    running_totals = list(accumulate([3, 1, 4]))
+    joined = list(chain("ab", [1, 2]))
+    pairs = list(batched("abcde", 2))
+    return evens, small_squares, running_totals, joined, pairs
+```
+
+It returns `[0, 2, 4, 6]`, `[1, 4, 9]`, `[3, 4, 8]`, `["a", "b", 1, 2]` and `[("a", "b"), ("c", "d"), ("e",)]`. `batched` is new in Python 3.12 (3.13 added `strict=True`), and `pairwise` in 3.10.
+
+### Level 5: `yield from`
+
+`yield from g` hands control to another generator until it finishes, passing its values straight through, and evaluates to that generator's `return` value ([PEP 380](https://peps.python.org/pep-0380/), Python 3.3):
+
+```python
+def inner():
+    yield 1
+    yield 2
+    return "inner done"  # becomes the value of the yield from expression
+
+
+def outer(results):
+    result = yield from inner()
+    results.append(result)
+    yield 3
+```
+
+`list(outer(results))` is `[1, 2, 3]`, and `results` ends up as `["inner done"]`. A recursive generator needs it to pass on the values of the inner calls:
+
+```python
+def flatten(items):
+    for item in items:
+        if isinstance(item, list):
+            yield from flatten(item)
+        else:
+            yield item
+```
+
+`list(flatten([1, [2, [3, 4]], 5]))` is `[1, 2, 3, 4, 5]`. Without `yield from`, writing `yield flatten(item)` would yield generator objects instead of numbers.
+
+### Level 6: `send()` turns a generator into a coroutine
+
+Since Python 2.5 ([PEP 342](https://peps.python.org/pep-0342/)), `yield` is an expression. `gen.send(x)` resumes the generator and makes the paused `yield` evaluate to `x`; the generator then runs to the next `yield`, whose value `send` returns:
+
+```python
+def running_average():
+    total, n, average = 0, 0, None
+    while True:
+        value = yield average  # send(x) makes this yield evaluate to x
+        total += value
+        n += 1
+        average = total / n
+
+
+def averages():
+    avg = running_average()
+    first = next(avg)  # run to the first yield: "priming"
+    return first, avg.send(10), avg.send(20), avg.send(60)
+```
+
+The generator computes
+
+$$
+a_k = \frac{1}{k} \sum_{i=1}^{k} x_i
+$$
+
+where $x_i$ is the $i$-th value sent and $a_k$ is the average after $k$ values.
+
+Example: $a_1 = 10/1 = 10$, $a_2 = (10 + 20)/2 = 15$, $a_3 = (10 + 20 + 60)/3 = 30$. `averages()` returns `(None, 10.0, 15.0, 30.0)`. The first `next` is needed because a new generator is not yet paused at any `yield` that could receive a value: `running_average().send(10)` raises `TypeError: can't send non-None value to a just-started generator`. Beazley's second tutorial, *A Curious Course on Coroutines and Concurrency* (2009), explores this style; `async def` coroutines ([asyncio](13-coroutines-and-asyncio.qmd)) grew out of it.
+
+## How it works underneath
+
+A generator function compiles to normal bytecode with one extra instruction at the start. On CPython 3.14, `dis.dis(countdown)` begins:
+
+```text
+RETURN_GENERATOR       build a generator object holding this frame, and return it
+POP_TOP
+RESUME                 0
+...
+YIELD_VALUE            0      hand `start` to the caller and suspend
+RESUME                 5      continue here on the next next() or send()
+```
+
+So calling `countdown(3)` sets up the frame (arguments and local variables), wraps it in a generator object and returns at once, which is why the body has not run yet. Since Python 3.11 the frame is stored **inside** the generator object. Trimmed from `Include/internal/pycore_interpframe_structs.h`:
+
+```text
+struct _PyGenObject {
+    PyObject_HEAD
+    PyObject *gi_name, *gi_qualname;
+    _PyErr_StackItem gi_exc_state;    /* the exception being handled, if any */
+    int8_t gi_frame_state;            /* created, suspended, running, completed ... */
+    _PyInterpreterFrame gi_iframe;    /* locals, value stack, instruction pointer */
+};
+```
+
+An ordinary function's frame is thrown away when it returns. A generator's frame survives `YIELD_VALUE`, because the generator object owns it: its local variables, its partly evaluated stack and its position (`f_lasti`, the index of the last instruction) stay put. `next()` jumps back in at that position. The lab looks inside a paused generator:
+
+```python
+def paused_frame():
+    gen = countdown(3)
+    next(gen)
+    paused = gen.gi_suspended, dict(gen.gi_frame.f_locals)
+    list(gen)
+    return paused, gen.gi_frame
+```
+
+It returns `((True, {"start": 3}), None)`: while paused, the frame holds `start = 3`; once the generator has finished, the frame is released and `gi_frame` is `None`. (`gi_suspended` was added in 3.11.)
+
+Two more methods complete the picture. `gen.throw(exc)` raises an exception at the paused `yield`, and `gen.close()` raises `GeneratorExit` there, so `finally` blocks and `with` blocks in the generator run their clean-up. The lab's `closing_demo` checks that `close()` runs a `finally` clause. Finally, [PEP 479](https://peps.python.org/pep-0479/) (default since Python 3.7) changed what happens when a `StopIteration` escapes a generator's body: it becomes `RuntimeError: generator raised StopIteration`. The bytecode handler at the end of every generator, `CALL_INTRINSIC_1 (INTRINSIC_STOPITERATION_ERROR)`, does that conversion.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Looping twice over one iterator or generator | The second loop does nothing: `list(once)` is `[]` | Keep a list, or call the generator function again |
+| `raise StopIteration` to end a generator | `RuntimeError: generator raised StopIteration` | `return` |
+| `send(x)` before the first `next` | `TypeError: can't send non-None value to a just-started generator` | Prime with `next(gen)` (or `gen.send(None)`) |
+| `len(gen)` or `gen[0]` | `TypeError: object of type 'generator' has no len()` | `list(gen)` if you really need all items; `next(gen)` or `islice` for the first ones |
+| `yield flatten(item)` in a recursive generator | Generator objects appear in the output | `yield from flatten(item)` |
+| Calling a generator function for its side effects | Nothing happens, because the body never runs | Iterate it, or make it a normal function |
+| `list(count())` or `sum` over an endless generator | The program hangs and memory grows | Cut it with `islice` or `takewhile` first |
+
+## Interview questions
+
+### 1. What is the difference between an iterable and an iterator?
+
+**Answer.** An iterable has `__iter__` and can produce iterators; an iterator has `__next__` and also `__iter__` returning itself. A list is iterable: `iter(numbers) is not iter(numbers)`, so each loop starts fresh. An iterator is single-use: the second `list(once)` on a `Countdown` is `[]`. Iterators are stateful cursors; iterables are collections or recipes that can hand out cursors. Because `for` calls `iter()` first, both work in a loop.
+
+### 2. How does a generator remember where it stopped?
+
+**Answer.** Its frame is not destroyed at `yield`. The generator object owns an interpreter frame (embedded in the object since 3.11) holding the local variables, the value stack and the instruction pointer. `YIELD_VALUE` returns a value to the caller and marks the frame suspended; `next` or `send` resumes execution at the following `RESUME`. The lab shows `gi_frame.f_locals == {"start": 3}` while paused and `gi_frame is None` after completion.
+
+### 3. What does `yield from` do that a `for` loop with `yield` does not?
+
+**Answer.** For plain iteration they produce the same values. `yield from` also (1) forwards `send()` values and `throw()` exceptions to the inner generator, (2) closes the inner generator when the outer one is closed, and (3) evaluates to the inner generator's `return` value, as in `result = yield from inner()`, which gives `"inner done"`. That full two-way delegation is what PEP 380 added, and it was the foundation for coroutines before `async`/`await`.
+
+### 4. Why does `raise StopIteration` inside a generator give `RuntimeError`?
+
+**Answer.** Before PEP 479, a `StopIteration` that leaked out of a helper inside a generator, for example from a bare `next(it)`, silently ended the generator, and the caller's loop just stopped early, hiding the bug. Since 3.7, any `StopIteration` escaping a generator's body becomes `RuntimeError: generator raised StopIteration`. A generator ends normally with `return` (or by falling off the end), which raises `StopIteration` **outside** the body, as the protocol requires.
+
+### 5. When should you use a generator expression instead of a list comprehension?
+
+**Answer.** When the results are consumed once, in order, especially by a function that takes an iterable: `sum(n * n for n in range(N))` uses a 208-byte generator where the list version allocates 8,448,728 bytes for $N = 10^6$. It can also stop early, as `islice` and `any` do, and can work on infinite input. Use a list when you need to reuse the results, index them, take `len`, or when the source may change before you consume it.
+
+## Summary
+
+$$
+\texttt{for } x \texttt{ in } S\texttt{:}\ \textit{body} \quad\equiv\quad it \leftarrow \operatorname{iter}(S);\ \text{repeat } \bigl(x \leftarrow \operatorname{next}(it);\ \textit{body}\bigr) \text{ until } \texttt{StopIteration}
+$$
+
+where $S$ is any iterable, $it$ is the one iterator the loop creates, and $x$ is bound to each item in turn.
+
+Example: for $S = $ `"abc"`, $it$ yields `"a"`, `"b"`, `"c"`, and the fourth `next` raises `StopIteration`, which ends the loop: `for_loop_by_hand("abc")` returns `["a", "b", "c"]`.
+
+- The protocol is `iter()` once, then `next()` until `StopIteration`; `for`, `list()`, `sum()` and unpacking all use it.
+- Iterators are single-use; iterables hand out fresh iterators.
+- A function with `yield` returns a generator; its frame pauses at each `yield` and keeps its locals.
+- Generator expressions and pipelines are lazy: memory stays constant and work happens only on demand.
+- `yield from` delegates completely and returns the inner result; `send()` passes values in.
+- End a generator with `return`, never `raise StopIteration`.
+
+## References
+
+- The Python Language Reference: [The `for` statement](https://docs.python.org/3.14/reference/compound_stmts.html#the-for-statement), [Yield expressions](https://docs.python.org/3.14/reference/expressions.html#yield-expressions), [Generator-iterator methods](https://docs.python.org/3.14/reference/expressions.html#generator-iterator-methods).
+- The standard library: [Iterator types](https://docs.python.org/3.14/library/stdtypes.html#iterator-types), [`itertools`](https://docs.python.org/3.14/library/itertools.html), [`inspect.getgeneratorstate`](https://docs.python.org/3.14/library/inspect.html#inspect.getgeneratorstate), and the [Functional Programming HOWTO](https://docs.python.org/3.14/howto/functional.html).
+- [PEP 234: Iterators](https://peps.python.org/pep-0234/), [PEP 255: Simple Generators](https://peps.python.org/pep-0255/), [PEP 289: Generator Expressions](https://peps.python.org/pep-0289/), [PEP 342: Coroutines via Enhanced Generators](https://peps.python.org/pep-0342/), [PEP 380: Syntax for Delegating to a Subgenerator](https://peps.python.org/pep-0380/), [PEP 479: Change StopIteration handling inside generators](https://peps.python.org/pep-0479/).
+- David Beazley, [Generator Tricks for Systems Programmers](https://www.dabeaz.com/tutorials.html#generator-tricks-for-systems-programmers) (PyCon 2008), [A Curious Course on Coroutines and Concurrency](https://www.dabeaz.com/tutorials.html#curious-course-coroutines) (PyCon 2009), [Generators: The Final Frontier](https://www.dabeaz.com/tutorials.html#generators-final-frontier) (PyCon 2014).
+- Luciano Ramalho, *Fluent Python*, 2nd ed. (O'Reilly, 2022), ch. 17 "Iterators, Generators, and Classic Coroutines".
+- CPython internals: [InternalDocs/frames.md](https://github.com/python/cpython/blob/3.14/InternalDocs/frames.md) (generator frames are embedded in the generator object), [Include/internal/pycore_interpframe_structs.h](https://github.com/python/cpython/blob/3.14/Include/internal/pycore_interpframe_structs.h), [Objects/genobject.c](https://github.com/python/cpython/blob/3.14/Objects/genobject.c).
+- Lab: [`labs/iterators-and-generators.py`](labs/iterators-and-generators.py). Run it from `programming-languages/python/labs` with `python3 -I iterators-and-generators.py`.

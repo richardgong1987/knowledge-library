@@ -1,0 +1,315 @@
+---
+title: "Modules and Imports"
+description: "Python modules and imports from the first import to interview level: a module is an object, sys.modules runs each file once, __main__ and python -m, packages, relative and namespace imports, sys.path, finders and loaders, and why circular imports fail."
+---
+
+## The problem
+
+A shop's code has grown to one long file. You split it: prices go into `shop/prices.py`, the report into `shop/report.py`. Now questions appear that the single file never raised:
+
+- `prices.py` prints `loading shop.prices` at the top. If three other files `import shop.prices`, does it print three times, and are there three copies of its `TAX = 0.2`?
+- `report.py` works with `python3 -m shop.report`, but `python3 shop/report.py` stops with `ImportError: attempted relative import with no known parent package`. Why does the way you start it matter?
+- `orders.py` imports `customers.py`, which imports `orders.py` back, and the program dies with `cannot import name 'DISCOUNT' from partially initialized module 'broken.orders' (most likely due to a circular import)`.
+- A file called `colorsys.py` in your folder suddenly makes the standard library's `colorsys.rgb_to_hsv` disappear.
+
+All four have one explanation: **what `import` actually does**. It finds a file, runs it once to build a module object, and caches that object in `sys.modules`. The lab writes a tiny package into a temporary folder and checks each step.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The school library's front desk
+
+You ask the librarian for *The Shop Book*. The first time, she walks to the shelves (the folders listed in **`sys.path`**), in a fixed order, and takes the first copy she finds. She reads the instructions inside it to set it up (that is **running the module**), then leaves it on the **front desk** (`sys.modules`).
+
+Everyone who asks after that gets **the very same book from the desk**. Nobody walks to the shelves again, and nobody gets a second copy. If one child writes in the margin, everyone sees the note.
+
+Two traps follow. If somebody put a fake *Shop Book* on a nearer shelf, the librarian brings that one: shadowing. And if book A says "first fetch book B", and book B says "first read page 10 of book A", but A is still being set up and has no page 10 yet, she is stuck: a circular import.
+
+Tim Peters' *Zen of Python* (PEP 20) ends with the line this chapter is about: "Namespaces are one honking great idea -- let's do more of those!" Each module is one such namespace.
+:::
+
+## From simple to advanced
+
+### Level 1: a module is an object, and a file runs once
+
+The package has `shop/__init__.py`, which prints `loading shop`, and this module:
+
+```python
+# shop/prices.py
+print("loading shop.prices")
+TAX = 0.2
+
+
+def with_tax(amount):
+    return round(amount * (1 + TAX), 2)
+```
+
+Importing it twice:
+
+```python
+def import_twice():
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        import shop.prices
+        import shop.prices  # found in sys.modules: the file does not run again
+    return output.getvalue()
+```
+
+The captured output is exactly `"loading shop\nloading shop.prices\n"`: each file ran once. The rule:
+
+$$
+\operatorname{import}(m) =
+\begin{cases}
+\texttt{sys.modules}[m] & \text{if } m \in \texttt{sys.modules} \\
+\operatorname{run}(\operatorname{find}(m)) \text{, then stored as } \texttt{sys.modules}[m] & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $m$ is the full dotted module name, such as `shop.prices`;
+- `sys.modules` is a dictionary from module names to module objects, the cache;
+- $\operatorname{find}(m)$ locates the source (Level 4);
+- $\operatorname{run}$ creates an empty module object and executes the file's code with that object's dictionary as its global namespace.
+
+Example: the first `import shop.prices` imports the parent first. `shop` is not in the cache, so `shop/__init__.py` runs and prints `loading shop`; then `shop.prices` is not in the cache, so `prices.py` runs and prints `loading shop.prices`. The second `import shop.prices` finds both names in the cache and runs nothing. Over $k$ imports the file runs $\min(k, 1)$ times: $k = 2$ gives 1.
+
+What `run` built is an ordinary object of type `types.ModuleType`. Its global variables are its attributes: `prices.TAX` is `prices.__dict__["TAX"]`, which is 0.2, and `prices.with_tax(10)` is $10 \times 1.2 = 12.0$. It also records where it came from: `__name__` is `"shop.prices"`, `__file__` ends in `shop/prices.py`, and after importing, the parent package has an attribute too: `sys.modules["shop"].prices is prices`. Because every importer shares this one object, a change to it is seen by all of them. `importlib.reload(prices)` runs the file again **into the same object**, which is why it prints `loading shop.prices` once more but returns `prices` itself.
+
+### Level 2: `__name__`, `"__main__"` and `python -m`
+
+Every module has a `__name__`. When imported, it is the dotted name. When a file is started as the program, Python names it `"__main__"` instead. That gives the familiar guard:
+
+```python
+# shop/report.py
+from .prices import with_tax
+
+
+def line(amount):
+    return f"total {with_tax(amount)}"
+
+
+if __name__ == "__main__":
+    print(line(10))
+```
+
+Imported, `shop.report.__name__` is `"shop.report"`, the guard is false, and nothing is printed; the lab calls `line(10)` itself and gets `"total 12.0"`. Started from the folder that contains `shop/`, the two ways of running it differ:
+
+```bash
+python3 -m shop.report
+python3 shop/report.py
+```
+
+```text
+loading shop
+loading shop.prices
+total 12.0
+
+ImportError: attempted relative import with no known parent package
+```
+
+`python3 -m shop.report` imports `shop` first, then runs `report.py` as `__main__` **with its package recorded as `"shop"`** (in `__spec__.parent`, mirrored in `__package__`), so `from .prices` knows what the dot means. `python3 shop/report.py` runs the file as a loose script with no package, so the relative import has nothing to be relative to. The lab runs both commands in a subprocess and checks the exit codes (0 and 1) and this output. Rule of thumb: inside a package, run modules with `-m` (PEP 338, Alyssa Coghlan).
+
+### Level 3: packages and relative imports
+
+A **regular package** is a folder with an `__init__.py`. Importing `shop.prices` runs `shop/__init__.py` first, then `shop/prices.py`, and sets `shop.prices` as an attribute of `shop`. The package's `__path__` is the list of folders searched for its submodules.
+
+Inside a package, `from .prices import with_tax` is a **relative import** (PEP 328): each leading dot means "this package", "its parent", and so on. It is translated to an absolute name before anything is searched:
+
+$$
+\operatorname{resolve}(d, m, p) = \operatorname{drop}_{d-1}(p) + \texttt{"."} + m
+$$
+
+where
+
+- $d$ is the number of leading dots;
+- $m$ is the name after the dots;
+- $p$ is the importing module's package name, `__spec__.parent` (also visible as `__package__`);
+- $\operatorname{drop}_k(p)$ removes the last $k$ dotted parts of $p$;
+- $+$ joins strings.
+
+Example: in `shop/report.py`, `from .prices import ...` has $d = 1$, $m = \texttt{prices}$, $p = \texttt{shop}$, so $\operatorname{drop}_0(\texttt{shop}) + \texttt{"."} + \texttt{prices} = \texttt{shop.prices}$. In a module of package `shop.sub`, `from ..tax import ...` has $d = 2$, so $\operatorname{drop}_1(\texttt{shop.sub}) = \texttt{shop}$ and the result is `shop.tax`. The lab checks both with `importlib.util.resolve_name`. Absolute imports (`from shop.prices import with_tax`) say the same thing and work in scripts too; relative ones survive renaming the package.
+
+One more consequence of Level 1: `from module import name` **copies a binding**. It does not create a link:
+
+```python
+from shop.prices import TAX  # copies the current binding into this namespace
+prices.TAX = 0.25
+assert TAX == 0.2 and prices.with_tax(10) == 12.5  # the module changed, the copy did not
+```
+
+`with_tax` reads `TAX` from its module at call time, so it sees 0.25 and returns $10 \times 1.25 = 12.5$, while the imported copy still says 0.2. This is why tests patch `shop.prices.TAX`, the place where the name is looked up, and not a copy in another module.
+
+### Level 4: the search path, finders and shadowing
+
+When a name is not in the cache, Python asks each **finder** in `sys.meta_path` in turn. The standard three are `BuiltinImporter` (modules compiled into the interpreter, such as `sys`), `FrozenImporter` (modules frozen into it) and `PathFinder`, which searches the folders of `sys.path`. The lab checks that order and that `importlib.util.find_spec("sys").origin` is `"built-in"`. For files:
+
+$$
+\operatorname{find}(m) = \text{the copy of } m \text{ in } p_{i^*}, \qquad i^* = \min \lbrace i : p_i \text{ contains } m \rbrace
+$$
+
+where
+
+- $(p_1, p_2, \dots)$ are the entries of `sys.path` in order;
+- "$p_i$ contains $m$" means the folder has `m.py`, a package folder `m/`, or a compiled extension for $m$;
+- $i^*$ is the first such position, and the first match wins.
+
+`sys.path` starts with the script's folder (or the current folder for `-c`, `-m` and the interactive shell), then the folders in the `PYTHONPATH` environment variable, then the standard library, then `site-packages`. Example: the lab inserts its temporary folder as $p_1$ and writes `colorsys.py` there. The standard library's `colorsys` lives in a later entry, say $p_3$. Then $\lbrace i : p_i \text{ contains colorsys} \rbrace = \lbrace 1, 3 \rbrace$, so $i^* = 1$ and the fake wins: `colorsys.SHADOW` is `True` and `rgb_to_hsv` is missing. Run normally (without `-I`), Python 3.13 and later add a hint to the error: `AttributeError: module 'colorsys' has no attribute 'rgb_to_hsv' (consider renaming '.../colorsys.py' since it has the same name as the standard library module named 'colorsys' and prevents importing that standard library module)`.
+
+The `-I` flag the labs use ("isolated mode") leaves the script's folder and the current folder **out** of `sys.path`, along with `PYTHONPATH` and the user's site-packages, so a stray file next to a lab cannot shadow anything.
+
+A finder returns a **module spec** (PEP 451): the name, the `origin` file, and the **loader** that knows how to create and run that kind of module. A `.py` file gets a `SourceFileLoader`, which also caches compiled bytecode: after the first import, `shop/__pycache__/prices.cpython-314.pyc` exists, and the next run skips compiling unless the source changed.
+
+### Level 5: namespace packages
+
+A folder **without** `__init__.py` can still be imported, as a **namespace package** (PEP 420, Python 3.3). The lab writes `one/plugins/alpha.py` and `two/plugins/beta.py`, puts both `one` and `two` on `sys.path`, and imports `plugins.alpha` and `plugins.beta`. One package `plugins` now spans **two** folders: `len(plugins.__path__) == 2`, and `plugins.__file__` is `None` because there is no `__init__.py` to point to.
+
+This is for distributions that share a top-level name, such as separately installed plugins. For your own code, prefer a regular package: an accidental namespace package (a forgotten `__init__.py`) quietly merges with any other folder of the same name on the path.
+
+### Level 6: circular imports and why they fail
+
+`broken.orders` needs `greet` from `broken.customers`, and `broken.customers` needs `DISCOUNT` from `broken.orders`:
+
+```python
+# broken/orders.py
+from broken.customers import greet
+
+DISCOUNT = 5
+```
+
+```python
+# broken/customers.py
+from broken.orders import DISCOUNT  # orders has not reached DISCOUNT yet
+
+
+def greet(name):
+    return f"hello {name}, {DISCOUNT}% off"
+```
+
+`import broken.orders` raises `ImportError: cannot import name 'DISCOUNT' from partially initialized module 'broken.orders' (most likely due to a circular import)`. The reason is the order of Level 1's steps: the module object goes into `sys.modules` **before** its file runs. So when `customers` asks for `broken.orders`, the cache hands back the half-built module, which has only run its first line:
+
+$$
+\texttt{from } m \texttt{ import } x \text{ succeeds} \iff x \in \operatorname{names}(m, t)
+$$
+
+where
+
+- $m$ is the module being imported from, and $x$ the name wanted;
+- $t$ is the moment the `from` statement runs;
+- $\operatorname{names}(m, t)$ is the set of names $m$'s code has defined by moment $t$.
+
+Example: at the moment `customers` runs its first line, `orders` is still on **its** first line, waiting for `customers`. So $\operatorname{names}(\texttt{orders}, t)$ holds only the automatic names such as `__name__`, and $\texttt{DISCOUNT} \notin \operatorname{names}$: the import fails. The lab also checks that the failed `broken.orders` is removed from `sys.modules` again.
+
+The fix is to look `DISCOUNT` up **later**, when it exists:
+
+```python
+# fixed/customers.py
+from fixed import orders  # bind the module object, not a name inside it
+
+
+def greet(name):
+    return f"hello {name}, {orders.DISCOUNT}% off"  # looked up at call time
+```
+
+One more trap: if the two files sit in the folder of the script you started, Python 3.13 and later may word the error as `cannot import name 'DISCOUNT' from 'orders' (consider renaming '...orders.py' if it has the same name as a library you intended to import)`. The hint is misleading; it is still a cycle.
+
+`from fixed import orders` succeeds even though `orders` is half-built, because the module object itself is in the cache. By the time anyone calls `greet("Ada")`, `orders` has finished, $\texttt{DISCOUNT} \in \operatorname{names}$, and the result is `"hello Ada, 5% off"`. Better still is removing the cycle: move the shared value into a third module that both import.
+
+## How it works underneath
+
+The import statement calls `importlib.__import__`, implemented in pure Python in `Lib/importlib/_bootstrap.py` and frozen into the interpreter. Its core, simplified into a function the lab actually runs:
+
+```python
+def mini_import(name):
+    if name in sys.modules:
+        return sys.modules[name]
+    parent, _, child = name.rpartition(".")
+    search_path = mini_import(parent).__path__ if parent else None
+    for finder in sys.meta_path:
+        spec = finder.find_spec(name, search_path)
+        if spec is not None:
+            break
+    else:
+        raise ModuleNotFoundError(f"No module named {name!r}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module  # registered before it runs: this is what makes cycles possible
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        del sys.modules[name]
+        raise
+    if parent:
+        setattr(sys.modules[parent], child, module)
+    return module
+```
+
+Every behaviour in this chapter is a line here:
+
+1. **The cache check** comes first: Level 1's "runs once".
+2. **Parents first**: importing `shop.coupons` imports `shop`, and searches only `shop.__path__` for the child. That is why a package's `__init__.py` always runs before its submodules.
+3. **Finders in order**: Level 4's search and shadowing. `PathFinder` in turn asks a path-entry finder for each `sys.path` folder (cached in `sys.path_importer_cache`), which checks for a package folder, `.py`, `.pyc` or an extension module.
+4. **Registered before running**: the language reference says the module "will exist in `sys.modules` before the loader executes the module code", which "prevents unbounded recursion in the worst case and multiple loading in the best". It is also exactly what makes Level 6's half-built module visible.
+5. **Removed on failure**: "the failing module – and only the failing module – gets removed from `sys.modules`".
+6. **Bound in the parent**: `shop.coupons` becomes an attribute of `shop`.
+
+The lab checks that `mini_import("shop.coupons")` returns a module whose `CODE` is `"SAVE5"`, that `shop.coupons` is set, that a second call returns the same object, and that `mini_import("shop.nothing")` raises `ModuleNotFoundError: No module named 'shop.nothing'`. The real function adds per-module locks so two threads importing the same module do not both run it, handles `__spec__` attributes, and supports the `fromlist` of `from x import y`. The import hooks themselves (`sys.meta_path`, `sys.path_hooks`) come from PEP 302 (Just van Rossum and Paul Moore), and Brett Cannon rewrote the whole machinery in Python as `importlib` for Python 3.3.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Running a package module as a file | `ImportError: attempted relative import with no known parent package` | `python3 -m shop.report` from the folder that contains `shop/` |
+| A file named like a standard library module (`random.py`, `colorsys.py`) | `AttributeError: module 'colorsys' has no attribute 'rgb_to_hsv' (consider renaming ...)` | Rename your file, and delete its `__pycache__` |
+| Two modules importing names from each other at the top | `ImportError: cannot import name 'DISCOUNT' from partially initialized module 'broken.orders' (most likely due to a circular import)` | Import the module and look the name up at call time, or move the shared code to a third module |
+| Patching a name copied with `from module import name` | The test's patch has no effect | Patch where the name is looked up: `shop.prices.TAX`, or the importing module's attribute |
+| Expecting a second `import` to pick up edits | The old code keeps running | Restart the process; `importlib.reload` only re-runs one file into the same object, and old references keep the old functions |
+| Forgetting `__init__.py` | The folder silently becomes a namespace package that can merge with others of the same name | Add `__init__.py` to your own packages |
+| Heavy work at module top level | Every program that imports the module pays for it, once, at import time | Put work in functions, and the program's start under `if __name__ == "__main__":` |
+
+## Interview questions
+
+### 1. What happens when you `import` the same module twice?
+
+**Answer.** The first import finds the source through `sys.meta_path` and `sys.path`, creates a module object, registers it in `sys.modules`, runs the file's code in it, and binds the name. The second import finds the name in `sys.modules` and simply binds the same object again, without running anything. In the lab, two `import shop.prices` statements print `loading shop.prices` once. Every importer therefore shares one module object, so module-level state acts as a process-wide singleton.
+
+### 2. Why do circular imports fail, and how do you fix them?
+
+**Answer.** Because a module is put into `sys.modules` **before** its code runs. When A imports B and B imports A back, B receives the half-built A. `import A` in B succeeds, since the object exists, but `from A import x` fails if A has not yet reached the line that defines `x`: "cannot import name ... from partially initialized module". Fixes, best first: move the shared code into a third module so there is no cycle; import the module (`from fixed import orders`) and read `orders.DISCOUNT` inside functions; or move the import into the function that needs it.
+
+### 3. What is the difference between `python file.py` and `python -m package.module`?
+
+**Answer.** `python file.py` runs the file as `__main__` with no package (`__package__` and `__spec__` are `None`), and puts the **file's folder** first on `sys.path`. `python -m package.module` puts the **current folder** first on `sys.path`, imports the parent packages (running their `__init__.py`), and runs the module as `__main__` with its package known, so relative imports work. In the lab, `-m shop.report` prints `total 12.0` while `shop/report.py` fails with "attempted relative import with no known parent package".
+
+### 4. What is a namespace package?
+
+**Answer.** A package with no `__init__.py` (PEP 420). Python collects every folder of that name it finds on `sys.path` into one package, so its `__path__` can list several folders and its `__file__` is `None`. In the lab, `plugins` spans `one/plugins` and `two/plugins`, and both `plugins.alpha` and `plugins.beta` import. It lets separately installed distributions share a top-level name. The cost is that it never fails loudly: a missing `__init__.py` just produces one.
+
+### 5. After `from shop.prices import TAX`, a test sets `shop.prices.TAX = 0.25`. What does each side see?
+
+**Answer.** `from ... import` copies the current binding into the importing namespace; it is not a live link. The importer's `TAX` stays 0.2, while code inside `shop.prices` that reads the global `TAX` at call time sees 0.25: in the lab, `prices.with_tax(10)` returns 12.5. That is the "patch where it is looked up" rule behind `unittest.mock.patch`.
+
+## Summary
+
+$$
+\operatorname{import}(m) = \begin{cases} \texttt{sys.modules}[m] & m \in \texttt{sys.modules} \\ \operatorname{run}(\operatorname{find}(m)) & \text{otherwise} \end{cases}, \qquad \texttt{from } m \texttt{ import } x \text{ succeeds} \iff x \in \operatorname{names}(m, t)
+$$
+
+where $m$ is a dotted module name, `sys.modules` is the cache, $\operatorname{find}$ takes the first match along `sys.meta_path` and `sys.path`, $\operatorname{run}$ executes the file into a new module object (registered **before** it runs), and $\operatorname{names}(m, t)$ is what $m$ has defined by moment $t$.
+
+Example: `import shop.prices` twice runs `prices.py` once; in the cycle, $\texttt{DISCOUNT} \notin \operatorname{names}(\texttt{orders}, t)$ while `orders` is still on its first line, so the import fails.
+
+- A module is an object; its globals are its attributes; everyone shares the one in `sys.modules`.
+- `if __name__ == "__main__":` separates "run as a program" from "imported".
+- Inside packages, use `python -m`; relative imports need a known parent package.
+- The first match on `sys.path` wins, so your file can shadow the standard library.
+- `from m import x` copies a binding; `import m` and `m.x` reads the live value.
+- Break cycles by moving shared code out, or by deferring the attribute lookup.
+
+## References
+
+- Python 3.14 documentation: [The import system](https://docs.python.org/3.14/reference/import.html) (language reference), [Modules](https://docs.python.org/3.14/tutorial/modules.html) (tutorial), [importlib](https://docs.python.org/3.14/library/importlib.html), [The initialization of the sys.path module search path](https://docs.python.org/3.14/library/sys_path_init.html), [`__main__`, top-level code environment](https://docs.python.org/3.14/library/__main__.html), and [Command line and environment](https://docs.python.org/3.14/using/cmdline.html) (`-m`, `-I`).
+- PEPs: [302, New Import Hooks](https://peps.python.org/pep-0302/); [328, Absolute/Relative imports](https://peps.python.org/pep-0328/); [338, Executing modules as scripts](https://peps.python.org/pep-0338/) (Alyssa Coghlan); [420, Implicit Namespace Packages](https://peps.python.org/pep-0420/) (Eric V. Smith); [451, A ModuleSpec Type for the Import System](https://peps.python.org/pep-0451/) (Eric Snow); [20, The Zen of Python](https://peps.python.org/pep-0020/) (Tim Peters).
+- Brett Cannon, [How Import Works](https://pyvideo.org/pycon-us-2013/how-import-works.html) (PyCon US 2013).
+- David Beazley, [Modules and Packages: Live and Let Die!](https://www.youtube.com/watch?v=0oTh1CXRaQ0) (PyCon 2015).
+- The source: [Lib/importlib/_bootstrap.py](https://github.com/python/cpython/blob/3.14/Lib/importlib/_bootstrap.py).
+- Lab: [`labs/modules-and-imports.py`](labs/modules-and-imports.py). Run it from `programming-languages/python/labs` with `python3 -I modules-and-imports.py`.

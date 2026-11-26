@@ -1,0 +1,408 @@
+---
+title: "Classes and the Data Model"
+description: "How Python classes plug into the language: classes as objects, __new__ versus __init__, special methods, operator overloading and NotImplemented, descriptors and attribute lookup order, how methods bind, __slots__, and dataclasses."
+---
+
+## The problem
+
+A geometry program needs 2-D vectors. The first version is a plain class with `x` and `y`. Then everything that should be natural fails:
+
+| You write | You get |
+|---|---|
+| `print(PlainVector(1, 2))` | `<__main__.PlainVector object at 0x...>` |
+| `PlainVector(1, 2) == PlainVector(1, 2)` | `False` |
+| `a + b` | `TypeError: unsupported operand type(s) for +: 'PlainVector' and 'PlainVector'` |
+
+Python's own types do all of this, and there is no secret: `len(x)`, `x + y`, `x == y`, `x[i]`, `print(x)` and even `x.name` are each translated into a call of a **special method** ("dunder" method, for the double underscores) on the object's type. The rules for that translation are called the **data model**. Learn them and your classes behave like built-ins; this chapter also shows the machinery underneath: descriptors, which is how methods, `property` and `__slots__` work.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The rules of a board game
+
+The Python interpreter is a referee running a board game. When a player writes `a + b`, the referee does not know what "plus" means for vectors. So it asks the piece: **"Do you have an `__add__` move?"** If the piece says yes, the referee lets it play that move. If it says "not with that partner" (`NotImplemented`), the referee asks the other piece. If nobody can, the referee blows the whistle: `TypeError`.
+
+Your class becomes a full player just by having the right moves. Luciano Ramalho opens *Fluent Python* with a chapter called "The Python Data Model", and the reference manual's chapter of the same name lists every move. Raymond Hettinger's *Descriptor Guide* in the official HOWTOs explains the one move behind attributes and methods.
+:::
+
+## From simple to advanced
+
+### Level 1: a class is an object
+
+A `class` statement runs its body, collects the names it defines into a dict, and calls `type` to build the class object:
+
+$$
+\texttt{class } C(B)\texttt{:}\ \textit{body} \quad\equiv\quad C \leftarrow \operatorname{type}\bigl(\texttt{"C"},\ (B,),\ ns\bigr)
+$$
+
+where
+
+- $C$ is the new class's name and $B$ its base class;
+- $ns$ is the namespace dict produced by running $\textit{body}$: its methods and class attributes;
+- $\operatorname{type}$ is the default **metaclass**, the class of classes.
+
+```python
+def make_class_at_run_time():
+    Pet = type("Pet", (), {"sound": "woof"})  # what a class statement does
+    return Pet.__name__, Pet().sound, type(Pet) is type
+```
+
+Example: with name `"Pet"`, no bases and $ns = \lbrace \texttt{"sound"}: \texttt{"woof"} \rbrace$, the call returns a class; `make_class_at_run_time()` returns `("Pet", "woof", True)`. A class is an ordinary object: you can pass it, store it and create it at run time. Even `type(type) is type`.
+
+### Level 2: `__new__` creates, `__init__` fills in
+
+Calling a class runs two steps:
+
+$$
+C(a) \;\equiv\;
+\begin{cases}
+\textit{obj} \leftarrow C.\operatorname{new}(C, a) & \text{allocate} \\
+\textit{obj}.\operatorname{init}(a) & \text{only if } \textit{obj} \text{ is an instance of } C \\
+\text{return } \textit{obj}
+\end{cases}
+$$
+
+where $C$ is the class, $a$ the arguments, $\operatorname{new}$ is `__new__` (it receives the class) and $\operatorname{init}$ is `__init__` (it receives the new object).
+
+```python
+class Traced:
+    log = []
+
+    def __new__(cls, name):
+        Traced.log.append("new")
+        return super().__new__(cls)  # allocate the empty object
+
+    def __init__(self, name):
+        Traced.log.append("init")
+        self.name = name  # fill it in
+```
+
+Example: `Traced("a")` leaves `Traced.log == ["new", "init"]`. You almost never write `__new__`. You need it when the value must exist before `__init__` could run, which is the case for subclasses of immutable types:
+
+```python
+class Celsius(float):
+    def __new__(cls, degrees):
+        return super().__new__(cls, round(degrees, 1))  # a float's value is fixed in __new__
+```
+
+`Celsius(21.456) == 21.5`. By the time `__init__` runs, a float's value is already set and cannot change, so rounding there would be too late.
+
+### Level 3: special methods
+
+Each piece of syntax calls one special method on the **type** of the object:
+
+| Syntax | Calls |
+|---|---|
+| `repr(v)`, the REPL, `print` of a container | `type(v).__repr__(v)` |
+| `v == w` | `type(v).__eq__(v, w)` |
+| `hash(v)`, set and dict keys | `type(v).__hash__(v)` |
+| `abs(v)` | `type(v).__abs__(v)` |
+| `v + w`, `v * 3` | `__add__`, `__mul__` (Level 4) |
+| `len(p)`, `p[i]` | `__len__`, `__getitem__` |
+
+```python
+class Vector:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+    def __repr__(self):
+        return f"Vector({self.x!r}, {self.y!r})"
+
+    def __eq__(self, other):
+        if not isinstance(other, Vector):
+            return NotImplemented  # let the other operand try
+        return (self.x, self.y) == (other.x, other.y)
+
+    def __hash__(self):
+        return hash((self.x, self.y))  # equal vectors have equal hashes
+
+    def __abs__(self):
+        return math.hypot(self.x, self.y)
+```
+
+Now `repr(Vector(1, 2))` is `"Vector(1, 2)"`, `Vector(1, 2) == Vector(1, 2)` is `True` (while `is` stays `False`), and two equal vectors are one set element, because `__hash__` keeps the contract $a == b \Rightarrow \operatorname{hash}(a) = \operatorname{hash}(b)$ from [Built-in Collections](02-built-in-collections.qmd). Defining `__eq__` without `__hash__` would set `__hash__` to `None` and make vectors unhashable. `abs` is the length of the vector:
+
+$$
+\lvert v \rvert = \sqrt{x^2 + y^2}
+$$
+
+where $x$ and $y$ are the vector's components.
+
+Example: for $v = (3, 4)$, $\lvert v \rvert = \sqrt{9 + 16} = \sqrt{25} = 5$, and the lab checks `abs(Vector(3, 4)) == 5.0`.
+
+Two methods are enough to make a sequence:
+
+```python
+class Playlist:
+    def __init__(self, *songs):
+        self.songs = list(songs)
+
+    def __len__(self):
+        return len(self.songs)
+
+    def __getitem__(self, index):
+        return self.songs[index]  # ints and slices both work
+```
+
+With `songs = Playlist("a", "b", "c")`, `len(songs)` is 3, `songs[-1]` is `"c"`, `songs[0:2]` is `["a", "b"]`, and, without writing them, `"b" in songs` is `True`, `list(songs)` is `["a", "b", "c"]` and `list(reversed(songs))` is `["c", "b", "a"]`. Python falls back to calling `__getitem__` with 0, 1, 2, … until `IndexError` when there is no `__iter__` or `__contains__`, and `reversed` uses `__len__` with `__getitem__`.
+
+### Level 4: operator overloading and `NotImplemented`
+
+The rest of `Vector`:
+
+```python
+    def __add__(self, other):
+        if not isinstance(other, Vector):
+            return NotImplemented
+        return Vector(self.x + other.x, self.y + other.y)
+
+    def __mul__(self, scalar):
+        return Vector(self.x * scalar, self.y * scalar)
+
+    def __rmul__(self, scalar):  # called for 3 * v, after int.__mul__ gives up
+        return self * scalar
+```
+
+Returning `NotImplemented` (a special singleton, not an exception) means "I cannot handle this operand; ask the other one". The interpreter's rule for a binary operator such as $+$:
+
+$$
+a + b =
+\begin{cases}
+b.\operatorname{radd}(a) & \text{tried first, if } \operatorname{type}(b) \text{ is a subclass of } \operatorname{type}(a) \text{ that overrides radd} \\
+a.\operatorname{add}(b) & \text{otherwise first; used unless it returns NotImplemented} \\
+b.\operatorname{radd}(a) & \text{next, if the types differ; used unless it returns NotImplemented} \\
+\text{raise } \texttt{TypeError} & \text{if every attempt returned NotImplemented}
+\end{cases}
+$$
+
+where $a$ and $b$ are the left and right operands, $\operatorname{add}$ is `__add__` and $\operatorname{radd}$ is the reflected `__radd__`. Every operator has such a pair: `__mul__` and `__rmul__`, `__sub__` and `__rsub__`, and so on.
+
+Example:
+
+1. `Vector(1, 2) + Vector(3, 4)`: `__add__` handles it and returns `Vector(4, 6)`.
+2. `3 * Vector(1, 2)`: `int.__mul__(3, v)` returns `NotImplemented`, so Python tries `Vector.__rmul__(v, 3)`, which returns `Vector(3, 6)`.
+3. `Vector(1, 2) + 1`: `__add__` returns `NotImplemented`; `int` has no way to add a vector either; so Python raises `TypeError: unsupported operand type(s) for +: 'Vector' and 'int'`.
+4. The first case: `Vector(1, 2) + LoudVector(0, 0)`, where `LoudVector` subclasses `Vector` and defines `__radd__`, calls `LoudVector.__radd__` before `Vector.__add__`, so subclasses can override their parents' operators.
+
+`==` is gentler: if both sides return `NotImplemented`, it falls back to identity, so `Vector(1, 2) == (1, 2)` is simply `False`.
+
+### Level 5: descriptors and the attribute lookup order
+
+`obj.name` is the most common operation in Python, and it is also a special method call: `type(obj).__getattribute__(obj, "name")`. The default, `object.__getattribute__`, looks in this order:
+
+$$
+\texttt{obj.name} =
+\begin{cases}
+d.\operatorname{get}(\textit{obj}, T) & \text{1. if the class attribute } d \text{ is a data descriptor} \\
+\operatorname{dict}(\textit{obj})[\textit{name}] & \text{2. else if the instance dict has the name} \\
+d.\operatorname{get}(\textit{obj}, T) & \text{3. else if } d \text{ is a non-data descriptor} \\
+d & \text{4. else if } d \text{ exists} \\
+\text{raise } \texttt{AttributeError} & \text{5. otherwise (after trying a } \operatorname{getattr} \text{ hook, if defined)}
+\end{cases}
+$$
+
+where
+
+- $T = \operatorname{type}(\textit{obj})$, and $d$ is the first value found under `name` in the dicts of $T$ and its base classes, in MRO order ([Inheritance, MRO and Protocols](07-inheritance-mro-and-protocols.qmd));
+- a **descriptor** is an object whose type defines `__get__` ($\operatorname{get}$); a **data descriptor** also defines `__set__` or `__delete__`;
+- $\operatorname{dict}(\textit{obj})$ is the instance's own `__dict__`, and $\textit{name}$ is the attribute name;
+- the $\operatorname{getattr}$ hook is the class's optional `__getattr__` method, called only when the normal lookup fails.
+
+The lab writes this order as a Python model and checks that it agrees with the real lookup:
+
+```python
+def lookup(obj, name):
+    # a model of object.__getattribute__ in Objects/object.c
+    class_attr = next((vars(k)[name] for k in type(obj).__mro__ if name in vars(k)), MISSING)
+    getter = getattr(type(class_attr), "__get__", None)
+    is_data = hasattr(type(class_attr), "__set__") or hasattr(type(class_attr), "__delete__")
+    if getter and is_data:
+        return getter(class_attr, obj, type(obj))  # 1. data descriptor
+    if name in getattr(obj, "__dict__", {}):
+        return obj.__dict__[name]  # 2. instance dictionary
+    if getter:
+        return getter(class_attr, obj, type(obj))  # 3. non-data descriptor, such as a function
+    if class_attr is not MISSING:
+        return class_attr  # 4. plain class attribute
+    raise AttributeError(name)
+```
+
+A data descriptor lets a class run code on every read and write of an attribute. This one validates prices:
+
+```python
+class Positive:
+    def __set_name__(self, owner, name):
+        self.storage = "_" + name  # the instance attribute that holds the value
+
+    def __get__(self, obj, objtype=None):
+        return getattr(obj, self.storage)
+
+    def __set__(self, obj, value):
+        if value <= 0:
+            raise ValueError(f"{self.storage[1:]} must be positive, got {value}")
+        setattr(obj, self.storage, value)
+
+
+class Product:
+    price = Positive()
+
+    def __init__(self, price):
+        self.price = price  # goes through Positive.__set__
+```
+
+Example, one line of the cases each:
+
+1. `Product(5).price`: $d$ is the `Positive` object, which has `__set__`, so **rule 1** calls its `__get__` and returns 5. The value lives in `vars(product) == {"_price": 5}`, and `Product(-1)` raises `ValueError: price must be positive, got -1`.
+2. `property` is a data descriptor too. The lab writes `account.__dict__["balance"] = 999` behind the property's back, and `account.balance` is still 10: rule 1 comes before rule 2.
+3. A function is a **non-data descriptor** (only `__get__`). After `g.hello = lambda: "from the instance"`, **rule 2** wins over rule 3 and `g.hello()` returns `"from the instance"`.
+4. `Vector(1, 2).x` has no class attribute at all, so it comes from the instance dict, **rule 2**.
+
+### Level 6: how methods bind
+
+Rule 3 is how methods work. A function stored in a class is a non-data descriptor, and its `__get__` returns a **bound method** that remembers the instance:
+
+$$
+\textit{obj}.m(a) \;\equiv\; \operatorname{get}(f, \textit{obj}, T)(a) \;\equiv\; f(\textit{obj}, a)
+$$
+
+where $f$ is the plain function stored as `T.__dict__["m"]`, $T = \operatorname{type}(\textit{obj})$, $\operatorname{get}$ is the function type's `__get__`, and $a$ stands for the call's arguments.
+
+```python
+def how_methods_bind():
+    g = Greeter()
+    plain = Greeter.__dict__["hello"]  # the plain function stored in the class
+    bound = plain.__get__(g, Greeter)  # what g.hello does behind the scenes
+    return bound(), bound.__self__ is g, bound.__func__ is plain
+```
+
+Example: $f$ = `hello`, $\textit{obj}$ = `g`, no other arguments, so `g.hello()` is `hello(g)`, which returns `"from the class"`. `how_methods_bind()` returns `("from the class", True, True)`: the bound method's `__self__` is `g` and its `__func__` is the plain function. That is why `self` is an explicit parameter: it is the ordinary first argument that binding fills in. Each access builds a new bound method, so `g.hello is g.hello` is `False` while `g.hello == g.hello` is `True`. `staticmethod` and `classmethod` ([Decorators](05-decorators.qmd)) are descriptors whose `__get__` returns the plain function, or a method bound to the class, instead.
+
+### Level 7: `__slots__`
+
+`__slots__` declares a fixed list of attributes. Each becomes a data descriptor on the class (a `member_descriptor`) that reads and writes a fixed position inside the object, and instances get no `__dict__`:
+
+```python
+class SlottedPoint:
+    __slots__ = ("x", "y")
+
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+```
+
+$$
+\operatorname{basicsize} = 16 + 8k
+$$
+
+where $k$ is the number of slots, $16$ bytes is the object header (reference count and type pointer) and $8$ bytes is one pointer per slot, on 64-bit CPython 3.14.
+
+Example: for $k = 2$, $16 + 16 = 32$, and the lab checks `SlottedPoint.__basicsize__ == 32`. Assigning a new attribute fails: `AttributeError: 'SlottedPoint' object has no attribute 'z' and no __dict__ for setting new attributes`. Slots used to save a lot of memory per instance; since Python 3.11 ordinary instances also create their `__dict__` lazily, so the saving is smaller than older articles say. The lasting benefits are a fixed set of attributes and faster attribute access.
+
+### Level 8: dataclasses
+
+Writing `__init__`, `__repr__` and `__eq__` by hand for every record class is tedious. `@dataclass` ([PEP 557](https://peps.python.org/pep-0557/), Python 3.7) reads the class's annotations and generates them:
+
+```python
+@dataclass(frozen=True, slots=True)
+class Money:
+    amount: int
+    currency: str = "GBP"
+```
+
+`Money(5) == Money(5, "GBP")`, and `repr(Money(5))` is `"Money(amount=5, currency='GBP')"`. Whether you get a hash depends on two options:
+
+$$
+\operatorname{hash} \text{ of a dataclass} =
+\begin{cases}
+\text{generated from the fields} & \text{if } eq \land frozen \\
+\text{None (unhashable)} & \text{if } eq \land \lnot frozen \\
+\text{inherited from the base class} & \text{if } \lnot eq
+\end{cases}
+$$
+
+where $eq$ (default true) means "generate `__eq__`" and $frozen$ (default false) means "forbid assignment after `__init__`"; $\land$ is "and" and $\lnot$ is "not".
+
+Example: `Money` has $eq \land frozen$, so `len({Money(5), Money(5)}) == 1`, and `cash.amount = 6` raises `FrozenInstanceError: cannot assign to field 'amount'`. A plain `@dataclass class Basket` has $eq \land \lnot frozen$, so `Basket.__hash__ is None`: a mutable object that compares by value must not be a set element. `slots=True` (Python 3.10) builds the class with `__slots__`. And `items: list = []` is refused with `ValueError: mutable default <class 'list'> for field items is not allowed: use default_factory`, the dataclass cure for the shared-default trap from [Functions, Scope and Closures](03-functions-scope-and-closures.qmd).
+
+## How it works underneath
+
+A class's special methods are not looked up by name on every operation. Each C-level type object has **slots**, function pointers such as `tp_repr`, `tp_hash`, `nb_add` and `sq_length`. When a class statement defines `__add__`, `type` fills `nb_add` with a generic C function, `slot_nb_add`, that finds and calls the Python method. The table that connects names to slots is `slotdefs` in `Objects/typeobject.c`; for example `BINSLOT(__add__, nb_add, slot_nb_add, ...)` and `TPSLOT(__hash__, tp_hash, slot_tp_hash, ...)`.
+
+The operators then go straight to the slots. `binary_op1` in `Objects/abstract.c` is the case analysis of Level 4, trimmed:
+
+```text
+slotv = type(v)->nb_add                      the left operand's slot
+slotw = type(w)->nb_add  if type(w) != type(v) and it differs from slotv
+if slotv:
+    if slotw and type(w) is a subtype of type(v):
+        x = slotw(v, w); if x != NotImplemented: return x     subclass first
+    x = slotv(v, w);     if x != NotImplemented: return x     left operand
+if slotw:
+    x = slotw(v, w);     if x != NotImplemented: return x     right operand
+return NotImplemented                        the caller raises TypeError
+```
+
+Because the interpreter reads the type's slot, special methods are looked up on the **type**, never on the instance. The reference manual's section *Special method lookup* says they are "only guaranteed to work correctly if defined on an object's type". The lab sets `sneaky.__len__ = lambda: 99` on an instance whose class returns 3, and `len(sneaky)` is still 3.
+
+Attribute access is `_PyObject_GenericGetAttrWithDict` in `Objects/object.c`, and its code follows the five rules in order: `_PyType_Lookup` walks the MRO (with a per-type cache, so this is usually one hash lookup); if the result's type has `tp_descr_get` and is a data descriptor, call it and stop; otherwise check the instance's values or dict; then call the non-data descriptor's `tp_descr_get`; then return the plain class attribute; otherwise raise `AttributeError`. `PyDescr_IsData` is literally "does its type have `tp_descr_set`".
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| No `__repr__` | Logs show `<__main__.PlainVector object at 0x...>` | Define `__repr__` that looks like the constructor call |
+| `__eq__` without `__hash__` | `TypeError: cannot use 'X' as a set element (unhashable type: 'X')` | Define `__hash__` from the same fields, or use a frozen dataclass |
+| `__eq__` or `__add__` raising for unknown types, or returning `False` | The other operand never gets its turn | `return NotImplemented` |
+| Writing `raise NotImplemented` | `TypeError: exceptions must derive from BaseException` | `NotImplemented` is a value to return; `NotImplementedError` is the exception |
+| Setting a special method on an instance | `len(obj)` ignores it | Define it on the class |
+| `items: list = []` in a dataclass | `ValueError: mutable default <class 'list'> for field items is not allowed: use default_factory` | `items: list = field(default_factory=list)` |
+| Mutating a field that the hash uses | Objects get lost in sets and dicts | Hash only immutable fields; prefer `frozen=True` |
+| Adding an attribute to a slotted class | `AttributeError: ... and no __dict__ for setting new attributes` | List it in `__slots__`, or drop `__slots__` |
+
+## Interview questions
+
+### 1. What is the difference between `__new__` and `__init__`?
+
+**Answer.** `__new__` is a static method that receives the **class** and returns a new object; `__init__` receives that object and initialises it, returning `None`. `type.__call__` runs `__new__`, then calls `__init__` only if the result is an instance of the class. Override `__new__` for immutable types, whose value must be set at creation (`Celsius(21.456) == 21.5`), and for caching or singletons that return an existing object. Everything else belongs in `__init__`. The lab's `Traced` logs `["new", "init"]`.
+
+### 2. What is a descriptor, and what is the difference between a data and a non-data descriptor?
+
+**Answer.** A descriptor is an object stored on a class whose type defines `__get__`, and optionally `__set__` or `__delete__`. Attribute lookup calls `__get__` instead of returning the object itself. A **data** descriptor (with `__set__` or `__delete__`) takes priority over the instance `__dict__`; a **non-data** descriptor (only `__get__`) is overridden by it. `property`, `__slots__` members and the lab's `Positive` are data descriptors, so writing into `__dict__` cannot shadow them. Functions, `staticmethod` and `classmethod` are non-data descriptors, which is why an instance attribute can shadow a method.
+
+### 3. How does `obj.method()` pass `self`?
+
+**Answer.** `method` is a plain function in the class dict. The function type defines `__get__`, so attribute lookup (rule 3) calls `function.__get__(obj, type(obj))`, which returns a bound method holding `__func__` (the function) and `__self__` (the object). Calling it calls `__func__(__self__, *args)`. `how_methods_bind()` reproduces it by hand and gets `("from the class", True, True)`. For an immediate call, CPython skips building the bound method object: `dis` shows `LOAD_ATTR 1 (hello + NULL|self)`, which pushes the function and `g` separately, and `CALL` passes `g` as the first argument. The result is the same.
+
+### 4. Why return `NotImplemented` instead of raising `TypeError`?
+
+**Answer.** Because the interpreter treats `NotImplemented` as "try the other operand" (Level 4). If `Vector.__mul__` raised for an `int`, `3 * v` could never reach `__rmul__`. By returning `NotImplemented`, both classes get a chance, and the interpreter raises the standard `TypeError: unsupported operand type(s) ...` only when neither can help. For `==`, the final fallback is identity instead of an error.
+
+### 5. When would you use `__slots__`?
+
+**Answer.** When you create very many small objects and want a fixed set of attributes, or want to stop typos from silently creating new attributes. The class gets one `member_descriptor` per name and each instance stores the values at fixed offsets (`__basicsize__` is $16 + 8k$), with no per-instance `__dict__`. The costs: no new attributes, no `__dict__` for tools that expect one, and `__weakref__` must be listed to allow weak references. A `@dataclass(slots=True)` gets the same layout with less code.
+
+## Summary
+
+$$
+\text{data descriptor} \;\succ\; \text{instance dict} \;\succ\; \text{non-data descriptor} \;\succ\; \text{class attribute} \;\succ\; \operatorname{getattr} \text{ hook}
+$$
+
+where $\succ$ means "is checked before", the descriptors and class attributes are found on the type's MRO, and the hook is `__getattr__`.
+
+Example: `account.balance` is 10 even with `"balance": 999` in its `__dict__`, because the property is a data descriptor; `g.hello` is the instance's lambda, because a function is only a non-data descriptor.
+
+- A class is an object created by `type`; `__new__` makes instances, `__init__` fills them.
+- Syntax calls special methods on the **type**: `len(x)` is `type(x).__len__(x)`.
+- Return `NotImplemented` from operators for unknown operands; Python then tries the reflected method.
+- Keep `__eq__` and `__hash__` consistent; mutable value objects should be unhashable.
+- Methods, `property`, `staticmethod`, `classmethod` and `__slots__` are all descriptors.
+- Use `@dataclass` for record classes, and `frozen=True` for hashable values.
+
+## References
+
+- The Python Language Reference: [Data model](https://docs.python.org/3.14/reference/datamodel.html), especially [Basic customization](https://docs.python.org/3.14/reference/datamodel.html#basic-customization), [Customizing attribute access](https://docs.python.org/3.14/reference/datamodel.html#customizing-attribute-access), [Implementing Descriptors](https://docs.python.org/3.14/reference/datamodel.html#implementing-descriptors), [`__slots__`](https://docs.python.org/3.14/reference/datamodel.html#slots), [Emulating numeric types](https://docs.python.org/3.14/reference/datamodel.html#emulating-numeric-types) and [Special method lookup](https://docs.python.org/3.14/reference/datamodel.html#special-method-lookup).
+- Raymond Hettinger, [Descriptor Guide](https://docs.python.org/3.14/howto/descriptor.html) (Python HOWTOs).
+- The [`dataclasses` module](https://docs.python.org/3.14/library/dataclasses.html) and [Implementing the arithmetic operations](https://docs.python.org/3.14/library/numbers.html#implementing-the-arithmetic-operations) in the `numbers` module.
+- [PEP 252: Making Types Look More Like Classes](https://peps.python.org/pep-0252/) (descriptors), [PEP 253: Subtyping Built-in Types](https://peps.python.org/pep-0253/) (`__new__`), [PEP 557: Data Classes](https://peps.python.org/pep-0557/).
+- Luciano Ramalho, *Fluent Python*, 2nd ed. (O'Reilly, 2022), ch. 1 "The Python Data Model", ch. 5 "Data Class Builders", ch. 11 "A Pythonic Object", ch. 16 "Operator Overloading" and ch. 23 "Attribute Descriptors".
+- CPython source: [Objects/object.c](https://github.com/python/cpython/blob/3.14/Objects/object.c) (`_PyObject_GenericGetAttrWithDict`), [Objects/abstract.c](https://github.com/python/cpython/blob/3.14/Objects/abstract.c) (`binary_op1`), [Objects/typeobject.c](https://github.com/python/cpython/blob/3.14/Objects/typeobject.c) (`slotdefs`).
+- Lab: [`labs/classes-and-the-data-model.py`](labs/classes-and-the-data-model.py). Run it from `programming-languages/python/labs` with `python3 -I classes-and-the-data-model.py`.

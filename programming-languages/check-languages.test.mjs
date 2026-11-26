@@ -20,7 +20,7 @@ const CHAPTERS = {
   python: [
     'names-objects-and-references', 'built-in-collections', 'functions-scope-and-closures', 'iterators-and-generators',
     'decorators', 'classes-and-the-data-model', 'inheritance-mro-and-protocols', 'exceptions-and-context-managers',
-    'type-hints', 'modules-and-imports', 'memory-and-garbage-collection', 'threads-processes-and-the-gil', 'asyncio',
+    'type-hints', 'modules-and-imports', 'memory-and-garbage-collection', 'threads-processes-and-the-gil', 'coroutines-and-asyncio',
   ],
   javascript: [
     'values-types-and-coercion', 'scope-hoisting-and-closures', 'this-and-function-calls', 'objects-and-prototypes',

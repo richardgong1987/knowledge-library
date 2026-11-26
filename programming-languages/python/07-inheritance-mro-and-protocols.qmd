@@ -1,0 +1,322 @@
+---
+title: "Inheritance, MRO and Protocols"
+description: "Inheritance and super() in Python, multiple inheritance and the C3 method resolution order worked step by step, mixins, abstract base classes, duck typing, and typing.Protocol for structural subtyping."
+---
+
+## The problem
+
+A messaging app has a `Base` class whose `__init__` opens a connection. `Left` and `Right` both extend `Base`, and `Bottom` extends both, a "diamond". Each `__init__` calls its parents **by name**:
+
+```python
+class NaiveBottom(NaiveLeft, NaiveRight):
+    def __init__(self, log):
+        log.append("Bottom")
+        NaiveLeft.__init__(self, log)
+        NaiveRight.__init__(self, log)
+```
+
+The lab logs the calls: `["Bottom", "Left", "Base", "Right", "Base"]`. `Base.__init__` runs **twice**, so the app opens two connections. With `super()` instead of explicit names, the same diamond logs `["Bottom", "Left", "Right", "Base"]`: every class exactly once.
+
+A second problem: a `broadcast(senders, text)` function checks `isinstance(s, Sender)`, and so rejects a perfectly good third-party `Pigeon` class that has a `send` method but no relation to `Sender`. Python has an answer for both: a precise **method resolution order** for inheritance, and **duck typing** with `typing.Protocol` for "anything that can do this".
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Asking the family for help
+
+You are stuck on homework, so you ask for help in a fixed order. First **yourself**. Then your **parents, in the order you named them**: Mum, then Dad. Only after both parents do you ask **Grandma**, whom they share, and you never ask anyone twice. That list, "me, Mum, Dad, Grandma", is the **method resolution order** (MRO). `super()` means "ask the next person on **my** list", not "ask my own parent".
+
+**Duck typing** is choosing a goalkeeper by watching who catches the ball, not by checking whose team shirt they wear. The Python glossary puts it this way: *"If it looks like a duck and quacks like a duck, it must be a duck."*
+
+Raymond Hettinger's article *Python's super() considered super!* (2011) says *"super() is in the business of delegating method calls to some class in the instance's ancestor tree"*. Guido van Rossum's *History of Python* post on the MRO tells how Python 2.3 adopted the C3 algorithm after Samuele Pedroni found problems with the 2.2 one.
+:::
+
+## From simple to advanced
+
+### Level 1: inheritance and `super()`
+
+A subclass inherits every attribute of its base class, can **override** a method by defining one with the same name, and can **extend** the parent's version by calling it through `super()`:
+
+```python
+class Sender:
+    def __init__(self, name):
+        self.name = name
+
+    def send(self, text):
+        return f"{self.name}: {text}"
+
+
+class EmailSender(Sender):
+    def send(self, text):
+        return super().send(text) + " [email]"  # extend the parent's behaviour
+```
+
+`EmailSender("ann").send("hi")` returns `"ann: hi [email]"`: `EmailSender.send` ran first and called `Sender.send` for the first part. `EmailSender` inherited `__init__` unchanged. Python's inheritance is **nominal**: a class is a subclass because it says so, and the check is a membership test on the MRO:
+
+$$
+\operatorname{issubclass}(T, P) \iff P \in \operatorname{mro}(T)
+$$
+
+where $T$ and $P$ are classes and $\operatorname{mro}(T)$ is the tuple `T.__mro__`: $T$ followed by its ancestors in lookup order. (ABCs can extend this rule; Level 5.)
+
+Example: $\operatorname{mro}(\texttt{EmailSender}) = (\texttt{EmailSender}, \texttt{Sender}, \texttt{object})$. `Sender` is in it, so `issubclass(EmailSender, Sender)` is `True`, and so is `isinstance(EmailSender("ann"), Sender)`.
+
+### Level 2: multiple inheritance and the diamond
+
+A class may list several bases. Attribute lookup walks the MRO from left to right ([Classes and the Data Model](06-classes-and-the-data-model.qmd), Level 5), and so does `super()`. Here is the diamond from The problem, with `super()`:
+
+```python
+class Left(Base):
+    def __init__(self, log):
+        log.append("Left")
+        super().__init__(log)
+
+
+class Right(Base):
+    def __init__(self, log):
+        log.append("Right")
+        super().__init__(log)
+
+
+class Bottom(Left, Right):
+    def __init__(self, log):
+        log.append("Bottom")
+        super().__init__(log)
+```
+
+`Bottom.__mro__` is `(Bottom, Left, Right, Base, object)`, and `Bottom(log)` logs `["Bottom", "Left", "Right", "Base"]`. Notice what `super()` inside **`Left`** did: it called `Right.__init__`, a class `Left` knows nothing about, because `Right` comes after `Left` in the MRO of the object being built. That is "ask the next person on **my** list". Hettinger's three rules make this work: the method must exist at the end of the chain, the signatures must match, and every class in the chain must call `super()`.
+
+### Level 3: the C3 linearisation
+
+The MRO is computed once, when the class is created, by the **C3** algorithm from *A Monotonic Superclass Linearization for Dylan* (Barrett et al., OOPSLA 1996):
+
+$$
+L[C] = C + \operatorname{merge}\bigl(L[B_1], \ldots, L[B_n],\ [B_1, \ldots, B_n]\bigr)
+$$
+
+where
+
+- $C$ is the class and $B_1, \ldots, B_n$ are its bases in the order written;
+- $L[X]$ is the linearisation (MRO) of $X$, with $L[\texttt{object}] = [\texttt{object}]$;
+- $+$ joins lists;
+- $\operatorname{merge}$ repeatedly takes the **first head** (first element of one of the lists) that does **not** appear in the **tail** (everything after the first element) of any list, appends it to the result and removes it from every list. If no head qualifies while lists remain, there is no consistent order, and Python raises `TypeError`.
+
+The last list, $[B_1, \ldots, B_n]$, keeps the bases in the order you wrote them; the rule about tails makes sure a class always comes before its own ancestors.
+
+Example, the diamond. $L[\texttt{Base}] = [\texttt{Base}, \texttt{object}]$, $L[\texttt{Left}] = [\texttt{Left}, \texttt{Base}, \texttt{object}]$, $L[\texttt{Right}] = [\texttt{Right}, \texttt{Base}, \texttt{object}]$, so
+
+$$
+L[\texttt{Bottom}] = \texttt{Bottom} + \operatorname{merge}\bigl([\texttt{Left}, \texttt{Base}, \texttt{object}],\ [\texttt{Right}, \texttt{Base}, \texttt{object}],\ [\texttt{Left}, \texttt{Right}]\bigr)
+$$
+
+where the first two lists are the parents' linearisations and the third is `Bottom`'s bases in the order written. The merge in this example runs in four steps:
+
+1. Head `Left`: the tails are $[\texttt{Base}, \texttt{object}]$, $[\texttt{Base}, \texttt{object}]$ and $[\texttt{Right}]$; `Left` is in none. Take it. Lists: $[\texttt{Base}, \texttt{object}]$, $[\texttt{Right}, \texttt{Base}, \texttt{object}]$, $[\texttt{Right}]$.
+2. Head `Base`: it is in the tail of $[\texttt{Right}, \texttt{Base}, \texttt{object}]$. Reject. Next head `Right`: in no tail. Take it. Lists: $[\texttt{Base}, \texttt{object}]$, $[\texttt{Base}, \texttt{object}]$, $[\,]$.
+3. Head `Base`: in no tail now. Take it. Then `object`.
+4. Result: $[\texttt{Bottom}, \texttt{Left}, \texttt{Right}, \texttt{Base}, \texttt{object}]$, the same as `Bottom.__mro__`.
+
+Step 2 is the heart of C3: `Base` must wait until **every** subclass of it in the hierarchy has been placed. The lab implements the formula and checks it against CPython:
+
+```python
+def c3(cls):
+    # L[C] = C + merge(L[B1], ..., L[Bn], [B1, ..., Bn])
+    sequences = [c3(base) for base in cls.__bases__] + [list(cls.__bases__)]
+    result = [cls]
+    while any(sequences):
+        sequences = [seq for seq in sequences if seq]
+        for seq in sequences:
+            head = seq[0]
+            if not any(head in other[1:] for other in sequences):
+                break  # a good head: it is in no list's tail
+        else:
+            raise TypeError("no consistent order")
+        result.append(head)
+        sequences = [[c for c in seq if c is not head] for seq in sequences]
+    return result
+```
+
+When does it fail? With `class B(A)`, try `class X(A, B)`: $L[X] = X + \operatorname{merge}([A, \texttt{object}], [B, A, \texttt{object}], [A, B])$. Head $A$ is in the tail of $[B, A, \texttt{object}]$; head $B$ is in the tail of $[A, B]$; no head qualifies. The bases ask for "$A$ before $B$", while inheritance demands "$B$ before its parent $A$". CPython refuses to create the class: `TypeError: Cannot create a consistent method resolution order (MRO) for bases A, B`. The lab's `c3` fails in the same way.
+
+### Level 4: mixins
+
+A **mixin** is a small class that adds one behaviour and is meant to be combined with others. It usually has no `__init__` and calls `super()` so that it can sit anywhere in a chain:
+
+```python
+class ShoutMixin:
+    def send(self, text):
+        return super().send(text.upper())  # adds one behaviour, then passes on
+
+
+class LoudEmailSender(ShoutMixin, EmailSender):
+    pass
+```
+
+`LoudEmailSender("ann").send("hi")` returns `"ann: HI [email]"`. `ShoutMixin`'s only base is `object`, which has no `send`, yet its `super().send` works. The rule for `super` explains it:
+
+$$
+\operatorname{super}(C, \textit{obj}).m = \text{the first } m \text{ defined after } C \text{ in } \operatorname{mro}(\operatorname{type}(\textit{obj}))
+$$
+
+where $C$ is the class whose method contains the `super()` call, $\textit{obj}$ is `self`, and $m$ is the attribute being looked up.
+
+Example: $\operatorname{mro}(\texttt{LoudEmailSender}) = (\texttt{LoudEmailSender}, \texttt{ShoutMixin}, \texttt{EmailSender}, \texttt{Sender}, \texttt{object})$. With $C = \texttt{ShoutMixin}$, the search starts at `EmailSender`, which defines `send`. So the chain is `ShoutMixin.send` (upper-cases), then `EmailSender.send` (adds `" [email]"`), then `Sender.send` (adds the name). Use the mixin alone and the chain is empty: `ShoutMixin().send("hi")` raises `AttributeError: 'super' object has no attribute 'send'`. Put mixins **left** of the class they modify, so they come first in the MRO.
+
+### Level 5: abstract base classes
+
+An **abstract base class** (ABC) defines an interface that subclasses must fill in, and can provide concrete methods built on it:
+
+```python
+class Shape(ABC):
+    @abstractmethod
+    def area(self): ...
+
+    def describe(self):  # concrete methods can use the abstract ones
+        return f"area {self.area()}"
+
+
+class Square(Shape):
+    def __init__(self, side):
+        self.side = side
+
+    def area(self):
+        return self.side**2
+```
+
+A class can be instantiated only when nothing abstract is left:
+
+$$
+C() \text{ is allowed} \iff \operatorname{abstract}(C) = \varnothing
+$$
+
+where $\operatorname{abstract}(C)$ is the set of methods marked `@abstractmethod` in $C$ or its bases and not overridden by a concrete one (stored as `C.__abstractmethods__`), and $\varnothing$ is the empty set.
+
+Example: $\operatorname{abstract}(\texttt{Shape}) = \lbrace \texttt{area} \rbrace \ne \varnothing$, so `Shape()` raises `TypeError: Can't instantiate abstract class Shape without an implementation for abstract method 'area'`. `Square` overrides `area`, so $\operatorname{abstract}(\texttt{Square}) = \varnothing$, and `Square(3).describe()` returns `"area 9"`.
+
+ABCs can also recognise classes that never inherit from them. `collections.abc.Sized` defines `__subclasshook__` to accept any class with `__len__`, so `isinstance(Shelf(), Sized)` is `True` although `Sized` is not in `Shelf.__mro__`. `Shape.register(cls)`, available on every ABC, declares such a "virtual subclass" by hand.
+
+### Level 6: duck typing
+
+Often you do not need any class relationship. Just call the method:
+
+```python
+class Pigeon:  # unrelated to Sender, but it can send
+    def send(self, text):
+        return f"coo: {text}"
+
+
+def broadcast(senders, text):
+    return [sender.send(text) for sender in senders]
+```
+
+`broadcast([EmailSender("ann"), Pigeon()], "hi")` returns `["ann: hi [email]", "coo: hi"]`. An object that cannot send fails at the call, with a clear message: `broadcast([42], "hi")` raises `AttributeError: 'int' object has no attribute 'send'`. This style, "easier to ask for forgiveness than permission" (EAFP, another glossary entry), is the Python default: try the operation and handle the exception, rather than checking types first.
+
+### Level 7: `typing.Protocol`
+
+Duck typing has one weakness: nothing checks it before the program runs. A **protocol** ([PEP 544](https://peps.python.org/pep-0544/), Python 3.8) writes the duck down, so a type checker such as mypy or Pyright can verify it, still without inheritance:
+
+```python
+@runtime_checkable
+class CanSend(Protocol):
+    def send(self, text: str) -> str: ...
+```
+
+This is **structural** subtyping. Next to the nominal rule of Level 1:
+
+$$
+T \le_{\text{nominal}} P \iff P \in \operatorname{mro}(T), \qquad T \le_{\text{structural}} P \iff \operatorname{members}(P) \subseteq \operatorname{members}(T)
+$$
+
+where
+
+- $T$ is a class and $P$ an interface;
+- $\le$ reads "can be used where $P$ is expected";
+- $\operatorname{members}(X)$ is the set of methods and attributes $X$ provides (a static type checker also compares their types).
+
+Example: $\operatorname{mro}(\texttt{Pigeon}) = (\texttt{Pigeon}, \texttt{object})$ does not contain `CanSend`, so nominally `Pigeon` is not a `CanSend`. But $\operatorname{members}(\texttt{CanSend}) = \lbrace \texttt{send} \rbrace \subseteq \operatorname{members}(\texttt{Pigeon})$, so structurally it is, and `isinstance(Pigeon(), CanSend)` is `True`, while `isinstance(42, CanSend)` is `False`.
+
+`@runtime_checkable` is what allows `isinstance` at all, and the runtime check is shallow: it only looks for the **names**. `WrongSend` defines `send(self)` with the wrong signature, and `isinstance(WrongSend(), CanSend)` is still `True`; only a static type checker catches that. Without the decorator, `isinstance` raises `TypeError: Instance and class checks can only be used with @runtime_checkable protocols`. A protocol with data members, such as `name: str`, supports `isinstance` but not `issubclass`: `TypeError: Protocols with non-method members don't support issubclass(). Non-method members: 'name'.` And a protocol itself cannot be instantiated: `TypeError: Protocols cannot be instantiated`.
+
+## How it works underneath
+
+**The MRO is computed once.** When `type` creates a class, `mro_internal` in `Objects/typeobject.c` calls `mro_implementation`, whose `pmerge` function is the $\operatorname{merge}$ of Level 3, and stores the result as the tuple `__mro__`. Every attribute lookup on the class or its instances walks that tuple (`_PyType_Lookup`), with a per-type cache in front of it, so the cost of multiple inheritance is paid at class creation, not at each call.
+
+**Zero-argument `super()` uses a hidden cell.** The compiler sees `super` in a method body and gives the function a free variable `__class__` that holds the class being defined; the lab checks `Left.__init__.__code__.co_freevars == ("__class__",)`. So `super()` is `super(__class__, self)`, with `self` taken from the first argument. Since Python 3.12 the call `super().__init__(log)` compiles to one instruction that skips creating a `super` object:
+
+```text
+LOAD_GLOBAL       super
+LOAD_DEREF        __class__              the class whose method this is: Left
+LOAD_FAST_BORROW  self
+LOAD_SUPER_ATTR   (__init__ + NULL|self) search type(self).__mro__ after Left
+```
+
+This is also why `super()` fails in a function defined outside a class body: there is no `__class__` cell (`RuntimeError: super(): __class__ cell not found`).
+
+**Abstract methods are a flag.** At class creation, `ABCMeta` collects the names whose values have `__isabstractmethod__ = True` into `__abstractmethods__`, and setting that attribute turns on the type flag `Py_TPFLAGS_IS_ABSTRACT`. `object_new` checks the flag and raises the "Can't instantiate abstract class" error. `isinstance` with an ABC goes through `ABCMeta.__instancecheck__`, which consults the MRO, the `register` registry and `__subclasshook__`, and caches the answers (in C, the `_abc` module).
+
+**Protocol checks are attribute probes.** `isinstance(x, CanSend)` runs the protocol metaclass's `__instancecheck__`, which checks every protocol member on `x`. Since 3.12 it uses `inspect.getattr_static`, so properties and `__getattr__` are not run during the check. It never looks at signatures or types, which is the reason for the `WrongSend` result.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Calling parents by name in a diamond | A shared base's `__init__` runs twice: `["Bottom", "Left", "Base", "Right", "Base"]` | Use `super()` in every class of the hierarchy |
+| One class in the chain does not call `super()` | Methods further along the MRO silently never run | Every cooperative method calls `super()`, except the root that ends the chain |
+| Bases listed in an order that contradicts inheritance, such as `class X(A, B)` with `B(A)` | `TypeError: Cannot create a consistent method resolution order (MRO) for bases A, B` | List subclasses before their bases: `class X(B, A)`, or just `class X(B)` |
+| A mixin used on its own, or placed right of its target | `AttributeError: 'super' object has no attribute 'send'`, or the mixin never runs | Put mixins first: `class LoudEmailSender(ShoutMixin, EmailSender)` |
+| Forgetting to implement an abstract method | `TypeError: Can't instantiate abstract class Shape without an implementation for abstract method 'area'` | Implement it in the subclass |
+| `isinstance` with a plain `Protocol` | `TypeError: Instance and class checks can only be used with @runtime_checkable protocols` | Add `@runtime_checkable`, or rely on the static checker |
+| Trusting a runtime protocol check for signatures | `isinstance(WrongSend(), CanSend)` is `True` | Run mypy or Pyright; runtime checks see names only |
+| Deep inheritance trees for code reuse | Hard to follow which method runs | Prefer composition, small mixins and protocols |
+
+## Interview questions
+
+### 1. What is the MRO, and how does Python compute it?
+
+**Answer.** The method resolution order is the sequence of classes searched for an attribute, stored as `C.__mro__`. Since Python 2.3 it is the C3 linearisation, $L[C] = C + \operatorname{merge}(L[B_1], \ldots, L[B_n], [B_1, \ldots, B_n])$, where merge keeps taking the first head that is in no tail. It guarantees that every class precedes its bases, that the order of bases you wrote is kept, and that it is **monotonic**: a class's MRO keeps the relative order of every parent's MRO. For the diamond it gives `Bottom, Left, Right, Base, object` (Level 3). If no order satisfies the constraints, class creation fails with `TypeError`.
+
+### 2. What does `super()` actually call?
+
+**Answer.** Not "the parent". `super().m` finds `m` in the class **after the current one in the MRO of `type(self)`**. In `Bottom`'s diamond, `super()` inside `Left` reaches `Right`, a sibling. That is what makes cooperative multiple inheritance and mixins work, and why every class in the chain must call `super()` with compatible arguments (often passing `**kwargs` along). Zero-argument `super()` gets the current class from the compiler-created `__class__` cell and the instance from the first argument.
+
+### 3. When would you use an ABC, and when a Protocol?
+
+**Answer.** Both describe an interface. An **ABC** is nominal: classes opt in by inheriting (or `register`), it can supply concrete methods such as `describe`, and it stops incomplete subclasses from being instantiated at run time. A **Protocol** is structural: any class with the right members matches, without importing or inheriting anything, which suits interfaces you do not own, such as third-party classes. Protocols are mainly checked statically by type checkers; their runtime `isinstance` (with `@runtime_checkable`) checks names only.
+
+### 4. Why does `class X(A, B)` fail when `B` inherits from `A`?
+
+**Answer.** The bases list asks C3 to put `A` before `B`, but `B`'s own linearisation $[B, A, \texttt{object}]$ demands `B` before `A`. During the merge, `A` is in the tail of $[B, A, \texttt{object}]$ and `B` is in the tail of $[A, B]$, so no head can be chosen and CPython raises `TypeError: Cannot create a consistent method resolution order (MRO) for bases A, B`. The fix is `class X(B, A)`, or just `class X(B)`, since `B` already brings `A`.
+
+### 5. What is duck typing, and what are its risks?
+
+**Answer.** Using an object through the operations it supports instead of its class: `broadcast` calls `.send()` on whatever it gets, so `Pigeon` works without inheriting from `Sender`. The benefit is loose coupling; the risk is that a missing or wrong method is found only when that line runs (`AttributeError: 'int' object has no attribute 'send'`). `typing.Protocol` keeps the flexibility and moves the check to the type checker, before the program runs.
+
+## Summary
+
+$$
+L[C] = C + \operatorname{merge}\bigl(L[B_1], \ldots, L[B_n],\ [B_1, \ldots, B_n]\bigr)
+$$
+
+where $C$ is a class, $B_1, \ldots, B_n$ are its bases in order, $L$ is the linearisation, and $\operatorname{merge}$ repeatedly takes the first head that is in no list's tail.
+
+Example: for the diamond, the merge picks `Left`, rejects `Base`, picks `Right`, then `Base` and `object`, giving `Bottom.__mro__ == (Bottom, Left, Right, Base, object)`.
+
+- Attribute lookup and `super()` both follow the MRO, computed once by C3 when the class is created.
+- `super()` means "the next class in `type(self)`'s MRO", so use it in every cooperative method.
+- Mixins add one behaviour, call `super()`, and go to the left of the class they modify.
+- ABCs enforce an interface by inheritance and refuse to instantiate incomplete classes.
+- Duck typing uses objects by behaviour; `typing.Protocol` makes that checkable statically.
+
+## References
+
+- The Python Language Reference: [Class definitions](https://docs.python.org/3.14/reference/compound_stmts.html#class-definitions) and [Creating the class object](https://docs.python.org/3.14/reference/datamodel.html#creating-the-class-object) (the `__class__` cell); the built-in [`super`](https://docs.python.org/3.14/library/functions.html#super).
+- Michele Simionato, [The Python 2.3 Method Resolution Order](https://docs.python.org/3.14/howto/mro.html) (Python HOWTOs).
+- K. Barrett, B. Cassels, P. Haahr, D. A. Moon, K. Playford and P. T. Withington, *A Monotonic Superclass Linearization for Dylan*, OOPSLA 1996, [doi:10.1145/236337.236343](https://doi.org/10.1145/236337.236343).
+- Guido van Rossum, [Method Resolution Order](https://python-history.blogspot.com/2010/06/method-resolution-order.html), *The History of Python* (2010).
+- Raymond Hettinger, [Python's super() considered super!](https://rhettinger.wordpress.com/2011/05/26/super-considered-super/) (2011).
+- The [`abc` module](https://docs.python.org/3.14/library/abc.html), [`collections.abc`](https://docs.python.org/3.14/library/collections.abc.html), and [PEP 3119: Introducing Abstract Base Classes](https://peps.python.org/pep-3119/).
+- [`typing.Protocol`](https://docs.python.org/3.14/library/typing.html#typing.Protocol), the [typing specification: Protocols](https://typing.python.org/en/latest/spec/protocol.html), and [PEP 544: Protocols: Structural subtyping (static duck typing)](https://peps.python.org/pep-0544/).
+- The glossary: [duck-typing](https://docs.python.org/3.14/glossary.html#term-duck-typing) and [EAFP](https://docs.python.org/3.14/glossary.html#term-EAFP).
+- Luciano Ramalho, *Fluent Python*, 2nd ed. (O'Reilly, 2022), ch. 13 "Interfaces, Protocols, and ABCs" and ch. 14 "Inheritance: For Better or For Worse".
+- CPython source: [Objects/typeobject.c](https://github.com/python/cpython/blob/3.14/Objects/typeobject.c) (`mro_implementation`, `pmerge`, `object_new`).
+- Lab: [`labs/inheritance-mro-and-protocols.py`](labs/inheritance-mro-and-protocols.py). Run it from `programming-languages/python/labs` with `python3 -I inheritance-mro-and-protocols.py`.
