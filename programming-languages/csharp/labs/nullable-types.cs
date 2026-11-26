@@ -11,7 +11,8 @@ age = 36;
 int certain = age.Value;             // 36: Value is safe only when HasValue is true
 
 Check(!known && shown == 0 && certain == 36, "HasValue, GetValueOrDefault and Value");
-Check(ValueOfEmpty() == "Nullable object must have a value.", "Value on an empty int? throws");
+string emptyMessage = ValueOfEmpty();
+Check(emptyMessage == "Nullable object must have a value.", $"Value on an empty int? throws, got: {emptyMessage}");
 
 int? five = 5;
 int? nothing = null;

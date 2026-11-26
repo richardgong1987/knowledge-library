@@ -219,17 +219,20 @@ for (const language of Object.keys(CHAPTERS)) {
     }
   });
 
-  test(`${language}: every lab runs and prints OK`, { skip }, () => {
+  // One subtest per lab, so a failing lab does not hide the result of the labs after it.
+  test(`${language}: every lab runs and prints OK`, { skip }, async t => {
     if (chapters.length === 0) return;
     const typeErrors = language === 'typescript' ? typeErrorsByFile() : null;
     if (typeErrors && ONLY.length === 0) assert.ok(!typeErrors.has('(project)'), typeErrors.get('(project)')?.join('\n'));
     for (const { slug } of chapters) {
       const { lab, checks, run: command } = LANGUAGES[language];
-      const errors = typeErrors?.get(lab(slug)) ?? [];
-      assert.equal(errors.length, 0, `tsc reports errors in labs/${lab(slug)}:\n${errors.join('\n')}`);
-      for (const check of checks?.(slug) ?? []) run(language, check, `${check.flat().join(' ')}`);
-      const stdout = run(language, command(slug), `${language} lab labs/${lab(slug)}`);
-      if (!stdout.startsWith('skipped')) assert.match(stdout, /^OK$/m, `${language} lab labs/${lab(slug)} did not print OK`);
+      await t.test(`labs/${lab(slug)}`, () => {
+        const errors = typeErrors?.get(lab(slug)) ?? [];
+        assert.equal(errors.length, 0, `tsc reports errors in labs/${lab(slug)}:\n${errors.join('\n')}`);
+        for (const check of checks?.(slug) ?? []) run(language, check, `${check.flat().join(' ')}`);
+        const stdout = run(language, command(slug), `${language} lab labs/${lab(slug)}`);
+        if (!stdout.startsWith('skipped')) assert.match(stdout, /^OK$/m, `${language} lab labs/${lab(slug)} did not print OK`);
+      });
     }
   });
 }
