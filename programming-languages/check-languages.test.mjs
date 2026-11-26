@@ -93,9 +93,6 @@ const fileName = (index, slug) => `${String(index + 1).padStart(2, '0')}-${slug}
 const ONLY = (process.env.ONLY ?? '').split(',').map(s => s.trim()).filter(Boolean);
 const selected = (language, file) => ONLY.length === 0 || ONLY.some(prefix => `${language}/${file}`.startsWith(prefix));
 
-// A language still on its old single page has not been rewritten yet, so its chapters are not required.
-const rewritten = language => !existsSync(join(root, `${language}.qmd`));
-
 const stripFencedCode = text => text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm, '');
 
 const lastMatch = (text, regex) => Math.max(-1, ...[...text.matchAll(regex)].map(match => match.index));
@@ -209,9 +206,7 @@ for (const language of Object.keys(CHAPTERS)) {
     .map((slug, i) => ({ slug, file: fileName(i, slug) }))
     .filter(({ file }) => selected(language, file));
 
-  const skip = ONLY.length === 0 && !rewritten(language) && 'old page still in place';
-
-  test(`${language}: every chapter meets the standard`, { skip }, () => {
+  test(`${language}: every chapter meets the standard`, () => {
     if (ONLY.length === 0 || ONLY.includes(language)) checkIndex(language);
     for (const { slug, file } of chapters) {
       assert.ok(existsSync(join(root, language, file)), `missing chapter programming-languages/${language}/${file}`);
@@ -220,7 +215,7 @@ for (const language of Object.keys(CHAPTERS)) {
   });
 
   // One subtest per lab, so a failing lab does not hide the result of the labs after it.
-  test(`${language}: every lab runs and prints OK`, { skip }, async t => {
+  test(`${language}: every lab runs and prints OK`, async t => {
     if (chapters.length === 0) return;
     const typeErrors = language === 'typescript' ? typeErrorsByFile() : null;
     if (typeErrors && ONLY.length === 0) assert.ok(!typeErrors.has('(project)'), typeErrors.get('(project)')?.join('\n'));

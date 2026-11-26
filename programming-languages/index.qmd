@@ -1,51 +1,79 @@
 ---
 title: "Programming Languages"
-subtitle: "One essential idea at a time"
-description: "Core programming language semantics, taught with independent tiny examples and a deeper Rust/JVM learning path."
+subtitle: "What each language guarantees, and how it works underneath"
+description: "Core concepts of Go, Python, JavaScript, TypeScript, C#, Prolog, Rust and Java, taught from first principles to interview level, with a runnable lab behind every chapter."
 ---
 
 # Learn the meaning before the syntax
 
-A language is not merely its keywords. The most useful questions concern **who owns data, what the type checker guarantees, how functions communicate and when code actually runs**.
+A language is not its keywords. The questions that matter are **who owns a value, what the type checker promises, how concurrent work is coordinated, and when code actually runs**. Each language here is taught through those questions, from a ten-year-old's picture of the idea to the runtime structure that implements it.
 
-Every example in this section should be the smallest code that demonstrates **one idea**. Do not combine unrelated frameworks, persistence, concurrency and metaprogramming in one demonstration.
+## The languages
 
-## Recommended: Rust fundamentals first
+| Language | Chapters | The ideas that explain most of it |
+|---|---|---|
+| [Go](go/index.qmd) | 15 | Values and slices, implicit interfaces, errors as values, and above all [goroutines](go/09-goroutines-and-the-scheduler.qmd), [channels](go/10-channels.qmd), [select and context](go/11-select-and-context.qmd) and the [memory model](go/12-sync-and-the-memory-model.qmd) |
+| [Python](python/index.qmd) | 13 | [Names bound to objects](python/01-names-objects-and-references.qmd), generators and decorators, the data model and MRO, the [GIL](python/12-threads-processes-and-the-gil.qmd) and [asyncio](python/13-coroutines-and-asyncio.qmd) |
+| [JavaScript](javascript/index.qmd) | 12 | [Coercion](javascript/01-values-types-and-coercion.qmd), closures, `this`, prototypes, and the [event loop](javascript/07-the-event-loop.qmd) behind promises and async/await |
+| [TypeScript](typescript/index.qmd) | 12 | [Types as sets of shapes](typescript/01-structural-typing.qmd), narrowing, generics, mapped and conditional types, and where the type system is [deliberately unsound](typescript/12-variance-and-soundness.qmd) |
+| [C#](csharp/index.qmd) | 13 | [Value versus reference types](csharp/01-value-and-reference-types.qmd), nullable types, reified generics, LINQ, pattern matching, and [async/await](csharp/11-tasks-and-async-await.qmd) |
+| [Prolog](prolog/index.qmd) | 10 | Programs as logic, [unification](prolog/02-unification.qmd), [backtracking search](prolog/03-resolution-and-backtracking.qmd), constraints and grammars |
+| [Rust](rust/index.qmd) | 16 | [Ownership](rust/01-ownership.qmd), borrowing and lifetimes, traits, and thread safety checked at compile time |
+| [Java](java.qmd) | JVM path | Object references and generics, then the [JVM and the Java Memory Model](java/jvm/index.qmd) |
 
-[**Rust Core Concepts — 16 small chapters**](rust/index.qmd) gives a clear progression:
+## How every chapter is built
 
-1. [Ownership and Moves](rust/01-ownership.qmd) — why a String is moved rather than implicitly copied.
-2. [Borrowing](rust/02-borrowing.qmd) — shared references versus exclusive mutable references.
-3. [Lifetimes](rust/03-lifetimes.qmd) — relationships between reference validity, not extra runtime objects.
-4. [Traits and Generics](rust/07-traits-and-generics.qmd) — constraints on behaviour.
-5. [Declarative Macros](rust/12-declarative-macros.qmd) and [Custom Attributes](rust/13-attributes-and-proc-macros.qmd) — compile-time syntax generation.
+The Go, Python, JavaScript, TypeScript, C# and Prolog chapters share one layout, so you always know where to look:
 
-The [Rust examples](rust/examples/index.qmd) compile each tiny chapter's program and run one **real custom procedural attribute** in an independent two-crate Cargo workspace. That separation is required by Rust, not arbitrary architectural complexity.
+1. **The problem:** a concrete situation with real values, and what goes wrong without the concept.
+2. **Explain it like I'm ten:** an everyday analogy, with the words of the language's designers and well-known teachers.
+3. **From simple to advanced:** levels that each add one idea, with its math and a short piece of code.
+4. **How it works underneath:** the runtime or compiler mechanism, taken from the official source.
+5. **Common mistakes:** each with its exact error message and the fix.
+6. **Interview questions:** with precise answers.
+7. **Summary** and **References.**
 
-## Other languages: concise core ideas
+**The code you read is the code that runs.** Every code block is cut from a lab next to the chapter that checks each quoted result and prints `OK`. Go labs run under the race detector, TypeScript labs prove their type errors with `@ts-expect-error`, and C# labs must build without a single warning. Code that cannot run, such as a compile error, is marked `sketch` and shown with the compiler's real message.
 
-- **[Java](java.qmd):** object references, generics, interfaces, records, exceptions, and the full [JVM/JMM path](java/jvm/index.qmd).
-- **[Go](go/index.qmd):** 15 chapters, from values, slices and interfaces to goroutines, channels, select and context, the memory model, concurrency patterns and the garbage collector.
-- **[TypeScript](typescript/index.qmd):** 12 chapters, from structural typing, inference and narrowing to generics, mapped, conditional and template literal types, runtime validation, and variance and soundness.
-- **[JavaScript](javascript/index.qmd):** 12 chapters, from values and coercion, closures, `this`, prototypes and classes to iterators, the event loop, promises, async/await, modules, errors and garbage collection.
-- **[Python](python/index.qmd):** 13 chapters, from names and objects, collections, closures, generators and decorators to the data model, the MRO, exceptions, type hints, imports, memory, the GIL and asyncio.
-- **[C#](csharp/index.qmd):** 13 chapters, from value and reference types, nullable types, records and generics to delegates, iterators, LINQ, pattern matching, async/await, threads, and memory with `Span<T>`.
-- **[Prolog](prolog/index.qmd):** 10 chapters, from facts, rules, unification and backtracking to recursion, lists, CLP(FD), cut and negation, difference lists, all-solutions predicates and grammars.
+**Math states the core idea in one line.** After every formula comes a list of what each symbol means and an example with the chapter's own numbers. For instance, Go's rule for when a channel send must wait, $\operatorname{len}(c) = \operatorname{cap}(c) \land R(c) = 0$, is worked through with a channel of capacity 2.
 
-## A useful comparison before the syntax
+## One question, many answers
 
-A string-like value is passed between two functions. Does the callee own an independent value, borrow it, or merely hold another reference? The answer depends on the language and type.
+The same operation means different things in different languages. That difference, not the syntax, is what to learn first.
 
-- Rust makes moves, borrows and explicit clones central to its static rules.
-- Go copies the argument value, even when that value is a slice descriptor or pointer.
-- JavaScript and Python bindings can refer to the same mutable object.
-- Java copies primitive values or object references as arguments.
-- TypeScript adds a compile-time structural type system to JavaScript; the runtime object behaviour is still JavaScript.
+**Passing a value to a function.** Does the callee get its own copy, a borrow, or another name for the same object?
+
+| Language | What the callee receives |
+|---|---|
+| Go | A copy of the argument, though a copied slice header or pointer still reaches the same memory ([values and pointers](go/01-values-types-and-pointers.qmd), [slices](go/02-slices-and-maps.qmd)) |
+| Python, JavaScript | Another name for the same object; mutating it is visible to the caller ([Python](python/01-names-objects-and-references.qmd), [JavaScript](javascript/01-values-types-and-coercion.qmd)) |
+| C# | A copy for a `struct`, a copied reference for a `class`, or the variable itself with `ref` ([value and reference types](csharp/01-value-and-reference-types.qmd)) |
+| Rust | The value moved, or a borrow the compiler tracks ([ownership](rust/01-ownership.qmd), [borrowing](rust/02-borrowing.qmd)) |
+| Java | A copy of a primitive, or a copy of an object reference ([Java](java.qmd)) |
+| Prolog | No assignment at all: arguments are unified, and a variable is bound at most once ([unification](prolog/02-unification.qmd)) |
+
+**Doing two things at once.** What runs concurrently, and what keeps it safe?
+
+| Language | Unit of concurrency | What coordinates it |
+|---|---|---|
+| Go | Goroutines multiplexed onto OS threads | Channels, `select`, `context`, and `sync` ([scheduler](go/09-goroutines-and-the-scheduler.qmd), [channels](go/10-channels.qmd)) |
+| Python | Threads under the GIL, processes, or coroutines on one event loop | Locks and queues, or `await` ([GIL](python/12-threads-processes-and-the-gil.qmd), [asyncio](python/13-coroutines-and-asyncio.qmd)) |
+| JavaScript | One thread running tasks and microtasks to completion | The event loop and promises ([event loop](javascript/07-the-event-loop.qmd)) |
+| C# | Tasks on the thread pool | `async`/`await`, locks, `Interlocked` and channels ([tasks](csharp/11-tasks-and-async-await.qmd), [threads](csharp/12-threads-and-synchronisation.qmd)) |
+| Rust | OS threads and futures | `Send` and `Sync` checked by the compiler ([concurrency](rust/10-concurrency.qmd), [async](rust/11-async-await.qmd)) |
+| Java | Threads, including virtual threads | `synchronized`, `volatile` and the Java Memory Model ([JMM](java/jvm/jmm/index.qmd)) |
 
 **The right question is not which language is best. It is what each language guarantees at the exact operation you are trying to understand.**
 
-## Mathematics when useful, not for decoration
+## Run the labs
 
-When a language concept needs a formula (for example, a happens-before relation), immediately explain **every symbol** and **substitute a real execution or set of numbers**. If the idea is clearer with just five lines of code, use the code instead of adding a gratuitous equation.
+Each language page gives the command for one lab. From the repository root, one command checks every chapter against the standard and runs every lab:
+
+```bash
+node --test programming-languages/check-languages.test.mjs
+ONLY=go/10-channels node --test programming-languages/check-languages.test.mjs   # just one chapter
+```
+
+It needs Go 1.27, Python 3.14, Node 26, .NET 10 and SWI-Prolog, plus `npm ci` in `programming-languages/typescript/labs` for the TypeScript compiler. The Rust chapters have their own [examples and checks](rust/examples/index.qmd).
 
 [← Knowledge Library](../index.qmd)
