@@ -1,0 +1,312 @@
+---
+title: "keyof, typeof and Indexed Access"
+description: "Deriving types from values in TypeScript: typeof in type positions, keyof, indexed access T[K], T[number] on arrays and tuples, a type-safe getter, and as const objects instead of enums."
+---
+
+## The problem
+
+A fruit stall keeps its prices in one object:
+
+```ts
+const prices = { apple: 0.5, banana: 0.25, cherry: 3 };
+function priceOfLoose(name: string): number {
+  // @ts-expect-error: not every string is a key of prices
+  return prices[name];
+}
+```
+
+```text
+error TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type '{ apple: number; banana: number; cherry: number; }'.
+  No index signature with a parameter of type 'string' was found on type '{ apple: number; banana: number; cherry: number; }'.
+```
+
+The compiler is right to object. `priceOfLoose("durian")` returns `undefined`, and the lab finds that adding it to the apple's price gives `0.5 + undefined`, which is `NaN`. The obvious fix is to write the allowed names by hand, `type Fruit = "apple" | "banana" | "cherry"`, but now the same three names live in two places. Add `"durian"` to the object next month and forget the type, and the two drift apart.
+
+The better fix is to **derive** the type from the value, so there is one source of truth. TypeScript has three small operators for that: `typeof` reads a value's type, `keyof` lists a type's keys, and `T[K]` looks up the type of a property.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A book and its table of contents
+
+- **`typeof prices`** is a photocopy of the book's **outline**: not the words, just which chapters there are and what kind of thing each holds.
+- **`keyof`** is the **table of contents**: the list of chapter titles, `"apple" | "banana" | "cherry"`. When a chapter is added, the table of contents updates itself.
+- **`T[K]`** is **opening the book at chapter `K`** to see what kind of thing is there: `Prices["apple"]` is `number`.
+- **`T[number]`** on a list is asking "what can be in **any** slot of this list?"
+
+Dan Vanderkam's *Effective TypeScript* has a whole item on keeping the two in step, "Use Type Operations and Generic Types to Avoid Repeating Yourself", and Matt Pocock's *Total TypeScript Essentials* calls the chapter on these operators "Deriving Types".
+:::
+
+## From simple to advanced
+
+### Level 1: `typeof` in a type position
+
+TypeScript has **two** `typeof`s that share a spelling. In an expression it is JavaScript's operator and produces a string at runtime. In a type position it is a **type query**: "give me the type the checker inferred for this value".
+
+```ts
+type Prices = typeof prices;
+const runtimeTag = typeof prices; // the JavaScript operator: a string at runtime
+```
+
+The lab proves `Prices` is exactly `{ apple: number; banana: number; cherry: number }`, and checks that `runtimeTag` is the string `"object"`. The type query sees what inference produced, so the prices are widened to `number` ([Inference and Literal Types](02-inference-and-literal-types.qmd)). It also sees narrowing: [Unions and Narrowing](03-unions-and-narrowing.qmd) used `type Here = Expect<Equal<typeof price, string>>` inside an `if` to prove what a variable was at that line. Like every type, `Prices` is erased; only `runtimeTag` exists when the program runs.
+
+### Level 2: `keyof` lists the keys
+
+`keyof T` is the union of the property names of `T`, each as a string literal type:
+
+$$
+\operatorname{keyof} O = \texttt{"}p_1\texttt{"} \mid \texttt{"}p_2\texttt{"} \mid \dots \mid \texttt{"}p_n\texttt{"}
+$$
+
+where
+
+- $O$ is an object type with the properties $p_1, \dots, p_n$;
+- $\texttt{"}p_i\texttt{"}$ is the literal type of the name $p_i$, a set with one string in it;
+- $\mid$ is union, so the result is the set of all $n$ names.
+
+Example: `Prices` has the properties `apple`, `banana` and `cherry`, so $\operatorname{keyof} \texttt{Prices} = \texttt{"apple"} \mid \texttt{"banana"} \mid \texttt{"cherry"}$, three names. Writing `keyof typeof prices` goes straight from the value to the names:
+
+```ts
+type Fruit = keyof typeof prices;
+function priceOf(name: Fruit): number {
+  return prices[name];
+}
+// @ts-expect-error: "durian" is not on the price list
+const durian = priceOf("durian");
+```
+
+```text
+error TS2345: Argument of type '"durian"' is not assignable to parameter of type '"apple" | "banana" | "cherry"'.
+```
+
+`prices[name]` now compiles, because every `Fruit` is a real key, and `priceOf("cherry")` is 3. Add `durian: 9` to the object and `Fruit` gains `"durian"` by itself.
+
+One surprise for interviews: a type with a string **index signature** has `string | number` as its keys. The Handbook explains why: *"JavaScript object keys are always coerced to a string, so obj[0] is always the same as obj["0"]."* The lab proves `keyof { [name: string]: number }` is `string | number`.
+
+### Level 3: indexed access `T[K]`
+
+`T[K]` is the type of property `K` in `T`. It uses square brackets and a **type** as the key, and it chains:
+
+```ts
+type User = { name: string; born: number; address: { city: string; zip: string } };
+type City = User["address"]["city"];
+type NameOrBorn = User["name" | "born"];
+// @ts-expect-error: User has no email
+type Email = User["email"];
+// @ts-expect-error: a dot reads a namespace, not a property type
+type DotName = User.name;
+```
+
+```text
+error TS2339: Property 'email' does not exist on type 'User'.
+error TS2713: Cannot access 'User.name' because 'User' is a type, but not a namespace. Did you mean to retrieve the type of the property 'name' in 'User' with 'User["name"]'?
+```
+
+When the key is a union, the lookup is done for each member and the results are joined:
+
+$$
+T[K_1 \mid K_2] = T[K_1] \mid T[K_2]
+$$
+
+where
+
+- $T$ is an object type and $K_1$, $K_2$ are key types (literal names);
+- $T[K]$ is the type of property $K$ in $T$.
+
+Example: `User["name" | "born"]` is $\texttt{User["name"]} \mid \texttt{User["born"]} = \texttt{string} \mid \texttt{number}$, which the lab proves. And $T[\operatorname{keyof} T]$ is the union of **all** property types, the "values of $T$", used in Level 6.
+
+### Level 4: `T[number]` on arrays and tuples
+
+Arrays are indexed by numbers, so `number` is a key type for them. `T[number]` asks "what is in any slot?":
+
+```ts
+const sizes = ["S", "M", "L"] as const;
+type Size = (typeof sizes)[number];
+function isSize(value: string): value is Size {
+  const allowed: readonly string[] = sizes; // includes on the tuple itself would accept only a Size
+  return allowed.includes(value);
+}
+type Pair = [string, number];
+```
+
+$$
+[A_0, A_1, \dots, A_{n-1}][\texttt{number}] = A_0 \mid A_1 \mid \dots \mid A_{n-1}, \qquad [A_0, \dots, A_{n-1}][\texttt{"length"}] = n
+$$
+
+where
+
+- $[A_0, \dots, A_{n-1}]$ is a tuple type with $n$ elements, $A_i$ being the type at position $i$;
+- indexing by the type `number` means "some position, we do not know which";
+- `"length"` is the tuple's `length` property, whose type is the literal $n$.
+
+Example: `typeof sizes` is `readonly ["S", "M", "L"]`, so $n = 3$ and `Size` is `"S" | "M" | "L"`. For `Pair = [string, number]`, `Pair[number]` is `string | number`, `Pair[1]` is `number`, and `Pair["length"]` is the literal `2`. A plain array `number[]` has no fixed positions, so `number[][number]` is just `number`. Asking a tuple for a position it does not have is an error:
+
+```text
+error TS2493: Tuple type 'Pair' of length '2' has no element at index '2'.
+```
+
+This is the standard way to keep a runtime list and a type in step: the array `sizes` is used at runtime (`isSize("M")` is `true`, `isSize("XL")` is `false`), and the type `Size` is derived from it.
+
+### Level 5: a type-safe getter
+
+Put `keyof` and `T[K]` into a generic function ([Generics](05-generics.qmd)), and the return type follows the key:
+
+```ts
+function get<T, K extends keyof T>(obj: T, key: K): T[K] {
+  return obj[key];
+}
+const ada: User = { name: "Ada", born: 1815, address: { city: "London", zip: "W1" } };
+const adaName = get(ada, "name");
+const adaBorn = get(ada, "born");
+// @ts-expect-error: "email" is not a key of User
+const adaEmail = get(ada, "email");
+```
+
+$$
+\texttt{get} : \forall T.\; \forall K \le \operatorname{keyof} T.\; (T, K) \to T[K]
+$$
+
+where
+
+- $\forall T$ is "for every object type $T$", and $K \le \operatorname{keyof} T$ restricts $K$ to the names of $T$'s properties;
+- $(T, K) \to T[K]$ says the result type is looked up from the key the caller passes.
+
+Example: `get(ada, "name")` infers $[T := \texttt{User}, K := \texttt{"name"}]$, so the result type is $\texttt{User["name"]} = \texttt{string}$, value `"Ada"`. `get(ada, "born")` gives $\texttt{User["born"]} = \texttt{number}$, value 1815. `"email"` fails the bound: `TS2345: Argument of type '"email"' is not assignable to parameter of type 'keyof User'.` One function, and each call has a precise type. Compare `prices[name]` with `name: string`, where the best TypeScript could say was "implicitly `any`".
+
+### Level 6: derive types from an `as const` object
+
+Many codebases reach for `enum` to name a fixed set of values. An `enum` generates JavaScript, so it is not erasable syntax and cannot run under Node's type stripping or the `erasableSyntaxOnly` option ([Structural Typing](01-structural-typing.qmd)). A plain object with `as const`, plus the three operators, does the same job:
+
+```ts
+const HttpStatus = { ok: 200, notFound: 404, serverError: 500 } as const;
+type HttpStatusName = keyof typeof HttpStatus;
+type HttpStatusCode = (typeof HttpStatus)[HttpStatusName];
+function isError(code: HttpStatusCode): boolean {
+  return code >= 400;
+}
+// @ts-expect-error: 418 is not one of the codes
+const teapot = isError(418);
+```
+
+$$
+\operatorname{ValuesOf}(T) = T[\operatorname{keyof} T]
+$$
+
+where
+
+- $T$ is an object type, here `typeof HttpStatus`;
+- $\operatorname{keyof} T$ is the union of its names, and indexing by that union gives the union of the property types (Level 3).
+
+Example: `as const` keeps the literal values ([Inference and Literal Types](02-inference-and-literal-types.qmd)), so `typeof HttpStatus` is `{ readonly ok: 200; readonly notFound: 404; readonly serverError: 500 }`. Then $\operatorname{keyof} T = \texttt{"ok"} \mid \texttt{"notFound"} \mid \texttt{"serverError"}$ and $T[\operatorname{keyof} T] = 200 \mid 404 \mid 500$, both proven in the lab. `isError(HttpStatus.notFound)` is `true` because $404 \ge 400$; `isError(418)` is `TS2345: Argument of type '418' is not assignable to parameter of type 'HttpStatusCode'.` At runtime `HttpStatus` is an ordinary object, so `Object.values(HttpStatus)` is `[200, 404, 500]`.
+
+## How it works underneath
+
+All three operators are type-level functions in the checker (`internal/checker/checker.go` in `microsoft/typescript-go`).
+
+**`keyof`** is `getIndexType`. For an object type it collects the literal types of the property names (`getLiteralTypeFromProperties`), plus `string`, `number` or `symbol` for any index signatures. For unions and intersections it recurses, and the result shows the same duality as property access in [Unions and Narrowing](03-unions-and-narrowing.qmd):
+
+$$
+\operatorname{keyof}(A \mid B) = \operatorname{keyof} A \mathbin{\&} \operatorname{keyof} B, \qquad \operatorname{keyof}(A \mathbin{\&} B) = \operatorname{keyof} A \mid \operatorname{keyof} B
+$$
+
+where
+
+- $A \mid B$ is a union type and $A \mathbin{\&} B$ an intersection type;
+- on unions of literal types, $\mathbin{\&}$ keeps the names in both and $\mid$ keeps the names in either.
+
+Example: `Book` has `id` and `title`, `Film` has `id` and `minutes`. A value of type `Book | Film` is only guaranteed to have `id`, so $\operatorname{keyof}(\texttt{Book} \mid \texttt{Film}) = (\texttt{"id"} \mid \texttt{"title"}) \mathbin{\&} (\texttt{"id"} \mid \texttt{"minutes"}) = \texttt{"id"}$. A `Book & Film` has all three, so its keys are `"id" | "title" | "minutes"`. The lab proves both. The source is direct: the union case calls `getIntersectionType` on the members' key types, and the intersection case calls `getUnionType`.
+
+**`T[K]`** is `getIndexedAccessType`. If `T` or `K` is still a type parameter, as inside `get`, the access is **deferred**: the checker builds an indexed access type that stays symbolic until a call substitutes real types. That is why `get` can declare `T[K]` once and each call gets a concrete answer. When `K` is a union, the checker looks up each member and, for a **read**, joins the results with `getUnionType`, which is the Level 3 formula. For a **write** it joins them with `getIntersectionType` instead, because the value must fit whichever property is chosen (interview question 4).
+
+**`typeof`** in a type position is a type query: the checker resolves the name and returns the type of that symbol **at that location**, including narrowing. It never evaluates anything. The Handbook states the limit: *"it's only legal to use typeof on identifiers (i.e. variable names) or their properties."* So `typeof prices.apple` is `number` (the lab checks it), and for the result of a call you write `ReturnType<typeof priceOf>` ([Mapped and Utility Types](07-mapped-and-utility-types.qmd)).
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Indexing an object with a `string` | `TS7053: Element implicitly has an 'any' type because expression of type 'string' can't be used to index type ...` | Type the key as `keyof typeof obj` |
+| Writing a union of keys by hand | It drifts from the object when keys are added | `type Fruit = keyof typeof prices` |
+| `User.name` to get a property's type | `TS2713: Cannot access 'User.name' because 'User' is a type, but not a namespace.` | `User["name"]` |
+| Expecting `Object.keys(obj)` to be `(keyof T)[]` | It is `string[]` | Correct by design (interview question 3); narrow each key with a guard |
+| Forgetting `as const` before `[number]` or `T[keyof T]` | `Size` becomes `string`, `HttpStatusCode` becomes `number` | Add `as const` to the value |
+| `enum` in code that Node runs directly | `TS1294` under `erasableSyntaxOnly`; Node stops with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` | An `as const` object plus `keyof typeof` |
+
+## Interview questions
+
+### 1. What is the difference between `typeof x` in a type and in an expression?
+
+**Answer.** In an expression, `typeof` is JavaScript's runtime operator: it returns one of eight strings, and `typeof prices` is `"object"`. In a type position, such as `type Prices = typeof prices`, it is TypeScript's type query: it returns the static type the checker has for `prices` at that point, here `{ apple: number; banana: number; cherry: number }`. The type query is erased; the expression runs.
+
+### 2. How do you get the element type of an array, and the type of one tuple position?
+
+**Answer.** Index the array type by `number`: `(typeof sizes)[number]` is `"S" | "M" | "L"` for an `as const` array, and `number[][number]` is `number`. For a tuple, index by a literal position: `Pair[1]` is `number`, `Pair["length"]` is the literal `2`, and `Pair[2]` is `TS2493: Tuple type 'Pair' of length '2' has no element at index '2'.`
+
+### 3. Why does `Object.keys(obj)` return `string[]` instead of `(keyof T)[]`?
+
+**Answer.** Because of structural typing ([Structural Typing](01-structural-typing.qmd)). A value of type `Prices` may carry **extra** properties, so its runtime keys can include names `keyof Prices` does not list:
+
+```ts
+const withDurian = { apple: 0.5, banana: 0.25, cherry: 3, durian: 9 };
+const sameShape: Prices = withDurian; // allowed: extra keys are fine structurally
+const keys = Object.keys(sameShape);
+```
+
+The assignment is legal (no excess check, because `withDurian` is not a fresh literal), and the lab finds `keys` is `["apple", "banana", "cherry", "durian"]`. If `Object.keys` returned `Fruit[]`, the type would claim `"durian"` cannot appear, and `prices[key]` would be typed `number` while really being `undefined`. *Effective TypeScript* covers this in "Know How to Iterate Over Objects".
+
+### 4. Why is `user[key] = value` an error when `key: "name" | "born"` and `value: string`?
+
+**Answer.** For a read, `User["name" | "born"]` is `string | number`: you get one of them. For a **write**, the value must be valid for **whichever** key it turns out to be, so the target type is the intersection `User["name"] & User["born"]` $= \texttt{string} \mathbin{\&} \texttt{number}$, which is `never`:
+
+```ts
+function setField(user: User, key: "name" | "born", value: string): void {
+  // @ts-expect-error: the target type is User["name"] & User["born"], which is never
+  user[key] = value;
+}
+```
+
+```text
+error TS2322: Type 'string' is not assignable to type 'never'.
+```
+
+The lab runs it anyway with `key = "born"`, and `ada.born` becomes the string `"unknown"`, which is exactly the bug the error prevents. The fix is to tie the value's type to the key with a type parameter:
+
+```ts
+function setTyped<K extends keyof User>(user: User, key: K, value: User[K]): void {
+  user[key] = value; // the value's type follows the key
+}
+// @ts-expect-error: "born" takes a number
+const wrongSet = () => setTyped(ada, "born", "unknown");
+```
+
+`setTyped(ada, "born", 1816)` compiles and sets 1816; a string for `"born"` is rejected with `TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.`
+
+### 5. What is `keyof (A | B)`?
+
+**Answer.** The keys **common** to both, `keyof A & keyof B`, because a value of the union is only guaranteed to have those. For `Book | Film` it is `"id"`. Dually, `keyof (A & B)` is `keyof A | keyof B`, all the keys, here `"id" | "title" | "minutes"`. More values means fewer guaranteed keys, the same duality as $P(A \mid B) = P(A) \cap P(B)$ for properties.
+
+## Summary
+
+$$
+\operatorname{keyof} O = \texttt{"}p_1\texttt{"} \mid \dots \mid \texttt{"}p_n\texttt{"}, \qquad T[K_1 \mid K_2] = T[K_1] \mid T[K_2]
+$$
+
+where $O$ is an object type with properties $p_1, \dots, p_n$, $T$ is a type, and $K_1$, $K_2$ are key types.
+
+Example: $\operatorname{keyof} \texttt{Prices} = \texttt{"apple"} \mid \texttt{"banana"} \mid \texttt{"cherry"}$; `User["name" | "born"]` is $\texttt{string} \mid \texttt{number}$; and for `HttpStatus`, $T[\operatorname{keyof} T] = 200 \mid 404 \mid 500$.
+
+- `typeof value` in a type position reads the checker's type of a value; in an expression it is JavaScript's operator.
+- `keyof T` is the union of `T`'s property names; a string index signature gives `string | number`.
+- `T[K]` looks up a property type, chains, and distributes over a union key.
+- `T[number]` gives an array's element type; a tuple also has fixed positions and a literal `length`.
+- `get<T, K extends keyof T>(obj: T, key: K): T[K]` returns exactly the type of the key you pass.
+- Write the data once, `as const`, and derive every type from it with `keyof typeof` and `[number]`.
+
+## References
+
+- TypeScript Handbook: [Keyof Type Operator](https://www.typescriptlang.org/docs/handbook/2/keyof-types.html), [Typeof Type Operator](https://www.typescriptlang.org/docs/handbook/2/typeof-types.html), [Indexed Access Types](https://www.typescriptlang.org/docs/handbook/2/indexed-access-types.html), [Creating Types from Types](https://www.typescriptlang.org/docs/handbook/2/types-from-types.html).
+- [TypeScript 5.8 release notes: the `--erasableSyntaxOnly` option](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html) (why `enum` is not erasable).
+- The checker source: [internal/checker/checker.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/checker.go) (`getIndexType`, `getIndexedAccessType`) in `microsoft/typescript-go`.
+- Dan Vanderkam, *Effective TypeScript*, 2nd ed. (O'Reilly, 2024), Items 15, 60 and 72 ([item list](https://github.com/danvk/effective-typescript)).
+- Matt Pocock, *Total TypeScript Essentials*, chapter [Deriving Types](https://www.totaltypescript.com/books/total-typescript-essentials/deriving-types).
+- Basarat Ali Syed, *TypeScript Deep Dive*: [Moving Types](https://basarat.gitbook.io/typescript/type-system/moving-types).
+- Lab: [`labs/keyof-typeof-and-indexed-access.ts`](labs/keyof-typeof-and-indexed-access.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node keyof-typeof-and-indexed-access.ts`.

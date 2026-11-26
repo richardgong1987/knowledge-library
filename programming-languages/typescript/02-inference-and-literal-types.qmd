@@ -1,0 +1,359 @@
+---
+title: "Inference and Literal Types"
+description: "How TypeScript works out types you never wrote: inference from initialisers and returns, literal types, widening with let and const, as const and readonly tuples, contextual typing, best common type and satisfies."
+---
+
+## The problem
+
+A small HTTP helper accepts only two methods:
+
+```ts
+type Method = "GET" | "POST";
+function request(url: string, method: Method): string {
+  return `${method} ${url}`;
+}
+```
+
+You keep the settings in an object and pass them in:
+
+```ts
+const settings = { url: "/users", method: "GET" };
+// @ts-expect-error: settings.method was widened to string
+const failed = request(settings.url, settings.method);
+```
+
+```text
+error TS2345: Argument of type 'string' is not assignable to parameter of type 'Method'.
+```
+
+The value really is `"GET"`, and at runtime the call returns `"GET /users"`, as the lab checks. The trouble is the **type** TypeScript inferred for `settings.method`: plain `string`, because someone could later write `settings.method = "DELETE"`. To fix it you need to know how TypeScript picks a type when you do not write one: inference, literal types and widening. This chapter covers the rules and the tools that control them: `as const`, contextual typing and `satisfies`.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Labels on boxes
+
+- **Inference:** you hand TypeScript a box with something inside, and it writes the label for you by looking at what is inside.
+- **`const` is a sealed box.** It can never be opened again, so the label can say exactly *"GET"*.
+- **`let` is a box with a lid.** Someone may swap the contents later, so the label says only *"some words"* (`string`). Making the label less exact like this is called **widening**.
+- **`as const`:** you seal every little box inside the big one too, so every label stays exact.
+- **Contextual typing:** a fill-in-the-blank sentence, *"I ate a ___ for breakfast"*. The sentence tells you the blank is a food before you write anything.
+- **`satisfies`:** a teacher checks your homework against the rules, then hands back **your** answers, not the rule sheet.
+
+Anders Hejlsberg, TypeScript's lead architect, explained the rule when he introduced it in 2016: *"immutable locations always have the most specific type inferred for them, whereas mutable locations have a widened type inferred."* Dan Vanderkam's *Effective TypeScript* covers the same ground in "Understand How a Variable Gets Its Type".
+:::
+
+## From simple to advanced
+
+### Level 1: the initialiser decides, and the type then stays
+
+When a variable has no annotation, its type is the type of its first value, and it keeps that type for the rest of its life:
+
+```ts
+let count = 3;
+// @ts-expect-error: count is a number for the rest of its life
+count = "three";
+```
+
+```text
+error TS2322: Type 'string' is not assignable to type 'number'.
+```
+
+Functions infer their return type from their `return` statements the same way:
+
+```ts
+function half(n: number) {
+  return n / 2;
+}
+function zero() {
+  return 0; // a single literal is widened: the result is number, not 0
+}
+function sign(n: number) {
+  if (n > 0) return "positive";
+  if (n < 0) return "negative";
+  return "zero";
+}
+```
+
+The rule takes the union of every returned type, and widens it only when that union is one single literal:
+
+$$
+\operatorname{ret}(f) = \begin{cases} \operatorname{widen}(U) & \text{if } U \text{ is a single literal type} \\ U & \text{otherwise} \end{cases}
+\qquad U = r_1 \mid r_2 \mid \dots \mid r_n
+$$
+
+where
+
+- $f$ is a function without a return type annotation and $\operatorname{ret}(f)$ is the return type TypeScript infers;
+- $r_1, \dots, r_n$ are the types of its $n$ `return` expressions, and $U$ is their union ("one of them");
+- a **literal type** is a type with exactly one value, such as `0` or `"zero"`;
+- $\operatorname{widen}$ turns a literal into its general type, `0` into `number` (defined fully in Level 2).
+
+Example: `half` returns `n / 2`, so $U = \texttt{number}$, which is not a literal, and the result is `number`. `zero` has $U = \texttt{0}$, a single literal, so it widens to `number`. `sign` has $U = \texttt{"positive"} \mid \texttt{"negative"} \mid \texttt{"zero"}$, a union of three, so it is kept as it is. The lab checks all three with a type-level equality test, `Expect<Equal<ReturnType<typeof sign>, "positive" | "negative" | "zero">>`, which fails to compile if the types differ.
+
+### Level 2: literal types, and widening with `let` and `const`
+
+Every literal in an expression starts with a literal type. What the variable gets depends on whether it can change:
+
+```ts
+const fixed = "GET"; // can never change, so its type is exactly "GET"
+let changeable = "GET"; // may become any string later, so its type is string
+const list = [1, 2, 3]; // elements can be replaced, so number[]
+```
+
+$$
+\operatorname{type}(x) = \begin{cases} t & \text{if } x \text{ is } \texttt{const} \text{ or } \texttt{readonly} \\ \operatorname{widen}(t) & \text{if } x \text{ is } \texttt{let}, \texttt{var}, \text{a parameter, a mutable property or an array element} \end{cases}
+$$
+
+$$
+\operatorname{widen}(t) = \begin{cases} \texttt{string} & \text{if } t \text{ is a string literal} \\ \texttt{number} & \text{if } t \text{ is a number literal} \\ \texttt{boolean} & \text{if } t \text{ is } \texttt{true} \text{ or } \texttt{false} \\ \operatorname{widen}(a) \mathbin{|} \operatorname{widen}(b) & \text{if } t = a \mathbin{|} b \\ t & \text{otherwise} \end{cases}
+$$
+
+where
+
+- $x$ is the variable, property or element being declared, and $\operatorname{type}(x)$ is the type it gets;
+- $t$ is the type of its initialiser, which for a literal is the literal type;
+- $a \mathbin{|} b$ is a union, and widening applies to each member;
+- "otherwise" covers object types: widening is **shallow** and never looks inside an object.
+
+Example: for `fixed`, $t = \texttt{"GET"}$ and the variable is `const`, so its type is `"GET"`. For `changeable`, $t = \texttt{"GET"}$ but it is a `let`, so its type is $\operatorname{widen}(\texttt{"GET"}) = \texttt{string}$. In `settings`, the object is `const` but its **property** `method` is mutable, so it gets $\operatorname{widen}(\texttt{"GET"}) = \texttt{string}$: the type is `{ url: string; method: string }`, which is the problem from the start of the chapter. In `list`, each element $1, 2, 3$ widens to `number`, so the type is `number[]`.
+
+### Level 3: `as const` and readonly tuples
+
+`as const` (TypeScript 3.4) marks a whole literal as never-changing. The release notes list its three effects: no literal in it is widened, object properties become `readonly`, and array literals become `readonly` tuples.
+
+```ts
+const frozenSettings = { url: "/users", method: "GET" } as const;
+const sent = request(frozenSettings.url, frozenSettings.method); // "GET" fits Method
+const point = [3, 4] as const;
+// @ts-expect-error: a readonly tuple has no push
+point.push(5);
+```
+
+```text
+error TS2339: Property 'push' does not exist on type 'readonly [3, 4]'.
+```
+
+Now `frozenSettings` has type `{ readonly url: "/users"; readonly method: "GET" }` and the call compiles. `point` has type `readonly [3, 4]`: a **tuple** of length exactly 2, so `(typeof point)["length"]` is the literal type `2`, where a plain `[3, 4]` would be `number[]` of any length.
+
+`as const` changes **types only**. It does not call `Object.freeze`, and assigning to a property it marked `readonly` is a compile error but not a runtime one:
+
+```ts
+const draft = { method: "GET" } as const;
+// @ts-expect-error: readonly is checked by tsc only
+draft.method = "POST";
+```
+
+```text
+error TS2540: Cannot assign to 'method' because it is a read-only property.
+```
+
+The lab runs both rejected lines anyway: afterwards `draft.method` is `"POST"`, `point` is `[3, 4, 5]`, and `Object.isFrozen(frozenSettings)` is `false`. Types are erased ([Structural Typing](01-structural-typing.qmd)); `readonly` is a promise between you and `tsc`.
+
+### Level 4: contextual typing and the best common type
+
+So far types flowed **outwards**, from a value to its variable. Contextual typing makes them flow **inwards**: when an expression sits where a type is already expected, that type shapes the expression.
+
+```ts
+type Formatter = (amount: number) => string;
+const euros: Formatter = amount => `€${amount.toFixed(2)}`; // amount: number from Formatter
+const names = ["Ada", "Alan"];
+const lengths = names.map(name => name.length); // name: string from the array
+// @ts-expect-error: with no expected type, the parameter has nothing to go on
+const bare = amount => amount;
+```
+
+```text
+error TS7006: Parameter 'amount' implicitly has an 'any' type.
+```
+
+$$
+\operatorname{type}(p_i) = \operatorname{param}_i(C)
+$$
+
+where
+
+- $C$ is the contextual type, the function type the arrow function is expected to have;
+- $p_i$ is the arrow function's $i$-th parameter, written without an annotation;
+- $\operatorname{param}_i(C)$ is the type of the $i$-th parameter of $C$.
+
+Example: `euros` is expected to be a `Formatter`, whose first parameter is `number`, so $\operatorname{type}(\texttt{amount}) = \texttt{number}$, `toFixed` is allowed, and `euros(9.5)` is `"€9.50"`. In `names.map`, the context is `map`'s callback type with `string` elements, so `name` is a `string` and `lengths` is `[3, 4]`. `bare` has no context, and under `strict` an un-annotated parameter with nothing to go on is an error.
+
+Context also stops widening. The rule from Level 2 has an exception: a literal in an object or array is **not** widened when its contextual type includes literal types. So `const typedSettings: { url: string; method: Method } = { url: "/users", method: "GET" }` compiles, because `Method` is a union of literals.
+
+When an array literal has no context, TypeScript computes the **best common type** of its elements:
+
+```ts
+const mixed = [1, "two", null];
+const pets = [new Dog(), new Animal()]; // Dog is a subtype of Animal, so it is absorbed
+const zoo = [new Dog(), new Cat()]; // neither absorbs the other: a union, not Animal[]
+```
+
+$$
+\operatorname{BCT}(t_1, \dots, t_n) = t_1 \mid \dots \mid t_n \text{, with every } t_i \text{ that is a subtype of another } t_j \text{ removed}
+$$
+
+where
+
+- $t_1, \dots, t_n$ are the widened types of the $n$ elements;
+- $t_i$ is a **subtype** of $t_j$ when every $t_i$ value is also a $t_j$ value (here, `Dog extends Animal`).
+
+Example: `mixed` has element types `number`, `string`, `null`; none is a subtype of another, so the type is `(string | number | null)[]`. `pets` has `Dog` and `Animal`; `Dog` is a subtype of `Animal`, so it is removed and the type is `Animal[]`. `zoo` has `Dog` and `Cat`; neither is a subtype of the other, so the type is `(Dog | Cat)[]`. TypeScript does not invent the shared base class `Animal` for you. If you want `Animal[]`, annotate.
+
+### Level 5: `satisfies` checks without changing the type
+
+An annotation does two things at once: it checks the value, and it **replaces** the inferred type with the annotation. Sometimes you want only the first. `satisfies` (TypeScript 4.9) checks that a value fits a type, then keeps the value's own, more exact type:
+
+```ts
+const routes = {
+  users: { path: "/users", method: "GET" },
+  login: { path: "/login", method: "POST" },
+} satisfies Record<string, Route>;
+const annotated: Record<string, Route> = {
+  users: { path: "/users", method: "GET" },
+};
+```
+
+$$
+\operatorname{type}(e \;\texttt{satisfies}\; T) = \operatorname{type}_T(e), \qquad \text{provided } \operatorname{type}_T(e) \le T
+$$
+
+where
+
+- $e$ is the expression and $T$ the type after `satisfies`;
+- $\operatorname{type}_T(e)$ is the type inferred for $e$ with $T$ as its contextual type (Level 4);
+- $\le$ means "is assignable to"; if it fails, the `satisfies` is an error.
+
+Example: `routes.users.method` has type `"GET"`, because the context `Method` includes literal types, so the literal is not widened. `path` gets `string`, because its context `string` has no literals. With the annotation, `annotated.users.method` is the whole `Method`, and worse, `annotated` claims to have **every** string key:
+
+```ts
+// @ts-expect-error: routes knows its own keys
+const missingRoute = routes.missing;
+const missingAnnotated = annotated.missing; // allowed: any string key is a Route here
+// @ts-expect-error: satisfies still checks every value
+const badRoute = { path: "/upload", method: "PUT" } satisfies Route;
+```
+
+```text
+error TS2339: Property 'missing' does not exist on type '{ users: { path: string; method: "GET"; }; login: { path: string; method: "POST"; }; }'.
+error TS2322: Type '"PUT"' is not assignable to type 'Method'.
+```
+
+`missingAnnotated` compiles with type `Route`, yet the lab finds `undefined` there at runtime. With `satisfies`, the typo is caught.
+
+## How it works underneath
+
+In the TypeScript 7 checker (`internal/checker/checker.go` in `microsoft/typescript-go`), every literal expression gets a **fresh** literal type, and widening is a separate step applied by the declaration. The whole function:
+
+```text
+func (c *Checker) getWidenedLiteralTypeForInitializer(declaration *ast.Node, t *Type) *Type {
+	if c.getCombinedNodeFlagsCached(declaration)&ast.NodeFlagsConstant != 0 || isDeclarationReadonly(declaration) {
+		return t
+	}
+	return c.getWidenedLiteralType(t)
+}
+```
+
+That is the Level 2 formula: `const` or `readonly` keeps $t$; everything else goes through `getWidenedLiteralType`, which maps a fresh string literal to `string`, a fresh number literal to `number`, `true`/`false` to `boolean`, and a union member by member. Object properties and array elements go through `checkExpressionForMutableLocation`, which keeps the literal in three cases: inside `as const` (`isConstContext`), under a type assertion, or when the contextual type contains literal types (`isLiteralOfContextualType`). The third case is why `satisfies Route` and the `typedSettings` annotation keep `"GET"`.
+
+The word **fresh** matters. The original design, Anders Hejlsberg's pull request #10676 (TypeScript 2.1), gives literal types two flavours: a literal written in an **expression** has a *widening* literal type, and a literal written in a **type** has a *non-widening* one. A `const` stores the type as it is, flavour included, so the flavour can surface one step later (interview question 3).
+
+`satisfies` is short. `checkSatisfiesExpression` checks the expression, reads the target type, reports `Type_0_does_not_satisfy_the_expected_type_1` if the expression's type is not assignable, and returns **the expression's own type**, not the target. The contextual typing happens earlier, because `getContextualType` treats the `satisfies` type as the expected type of the expression. Array literals end in `checkArrayLiteral`: in a const context they become readonly tuples, and otherwise the element types are combined with `getUnionTypeEx(elementTypes, UnionReductionSubtype, ...)`, the subtype-removing union that is the best common type.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Passing a property of a plain object where a literal union is expected | `TS2345: Argument of type 'string' is not assignable to parameter of type 'Method'.` | `as const`, `satisfies`, or annotate the object |
+| Annotating a config object with a broad type such as `Record<string, Route>` | Typos in keys compile; exact literal types are lost | `satisfies Record<string, Route>` keeps the keys and the literals |
+| Thinking `as const` or `readonly` freezes the object | Mutation through another path still happens at runtime | Use `Object.freeze` when you need a runtime guarantee |
+| Writing a callback outside the call that gives it context | `TS7006: Parameter 'amount' implicitly has an 'any' type.` | Inline the callback, or give the variable a function type |
+| Using `as Route` to "type" an object literal | Missing properties compile; `undefined` at runtime | Use an annotation or `satisfies`; `as` asserts and does not check |
+| Expecting `[new Dog(), new Cat()]` to be `Animal[]` | `zoo.push(new Animal())` fails with `TS2345`, because the element type is the union of `Dog` and `Cat` | Annotate: `const zoo: Animal[] = [...]` |
+
+## Interview questions
+
+### 1. Why is `let changeable = "GET"` a `string` but `const fixed = "GET"` the type `"GET"`?
+
+**Answer.** A `const` can never be reassigned, so the most specific type is always correct; a `let` can be, so TypeScript widens the literal to the type of all values you are likely to store later. In the checker, `getWidenedLiteralTypeForInitializer` returns the literal unchanged for `const` and `readonly` declarations and calls `getWidenedLiteralType` for everything else. The same rule widens a mutable **property** of a `const` object, which is why `settings.method` is `string`.
+
+### 2. What is the difference between an annotation, `satisfies`, `as const` and `as`?
+
+**Answer.**
+
+- `const a: T = e` **checks** $e$ against $T$, then the variable's type **is** $T$. Precision is lost (`annotated.users.method` is `Method`).
+- `e satisfies T` **checks** $e$ against $T$ and keeps $e$'s own inferred type, computed with $T$ as context (`routes.users.method` is `"GET"`).
+- `e as const` does **not check** anything; it stops widening and adds `readonly` everywhere.
+- `e as T` is an **assertion**: it does not check that $e$ is a $T$, only that one of the two types is assignable to the other. The lab finds `unsafe.method === undefined`:
+
+```ts
+const unsafe = { path: "/x" } as Route; // compiles although method is missing
+// @ts-expect-error: as still refuses two types that do not overlap at all
+const nonsense = "/x" as number;
+```
+
+```text
+error TS2352: Conversion of type 'string' to type 'number' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+```
+
+### 3. After `const hello = "hello"; let copied = hello;`, what is the type of `copied`?
+
+**Answer.** `string`. `hello` has the literal type `"hello"`, but it is the **widening** flavour, because it came from an expression. Copying it into a `let` widens it. If the `const` is annotated with the literal type, the flavour is non-widening and survives the copy:
+
+```ts
+const hello = "hello";
+let copied = hello;
+const pinned: "hello" = "hello";
+let copiedPinned = pinned;
+```
+
+The lab proves `typeof copied` is `string` and `typeof copiedPinned` is `"hello"`. The TypeScript 2.1 release notes use the same example.
+
+### 4. Should you annotate return types?
+
+**Answer.** For short local functions, inference is fine and avoids clutter. For exported functions and functions with several `return` statements, an annotation states the contract, and mistakes are reported **inside** the function instead of at distant call sites. If `sign` had a typo, the inferred type would silently become `"postive" | "negative" | "zero"`. With the annotation:
+
+```ts
+function signChecked(n: number): Sign {
+  // @ts-expect-error: "postive" is not one of the three signs
+  if (n > 0) return "postive";
+  if (n < 0) return "negative";
+  return "zero";
+}
+```
+
+```text
+error TS2820: Type '"postive"' is not assignable to type 'Sign'. Did you mean '"positive"'?
+```
+
+### 5. Why is `[1, 2, 3]` inferred as `number[]` and not `[1, 2, 3]` or `[number, number, number]`?
+
+**Answer.** Array elements are mutable locations, so each element type widens to `number`. Arrays can also grow, so without context TypeScript picks an array type, not a fixed-length tuple, and the element type is the best common type of the widened elements. You get a tuple with `as const` (a `readonly [1, 2, 3]`), with a tuple annotation, or with a tuple-typed context such as a `const` type parameter ([Generics](05-generics.qmd)).
+
+## Summary
+
+$$
+\operatorname{type}(x) = \begin{cases} t & x \text{ immutable } (\texttt{const}, \texttt{readonly}, \texttt{as const}) \text{ or the context includes literal types} \\ \operatorname{widen}(t) & \text{otherwise} \end{cases}
+$$
+
+where $x$ is a declared variable, property or element, $t$ is the type of its initialiser, and $\operatorname{widen}$ maps a literal type to `string`, `number` or `boolean`.
+
+Example: `const fixed = "GET"` gives `"GET"`; `let changeable = "GET"` gives `string`; `{ method: "GET" }` gives `method: string`, unless it is `as const` or its context is `Method`, which keeps `"GET"`.
+
+- Without an annotation, a variable takes the type of its initialiser and keeps it.
+- Return types are the union of the `return` types; a single literal is widened.
+- `const` keeps literals; `let`, parameters, mutable properties and array elements widen them.
+- `as const` keeps every literal, adds `readonly`, and turns arrays into tuples, but only in the type system.
+- Context flows inwards: callback parameters get their types from where the callback goes.
+- `satisfies` checks like an annotation and keeps the inferred type; `as` checks almost nothing.
+
+## References
+
+- TypeScript Handbook: [Type Inference](https://www.typescriptlang.org/docs/handbook/type-inference.html) (best common type, contextual typing), [Everyday Types: Literal Types and Literal Inference](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html).
+- Release notes: [TypeScript 2.1 (literal type widening)](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-2-1.html), [TypeScript 3.4 (const assertions)](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-4.html), [TypeScript 4.9 (the `satisfies` operator)](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html).
+- Anders Hejlsberg, [Always use literal types](https://github.com/microsoft/TypeScript/pull/10676), TypeScript pull request #10676 (2016), the design of widening.
+- The checker source: [internal/checker/checker.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/checker.go) in `microsoft/typescript-go`.
+- Dan Vanderkam, *Effective TypeScript*, 2nd ed. (O'Reilly, 2024), Items 18, 20 and 24 ([item list](https://github.com/danvk/effective-typescript)).
+- Matt Pocock, [Clarifying the `satisfies` Operator](https://www.totaltypescript.com/clarifying-the-satisfies-operator) and *Total TypeScript Essentials*, chapter [Mutability](https://www.totaltypescript.com/books/total-typescript-essentials/mutability).
+- Basarat Ali Syed, *TypeScript Deep Dive*: [Type Inference](https://basarat.gitbook.io/typescript/type-system/type-inference) and [Literal Types](https://basarat.gitbook.io/typescript/type-system/literal-types).
+- Lab: [`labs/inference-and-literal-types.ts`](labs/inference-and-literal-types.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node inference-and-literal-types.ts`.

@@ -1,0 +1,341 @@
+---
+title: "Mapped and Utility Types"
+description: "TypeScript mapped types from the first loop over keyof to homomorphic mapping: the readonly and ? modifiers, -readonly and -?, key remapping with as, and Partial, Required, Readonly, Pick, Omit and Record written by hand and compared with the built-ins."
+---
+
+## The problem
+
+A web shop stores users with three fields:
+
+```ts
+type User = { id: number; name: string; email: string };
+type UserPatchByHand = { id?: number; name?: string; email?: string };
+```
+
+An update request sends only the fields that changed, such as `{ name: 'Ada' }`, so someone writes `UserPatchByHand` by copying `User` and adding a `?` to each field. It works today. Next month `User` gains a fourth field, `role`. Nobody remembers the copy, so the patch type silently cannot express a role change, and nothing in the compiler complains. Two types that must stay in step are kept in step by memory.
+
+A **mapped type** computes the second type from the first. `Partial<User>` is "`User` with every field optional", recomputed every time `User` changes. The lab proves that it is exactly the hand-written copy, so the copy can be deleted.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A photocopier with a stamp
+
+Picture a form with three boxes: *id*, *name*, *email*. You put it into a photocopier that walks over **every box** on the form, copies it, and stamps the same mark on each copy:
+
+- the **"you may leave this empty"** stamp makes `Partial`;
+- the **"do not write here"** stamp makes `Readonly`;
+- a **"skip this box"** rule makes `Omit`.
+
+The photocopier never needs to know what the boxes are called. If the form grows a fourth box, the next copy has a fourth box too.
+
+Anders Hejlsberg added mapped types in TypeScript 2.1 ([pull request #12114](https://github.com/microsoft/TypeScript/pull/12114), 2016). The release notes describe them as "like list comprehensions in Python, but instead of producing new elements in a list, they produce new properties in a type." Dan Vanderkam's *Effective TypeScript* gives the same advice as a rule, Item 15: *Use Type Operations and Generic Types to Avoid Repeating Yourself.*
+:::
+
+## From simple to advanced
+
+The lab proves type-level facts with two tiny helpers. `Equal<A, B>` is `true` only when `A` and `B` are the same type, and `Expect<T>` refuses anything but `true`, so a wrong claim stops `tsc`:
+
+```ts
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+type Expect<T extends true> = T;
+```
+
+This `Equal` trick was posted by Matt McCutchen in [TypeScript issue #27024](https://github.com/microsoft/TypeScript/issues/27024) and is the helper used by the [type-challenges](https://github.com/type-challenges/type-challenges) project.
+
+### Level 1: a mapped type walks over the keys
+
+`keyof User` is the union `'id' | 'name' | 'email'` ([keyof, typeof and indexed access](06-keyof-typeof-and-indexed-access.qmd)). A mapped type is a loop over that union, written in a type position:
+
+```ts
+type Flags<T> = { [K in keyof T]: boolean };
+type UserFlags = Flags<User>;
+type Level1Flags = Expect<Equal<UserFlags, { id: boolean; name: boolean; email: boolean }>>;
+```
+
+Read `[K in keyof T]` as "for each key `K` of `T`". The part after the colon is the **template**: the type each new property gets. The template may use `K`, and `T[K]` is the type of the original property, so a template of `T[K]` copies `T` exactly:
+
+```ts
+type Copy<T> = { [K in keyof T]: T[K] };
+type Level1Copy = Expect<Equal<Copy<User>, User>>;
+```
+
+As a formula, a mapped type is a function from an object type to an object type:
+
+$$
+\operatorname{Map}_F(T) = \lbrace\, K : F(T[K]) \;\mid\; K \in \operatorname{keyof} T \,\rbrace
+$$
+
+where
+
+- $T$ is the input object type, such as `User`;
+- $\operatorname{keyof} T$ is the set of its keys;
+- $K$ is one key, taken in turn;
+- $T[K]$ is the type of the property called $K$;
+- $F$ is the template, a rule that turns the old property type into the new one;
+- $\lbrace K : \dots \mid K \in \dots \rbrace$ means "a property $K$ with that type, for every key in the set".
+
+Example with $T$ set to `User`, so $\operatorname{keyof} T = \lbrace \texttt{id}, \texttt{name}, \texttt{email} \rbrace$:
+
+1. `Flags` uses $F(x) = \texttt{boolean}$, ignoring the old type: $\lbrace \texttt{id} : \texttt{boolean}, \texttt{name} : \texttt{boolean}, \texttt{email} : \texttt{boolean} \rbrace$.
+2. `Copy` uses $F(x) = x$: $\lbrace \texttt{id} : \texttt{number}, \texttt{name} : \texttt{string}, \texttt{email} : \texttt{string} \rbrace$, which is `User` again.
+3. Either way the output has exactly $|\operatorname{keyof} T| = 3$ properties. Add `role` to `User` and both outputs have 4, with no other edit.
+
+### Level 2: modifiers add or remove `?` and `readonly`
+
+A mapped type can put a modifier in front of the key (`readonly`) or after it (`?`). A minus sign removes the modifier instead. These four lines are the whole of four built-in utility types:
+
+```ts
+type MyPartial<T> = { [K in keyof T]?: T[K] };
+type MyRequired<T> = { [K in keyof T]-?: T[K] };
+type MyReadonly<T> = { readonly [K in keyof T]: T[K] };
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+```
+
+The lab checks each one against the built-in, and checks that `MyPartial<User>` is exactly the hand-written patch type from the problem:
+
+```ts
+type Level2 = [
+  Expect<Equal<MyPartial<User>, Partial<User>>>,
+  Expect<Equal<MyPartial<User>, UserPatchByHand>>,
+  Expect<Equal<MyRequired<Partial<User>>, User>>,
+  Expect<Equal<MyReadonly<User>, Readonly<User>>>,
+  Expect<Equal<Mutable<Readonly<User>>, User>>,
+];
+```
+
+`-readonly` and `-?` arrived in TypeScript 2.8; plain `readonly` and `?` are the same as `+readonly` and `+?`. Each new property's optional flag follows one rule:
+
+$$
+\operatorname{opt}'(K) =
+\begin{cases}
+\text{true} & \text{if the mapped type writes } \texttt{?} \text{ or } \texttt{+?} \\
+\text{false} & \text{if it writes } \texttt{-?} \\
+\operatorname{opt}_T(K) & \text{if it writes nothing}
+\end{cases}
+$$
+
+where
+
+- $K$ is a key of the input type $T$;
+- $\operatorname{opt}_T(K)$ is true when the property $K$ of $T$ is optional;
+- $\operatorname{opt}'(K)$ is true when the property $K$ of the result is optional;
+- the third case applies only when the mapped type loops over `keyof T` for a type parameter `T` (Level 5 names this "homomorphic"); otherwise "nothing" means "not optional".
+
+The `readonly` flag follows the same three cases. Example:
+
+1. `MyPartial<User>` writes `?`, so the first case gives $\operatorname{opt}' = \text{true}$ for all 3 keys.
+2. `MyRequired<Partial<User>>`: the input has $\operatorname{opt}_T = \text{true}$ for all 3 keys, but `-?` is the second case, so $\operatorname{opt}' = \text{false}$ for all 3. That is `User`.
+3. `Copy<Partial<User>>` writes nothing, so the third case keeps $\operatorname{opt}' = \operatorname{opt}_T = \text{true}$ (the lab's `CopyKeepsOptional` check).
+
+Modifiers exist only for the type checker. A write to a `readonly` property is a compile error, but the JavaScript that runs has no idea:
+
+```ts
+const ada: MyReadonly<User> = { id: 1, name: 'Ada', email: 'ada@example.com' };
+// @ts-expect-error Cannot assign to 'id' because it is a read-only property.
+ada.id = 2;
+assert.equal(ada.id, 2); // readonly is erased: the write still happens at runtime
+```
+
+### Level 3: Pick, Omit and Record choose the keys
+
+The loop does not have to run over `keyof T`. It can run over any union of keys:
+
+```ts
+type MyPick<T, K extends keyof T> = { [P in K]: T[P] };
+type MyRecord<K extends keyof any, V> = { [P in K]: V };
+type MyOmit<T, K extends keyof any> = MyPick<T, Exclude<keyof T, K>>;
+```
+
+`Pick` keeps the keys you name, `Record` builds an object from a key union and one value type, and `Omit` picks everything except the named keys. `Exclude` is a conditional type from [the next chapter](08-conditional-types-and-infer.qmd); here it only means "set difference". In set notation:
+
+$$
+\operatorname{keys}(\texttt{Pick}\langle T, K \rangle) = K,
+\qquad
+\operatorname{keys}(\texttt{Omit}\langle T, K \rangle) = \operatorname{keyof} T \setminus K
+$$
+
+where
+
+- $\operatorname{keys}(X)$ is the set of property names of the type $X$;
+- $K$ is the set of keys passed as the second type argument;
+- $\setminus$ is set difference: members of the left set that are not in the right set.
+
+Example with `User`: `Pick<User, 'id' | 'name'>` has keys $\lbrace \texttt{id}, \texttt{name} \rbrace$, and `Omit<User, 'email'>` has $\lbrace \texttt{id}, \texttt{name}, \texttt{email} \rbrace \setminus \lbrace \texttt{email} \rbrace = \lbrace \texttt{id}, \texttt{name} \rbrace$, the same 2 of 3. With a misspelled key, $\lbrace \texttt{id}, \texttt{name}, \texttt{email} \rbrace \setminus \lbrace \texttt{nmae} \rbrace$ removes nothing. That trap is shown below.
+
+A type-level `Pick` usually has a runtime partner. The signature promises the caller exactly the chosen keys:
+
+```ts
+function pick<T, K extends keyof T>(source: T, keys: K[]): Pick<T, K> {
+  const result = {} as Pick<T, K>;
+  for (const key of keys) result[key] = source[key];
+  return result;
+}
+```
+
+`pick({ id: 1, name: 'Ada', email: 'ada@example.com' }, ['id', 'name'])` returns `{ id: 1, name: 'Ada' }`. `Record` with a literal key union demands every key:
+
+```ts
+const scores: Record<'ada' | 'alan', number> = { ada: 90, alan: 85 };
+// @ts-expect-error Property 'alan' is missing in type '{ ada: number; }'
+const missing: Record<'ada' | 'alan', number> = { ada: 90 };
+```
+
+The built-in `Omit` declares `K extends keyof any`, which is `string | number | symbol`, not `keyof T`. So a typo compiles and omits nothing. A stricter version constrains the keys:
+
+```ts
+type Typo = Omit<User, 'nmae'>;
+type TypoKeepsEverything = Expect<Equal<Typo, { id: number; name: string; email: string }>>;
+type StrictOmit<T, K extends keyof T> = Omit<T, K>;
+// @ts-expect-error Type '"nmae"' does not satisfy the constraint 'keyof User'.
+type CaughtTypo = StrictOmit<User, 'nmae'>;
+```
+
+### Level 4: key remapping with `as`
+
+Since TypeScript 4.1, an `as` clause after the key computes a **new name** for each property. If the new name is `never`, the property is dropped:
+
+```ts
+type WithoutId<T> = { [K in keyof T as Exclude<K, 'id'>]: T[K] };
+type StringFields<T> = { [K in keyof T as T[K] extends string ? K : never]: T[K] };
+```
+
+`WithoutId<User>` is `{ name: string; email: string }`. `StringFields` keeps a key only when its value type is a string, so it filters by value rather than by name. Remapping to a different name, such as `getName`, is the job of [template literal types](09-template-literal-types.qmd). With a renaming function $g$, the result's keys are:
+
+$$
+\operatorname{keys}(R) = \lbrace\, g(K) \mid K \in \operatorname{keyof} T \,\rbrace \setminus \lbrace \texttt{never} \rbrace
+$$
+
+where
+
+- $R$ is the remapped result type;
+- $g$ is the type after `as`, evaluated once for each key $K$;
+- $\texttt{never}$ in the result means "no key", so it is removed.
+
+Example with `StringFields<User>`: $g(\texttt{id}) = \texttt{never}$ because `number` is not a string, $g(\texttt{name}) = \texttt{name}$ and $g(\texttt{email}) = \texttt{email}$. So $\operatorname{keys}(R) = \lbrace \texttt{never}, \texttt{name}, \texttt{email} \rbrace \setminus \lbrace \texttt{never} \rbrace = \lbrace \texttt{name}, \texttt{email} \rbrace$. For `{ id: number; done: boolean }` every key maps to `never`, and the lab checks that the result is `{}`.
+
+### Level 5: homomorphic mapped types keep the shape
+
+A mapped type of the exact form `{ [K in keyof T]: ... }`, with `T` a type parameter, is called **homomorphic**: it has the same shape as `T`. The compiler then remembers which `T` the keys came from, and that buys four behaviours:
+
+```ts
+type Profile = { readonly id: number; nickname?: string };
+type FlagsOfKeys<Keys extends PropertyKey> = { [K in Keys]: boolean };
+type Level5 = [
+  Expect<Equal<Flags<Profile>, { readonly id: boolean; nickname?: boolean }>>,
+  Expect<Equal<FlagsOfKeys<keyof Profile>, { id: boolean; nickname: boolean }>>,
+  Expect<Equal<Flags<[number, string]>, [boolean, boolean]>>,
+  Expect<Equal<Flags<number[]>, boolean[]>>,
+  Expect<Equal<Partial<number>, number>>,
+  Expect<Equal<Partial<User | Profile>, Partial<User> | Partial<Profile>>>,
+];
+```
+
+1. **Modifiers are kept.** `Flags<Profile>` still has `readonly id` and `nickname?`. `FlagsOfKeys` receives the same keys as a ready-made union, has no `T` to look back at, and loses both modifiers.
+2. **Arrays and tuples stay arrays and tuples.** `Flags<[number, string]>` is the tuple `[boolean, boolean]`, not an object with keys `'0'`, `'1'` and `length`.
+3. **Primitives pass through.** `Partial<number>` is just `number`.
+4. **Unions are mapped member by member.** `Partial<User | Profile>` is `Partial<User> | Partial<Profile>`.
+
+Homomorphic does not mean deep. `Partial` reaches only the top level, so a nested object still needs all its fields:
+
+```ts
+type Order = { id: number; address: { city: string; zip: string } };
+// @ts-expect-error Property 'zip' is missing in type '{ city: string; }'
+const shallow: Partial<Order> = { address: { city: 'Liverpool' } };
+```
+
+A deep version needs recursion, which [conditional types](08-conditional-types-and-infer.qmd) provide with `DeepReadonly`.
+
+## How it works underneath
+
+The built-ins are not special. In TypeScript 7 they are declared in `lib.es5.d.ts` as ordinary mapped types, reformatted here to one line each:
+
+```ts
+// sketch: from lib.es5.d.ts in TypeScript 7.0, one line per type
+type Partial<T> = { [P in keyof T]?: T[P] };
+type Required<T> = { [P in keyof T]-?: T[P] };
+type Readonly<T> = { readonly [P in keyof T]: T[P] };
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+type Record<K extends keyof any, T> = { [P in K]: T };
+type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>;
+```
+
+The checker stores a mapped type `{ [P in K as N]: X }` as four parts: the type parameter `P`, the **constraint** `K`, the optional **name type** `N`, and the **template** `X`. While `T` is still a type parameter, nothing is computed; the type stays deferred. When `T` becomes a concrete type, `resolveMappedTypeMembers` in the Go checker ([internal/checker/checker.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/checker.go)) runs the loop:
+
+1. Each member of the constraint that can be a property name (a string or number literal, or a unique symbol) becomes a property. A wide key such as `string` becomes an index signature instead, which is why `Record<string, number>` is `{ [x: string]: number }` (the lab's `WideKeys` check).
+2. The template is instantiated with `P` replaced by that key.
+3. The modifiers come from one line, trimmed from that function:
+
+```text
+isOptional := templateModifiers&MappedTypeModifiersIncludeOptional != 0 ||
+    templateModifiers&MappedTypeModifiersExcludeOptional == 0 &&
+    modifiersProp != nil && modifiersProp.Flags&ast.SymbolFlagsOptional != 0
+```
+
+That is the Level 2 formula: "include" wins, otherwise "exclude" wins, otherwise copy the flag from `modifiersProp`, the matching property of the original type. A mapped type that is not homomorphic has no original type, so `modifiersProp` is `nil` and the flag is false.
+
+The homomorphic special cases live in `instantiateMappedType`. Its comment lists them: if `T` is a primitive, the result is `T`; a union is distributed over; an array maps to an array; a tuple maps to a tuple; anything else maps to an object. The test is `getHomomorphicTypeVariable`: the constraint must be `keyof X` where `X` is a type parameter. `FlagsOfKeys<keyof Profile>` fails that test because its constraint is the type parameter `Keys`, not `keyof` of anything.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Copying a type by hand and editing the copy | The copy drifts when the original changes; no error | Derive it: `Partial<User>`, `Pick<User, 'id'>` |
+| Expecting `Readonly<T>` to protect the value at runtime | The write succeeds; in the lab `ada.id` becomes 2 | `readonly` is compile-time only; use `Object.freeze` when the runtime must refuse |
+| A typo in `Omit`'s keys | No error, nothing is removed | Use a `StrictOmit<T, K extends keyof T>` |
+| Expecting `Partial` to reach nested objects | `Property 'zip' is missing in type '{ city: string; }' but required in type '{ city: string; zip: string; }'.` | Write a recursive type ([Conditional Types](08-conditional-types-and-infer.qmd)) |
+| Mapping over a key union computed elsewhere | `readonly` and `?` disappear | Map over `keyof T` directly so the type stays homomorphic |
+| Using `Record<string, V>` and trusting every lookup | A missing key reads as `undefined` while typed `V` | Use literal keys, or turn on `noUncheckedIndexedAccess` ([Variance and Soundness](12-variance-and-soundness.qmd)) |
+
+## Interview questions
+
+### 1. Implement `Partial`, `Required` and `Readonly` yourself.
+
+**Answer.** Each is one homomorphic mapped type with one modifier, exactly the Level 2 code: `{ [K in keyof T]?: T[K] }`, `{ [K in keyof T]-?: T[K] }` and `{ readonly [K in keyof T]: T[K] }`. `keyof T` supplies the keys, `T[K]` keeps each value type, and the modifier is the only difference. The lab proves each against the built-in with `Equal`. One detail interviewers like: `Required` also strips the `undefined` that `?` added. Under `strictNullChecks` the checker marks such a property `StripOptional`, so `MyRequired<Partial<User>>` is exactly `User`, not `{ id: number | undefined; ... }`.
+
+### 2. What is a homomorphic mapped type, and why does it matter?
+
+**Answer.** It is a mapped type of the form `{ [K in keyof T]: X }` with `T` a type parameter. Because the checker can see `T`, it copies each property's `readonly` and `?` flags from `T`, maps arrays to arrays and tuples to tuples, returns primitives unchanged and distributes over unions. A mapped type over a precomputed key union, such as `FlagsOfKeys<keyof Profile>`, has none of these: the lab shows it drops `readonly` and `?`. `Pick` sits in between. Its key parameter is constrained by `keyof T`, so the checker still finds `T` and copies the modifiers (the lab checks that `Pick<Profile, 'id' | 'nickname'>` keeps both), but it does not get the array, primitive and union rules.
+
+### 3. Why does `Omit<User, 'nmae'>` compile?
+
+**Answer.** `Omit` is declared as `type Omit<T, K extends keyof any> = Pick<T, Exclude<keyof T, K>>`. Its key parameter accepts any `string | number | symbol`, and `Exclude<'id' | 'name' | 'email', 'nmae'>` removes nothing, so the result has all three properties of `User`; the lab's `TypoKeepsEverything` check proves it. The loose constraint lets `Omit` accept keys that a generic `T` might or might not have. When typos matter, define `StrictOmit<T, K extends keyof T>`, which reports `Type '"nmae"' does not satisfy the constraint 'keyof User'.`
+
+### 4. Is `Readonly<T>` the same as `Object.freeze`?
+
+**Answer.** No. `Readonly<T>` is a compile-time view: it adds `readonly` to the type, then disappears when the types are stripped. `Object.freeze` is a runtime operation: it makes the object's properties non-writable, and a write in strict-mode code throws a `TypeError`. The lab assigns through a `MyReadonly<User>` behind `@ts-expect-error` and shows the value changes. Both are shallow. Their types do line up: `lib.es5.d.ts` declares `freeze<T>(o: T): Readonly<T>`, so a frozen object is also readonly to the checker:
+
+```ts
+const frozen = Object.freeze({ id: 1 }); // returns Readonly<{ id: 1 }>
+// @ts-expect-error Cannot assign to 'id' because it is a read-only property.
+assert.throws(() => { frozen.id = 2; }, TypeError); // freeze is enforced by the runtime
+```
+
+## Summary
+
+$$
+\operatorname{Map}_F(T) = \lbrace\, K : F(T[K]) \;\mid\; K \in \operatorname{keyof} T \,\rbrace,
+\qquad
+\operatorname{opt}'(K) = \text{include} \lor (\lnot\,\text{exclude} \land \operatorname{opt}_T(K))
+$$
+
+where $T$ is the input type, $K$ runs over its keys, $F$ is the template, $T[K]$ is a property's type, "include" means the mapped type writes `?`, "exclude" means it writes `-?`, and $\operatorname{opt}_T(K)$ is the original property's optional flag ($\lor$ is "or", $\land$ is "and", $\lnot$ is "not").
+
+Example: for `Partial<User>`, include is true, so all 3 keys become optional. For `Required<Partial<User>>`, include is false and exclude is true, so $\text{false} \lor (\text{false} \land \text{true}) = \text{false}$: all 3 keys are required again.
+
+- A mapped type is a loop over keys: `{ [K in keyof T]: F }`. It keeps derived types in step with their source.
+- `?`, `readonly`, `-?` and `-readonly` set or clear modifiers; with no prefix, a homomorphic type copies them.
+- `Pick`, `Omit` and `Record` choose the key set; `Omit` does not check its keys.
+- `as` renames keys, and renaming to `never` removes them.
+- Homomorphic mapped types keep modifiers, arrays, tuples and primitives, and distribute over unions.
+- Every modifier is compile-time only, and every built-in is shallow.
+
+## References
+
+- TypeScript Handbook: [Mapped Types](https://www.typescriptlang.org/docs/handbook/2/mapped-types.html), [Utility Types](https://www.typescriptlang.org/docs/handbook/utility-types.html), [Keyof Type Operator](https://www.typescriptlang.org/docs/handbook/2/keyof-types.html).
+- Release notes: [TypeScript 2.1](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-2-1.html) (mapped types; `Partial`, `Readonly`, `Record`, `Pick`), [TypeScript 2.8](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-2-8.html) (`+` and `-` modifiers), [TypeScript 3.5](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-5.html) (`Omit`), [TypeScript 4.1](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-1.html) (key remapping with `as`).
+- Anders Hejlsberg, [Mapped types](https://github.com/microsoft/TypeScript/pull/12114), microsoft/TypeScript pull request #12114 (2016).
+- The TypeScript 7 sources: [lib.es5.d.ts](https://github.com/microsoft/typescript-go/blob/main/internal/bundled/libs/lib.es5.d.ts) and [internal/checker/checker.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/checker.go) (`resolveMappedTypeMembers`, `instantiateMappedType`).
+- Dan Vanderkam, [*Effective TypeScript*](https://effectivetypescript.com/), 2nd ed., O'Reilly, 2024, Item 15.
+- Matt McCutchen's `Equal` type in [microsoft/TypeScript#27024](https://github.com/microsoft/TypeScript/issues/27024), as packaged by [type-challenges](https://github.com/type-challenges/type-challenges/blob/main/utils/index.d.ts).
+- Lab: [`labs/mapped-and-utility-types.ts`](labs/mapped-and-utility-types.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node mapped-and-utility-types.ts`.

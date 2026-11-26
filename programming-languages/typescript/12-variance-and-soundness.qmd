@@ -1,0 +1,296 @@
+---
+title: "Variance and Soundness"
+description: "When a Box of Dog is a Box of Animal: subtyping, covariance of readonly arrays and return types, contravariance of parameters under strictFunctionTypes, method bivariance, in and out annotations, and TypeScript's deliberate unsound spots such as mutable array covariance and unchecked index access."
+---
+
+## The problem
+
+Every dog is an animal, so a list of dogs should be a list of animals. TypeScript agrees:
+
+```ts
+const dogs: Dog[] = [rex];
+const animals: Animal[] = dogs; // allowed: mutable arrays are covariant
+animals.push(tom); // allowed: Tom is an Animal
+assert.equal(dogs.length, 2); // one array, two names for it
+assert.throws(() => dogs[1].bark(), { name: 'TypeError', message: 'dogs[1].bark is not a function' });
+```
+
+Each line compiles, and the program crashes. `animals` and `dogs` are two names for **one** array. Pushing the cat Tom through the `Animal[]` name puts a cat into the `Dog[]`, and the next bark fails with `TypeError: dogs[1].bark is not a function`.
+
+The question behind it is **variance**: if `Dog` is a subtype of `Animal`, what is the relationship between `Box<Dog>` and `Box<Animal>`, or between functions that take them? The safe answer depends on whether the box is read from, written to, or both. TypeScript picks the safe answer in most places and a deliberately unsafe one in a few. This chapter shows both, and why.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Fruit baskets and vets
+
+- If every apple is a fruit, is a basket of apples a basket of fruit? **For looking**, yes: everything you take out is a fruit. **For putting things in**, no: someone could drop a banana into your apple basket.
+- A vet who can treat **any animal** can take a **dog-only** appointment. A dog groomer cannot take an any-animal appointment, because a cat might walk in. For a job that **takes** something, the direction flips.
+
+This is Barbara Liskov's substitution idea, made precise with Jeannette Wing in *A Behavioral Notion of Subtyping* (1994): a subtype must be usable wherever its supertype is expected. Benjamin Pierce's *Types and Programming Languages* (2002) gives the rules in Chapter 15, *Subtyping*. The TypeScript 4.7 release notes offer a school-maths picture of the flip: checking whether $-x < -y$ "is the same as checking whether $y < x$."
+:::
+
+## From simple to advanced
+
+The lab declares three types and checks claims with `Expect<Equal<...>>` plus a helper `Assignable<From, To>`, which is `true` when a `From` value fits a `To` variable:
+
+```ts
+type Assignable<From, To> = [From] extends [To] ? true : false;
+type Animal = { name: string };
+type Dog = { name: string; bark(): string };
+type Cat = { name: string; meow(): string };
+```
+
+### Level 1: a subtype has at least the supertype's members
+
+TypeScript decides subtyping by shape ([Structural Typing](01-structural-typing.qmd)). `Dog` has everything `Animal` has, plus `bark`:
+
+$$
+S <: T \iff \forall p \in \operatorname{props}(T):\; p \in \operatorname{props}(S) \land S[p] <: T[p]
+$$
+
+where
+
+- $S <: T$ means "$S$ is a subtype of $T$": a value of type $S$ may be used where a $T$ is expected;
+- $\operatorname{props}(X)$ is the set of property names of $X$, and $p$ is one of them;
+- $X[p]$ is the type of property $p$ in $X$.
+
+Example: $\operatorname{props}(\texttt{Animal}) = \lbrace \texttt{name} \rbrace$ and $\operatorname{props}(\texttt{Dog}) = \lbrace \texttt{name}, \texttt{bark} \rbrace$. The only property to check is `name`, and $\texttt{string} <: \texttt{string}$, so $\texttt{Dog} <: \texttt{Animal}$. The reverse needs `bark` in `Animal`, which is missing:
+
+```ts
+const someAnimal: Animal = rex;
+// @ts-expect-error Property 'bark' is missing in type 'Animal' but required in type 'Dog'.
+const someDog: Dog = someAnimal;
+```
+
+### Level 2: covariance, where the box is only read
+
+A type constructor $F$, such as "read-only array of" or "function returning", is **covariant** when it keeps the direction of subtyping:
+
+```ts
+type Level2 = [
+  Expect<Equal<Assignable<readonly Dog[], readonly Animal[]>, true>>,
+  Expect<Equal<Assignable<readonly Animal[], readonly Dog[]>, false>>,
+  Expect<Equal<Assignable<() => Dog, () => Animal>, true>>,
+  Expect<Equal<Assignable<() => Animal, () => Dog>, false>>,
+];
+```
+
+$$
+A <: B \;\Rightarrow\; F\langle A \rangle <: F\langle B \rangle
+$$
+
+where
+
+- $A$ and $B$ are types, here $\texttt{Dog}$ and $\texttt{Animal}$;
+- $F\langle X \rangle$ is the type built by $F$ from $X$, such as `readonly X[]`;
+- $\Rightarrow$ means "implies".
+
+Example with $A = \texttt{Dog}$ and $B = \texttt{Animal}$: Level 1 gave $\texttt{Dog} <: \texttt{Animal}$. With $F$ standing for `readonly X[]`, the rule gives `readonly Dog[]` $<:$ `readonly Animal[]`. With $F$ standing for `() => X`, it gives `() => Dog` $<:$ `() => Animal`. Both are safe for the same reason: every value that comes **out** of the dog version is an animal. So `names(kennel)` accepts a `readonly Dog[]` where `readonly Animal[]` is declared, and returns `['Rex']`.
+
+### Level 3: contravariance, where the box is written to
+
+A function parameter is the opposite position: the function **takes** a value. The safe rule flips the direction:
+
+```ts
+type Handler<T> = (value: T) => string;
+const describeAnimal: Handler<Animal> = animal => `an animal called ${animal.name}`;
+const describeDog: Handler<Dog> = dog => `${dog.name} says ${dog.bark()}`;
+const forDogs: Handler<Dog> = describeAnimal; // safe: it only reads name
+// @ts-expect-error Type 'Handler<Dog>' is not assignable to type 'Handler<Animal>'.
+const forAnimals: Handler<Animal> = describeDog;
+```
+
+$$
+A <: B \;\Rightarrow\; F\langle B \rangle <: F\langle A \rangle
+$$
+
+where $F$ is now **contravariant**, as `Handler` is ($F$ stands for `(value: X) => string`), and the subtype arrow on the right points the other way.
+
+Example with $A = \texttt{Dog}$, $B = \texttt{Animal}$: the rule gives `Handler<Animal>` $<:$ `Handler<Dog>`. An animal describer can stand in for a dog describer, because every dog it receives is an animal. The reverse, `forAnimals`, is rejected, and the lab shows why with the error suppressed: `forAnimals(tom)` calls `tom.bark()` and throws a `TypeError`. The full message names the root cause:
+
+```text
+error TS2322: Type 'Handler<Dog>' is not assignable to type 'Handler<Animal>'.
+  Property 'bark' is missing in type 'Animal' but required in type 'Dog'.
+```
+
+Putting Levels 2 and 3 together gives the classic function rule: $(B \to R) <: (A \to R')$ exactly when $A <: B$ (parameters flip) and $R <: R'$ (results keep). This check is the compiler option `strictFunctionTypes`, added in TypeScript 2.6 and part of `strict`. The lab type-checks the same three lines twice to show the option is what makes the difference:
+
+```ts
+const handlerSnippet = 'type Animal = { name: string };\nconst dogOnly = (dog: Animal & { bark(): string }) => dog.bark();\nconst anyAnimal: (animal: Animal) => string = dogOnly;\n';
+assert.match(typeErrors(handlerSnippet, []), /error TS2322/);
+assert.equal(typeErrors(handlerSnippet, ['--strictFunctionTypes', 'false']), '');
+```
+
+`typeErrors` writes the snippet to a temporary folder, runs the lab's own `tsc --noEmit --strict` on it with the extra flags, and returns what `tsc` printed.
+
+### Level 4: methods are checked both ways
+
+`strictFunctionTypes` has a deliberate hole. A parameter of a **method**, written `handle(value: T): string`, is still checked **bivariantly**: either direction is accepted. A property holding a function, written `handle: (value: T) => string`, is checked contravariantly:
+
+```ts
+type MethodHandler<T> = { handle(value: T): string };
+type PropertyHandler<T> = { handle: (value: T) => string };
+type Level4 = [
+  Expect<Equal<Assignable<MethodHandler<Dog>, MethodHandler<Animal>>, true>>,
+  Expect<Equal<Assignable<MethodHandler<Animal>, MethodHandler<Dog>>, true>>,
+  Expect<Equal<Assignable<PropertyHandler<Dog>, PropertyHandler<Animal>>, false>>,
+  Expect<Equal<Assignable<PropertyHandler<Animal>, PropertyHandler<Dog>>, true>>,
+];
+```
+
+$$
+A <: B \;\Rightarrow\; F\langle A \rangle <: F\langle B \rangle \;\land\; F\langle B \rangle <: F\langle A \rangle
+$$
+
+where $F$ is **bivariant**: both directions hold, and $\land$ means "and".
+
+Example: with $F$ standing for `MethodHandler<X>`, both `MethodHandler<Dog>` $<:$ `MethodHandler<Animal>` and the reverse are accepted, as the first two checks show. The first is unsafe, and the lab proves it: `animalMethod.handle(tom)` reaches `dog.bark()` and throws.
+
+Why keep the hole? The TypeScript 2.6 release notes: "Methods are excluded specifically to ensure generic classes and interfaces (such as `Array<T>`) continue to mostly relate covariantly." `Array<T>` has methods that take a `T`, such as `push(...items: T[])`. Checked strictly, those would make `Dog[]` and `Animal[]` unrelated, and a huge amount of existing code passes a `Dog[]` where `Animal[]` is expected without ever writing to it. The TypeScript FAQ entry *Why Method Bivariance?* says a strict mode for methods "breaks array covariance, and not even in a way that has an apparent fix." The price is the crash in the problem section.
+
+### Level 5: `in` and `out` state the variance
+
+Since TypeScript 4.7, a type parameter can be annotated: `out T` for covariant, `in T` for contravariant, `in out T` for **invariant** (neither direction; the types must be equal):
+
+```ts
+interface Producer<out T> { make(): T }
+interface Consumer<in T> { take(value: T): void }
+interface Cell<in out T> { get(): T; set(value: T): void }
+interface MeasuredCell<T> { get(): T; set(value: T): void }
+```
+
+$$
+F\langle A \rangle <: F\langle B \rangle \;\Rightarrow\; A <: B \;\land\; B <: A
+$$
+
+where $F$ is invariant (`in out`), so $F\langle A \rangle$ and $F\langle B \rangle$ are related only when $A$ and $B$ are mutually assignable, that is, equivalent.
+
+Example with `Cell`: $\texttt{Dog} <: \texttt{Animal}$ holds but $\texttt{Animal} <: \texttt{Dog}$ does not, so neither `Cell<Dog>` $<:$ `Cell<Animal>` nor the reverse is allowed; the lab checks both are `false`. The same shape without the annotation, `MeasuredCell`, is measured as **covariant**, because its `set` is a method and therefore bivariant. That is the array situation in miniature, and `in out` closes it. Annotating `Consumer<in T>` also overrides method bivariance: `Consumer<Dog>` $<:$ `Consumer<Animal>` is `false`.
+
+The checker verifies that an annotation matches the structure. `out` on a type that takes `T` in a strict position is rejected:
+
+```ts
+// @ts-expect-error Type 'Sink<sub-T>' is not assignable to type 'Sink<super-T>' as implied by variance annotation.
+interface Sink<out T> { put: (value: T) => void }
+```
+
+`sub-T` and `super-T` in that message are the checker's marker types, explained below.
+
+### Level 6: soundness, and where TypeScript gives it up
+
+A type system is **sound** if a program that type-checks never has a value of the wrong type at runtime. TypeScript's design goals list soundness as a **non-goal**: "Apply a sound or 'provably correct' type system. Instead, strike a balance between correctness and productivity." Two everyday spots show the balance.
+
+The first is mutable array covariance, the problem section. The sound rule would make `T[]` invariant, as `Cell` is; TypeScript keeps it covariant for convenience.
+
+The second is indexing. By default, reading an array element past the end is typed as the element type:
+
+```ts
+const scores: number[] = [90, 85];
+const third = scores[2];
+type Level6 = Expect<Equal<typeof third, number>>; // the type says number...
+assert.throws(() => third.toFixed(1), TypeError); // ...the value is undefined
+```
+
+The option `noUncheckedIndexedAccess` (TypeScript 4.1) adds `undefined` to every index read. It is not part of `strict`, and TypeScript 7 still leaves it off by default, so this project's `tsconfig.json` does not enable it. The lab type-checks the snippet both ways:
+
+```ts
+const indexSnippet = 'const scores: number[] = [90, 85];\nconst third = scores[2];\nthird.toFixed(1);\n';
+assert.equal(typeErrors(indexSnippet, []), '');
+assert.match(typeErrors(indexSnippet, ['--noUncheckedIndexedAccess']), /error TS18048: 'third' is possibly 'undefined'\./);
+```
+
+Without the option, an honest alternative is `at()`, whose return type always includes `undefined`:
+
+```ts
+const safer = scores.at(2);
+type Level6At = Expect<Equal<typeof safer, number | undefined>>;
+```
+
+Other unsound spots, covered in earlier chapters: `any`, `as` and `!` ([any, unknown and Runtime Validation](11-any-unknown-and-runtime-validation.qmd)), type predicates whose body is not checked, and method bivariance from Level 4.
+
+## How it works underneath
+
+Comparing `Box<Dog>` with `Box<Animal>` member by member works, but is slow for big types and loops forever on recursive ones. So the checker measures each generic type's **variance** once and then compares only the type arguments. In TypeScript 7 this is `getVariances` and `getVariancesWorker` in [internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go):
+
+1. **Arrays and tuples are hard-coded.** The first lines read "Arrays and tuples are known to be covariant, no need to spend time computing this." That is the problem section, written down.
+2. **Annotations win.** If the type parameter has `out`, `in` or both, that variance is used directly.
+3. **Otherwise, measure with markers.** The checker makes two fresh type parameters, `markerSuperType` and `markerSubType`, with the sub one constrained to the super one, and instantiates the generic type with each. If `Box<sub>` is assignable to `Box<super>`, the parameter is covariant; if the reverse holds, contravariant; both, bivariant; neither, invariant. A third, unrelated marker detects parameters that are not used at all ("independent"). The results are cached per declaration.
+
+For an annotation, the checker runs step 3 anyway to check the claim, and when it fails it prints the markers by name: `Type 'Sink<sub-T>' is not assignable to type 'Sink<super-T>' as implied by variance annotation.`
+
+Method bivariance is one boolean in `compareSignaturesRelated`:
+
+```text
+strictVariance := checkMode&SignatureCheckModeCallback == 0 && c.strictFunctionTypes &&
+    kind != ast.KindMethodDeclaration && kind != ast.KindMethodSignature && kind != ast.KindConstructor
+```
+
+With `strictVariance` false, parameters are compared in both directions and either may succeed: Level 4.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Passing a `Dog[]` to code that pushes into an `Animal[]` | A runtime `TypeError` far from the push | Accept `readonly Animal[]` when you only read; copy before writing |
+| Declaring callbacks with method syntax | Unsafe callbacks are accepted silently | Use property syntax, `handle: (value: T) => R`, for contravariant checking |
+| Trusting `array[i]` to be defined | `TypeError` on `undefined`, while the type says `number` | `noUncheckedIndexedAccess`, `at()`, or a length check |
+| Marking a parameter `out` when it is also an input | `Type 'Sink<sub-T>' is not assignable to type 'Sink<super-T>' as implied by variance annotation.` | Use `in out`, or remove the write |
+| Turning off `strictFunctionTypes` to silence an error | Parameter checks become bivariant everywhere | Fix the handler's parameter type instead |
+
+## Interview questions
+
+### 1. Is TypeScript's type system sound?
+
+**Answer.** No, by design: the design goals list a sound type system as a non-goal, in favour of "a balance between correctness and productivity." Known unsound spots: mutable arrays are covariant (`Dog[]` to `Animal[]`, then `push(cat)`); method parameters are bivariant even under `strictFunctionTypes`; index reads are typed as defined unless `noUncheckedIndexedAccess` is on; `any`, `as`, `!` and type predicates are trusted without checks. Each is demonstrated in this chapter's lab or the previous chapter's.
+
+### 2. Why is `(d: Dog) => void` not assignable to `(a: Animal) => void`?
+
+**Answer.** Because the target promises callers they may pass **any** animal, but the source can only handle dogs; a cat would reach `dog.bark()`. Function types are contravariant in their parameters: $A <: B \Rightarrow (B \to R) <: (A \to R)$. With $A = \texttt{Dog}$ and $B = \texttt{Animal}$, `(a: Animal) => void` is assignable to `(d: Dog) => void`, not the other way. TypeScript enforces this for function-typed values under `strictFunctionTypes` (2.6, part of `strict`); the lab shows the same snippet passing once the option is turned off.
+
+### 3. Why are method parameters bivariant?
+
+**Answer.** To keep generic containers covariant. `Array<T>` declares `push(...items: T[])`, so with strict parameter checking `T` would appear in an input position and `Array` would become invariant, breaking every call that passes `Dog[]` where `Animal[]` is expected. The 2.6 release notes say methods are excluded "to ensure generic classes and interfaces (such as `Array<T>`) continue to mostly relate covariantly." The practical advice: declare callbacks as properties (`onClick: (e: Event) => void`), not methods, to get the strict check.
+
+### 4. What do the `in` and `out` modifiers do?
+
+**Answer.** They declare a type parameter's variance instead of letting the checker measure it: `out T` is covariant, `in T` contravariant, `in out T` invariant. The checker still verifies that the declaration matches the structure and reports TS2636 if not. Benefits named in the 4.7 release notes: readability, catching mistakes, and speed and accuracy on deeply recursive types where measuring is expensive or circular. The lab shows they can also be **stricter** than the structure: `Cell<in out T>` is invariant while the same shape without annotations is measured covariant.
+
+### 5. What does `noUncheckedIndexedAccess` change, and why is it off by default?
+
+**Answer.** It adds `undefined` to the type of every index read, `arr[i]` and `obj[key]` through an index signature, so `scores[2].toFixed(1)` becomes `'third' is possibly 'undefined'.` It is off by default and outside `strict`. The cost of turning it on is noise: a loop such as `for (let i = 0; i < arr.length; i++) arr[i]` is safe, but the checker cannot prove it and demands a check anyway. It is not included in `strict`, and TypeScript 7's new defaults did not change that. Alternatives without the flag are `at()`, `for...of`, and destructuring with defaults.
+
+## Summary
+
+$$
+A <: B \;\Rightarrow\;
+\begin{cases}
+F\langle A \rangle <: F\langle B \rangle & F \text{ covariant, } \texttt{out} \text{: readonly arrays, return types} \\
+F\langle B \rangle <: F\langle A \rangle & F \text{ contravariant, } \texttt{in} \text{: function parameters}
+\end{cases}
+$$
+
+where $A$ and $B$ are types, $<:$ is "is a subtype of", and $F$ builds a new type from one type argument. An invariant $F$ (`in out`) needs both directions, and a bivariant one (methods) accepts either.
+
+Example: with $\texttt{Dog} <: \texttt{Animal}$, `readonly Dog[]` $<:$ `readonly Animal[]` (covariant) and `Handler<Animal>` $<:$ `Handler<Dog>` (contravariant). Mutable `Dog[]` $<:$ `Animal[]` is also accepted, which is the deliberate unsoundness that crashed on Tom.
+
+- Subtyping is structural: more members means more specific.
+- What comes out is covariant; what goes in is contravariant; both makes it invariant.
+- `strictFunctionTypes` checks function parameters contravariantly, but methods stay bivariant.
+- `in` and `out` declare variance; the checker verifies them with marker types.
+- TypeScript is unsound on purpose: mutable arrays, methods, unchecked indexes, `any` and assertions.
+- Prefer `readonly` arrays for inputs, property syntax for callbacks, and `at()` or `noUncheckedIndexedAccess` for indexes.
+
+## References
+
+- TypeScript Handbook: [Type Compatibility](https://www.typescriptlang.org/docs/handbook/type-compatibility.html) ("A Note on Soundness", function parameter bivariance).
+- Release notes: [TypeScript 2.6](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-2-6.html) (strict function types), [TypeScript 4.1](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-1.html) (`noUncheckedIndexedAccess`), [TypeScript 4.7](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-7.html) (variance annotations).
+- TSConfig reference: [strictFunctionTypes](https://www.typescriptlang.org/tsconfig/#strictFunctionTypes) and [noUncheckedIndexedAccess](https://www.typescriptlang.org/tsconfig/#noUncheckedIndexedAccess).
+- [TypeScript Design Goals](https://github.com/microsoft/TypeScript/wiki/TypeScript-Design-Goals) (non-goal 3) and the FAQ entry [Why Method Bivariance?](https://github.com/microsoft/TypeScript/wiki/FAQ#why-method-bivariance).
+- Anders Hejlsberg, [Strict function types](https://github.com/microsoft/TypeScript/pull/18654) (#18654, 2017) and [Optional variance annotations](https://github.com/microsoft/TypeScript/pull/48240) (#48240, 2022), microsoft/TypeScript pull requests.
+- The TypeScript 7 source: [internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go) (`getVariances`, `getVariancesWorker`, `compareSignaturesRelated`).
+- Barbara Liskov and Jeannette Wing, A behavioral notion of subtyping, *ACM TOPLAS* 16(6), 1994, [doi:10.1145/197320.197383](https://doi.org/10.1145/197320.197383).
+- Benjamin C. Pierce, [*Types and Programming Languages*](https://www.cis.upenn.edu/~bcpierce/tapl/), MIT Press, 2002, Chapter 15.
+- Gavin Bierman, Martín Abadi and Mads Torgersen, Understanding TypeScript, ECOOP 2014, [doi:10.1007/978-3-662-44202-9_11](https://doi.org/10.1007/978-3-662-44202-9_11), a formal model of TypeScript's core type system.
+- Dan Vanderkam, [*Effective TypeScript*](https://effectivetypescript.com/), 2nd ed., O'Reilly, 2024, Item 48 (*Avoid Soundness Traps*).
+- Lab: [`labs/variance-and-soundness.ts`](labs/variance-and-soundness.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node variance-and-soundness.ts`.

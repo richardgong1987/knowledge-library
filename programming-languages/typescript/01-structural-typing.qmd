@@ -1,0 +1,348 @@
+---
+title: "Structural Typing"
+description: "TypeScript compares types by shape: types as sets of values, assignability as subset, excess property checks on fresh object literals, brands for nominal typing, and type erasure."
+---
+
+## The problem
+
+JavaScript makes objects on the fly. A rectangle can come from an object literal `{ width: 3, height: 4 }`, from `JSON.parse`, from a library, or from a class instance. None of them says "I am a `Rect`". A type checker for JavaScript has to decide whether `area(tile)` is safe **without** any declaration that links `tile` to `Rect`. If it demanded such a declaration, as Java does with `implements`, almost no existing JavaScript would type-check.
+
+TypeScript's answer is to compare **shapes**: `tile` is a `Rect` if it has a numeric `width` and a numeric `height`, whatever else it carries. That solves the first problem and creates a second one. A shop has user 7 (Ada) and order 7. Both ids are `number`, so `findUser(order.id)` type-checks and quietly returns Ada for an order id. Shapes alone cannot tell two numbers apart.
+
+This chapter explains both sides: why shape-based typing fits JavaScript, how the compiler checks a shape, the extra check it runs on fresh object literals, how **brands** bring back names where you need them, and why none of it exists when the program runs.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The checklist at the club door
+
+- **Structural typing:** the door person holds a **checklist**: "has a ticket, is wearing shoes". Anyone who ticks every box gets in, even with a backpack nobody asked about. Nobody asks your name.
+- **Nominal typing:** the door person holds a **guest list of names**. Your identical twin, with the same ticket and the same shoes, is turned away because the name is not on the list.
+- **Excess property check:** when you fill in the entry form **right there at the door**, the door person reads it and asks: "You wrote *widht*. Did you mean *width*?"
+- **Brand:** a **wristband** the club stamps on you. The checklist now says "has a ticket, has a wristband", and only the stamp desk can hand wristbands out.
+- **Type erasure:** once you are inside, the checklist is thrown away. Nobody checks it again.
+
+The TypeScript Handbook puts it this way: *"One of TypeScript's core principles is that type checking focuses on the shape that values have. This is sometimes called 'duck typing' or 'structural typing'."* Dan Vanderkam's *Effective TypeScript* devotes two items to it: "Get Comfortable with Structural Typing" and "Think of Types as Sets of Values". TypeScript's lead architect, Anders Hejlsberg, had designed C#, a nominal language, but the Handbook explains why TypeScript went the other way: *"Because JavaScript widely uses anonymous objects like function expressions and object literals, it's much more natural to represent the kinds of relationships found in JavaScript libraries with a structural type system instead of a nominal one."*
+:::
+
+## From simple to advanced
+
+### Level 1: a type is a set of values
+
+Read a type as the **set of values** it allows. `number` is every number, `string` is every string, the literal type `"red"` is the one-element set holding `"red"`, `unknown` is every value, and `never` is the empty set. Assignability is then one rule:
+
+$$
+S \text{ is assignable to } T \iff V(S) \subseteq V(T)
+$$
+
+where
+
+- $S$ is the source type (the type of the value you have) and $T$ is the target type (the annotation or parameter it goes into);
+- $V(T)$ is the set of all JavaScript values that have type $T$;
+- $\subseteq$ means "is a subset of": every member of the left set is also in the right set;
+- $\iff$ means "exactly when".
+
+Example, with the lab's four declarations:
+
+1. $V(\texttt{"red"}) = \lbrace \texttt{"red"} \rbrace$, and `"red"` is a string, so $\lbrace \texttt{"red"} \rbrace \subseteq V(\texttt{string})$: `const colour: string = red` is fine.
+2. `"three"` is in $V(\texttt{string})$ but not in $V(\texttt{number})$, so the subset test fails and `const count: number = "three"` is an error.
+3. $V(\texttt{unknown})$ is every value, so 42 fits.
+4. $V(\texttt{never}) = \emptyset$. The set $\lbrace 0 \rbrace$ is not a subset of the empty set, so `const nothing: never = 0` is an error.
+
+```ts
+const red: "red" = "red";
+const colour: string = red; // {"red"} is inside the set of all strings
+// @ts-expect-error: "three" is a string, and strings are not in the set of numbers
+const count: number = "three";
+const anything: unknown = 42; // unknown is the set of every value
+// @ts-expect-error: never is the empty set, so no value fits
+const nothing: never = 0;
+```
+
+A `// @ts-expect-error` comment tells `tsc` "the next line must fail". The lab uses one for every error this chapter shows, so if TypeScript ever stopped reporting it, the lab itself would fail. With the comments removed, TypeScript 7 reports:
+
+```text
+error TS2322: Type 'string' is not assignable to type 'number'.
+error TS2322: Type '0' is not assignable to type 'never'.
+```
+
+### Level 2: the shape decides, not the name
+
+An object type is a list of conditions on properties, and the set it describes is every value that meets them all:
+
+$$
+v \in V(O) \iff \forall i \in \lbrace 1, \dots, n \rbrace :\ v.p_i \in V(T_i)
+$$
+
+where
+
+- $O$ is an object type listing the properties $p_1 : T_1, \dots, p_n : T_n$, such as `Rect` with `width: number` and `height: number`;
+- $v$ is a value and $v.p_i$ is the value of its property $p_i$;
+- $\forall i$ means "for every $i$".
+
+Nothing in the formula mentions properties **outside** the list, so extra properties are allowed. Each property you add to $O$ adds a condition and makes the set smaller. That is why a type with more properties is assignable to one with fewer.
+
+```ts
+type Rect = { width: number; height: number };
+function area(rect: Rect): number {
+  return rect.width * rect.height;
+}
+const tile = { width: 3, height: 4, colour: "red" };
+const tileArea = area(tile); // the extra colour does not matter
+class Photo {
+  width = 6;
+  height = 4;
+}
+const photoArea = area(new Photo()); // Photo never mentions Rect
+```
+
+Example: for `tile`, $v.\texttt{width} = 3 \in V(\texttt{number})$ and $v.\texttt{height} = 4 \in V(\texttt{number})$, so `tile` is in $V(\texttt{Rect})$ and `area(tile)` is $3 \times 4 = 12$. The `Photo` instance passes the same two tests and gives $6 \times 4 = 24$, although the class never says `implements Rect`. In TypeScript, the Handbook notes, *"an implements clause is only a check that the class can be treated as the interface type"*; it is never required ([Classes and Interfaces](10-classes-and-interfaces.qmd)). Two type aliases with different names and the same shape are the same set, so a `Size` of $2 \times 5$ goes into a `Rect` slot and gives 10.
+
+A value that fails a condition is rejected, and this is the bug the check prevents:
+
+```ts
+// @ts-expect-error: without a height the value is not a Rect
+const strip = area({ width: 3 });
+```
+
+```text
+error TS2741: Property 'height' is missing in type '{ width: number; }' but required in type 'Rect'.
+```
+
+Without the check, `area` would compute `3 * undefined`, and the lab confirms the result is `NaN`.
+
+### Level 3: excess property checks on fresh object literals
+
+Level 2 says extra properties are fine. Yet this is an error:
+
+```ts
+// @ts-expect-error: the literal is fresh, so its extra colour is reported
+const typo: Rect = { width: 3, height: 4, colour: "red" };
+const viaVariable: Rect = tile; // tile is not fresh any more: no excess check
+```
+
+```text
+error TS2353: Object literal may only specify known properties, and 'colour' does not exist in type 'Rect'.
+```
+
+The value is still a perfectly good `Rect`. This is a **separate, extra check**, not the subset rule. An object literal written directly where a type is expected is called **fresh**. Nobody else can ever read its extra properties, so an unknown property there is almost certainly a mistake:
+
+$$
+\text{excess error} \iff \operatorname{fresh}(L) \land P(L) \setminus P(T) \neq \emptyset
+$$
+
+where
+
+- $L$ is the object literal and $T$ the type it is assigned to;
+- $\operatorname{fresh}(L)$ is true when $L$ is written right here, not read from a variable;
+- $P(X)$ is the set of property names of $X$;
+- $\setminus$ is set difference ("in the left set but not the right"), and $\emptyset$ is the empty set.
+
+Example: for `typo`, $P(L) = \lbrace \texttt{width}, \texttt{height}, \texttt{colour} \rbrace$ and $P(\texttt{Rect}) = \lbrace \texttt{width}, \texttt{height} \rbrace$, so the difference is $\lbrace \texttt{colour} \rbrace \neq \emptyset$, and the literal is fresh: error. For `viaVariable` the difference is the same $\lbrace \texttt{colour} \rbrace$, but `tile` is a variable, so $\operatorname{fresh}$ is false and there is no error. The lab checks that `Object.keys(viaVariable)` still lists `colour` at runtime.
+
+The check earns its place with optional properties, where a typo would otherwise vanish silently:
+
+```ts
+type Options = { title?: string; width?: number };
+// @ts-expect-error: the check exists to catch typos like this one
+const options: Options = { title: "Box", widht: 100 };
+```
+
+```text
+error TS2561: Object literal may only specify known properties, but 'widht' does not exist in type 'Options'. Did you mean to write 'width'?
+```
+
+### Level 4: brands bring back names
+
+Back to the shop. `UserId` and `OrderId` should be different types although both are numbers at runtime. A **brand** is an extra, made-up property in the type that no real value has:
+
+```ts
+type UserId = number & { readonly brand: "UserId" };
+type OrderId = number & { readonly brand: "OrderId" };
+function toUserId(n: number): UserId {
+  return n as UserId; // the one place allowed to mint a UserId
+}
+```
+
+The `&` is an intersection: a `UserId` must be a number **and** have `brand: "UserId"` ([Unions and Narrowing](03-unions-and-narrowing.qmd) covers `&` in full). In the set reading:
+
+$$
+V(\texttt{UserId}) \cap V(\texttt{OrderId}) = \emptyset
+$$
+
+where
+
+- $V(\texttt{UserId})$ and $V(\texttt{OrderId})$ are the sets of values the two branded types allow;
+- $\cap$ is set intersection, the values in both sets;
+- $\emptyset$ is the empty set.
+
+The two sets share nothing, because no value can have `brand` equal to `"UserId"` and to `"OrderId"` at once. Example: `toOrderId(7)` has brand `"OrderId"`, and the checker compares the two brands:
+
+```ts
+const ada = findUser(toUserId(7));
+// @ts-expect-error: an OrderId is not a UserId
+const wrongUser = findUser(toOrderId(7));
+// @ts-expect-error: a plain number is not a UserId either
+const plainNumber = findUser(7);
+```
+
+```text
+error TS2345: Argument of type 'OrderId' is not assignable to parameter of type 'UserId'.
+  Type 'OrderId' is not assignable to type '{ readonly brand: "UserId"; }'.
+    Types of property 'brand' are incompatible.
+      Type '"OrderId"' is not assignable to type '"UserId"'.
+error TS2345: Argument of type 'number' is not assignable to parameter of type 'UserId'.
+  Type 'number' is not assignable to type '{ readonly brand: "UserId"; }'.
+```
+
+A brand is a polite fiction: no number really has a `brand` property, so the only way to make a `UserId` is the `as UserId` assertion. Keep it inside one small function, `toUserId`, which is the "stamp desk". Everything else must go through it.
+
+### Level 5: types are erased
+
+Types exist only while `tsc` checks the program. Running it never consults them. The TypeScript Handbook says it plainly: *"Type annotations never change the runtime behavior of your program."* Node 26 runs `.ts` files by **type stripping**: it replaces the TypeScript syntax with spaces and runs what is left, with no type checking at all. The lab's `double` shows the result:
+
+```ts
+function double(n: number): number {
+  return n * 2;
+}
+```
+
+```text
+double.toString() === "function double(n        )         {\n  return n * 2;\n}"
+```
+
+Each `: number` became eight spaces. Replacing with spaces, rather than deleting, keeps every character in its column:
+
+$$
+\operatorname{len}(\operatorname{strip}(\ell)) = \operatorname{len}(\ell)
+$$
+
+where
+
+- $\ell$ is one line of the source file;
+- $\operatorname{strip}$ is Node's type stripping, which turns type syntax into spaces;
+- $\operatorname{len}$ counts characters.
+
+Example: `function double(n: number): number {` has 36 characters, and the stripped line `function double(n        )         {` also has 36. The lab checks both lengths. That is why Node's stack traces point at the right line and column of the `.ts` file without source maps.
+
+Erasure has consequences. The brand from Level 4 leaves no trace, so `typeof toUserId(7)` is `"number"`, and the lab confirms that the `wrongUser` line, which `tsc` rejected, still runs and returns `"Ada"`. A type alias is not a value, so it cannot be tested at runtime:
+
+```ts
+const missingRect = () => {
+  // @ts-expect-error: Rect exists only in the type world
+  return tile instanceof Rect;
+};
+```
+
+`tsc` reports `error TS2693: 'Rect' only refers to a type, but is being used as a value here.`, and if you run it anyway Node throws `ReferenceError: Rect is not defined`. Checking data that arrives at runtime needs runtime code, the subject of [any, unknown and Runtime Validation](11-any-unknown-and-runtime-validation.qmd).
+
+Because Node only strips, TypeScript features that **generate** JavaScript (`enum`, `namespace` with code, constructor parameter properties) cannot run this way. The compiler option `erasableSyntaxOnly` (TypeScript 5.8) forbids them, and these labs turn it on.
+
+## How it works underneath
+
+TypeScript 7 is a native port of the compiler to Go, announced by Anders Hejlsberg in March 2025 and released in July 2026, but the type checker follows the same rules as before. Assignability lives in `internal/checker/relater.go` of the `microsoft/typescript-go` repository. `isRelatedTo` handles the easy cases (identical types, primitives, `any`, `never`), and for object types it calls `structuredTypeRelatedTo`, which calls `propertiesRelatedTo`. That function first looks for a property of the target that the source lacks (`getUnmatchedProperty`, the source of `TS2741`), then compares each target property's type. As a formula, for required properties:
+
+$$
+S \le T \iff \forall p \in P(T) :\ p \in P(S) \land S[p] \le T[p]
+$$
+
+where
+
+- $S \le T$ means "$S$ is assignable to $T$";
+- $P(T)$ is the set of property names of $T$; the loop runs over the **target's** properties only;
+- $S[p]$ is the type of property $p$ in $S$.
+
+Example: $S$ is the type of `tile`, `{ width: number; height: number; colour: string }`, and $T$ is `Rect`. $P(T) = \lbrace \texttt{width}, \texttt{height} \rbrace$. For `width`: it is in $P(S)$ and $\texttt{number} \le \texttt{number}$. For `height`: the same. Both hold, so $S \le T$. `colour` is never looked at, because the loop never visits it. For `{ width: 3 }`, `height` is not in $P(S)$, and the loop stops with `TS2741`. The rule is **recursive**: $S[p] \le T[p]$ is the same test one level down, so nested objects are compared by shape all the way.
+
+The excess property check sits in front of this. Trimmed from `relater.go`:
+
+```text
+isPerformingExcessPropertyChecks := ... isObjectLiteralType(source) &&
+    source.objectFlags&ObjectFlagsFreshLiteral != 0
+if isPerformingExcessPropertyChecks {
+    if r.hasExcessProperties(source, target, reportErrors) { ... return TernaryFalse }
+}
+```
+
+An object literal's type is born with the flag `ObjectFlagsFreshLiteral` (set in `checkObjectLiteral` in `checker.go`). When the literal is stored in a variable without an annotation, the variable's type goes through `getWidenedType`, and for an object literal `getWidenedTypeOfObjectLiteral` builds a copy of the type that does **not** carry the flag. That is the whole difference between `typo` and `viaVariable`. Right after it comes the **weak type** check: a target whose properties are all optional, such as `Options`, is "weak", and a source must share at least one property with it (`hasCommonProperties`). Otherwise almost anything would be an `Options`.
+
+Classes with `private` or `#private` members are the one place where a declaration matters. `propertyRelatedTo` accepts a `private` property only if source and target point to the **same declaration**. A `#private` field is stored under a name tied to the class that declares it (`GetSymbolNameForPrivateIdentifier`), so the `#unit` of `Fahrenheit` and the `#unit` of `Celsius` are different properties, and the target's one counts as missing. Finally, erasure happens in two places: `tsc` emits JavaScript with the types removed (or, with `noEmit`, emits nothing), and Node's built-in stripper replaces types with whitespace. Neither keeps any type information for the running program.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Expecting an extra property to be an error everywhere | No error when the object comes from a variable | Excess checks run only on fresh literals; annotate the literal where you create it |
+| A typo in an optional property of a stored object | The setting is silently ignored | Annotate at creation so the literal is fresh: `TS2561 ... Did you mean to write 'width'?` |
+| Two ids of the same primitive type | One is passed for the other with no error | Brand them: `number & { readonly brand: "UserId" }`, minted in one function |
+| Using a type in a runtime test | `TS2693: 'Rect' only refers to a type, but is being used as a value here.` | Test the shape with runtime code (`"width" in value`), or use a class |
+| Trusting a type annotation on `JSON.parse` output | Wrong data flows on; crashes far away | Validate at the boundary ([chapter 11](11-any-unknown-and-runtime-validation.qmd)) |
+| `enum` or parameter properties in a file Node runs directly | `TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.`, and Node stops with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` | Use `as const` objects ([chapter 6](06-keyof-typeof-and-indexed-access.qmd)) and plain fields |
+
+## Interview questions
+
+### 1. What is structural typing, and how does it differ from nominal typing?
+
+**Answer.** In a structural system, $S$ is assignable to $T$ when $S$ has every property $T$ requires, with assignable types: $\forall p \in P(T): p \in P(S) \land S[p] \le T[p]$. Names and declarations play no part. In a nominal system (Java, C#), $S$ is assignable to $T$ only if $S$ is declared to be $T$ or a subclass of it. In the lab, `new Photo()` is accepted as a `Rect` although `Photo` never mentions `Rect`; in Java that would need `implements Rect`. TypeScript chose structure because JavaScript objects are usually created without any declaration.
+
+### 2. Why is `const typo: Rect = { width: 3, height: 4, colour: "red" }` an error when `const viaVariable: Rect = tile` is not?
+
+**Answer.** It is not a type error in the subset sense, since both values are in $V(\texttt{Rect})$. It is the **excess property check**, which only applies to fresh object literals: the literal is written at the assignment, so `colour` can never be read through a `Rect` and is probably a typo. When the literal goes into the variable `tile` first, widening the variable's type drops the fresh flag (`getWidenedTypeOfObjectLiteral`), and later assignments see an ordinary type. *Effective TypeScript* has an item on exactly this: "Distinguish Excess Property Checking from Type Checking".
+
+### 3. How do you get nominal typing in TypeScript?
+
+**Answer.** Two ways. A **brand** intersects the base type with a property no real value has, `number & { readonly brand: "UserId" }`, and a single function creates values with `as`. It costs nothing at runtime. A **class with a `#private` field** is compared by declaration: two classes with identical public shapes are still incompatible.
+
+```ts
+// @ts-expect-error: the two #unit fields are different members
+const boiling: Celsius = new Fahrenheit(212);
+```
+
+```text
+error TS2322: Type 'Fahrenheit' is not assignable to type 'Celsius'.
+  Property '#unit' in type 'Fahrenheit' refers to a different member that cannot be accessed from within type 'Celsius'.
+```
+
+### 4. Can you check a TypeScript type at runtime?
+
+**Answer.** No. Types are erased before the program runs: `tsc` removes them when it emits JavaScript, and Node replaces them with spaces. `tile instanceof Rect` is rejected with `TS2693`, and running it throws `ReferenceError: Rect is not defined`. To check data at runtime you write runtime code, either a hand-written type guard ([Unions and Narrowing](03-unions-and-narrowing.qmd)) or a schema library, and let TypeScript infer the type from it.
+
+### 5. Why does `const notNullish: {} = 42` compile?
+
+**Answer.** `{}` is an object type with **no** required properties. By the structural rule, the loop over $P(\lbrace\rbrace) = \emptyset$ has nothing to check, so every value whose properties can be read passes. That is every value except `null` and `undefined`, which have no properties at all:
+
+```ts
+const notNullish: {} = 42;
+// @ts-expect-error: null is outside {}
+const nullValue: {} = null;
+```
+
+`tsc` reports `Type 'null' is not assignable to type '{}'.` Use `object` for "any non-primitive" and `unknown` for "anything".
+
+## Summary
+
+$$
+S \le T \iff V(S) \subseteq V(T), \qquad \text{checked as } \forall p \in P(T) :\ p \in P(S) \land S[p] \le T[p]
+$$
+
+where $V(T)$ is the set of values of type $T$, $P(T)$ its property names, $S[p]$ the type of property $p$ in $S$, and $\le$ is "assignable to".
+
+Example: `tile` has `width: 3` and `height: 4`, both numbers, so its type is $\le$ `Rect` and `area(tile)` is 12; its `colour` is never examined.
+
+- A type is a set of values; assignable means subset. `never` is the empty set, `unknown` is everything.
+- Object types are compared by **shape**, recursively. Extra properties are allowed; missing ones are not.
+- **Fresh** object literals also get an excess property check, which catches typos. Storing the literal in a variable first switches it off.
+- **Brands** and `#private` class fields give nominal typing where two shapes must not mix.
+- Types are **erased**: they cost nothing at runtime and protect nothing at runtime.
+
+## References
+
+- TypeScript Handbook: [Type Compatibility](https://www.typescriptlang.org/docs/handbook/type-compatibility.html), [Object Types: Excess Property Checks](https://www.typescriptlang.org/docs/handbook/2/objects.html), [Classes: implements Clauses](https://www.typescriptlang.org/docs/handbook/2/classes.html), [TypeScript for JavaScript Programmers: Structural Type System](https://www.typescriptlang.org/docs/handbook/typescript-in-5-minutes.html), [The Basics: Erased Types](https://www.typescriptlang.org/docs/handbook/2/basic-types.html).
+- [TypeScript 5.8 release notes: the `--erasableSyntaxOnly` option](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html).
+- Node.js documentation: [Modules: TypeScript, Type stripping](https://nodejs.org/api/typescript.html).
+- Anders Hejlsberg, [A 10x Faster TypeScript](https://devblogs.microsoft.com/typescript/typescript-native-port/) (2025), and Daniel Rosenwasser, [Announcing TypeScript 7.0](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/) (2026).
+- The checker source: [internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go) in `microsoft/typescript-go`.
+- Dan Vanderkam, *Effective TypeScript*, 2nd ed. (O'Reilly, 2024), Items 4, 7, 11 and 64 ([item list](https://github.com/danvk/effective-typescript)).
+- Matt Pocock, *Total TypeScript Essentials*, chapter [The Weird Parts](https://www.totaltypescript.com/books/total-typescript-essentials/the-weird-parts) (excess properties, open object types, `{}`).
+- Basarat Ali Syed, *TypeScript Deep Dive*: [Freshness](https://basarat.gitbook.io/typescript/type-system/freshness) and [Nominal Typing](https://basarat.gitbook.io/typescript/main-1/nominaltyping).
+- Lab: [`labs/structural-typing.ts`](labs/structural-typing.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node structural-typing.ts`.

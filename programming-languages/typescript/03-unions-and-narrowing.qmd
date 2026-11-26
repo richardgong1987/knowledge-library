@@ -1,0 +1,395 @@
+---
+title: "Unions and Narrowing"
+description: "Unions and intersections as set union and intersection, narrowing with typeof, truthiness, equality, in and instanceof, type predicates and assertion functions, control-flow analysis, and inferred type predicates (TypeScript 5.5)."
+---
+
+## The problem
+
+A shop's prices arrive in two forms: the database sends the number `9.5`, and a web form sends the string `"9.5"`. The function that prints a price must accept both, so its parameter has the **union type** `number | string`. Calling `toFixed` straight away is wrong for half the inputs:
+
+```ts
+function formatUnchecked(price: number | string): string {
+  // @ts-expect-error: toFixed exists on number but not on string
+  return price.toFixed(2);
+}
+```
+
+```text
+error TS2339: Property 'toFixed' does not exist on type 'string | number'.
+  Property 'toFixed' does not exist on type 'string'.
+```
+
+The error is right. The lab runs the function anyway: `formatUnchecked(9.5)` returns `"9.50"`, and `formatUnchecked("9.5")` throws `TypeError: price.toFixed is not a function`. What we need is a way to say "if it is a string, do this; otherwise do that", and have the compiler **follow along**, knowing in each branch which member of the union it holds. That is **narrowing**, and the compiler's ability to follow the branches is **control-flow analysis**.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## The mystery pet box
+
+- **Union (`Cat | Dog`):** a box that holds a cat **or** a dog. Until you look inside, you may only ask for things **both** can do: eat, sleep. You cannot ask it to bark.
+- **Narrowing:** you peek through the air hole and hear a bark. Now you **know** it is a dog, and you can throw it a ball.
+- **Intersection (`Swimmer & Flyer`):** a pet that must be a swimmer **and** a flyer, like a duck. It can do everything on both lists.
+- **Type guard:** the question you ask to peek: "Does it bark?" (`"swim" in animal`, `typeof price === "string"`).
+- **Control-flow analysis:** a friend who follows you through every door of the house and remembers what you learned in each room.
+
+The TypeScript Handbook gives the names: TypeScript looks at these checks *"(called type guards) and assignments, and the process of refining types to more specific types than declared is called narrowing."* Dan Vanderkam, author of *Effective TypeScript*, has an item called "Understand Type Narrowing", and he wrote the TypeScript 5.5 feature that infers type guards for you (Level 6).
+:::
+
+## From simple to advanced
+
+### Level 1: a union is "or", an intersection is "and"
+
+[Structural Typing](01-structural-typing.qmd) read a type as a set of values. Union and intersection are then the set operations of the same names:
+
+$$
+V(A \mid B) = V(A) \cup V(B), \qquad V(A \mathbin{\&} B) = V(A) \cap V(B)
+$$
+
+where
+
+- $V(T)$ is the set of values of type $T$;
+- $A \mid B$ is the union type ("an $A$ or a $B$") and $\cup$ is set union;
+- $A \mathbin{\&} B$ is the intersection type ("an $A$ and a $B$") and $\cap$ is set intersection.
+
+There is a twist that surprises everyone once. What you may **do** with a value runs the other way round. A property is safe to read only if every value in the set has it:
+
+$$
+P(A \mid B) = P(A) \cap P(B), \qquad P(A \mathbin{\&} B) = P(A) \cup P(B)
+$$
+
+where $P(T)$ is the set of properties you can read on every value of type $T$.
+
+Example, with `Named = { name: string }` and `Aged = { age: number }`:
+
+1. `Named | Aged` has more values (anything with a name, plus anything with an age), but $P = \lbrace \texttt{name} \rbrace \cap \lbrace \texttt{age} \rbrace = \emptyset$, so `contact.name` is an error.
+2. `Person = Named & Aged` has fewer values (only things with both), and $P = \lbrace \texttt{name} \rbrace \cup \lbrace \texttt{age} \rbrace = \lbrace \texttt{name}, \texttt{age} \rbrace$, so `ada` must have both.
+3. `string & number` is $V(\texttt{string}) \cap V(\texttt{number}) = \emptyset$, which is `never`.
+
+```ts
+type Person = Named & Aged; // must have both
+const ada: Person = { name: "Ada", age: 36 };
+function nameOf(contact: Named | Aged): string {
+  // @ts-expect-error: an Aged contact has no name
+  return contact.name;
+}
+type NoValueIsBoth = Expect<Equal<string & number, never>>;
+type ClashingProperty = Expect<Equal<({ id: string } & { id: number })["id"], never>>;
+```
+
+```text
+error TS2339: Property 'name' does not exist on type 'Aged | Named'.
+  Property 'name' does not exist on type 'Aged'.
+```
+
+`Expect<Equal<X, Y>>` is a type-level test: it compiles only if `X` and `Y` are the same type. The last line shows that intersecting two objects whose `id` types clash leaves `id: never`, a property no value can fill.
+
+### Level 2: `typeof` narrows a union
+
+Inside an `if`, a `typeof` test is a **type guard**: the compiler knows which part of the union passed.
+
+```ts
+function formatPrice(price: number | string): string {
+  if (typeof price === "string") {
+    type Here = Expect<Equal<typeof price, string>>;
+    return Number(price).toFixed(2);
+  }
+  type Here = Expect<Equal<typeof price, number>>;
+  return price.toFixed(2);
+}
+```
+
+The `type Here = ...` lines are proofs, not decoration: each one fails to compile unless `price` has exactly that type at that point. Narrowing is a set operation too:
+
+$$
+\operatorname{narrow}(T, g) = \begin{cases} T \cap G & \text{in the branch where } g \text{ is true} \\ T \setminus G & \text{in the branch where } g \text{ is false} \end{cases}
+$$
+
+where
+
+- $T$ is the type of the variable before the test (its declared or current type);
+- $g$ is the guard, such as `typeof price === "string"`;
+- $G$ is the set of values for which $g$ is true;
+- $\cap$ keeps what is in both; $\setminus$ keeps what is in $T$ but not in $G$.
+
+Example: $T = \texttt{number} \mid \texttt{string}$ and $G = V(\texttt{string})$. The true branch gets $T \cap G = \texttt{string}$, and `Number("9.5").toFixed(2)` is `"9.50"`. After the `if`, which returned, only the false branch continues, with $T \setminus G = \texttt{number}$, and `(9.5).toFixed(2)` is `"9.50"`.
+
+$G$ comes from what JavaScript's `typeof` really returns, and that includes an old wart: `typeof null` is `"object"`. So `typeof tags === "object"` does **not** remove `null`:
+
+```ts
+function keepsNull(tags: string[] | null): string {
+  if (typeof tags === "object") {
+    type Here = Expect<Equal<typeof tags, string[] | null>>; // typeof null is "object"
+    return tags === null ? "null" : "array";
+  }
+  return "never reached";
+}
+```
+
+### Level 3: truthiness, equality, `in` and `instanceof`
+
+The same rule works with four other guards. Each line below is checked in the lab.
+
+| Guard | True branch | False branch | Lab example |
+|---|---|---|---|
+| `if (name)` | removes `null` and `undefined` | keeps everything, **including `""`** | `greet("")` is `"Hello, guest"` |
+| `a === b` | both sides narrow to the types they share | unchanged | `a` is a string or number, `b` a string or boolean: both become `string` |
+| `"swim" in animal` | members that have `swim` | members that do not | `Fish` and `Bird` |
+| `value instanceof Date` | `Date` | the rest | `Date` and `string` |
+
+```ts
+function greet(name: string | null | undefined): string {
+  if (name) {
+    type Here = Expect<Equal<typeof name, string>>;
+    return `Hello, ${name}`;
+  }
+  return "Hello, guest"; // null, undefined and also ""
+}
+function joinIfEqual(a: string | number, b: string | boolean): string {
+  if (a === b) {
+    type Here = Expect<Equal<typeof a | typeof b, string>>; // string is the only overlap
+    return a + b;
+  }
+  return "different";
+}
+```
+
+```ts
+function move(animal: Fish | Bird): string {
+  if ("swim" in animal) return animal.swim();
+  return animal.fly();
+}
+function toDate(value: Date | string): Date {
+  if (value instanceof Date) return value;
+  return new Date(value);
+}
+```
+
+Truthiness is the one to watch. The empty string `""` is a perfectly good name, but it is falsy, so `greet("")` falls through to `"Hello, guest"`. When `""` or `0` are valid, test `name != null` instead, which removes exactly `null` and `undefined`.
+
+### Level 4: your own guards, and assertion functions
+
+When the check is more than one operator, wrap it in a function and tell the compiler what a `true` result means. The return type `animal is Fish` is a **type predicate**:
+
+```ts
+function isFish(animal: Fish | Bird): animal is Fish {
+  return "swim" in animal;
+}
+function assertIsString(value: unknown): asserts value is string {
+  if (typeof value !== "string") {
+    throw new TypeError(`expected a string, got ${typeof value}`);
+  }
+}
+function shout(input: unknown): string {
+  assertIsString(input);
+  return input.toUpperCase(); // input: string from here on
+}
+```
+
+An **assertion function** (TypeScript 3.7) has return type `asserts value is string`. It does not return a boolean; it **throws** when the check fails, so the code after the call may assume it passed. The two promises:
+
+$$
+\begin{aligned}
+\texttt{x is T}: &\quad f(x) = \texttt{true} \iff x \in V(T) \\
+\texttt{asserts x is T}: &\quad f(x) \text{ returns normally} \implies x \in V(T)
+\end{aligned}
+$$
+
+where
+
+- $f$ is the guard function and $x$ the argument it checks;
+- $V(T)$ is the set of values of type $T$;
+- $\iff$ is "exactly when" (the 5.5 release notes call it *"if and only if" semantics*): `true` means $x$ is a $T$, and `false` means it is **not**, so the compiler narrows both branches;
+- $\implies$ is "if ... then": an assertion only promises something when it returns.
+
+Example: `isFish({ fly: ... })` returns `false`, so in the else branch the argument is `Bird`. `shout("hi")` passes the assertion and returns `"HI"`; `shout(42)` never reaches `toUpperCase`, because `assertIsString` throws `TypeError: expected a string, got number`.
+
+The compiler **trusts** these promises and does not check the body. A guard that lies compiles cleanly and crashes later:
+
+```ts
+function isFishLie(animal: Fish | Bird): animal is Fish {
+  return true; // tsc trusts the predicate and does not check the body
+}
+```
+
+The lab calls `isFishLie(bird) ? bird.swim() : ""` on a bird and gets a `TypeError`. A type guard is as unsafe as an `as` assertion; keep each one tiny and test it.
+
+### Level 5: control-flow analysis follows assignments and joins
+
+Narrowing is not limited to `if` tests. The compiler tracks every assignment, and where two paths meet it takes the union of what each path knew:
+
+```ts
+function pick(flag: boolean) {
+  let result: string | number | boolean;
+  if (flag) {
+    result = "yes";
+  } else {
+    result = 0;
+  }
+  return result; // the two paths meet: string | number, never boolean
+}
+```
+
+$$
+\operatorname{type}_{\text{join}}(x) = \operatorname{type}_1(x) \mid \operatorname{type}_2(x) \mid \dots \mid \operatorname{type}_k(x)
+$$
+
+where
+
+- a **join** is a point where $k$ paths through the code meet, such as the line after an `if`/`else`;
+- $\operatorname{type}_i(x)$ is the type $x$ has at the end of path $i$;
+- an assignment sets $\operatorname{type}_i(x)$ to the members of the declared type that the new value fits.
+
+Example: in `pick`, the declared type is `string | number | boolean`. The `then` path assigns `"yes"`, which fits only `string`; the `else` path assigns `0`, which fits only `number`. At the `return` the join gives `string | number`, and the lab proves that `ReturnType<typeof pick>` is exactly that: `boolean` was declared but can never come out.
+
+A callback is harder, because it may run **later**, after more assignments. If a variable is assigned after the callback is created, the narrowing cannot be trusted inside it:
+
+```ts
+let late: string | number = "a";
+// @ts-expect-error: late is assigned again below, so the closure cannot trust "string"
+const readLate = () => late.toUpperCase();
+late = 1;
+```
+
+```text
+error TS2339: Property 'toUpperCase' does not exist on type 'string | number'.
+  Property 'toUpperCase' does not exist on type 'number'.
+```
+
+The error is real: the lab calls `readLate()` after `late = 1` and gets a `TypeError`. Since TypeScript 5.4, narrowing **is** kept inside a closure created after the variable's **last** assignment:
+
+```ts
+function withQuery(url: string | URL, names: string[]): string[] {
+  if (typeof url === "string") {
+    url = new URL(url);
+  }
+  return names.map(name => {
+    url.searchParams.set("lang", name); // TypeScript 5.4+: url is URL after its last assignment
+    return url.toString();
+  });
+}
+```
+
+### Level 6: inferred type predicates (TypeScript 5.5)
+
+Filtering out `null` is the most common narrowing of all. Since TypeScript 5.5 the compiler infers the predicate from the arrow function itself:
+
+```ts
+const scores = [90, null, 75].filter(score => score !== null);
+const truthy = [90, null, 0].filter(score => !!score);
+type ScoresAreNumbers = Expect<Equal<typeof scores, number[]>>;
+type TruthyKeepsNull = Expect<Equal<typeof truthy, (number | null)[]>>;
+```
+
+`score => score !== null` is inferred as `(score: number | null) => score is number`, and `filter`'s overload for predicates returns `number[]`. The truthiness version gets **no** predicate, because of the "if and only if" rule from Level 4:
+
+$$
+\text{infer } (x \text{ is } T) \iff T = \operatorname{narrow}_{\text{true}}(D, b) \neq D \;\land\; \operatorname{narrow}_{\text{false}}(T, b) = \texttt{never}
+$$
+
+where
+
+- $x$ is the parameter and $D$ its declared type;
+- $b$ is the boolean expression the function returns;
+- $\operatorname{narrow}_{\text{true}}(D, b)$ is the type of $x$ where $b$ is true, starting from $D$;
+- $\operatorname{narrow}_{\text{false}}(T, b)$ is the type of $x$ where $b$ is false, starting from $T$: if a $T$ can still make $b$ false, a `false` result would not prove "not $T$".
+
+Example: for `score !== null`, $D = \texttt{number} \mid \texttt{null}$. True branch: $T = \texttt{number} \neq D$. False branch starting from `number`: `score !== null` is never false for a number, so it is `never`. Both hold, and the predicate `score is number` is inferred. For `!!score`: true branch $T = \texttt{number}$, but the false branch starting from `number` is still `number`, because `0` is falsy. It is not `never`, so no predicate is inferred, and `truthy` stays `(number | null)[]`, although at runtime it is `[90]` (the `0` was dropped too).
+
+## How it works underneath
+
+The **binder** walks each function once and builds a **control-flow graph**: a node for every assignment, every condition (with a true and a false copy), every call that might be an assertion, and a **label** wherever paths meet. Each reference to a variable remembers the flow node just before it.
+
+When the checker needs the type of `price` at some line, `getFlowTypeOfReference` (in `internal/checker/flow.go` of `microsoft/typescript-go`) walks that graph **backwards** from the reference. Trimmed, with comments added:
+
+```text
+switch {
+case flags&ast.FlowFlagsAssignment != 0:
+	t = c.getTypeAtFlowAssignment(f, flow)   // x = e: the declared type, reduced to what e fits
+case flags&ast.FlowFlagsCondition != 0:
+	t = c.getTypeAtFlowCondition(f, flow)    // a guard: narrow the type found further back
+case flags&ast.FlowFlagsBranchLabel != 0:
+	t = c.getTypeAtFlowBranchLabel(f, flow, antecedents)  // a join: union of every incoming path
+case flags&ast.FlowFlagsStart != 0:
+	t = FlowType{t: f.initialType}           // the top of the function: the declared type
+}
+```
+
+For `pick`, the walk from `return result` reaches the branch label after the `if`, follows both antecedents, finds the assignments `result = "yes"` (type `string`) and `result = 0` (type `number`), and returns their union. A condition node calls the matching narrowing function: `narrowTypeByTypeof`, `narrowTypeByInKeyword`, `narrowTypeByInstanceof`, the equality and truthiness rules, or `narrowTypeByTypePredicate` for your own guards. A call to an assertion function is a separate kind of node, handled by `getTypeAtFlowCall`, which applies the same predicate narrowing as if the result were `true`. All of them filter the members of a union, which is the $T \cap G$ and $T \setminus G$ of Level 2. The design dates from Anders Hejlsberg's pull request #8010, "Control flow based type analysis", in TypeScript 2.0.
+
+Inferred predicates reuse the same machinery. `getTypePredicateFromBody` only tries functions with a single `return`; then `checkIfExpressionRefinesParameter` builds a fake true-condition node and a fake false-condition node around the returned expression and asks `getFlowTypeOfReference` for the parameter's type under each. The source comment says it directly: *"'x is T' means that x is T if and only if it returns true. If it returns false then x is not T."* The false-branch type must reduce to `never`, which is the Level 6 formula.
+
+Assertion calls are flow nodes too: the binder records each call statement as a **possible** assertion, and the checker decides later by looking at the callee's type. If that type had to be inferred, the inference could need control-flow analysis of the very code being analysed. Anders Hejlsberg's pull request #32695 therefore requires that *"each identifier in the function name references an entity with an explicit type"*, a rule that *"exists so that control flow analysis of potential assertion calls doesn't circularly trigger further analysis."* Breaking it gives `TS2775`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Calling a member that only some union members have | `TS2339: Property 'toFixed' does not exist on type ...`; a `TypeError` if forced | Narrow first with `typeof`, `in`, `instanceof` or a guard |
+| `if (value)` when `0` or `""` are valid | Valid values take the "missing" branch: `greet("")` is `"Hello, guest"` | Test `value != null` |
+| `typeof x === "object"` to mean "a real object" | `null` is still in the type | Add `x !== null` |
+| A type predicate whose body does not match its promise | Compiles, then `TypeError` | Keep guards tiny; test both branches |
+| An arrow-function assertion without a type on the variable | `TS2775: Assertions require every name in the call target to be declared with an explicit type annotation.` | Use a `function` declaration, or annotate the `const` |
+| Expecting narrowing inside a callback when the variable changes later | The narrowed type is lost in the closure | Copy the value into a `const` before creating the callback |
+| `filter(x => !!x)` to drop `null` from numbers | The element type still includes `null`, and `0` is dropped | `filter(x => x !== null)` |
+
+## Interview questions
+
+### 1. What is the difference between `x is T` and `asserts x is T`?
+
+**Answer.** `x is T` is the return type of a function that returns a boolean; the compiler narrows `x` to `T` where the result is `true` and removes `T` where it is `false` ("if and only if"). `asserts x is T` is the return type of a function that returns nothing and **throws** if the check fails; the compiler narrows `x` to `T` for all code after the call. In the lab, `isFish` drives an `if`, and `assertIsString(input)` is a statement after which `input.toUpperCase()` compiles. Neither body is verified. An assertion must also be called through names with explicit types:
+
+```ts
+const assertArrow = (value: unknown): asserts value is string => assertIsString(value);
+function lengthOf(input: unknown): number {
+  // @ts-expect-error: an assertion must be called through a name with an explicit type
+  assertArrow(input);
+  return 0;
+}
+```
+
+```text
+error TS2775: Assertions require every name in the call target to be declared with an explicit type annotation.
+```
+
+### 2. Why can't you read `contact.name` on `Named | Aged`, when the union has more values than `Named`?
+
+**Answer.** Because what you may do depends on **every** value in the set. $V(\texttt{Named} \mid \texttt{Aged}) = V(\texttt{Named}) \cup V(\texttt{Aged})$ is bigger, so the common properties shrink: $P = \lbrace \texttt{name} \rbrace \cap \lbrace \texttt{age} \rbrace = \emptyset$. For an intersection it is the reverse: fewer values, more properties. The lab's `nameOf({ age: 36 })` returns `undefined`, which is the bug `TS2339` prevents.
+
+### 3. Why does `[90, null, 75].filter(s => s !== null)` give `number[]`, but `filter(s => !!s)` does not?
+
+**Answer.** Since TypeScript 5.5 the compiler infers a type predicate from a single-`return` function when it is valid in **both** directions. `s !== null` is true exactly for numbers, so `s is number` is inferred and the predicate overload of `filter` returns `number[]`. `!!s` is false for `0`, a number, so "false" would not prove "not a number"; no predicate is inferred and the result stays `(number | null)[]`. The runtime confirms the difference: the truthiness filter also drops `0` and returns `[90]`.
+
+### 4. Why does `typeof x === "object"` not exclude `null`?
+
+**Answer.** Narrowing follows JavaScript's real `typeof`, and `typeof null === "object"` (the lab checks it). The set $G$ for the guard `"object"` therefore includes `null`, and $T \cap G$ for `string[] | null` is still `string[] | null`. Add `x !== null`, or test `Array.isArray(x)`.
+
+### 5. Why does narrowing disappear inside a callback?
+
+**Answer.** A callback can run later. If the variable is assigned **after** the callback is created, the narrowed type might be stale when the callback runs, so the compiler falls back to the declared type: `readLate` sees `string | number` and the lab shows it really does crash after `late = 1`. Since TypeScript 5.4, narrowing is kept for `let` variables and parameters when the closure is created after the **last** assignment, as in `withQuery`. Otherwise, copy the narrowed value into a `const`.
+
+## Summary
+
+$$
+\operatorname{narrow}(T, g) = \begin{cases} T \cap G & g \text{ true} \\ T \setminus G & g \text{ false} \end{cases}, \qquad \operatorname{type}_{\text{join}}(x) = \operatorname{type}_1(x) \mid \dots \mid \operatorname{type}_k(x)
+$$
+
+where $T$ is the type before the guard $g$, $G$ the set of values for which $g$ holds, and at a join the type is the union of the types on the $k$ incoming paths.
+
+Example: `price: number | string` with $g$ = `typeof price === "string"` gives `string` inside the `if` and `number` after it; in `pick`, the paths give `string` and `number`, so the result is `string | number`.
+
+- A union is set union ("or"), an intersection is set intersection ("and"); readable properties go the opposite way.
+- `typeof`, truthiness, `===`, `in` and `instanceof` narrow unions; mind `typeof null` and falsy `0` and `""`.
+- `x is T` narrows both branches of an `if`; `asserts x is T` narrows everything after the call. Both are trusted, not checked.
+- Control-flow analysis walks back through assignments and conditions and unions the types where paths meet.
+- Since 5.4 closures keep narrowing after the last assignment; since 5.5 simple guards are inferred.
+
+## References
+
+- TypeScript Handbook: [Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html), [Everyday Types: Union Types](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html), [Object Types: Intersection Types](https://www.typescriptlang.org/docs/handbook/2/objects.html).
+- Release notes: [TypeScript 2.0 (control flow based type analysis)](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-2-0.html), [TypeScript 3.7 (assertion functions)](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-7.html), [TypeScript 5.4 (preserved narrowing in closures)](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-4.html), [TypeScript 5.5 (inferred type predicates)](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-5.html).
+- Anders Hejlsberg, [Control flow based type analysis](https://github.com/microsoft/TypeScript/pull/8010), pull request #8010 (2016), and [Assertions in control flow analysis](https://github.com/microsoft/TypeScript/pull/32695), pull request #32695 (2019); Dan Vanderkam, [Infer type predicates from function bodies using control flow analysis](https://github.com/microsoft/TypeScript/pull/57465), pull request #57465 (2024).
+- The checker source: [internal/checker/flow.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/flow.go) in `microsoft/typescript-go`.
+- Dan Vanderkam, *Effective TypeScript*, 2nd ed. (O'Reilly, 2024), Items 7 and 22 ([item list](https://github.com/danvk/effective-typescript)).
+- Matt Pocock, *Total TypeScript Essentials*, chapter [Unions, Literals, and Narrowing](https://www.totaltypescript.com/books/total-typescript-essentials/unions-literals-and-narrowing).
+- Basarat Ali Syed, *TypeScript Deep Dive*: [Type Guard](https://basarat.gitbook.io/typescript/type-system/typeguard).
+- Lab: [`labs/unions-and-narrowing.ts`](labs/unions-and-narrowing.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node unions-and-narrowing.ts`.

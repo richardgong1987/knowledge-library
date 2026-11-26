@@ -1,0 +1,337 @@
+---
+title: "any, unknown and Runtime Validation"
+description: "TypeScript's escape hatches and how to close them: the type lattice with unknown at the top and never at the bottom, any escaping both, unchecked as and ! assertions, JSON.parse returning any, type guards, a small hand-written parser, branded types, and satisfies versus as."
+---
+
+## The problem
+
+A server receives a JSON body and the code says it is a `User`:
+
+```ts
+type User = { id: number; name: string };
+const body = '{"id": "42", "name": "Ada"}';
+const user: User = JSON.parse(body); // compiles: JSON.parse returns any
+```
+
+The client sent `"42"`, a string, not `42`. The program compiles, and a few lines later `user.id.toFixed(2)` throws `TypeError: user.id.toFixed is not a function`. Nothing was wrong with the types the compiler could see. The mistake is that **types do not exist at runtime**: they are erased, so `tsc` cannot check bytes that arrive from a network, a file or a user. It can only check what the code *claims* about them, and `JSON.parse` returns `any`, a type that accepts every claim.
+
+This chapter is about the boundary between checked code and the outside world: which types let unchecked values in (`any`, `as`, `!`), which type keeps them out (`unknown`), and how a small runtime parser turns outside data into a value the compiler can trust.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## Parcels at the airport
+
+- **`unknown`** is a sealed parcel from a stranger. You may carry it around, but you may not use what is inside until you open it and look.
+- **`any`** is a parcel with a **"TRUST ME"** sticker. Security waves it through, and you may label it anything you like: "toothbrush", "phone", "cake". Whatever it really is.
+- **`never`** is the label for a parcel that cannot exist. No parcel ever carries it, so any shelf can promise to hold it.
+- A **type guard** is the security officer who opens the parcel and checks. A **brand** is the officer's stamp: "checked". Only the officer has the stamp.
+
+The TypeScript 3.0 release notes introduced `unknown` in one line: "`unknown` is the type-safe counterpart of `any`." Alexis King's essay *Parse, don't validate* (2019) gives the method used in Level 4: "a parser is just a function that consumes less-structured input and produces more-structured output." Dan Vanderkam's *Effective TypeScript*, Item 46: *Use unknown Instead of any for Values with an Unknown Type.*
+:::
+
+## From simple to advanced
+
+The lab proves type-level claims with `Expect<Equal<A, B>>` and adds one more helper, `Assignable<From, To>`, which is `true` when a `From` value may be stored in a `To` variable:
+
+```ts
+type Assignable<From, To> = [From] extends [To] ? true : false;
+```
+
+### Level 1: the lattice, with `unknown` on top and `never` at the bottom
+
+Think of a type as a set of values ([Unions and Narrowing](03-unions-and-narrowing.qmd)). `string` is the set of all strings, `'ada'` is a set with one string in it, `unknown` is the set of **every** value, and `never` is the **empty** set. Assignability is the subset relation:
+
+```ts
+type Level1 = [
+  Expect<Equal<Assignable<string, unknown>, true>>,
+  Expect<Equal<Assignable<unknown, string>, false>>,
+  Expect<Equal<Assignable<never, string>, true>>,
+  Expect<Equal<Assignable<string, never>, false>>,
+  Expect<Equal<Assignable<any, string>, true>>,
+  Expect<Equal<Assignable<string, any>, true>>,
+];
+```
+
+$$
+\forall T:\; \texttt{never} <: T <: \texttt{unknown},
+\qquad
+\forall T \ne \texttt{never}:\; \texttt{any} <: T \;\land\; T <: \texttt{any}
+$$
+
+where
+
+- $T$ is any type, and $\forall$ means "for every";
+- $S <: T$ means "a value of type $S$ may be used as a $T$", which for sets is $S \subseteq T$;
+- $\texttt{unknown}$ is the top (every value), $\texttt{never}$ the bottom (no value);
+- $\texttt{any}$ is not a set at all: it is a switch that makes both directions succeed.
+
+Example with $T = \texttt{string}$: $\texttt{never} <: \texttt{string}$ holds because the empty set is inside every set, and $\texttt{string} <: \texttt{unknown}$ holds because every string is a value. The reverse, $\texttt{unknown} <: \texttt{string}$, fails, because 42 is in `unknown` but not in `string`. The `any` rule holds in both directions, which breaks the most useful law of subsets, transitivity: $\texttt{string} <: \texttt{any}$ and $\texttt{any} <: \texttt{boolean}$, yet $\texttt{string} <: \texttt{boolean}$ is false. The lab walks exactly that path:
+
+```ts
+const anything: any = 'hello';
+const flag: boolean = anything; // any flows into every type, even the wrong one
+// @ts-expect-error Type 'any' is not assignable to type 'never'.
+const impossible: never = anything;
+```
+
+`flag` is typed `boolean` and holds a string. The one door `any` cannot open is `never`, the empty set.
+
+Top and bottom also behave like 1 and 0 in arithmetic. In a union, `unknown` swallows everything and `never` disappears; in an intersection it is the other way round:
+
+```ts
+type Level1Algebra = [
+  Expect<Equal<string | unknown, unknown>>,
+  Expect<Equal<string & unknown, string>>,
+  Expect<Equal<string | never, string>>,
+  Expect<Equal<string & never, never>>,
+];
+```
+
+`never` is also the return type of a function that cannot return, such as one that always throws. Because `never` fits everywhere, `fail` can stand in any branch: in `parsePort`, the expression `Number.isInteger(port) ? port : fail(...)` has type `number | never`, which is `number`.
+
+### Level 2: `unknown` must be narrowed before use
+
+Assigning anything **to** `unknown` is free. Using an `unknown` value requires a check first:
+
+```ts
+function describe(value: unknown): string {
+  if (typeof value === 'string') return `text of length ${value.length}`;
+  if (typeof value === 'number') return `number ${value.toFixed(1)}`;
+  return 'something else';
+}
+```
+
+Each `typeof` test narrows `value` inside its branch, so `value.length` is allowed only where `value` is a `string`. Skipping the check is a compile error, and the lab confirms that the unchecked call would have crashed:
+
+```ts
+function shout(value: unknown): string {
+  // @ts-expect-error 'value' is of type 'unknown'.
+  return value.toUpperCase();
+}
+```
+
+### Level 3: `as` and `!` change the type, never the value
+
+A type assertion `e as T` tells the compiler "trust me, this is a `T`". It is erased, so the value is untouched:
+
+```ts
+const asserted = JSON.parse(body) as User;
+assert.equal(typeof asserted.id, 'string');
+```
+
+`as` does refuse claims that look impossible, but a detour through `unknown` gets past any refusal:
+
+```ts
+// @ts-expect-error Conversion of type 'string' to type 'number' may be a mistake
+const refused = 'hello' as number;
+const forced = 'hello' as unknown as number;
+assert.equal(typeof forced, 'string');
+```
+
+The rule, from the checker's `checkAssertionDeferred`:
+
+$$
+e \texttt{ as } T \text{ is accepted} \iff T \lesssim S \;\lor\; S \lesssim T
+$$
+
+where
+
+- $S$ is the type of the expression $e$ (widened, so `'hello'` counts as `string`);
+- $T$ is the asserted type;
+- $X \lesssim Y$ is *comparability*, a looser form of assignability ($X$ could be a $Y$);
+- $\lor$ means "or". The result has type $T$ whether or not the value is one.
+
+Example 1: $S = \texttt{string}$, $T = \texttt{number}$. Neither is comparable to the other, so TS2352 is reported. Example 2: `'hello' as unknown` has $T = \texttt{unknown}$, and $\texttt{string} \lesssim \texttt{unknown}$ holds, so it passes. Then `unknown as number` has $S = \texttt{unknown}$ and $\texttt{number} \lesssim \texttt{unknown}$ holds, so it passes too. Since every type is comparable to `unknown`, a double assertion passes for every pair of types.
+
+The non-null assertion `x!` is the same promise about one fact: "this is not `null` or `undefined`". When the promise is false, the crash comes later:
+
+```ts
+const ages = new Map([['ada', 36]]);
+assert.equal(ages.get('ada')!, 36);
+assert.throws(() => ages.get('alan')!.toFixed(), {
+  message: "Cannot read properties of undefined (reading 'toFixed')",
+});
+```
+
+`any` is also **contagious**: every property of an `any` is `any`, so one `JSON.parse` can spread unchecked values through a program. Annotating the result as `unknown` stops the spread at the first use:
+
+```ts
+const parsed = JSON.parse(body);
+const id = parsed.id;
+type Level3 = [Expect<Equal<typeof parsed, any>>, Expect<Equal<typeof id, any>>];
+const contained: unknown = JSON.parse(body);
+// @ts-expect-error 'contained' is of type 'unknown'.
+assert.equal(contained.id, '42');
+```
+
+### Level 4: check the value, then let the types follow
+
+A **type guard** is a function whose return type is a predicate, `value is User`. When it returns `true`, the caller's variable is narrowed to `User`:
+
+```ts
+function isUser(value: unknown): value is User {
+  return typeof value === 'object' && value !== null
+    && 'id' in value && typeof value.id === 'number'
+    && 'name' in value && typeof value.name === 'string';
+}
+```
+
+`'id' in value` narrows `value` from `object` to `object & Record<'id', unknown>` (TypeScript 4.9; the lab's `hasId` checks this type), which is what makes `value.id` legal on the next test. `isUser(JSON.parse(body))` is `false` because `"42"` is a string.
+
+A **parser** goes one step further. Instead of answering yes or no, it returns a fresh, typed value or throws an error that says what was wrong:
+
+```ts
+function parseUser(json: string): User {
+  const value: unknown = JSON.parse(json);
+  if (typeof value !== 'object' || value === null) throw new InvalidUserError('not an object');
+  if (!('id' in value) || typeof value.id !== 'number') throw new InvalidUserError('id must be a number');
+  if (!('name' in value) || typeof value.name !== 'string') throw new InvalidUserError('name must be a string');
+  return { id: value.id, name: value.name };
+}
+```
+
+`parseUser(body)` throws `InvalidUserError: id must be a number`, at the boundary, with a message a client can act on. `parseUser('{"id": 42, "name": "Ada", "admin": true}')` returns `{ id: 42, name: 'Ada' }`: building a new object also drops the unexpected `admin` field. No `as` appears anywhere, so every claim in the return type was checked by `tsc`.
+
+One caution. The compiler checks *calls* of a type guard, not its *body*. A predicate that lies compiles:
+
+```ts
+function isUserLie(value: unknown): value is User {
+  return typeof value === 'object';
+}
+```
+
+Since TypeScript 5.5, simple one-line checks infer their predicate, which removes this risk for them: `const isNumber = (x: unknown) => typeof x === 'number'` has the type `(x: unknown) => x is number`, and `[1, 'two', 3].filter(isNumber)` is typed `number[]`; the lab checks both types.
+
+### Level 5: a brand remembers that a check happened
+
+A parser's result is often still a `string`, such as a validated email address. A **brand** makes "checked string" a different type from "any string":
+
+```ts
+type Email = string & { readonly __brand: 'Email' };
+function parseEmail(text: string): Email {
+  if (!/^[^@\s]+@[^@\s]+$/.test(text)) throw new InvalidEmailError(text);
+  return text as Email;
+}
+function sendWelcome(to: Email): string {
+  return `welcome mail to ${to}`;
+}
+```
+
+No real string has a `__brand` property, so the only way to get an `Email` is through the single `as` inside `parseEmail`, right after the check. Passing an unchecked string fails:
+
+```text
+error TS2345: Argument of type 'string' is not assignable to parameter of type 'Email'.
+  Type 'string' is not assignable to type '{ readonly __brand: "Email"; }'.
+```
+
+The brand costs nothing at runtime: it is erased, and an `Email` is an ordinary string.
+
+### Level 6: `satisfies` checks; `as` overrides
+
+`e satisfies T` (TypeScript 4.9) checks that the expression fits `T`, but **keeps the expression's own type**. `as` does the opposite: it barely checks, and replaces the type.
+
+```ts
+const assertedConfig = { port: 8080 } as Config; // compiles: host is missing
+assert.equal(assertedConfig.host, undefined);
+// @ts-expect-error Property 'host' is missing in type '{ port: number; }' but required in type 'Config'.
+const checkedConfig = { port: 8080 } satisfies Config;
+```
+
+The kept type matters for lookups. With an annotation, the object's keys are forgotten; with `satisfies`, they are remembered:
+
+```ts
+const routes = { home: '/', user: '/users/:id' } satisfies Record<string, string>;
+const annotated: Record<string, string> = { home: '/', user: '/users/:id' };
+type Level6 = Expect<Equal<typeof routes, { home: string; user: string }>>;
+// @ts-expect-error Property 'nope' does not exist on type '{ home: string; user: string; }'.
+assert.equal(routes.nope, undefined);
+```
+
+| Form | What `tsc` checks | Type of the result |
+|---|---|---|
+| `const x: T = e` | $S <: T$ | $T$ |
+| `e as T` | $T \lesssim S$ or $S \lesssim T$ | $T$ |
+| `e satisfies T` | $S <: T$ | $S$ |
+
+## How it works underneath
+
+**The lattice is a few lines of the relater.** Before any structural comparison, TypeScript 7's `isSimpleTypeRelatedTo` ([internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go)) runs fast checks on the two types' flags. Trimmed, with comments added:
+
+```text
+if t&TypeFlagsAny != 0 || s&TypeFlagsNever != 0 { return true }   // anything -> any, never -> anything
+if t&TypeFlagsUnknown != 0 { return true }                          // anything -> unknown
+if t&TypeFlagsNever != 0 { return false }                           // nothing else -> never
+...
+if relation == c.assignableRelation || relation == c.comparableRelation {
+    if s&TypeFlagsAny != 0 { return true }                          // any -> anything left
+}
+```
+
+The order explains Level 1 precisely. `any` as a target and `never` as a source succeed first. `never` as a target is refused before the "source is `any`" rule is reached, which is why `const impossible: never = anything` fails. And `unknown` as a source has no rule at all, so it falls through to the structural check and fails against `string`.
+
+**Narrowing is control-flow analysis.** The checker walks the code's branches and, at each reference to `value`, computes its type from the tests that must have passed: `typeof value === 'string'` filters a union to `string`, `value !== null` removes `null`, and `'id' in value` intersects with `Record<'id', unknown>`. A call to a function declared `value is User` counts as such a test. The checker verifies that the guard's body returns a `boolean`, not that it tells the truth.
+
+**`JSON.parse` returns `any` by declaration.** `lib.es5.d.ts` declares `parse(text: string, reviver?: (this: any, key: string, value: any) => any): any;`. That declaration is older than `unknown` itself (added in 3.0) and has stayed `any`, so writing the `unknown` annotation is your job.
+
+**`satisfies` in one function.** `checkSatisfiesExpression` checks `exprType` against the target with the normal assignability rule, then `return exprType`. A type assertion instead returns the target type, after the comparability check in `checkAssertionDeferred`.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Storing `JSON.parse` output in a typed variable | Wrong data passes; a later `TypeError` such as `user.id.toFixed is not a function` | Annotate as `unknown` and parse it |
+| Using `as User` on outside data | Same as above, now with the bug hidden behind an explicit claim | A parser function that checks every field |
+| `!` on a lookup that can miss | `Cannot read properties of undefined (reading 'toFixed')` | Check for `undefined`, or supply a default with `??` |
+| A type guard whose body does not match its predicate | Code compiles and narrows to the wrong type | Keep guards tiny and tested; let TypeScript 5.5 infer simple ones |
+| Using `as` to make an object literal "fit" | Missing properties compile; `assertedConfig.host` is `undefined` | Use an annotation or `satisfies` |
+| Annotating a lookup table as `Record<string, V>` | Typos such as `routes.nope` compile and return `undefined` | `satisfies Record<string, V>` keeps the real keys |
+
+## Interview questions
+
+### 1. What is the difference between `any`, `unknown` and `never`?
+
+**Answer.** As sets of values, `unknown` is all values (the top type) and `never` is no values (the bottom type): $\texttt{never} <: T <: \texttt{unknown}$ for every $T$. So anything can be assigned to `unknown`, but an `unknown` must be narrowed before it is used; and `never` can be assigned to anything, but nothing except `never` can be assigned to it. `any` is not a set: it switches checking off in both directions, so it is assignable to and from every type except `never`. That breaks transitivity, which is why `const flag: boolean = anything` holds a string in the lab. Use `unknown` for values you have not checked yet, `never` for impossible cases, and `any` only at a boundary you are about to check.
+
+### 2. What does `as` check, and why does `x as unknown as T` always compile?
+
+**Answer.** `e as T` requires the two types to be *comparable* in one direction or the other; it rejects `'hello' as number` with TS2352 because `string` and `number` have no overlap. It never looks at the value: the result simply has type `T`. Every type is comparable to `unknown`, so `x as unknown` always passes, and `unknown as T` passes for the same reason. The double assertion therefore converts anything to anything. TypeScript's own error message suggests it ("convert the expression to 'unknown' first"), which is a sign it is meant for rare, deliberate cases.
+
+### 3. How do you validate JSON at runtime without a library?
+
+**Answer.** Parse into `unknown`, check each field with `typeof`, `in` and `Array.isArray`, and build a new object from the checked fields, throwing a named error on the first failure. The lab's `parseUser` does exactly that and contains no `as`, so the compiler verifies that each returned field was checked. This is Alexis King's "parse, don't validate": the function's output type records what the checks proved, so later code cannot forget them. Schema libraries automate the same pattern, deriving both the parser and the TypeScript type from one schema.
+
+### 4. What is a branded type?
+
+**Answer.** An intersection of a base type with a property no real value has, such as `string & { readonly __brand: 'Email' }`. Ordinary strings are not assignable to it, so a function taking `Email` can only receive a value that came through the single `as` inside the parser. It simulates nominal typing inside TypeScript's structural system, and it is free at runtime because the brand is erased. Dan Vanderkam's *Effective TypeScript* covers it as Item 64, *Consider Brands for Nominal Typing*.
+
+### 5. When do you use `satisfies` instead of an annotation or `as`?
+
+**Answer.** When you want the check of an annotation but the precise type of the expression. `const routes = {...} satisfies Record<string, string>` reports a non-string value and keeps the keys `home` and `user`, so `routes.nope` is an error; the annotated version accepts `annotated.nope`. `as` is the wrong tool for both jobs: it checks only comparability, so `{ port: 8080 } as Config` compiles without `host`, while `satisfies Config` reports `Property 'host' is missing`.
+
+## Summary
+
+$$
+\forall T:\; \texttt{never} <: T <: \texttt{unknown},
+\qquad
+\texttt{any} <: T \;\land\; T <: \texttt{any} \;\; (T \ne \texttt{never})
+$$
+
+where $T$ is any type, $<:$ is assignability (the subset relation on values), `unknown` is the set of all values, `never` the empty set, and `any` a switch that turns the check off.
+
+Example: with $T = \texttt{string}$, `never` fits into `string` and `string` fits into `unknown`, but `unknown` does not fit into `string`. Through `any`, a `string` reaches a `boolean` variable: the lab's `flag` holds `'hello'`.
+
+- Data from outside the program is `unknown` until a runtime check says otherwise; `JSON.parse` returns `any`, so annotate it.
+- `any`, `as` and `!` are unchecked promises; the value is never converted.
+- Narrow with `typeof`, `in`, `instanceof` and `Array.isArray`; type guards are trusted, not verified.
+- Parse, don't validate: return a new, typed value or throw a named error.
+- Brands turn "checked" into a type; `satisfies` checks without forgetting the precise type.
+
+## References
+
+- TypeScript Handbook: [Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html) (type predicates, `in`), [Everyday Types](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html) (type assertions, non-null assertion), [Type Compatibility](https://www.typescriptlang.org/docs/handbook/type-compatibility.html) (`any`, `unknown`, `never`).
+- Release notes: [TypeScript 3.0](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-0.html) (`unknown`), [TypeScript 4.9](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html) (`satisfies`, `in` narrowing), [TypeScript 5.5](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-5.html) (inferred type predicates).
+- The TypeScript 7 sources: [internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go) (`isSimpleTypeRelatedTo`), [internal/checker/checker.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/checker.go) (`checkAssertionDeferred`, `checkSatisfiesExpression`) and [lib.es5.d.ts](https://github.com/microsoft/typescript-go/blob/main/internal/bundled/libs/lib.es5.d.ts) (`JSON.parse`).
+- Alexis King, [Parse, don't validate](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/) (2019).
+- Dan Vanderkam, [*Effective TypeScript*](https://effectivetypescript.com/), 2nd ed., O'Reilly, 2024, Items 46 and 64.
+- Lab: [`labs/any-unknown-and-runtime-validation.ts`](labs/any-unknown-and-runtime-validation.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node any-unknown-and-runtime-validation.ts`.

@@ -1,0 +1,316 @@
+---
+title: "Conditional Types and infer"
+description: "TypeScript conditional types from the first if-statement on types to recursion: T extends U ? X : Y, distribution over unions and how to stop it, infer, ReturnType, Parameters, Awaited, Exclude and Extract written by hand, DeepReadonly, and never."
+---
+
+## The problem
+
+A helper takes either a list or a single value and returns the first item or the value itself: `firstOrSelf(['a', 'b'])` is `'a'`, and `firstOrSelf(7)` is `7`. What is its return type?
+
+- `T` is wrong for the list: it would claim the result is `string[]`.
+- `unknown` is honest but useless: every caller must cast.
+- Overloads work for two cases, then grow with every new case.
+
+The return type **depends on** the argument type: "if `T` is an array of `E`, the result is `E`; otherwise it is `T`." That sentence is an if-statement, but about types. A **conditional type** writes it down, and `infer` lets it name the `E`. The same tool lets you read a function's return type instead of copying it (`ReturnType<typeof greet>`), and is how `Exclude`, `Extract`, `Parameters` and `Awaited` are built.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A coin sorter and a fill-in-the-blank card
+
+- A **coin sorter** has one question: "does this coin fit the 10p slot?" Yes goes left, no goes right. That is `T extends U ? X : Y`.
+- Pour in a **bag of mixed coins** and the machine sorts them **one at a time**. A union is a bag, and the sorting is called *distribution*.
+- **`infer`** is a card that says "a box of \_\_\_\_". Hold it against a box of apples and the blank reads "apples". Hold it against a bag and nothing matches.
+
+Anders Hejlsberg introduced conditional types in TypeScript 2.8 ([pull request #21316](https://github.com/microsoft/TypeScript/pull/21316), 2018), which opens: "This PR introduces conditional types which add the ability to express non-uniform type mappings." Dan Vanderkam's *Effective TypeScript* gives distribution its own rule, Item 53: *Know How to Control the Distribution of Unions over Conditional Types.*
+:::
+
+## From simple to advanced
+
+As in [Mapped and Utility Types](07-mapped-and-utility-types.qmd), the lab proves type-level claims with `Expect<Equal<A, B>>`, which stops `tsc` unless `A` and `B` are the same type.
+
+### Level 1: an if-statement on types
+
+```ts
+type IsString<T> = T extends string ? true : false;
+type Level1 = [
+  Expect<Equal<IsString<'ada'>, true>>,
+  Expect<Equal<IsString<42>, false>>,
+];
+```
+
+`extends` here is not inheritance. It asks "is `T` assignable to `string`?" The rule:
+
+$$
+C\langle T \rangle =
+\begin{cases}
+X & \text{if } T <: U \\
+Y & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $C\langle T \rangle$ is the conditional type `T extends U ? X : Y` applied to a type $T$;
+- $U$ is the type after `extends`;
+- $T <: U$ means "$T$ is assignable to $U$": every value of $T$ is also a value of $U$;
+- $X$ and $Y$ are the true and false branches.
+
+Example with $U = \texttt{string}$, $X = \texttt{true}$, $Y = \texttt{false}$: for $T = \texttt{'ada'}$, the literal `'ada'` is a string, so $T <: U$ holds and the result is `true`. For $T = \texttt{42}$, a number is not a string, so the result is `false`.
+
+### Level 2: unions are sorted one member at a time
+
+When the checked type is a **naked type parameter** (just `T`, not wrapped in anything), a union argument is split, each member goes through the condition, and the results are joined again:
+
+```ts
+type ToArray<T> = T extends unknown ? T[] : never;
+type ToArrayWhole<T> = [T] extends [unknown] ? T[] : never;
+type Level2 = [
+  Expect<Equal<IsString<string | number>, boolean>>,
+  Expect<Equal<ToArray<string | number>, string[] | number[]>>,
+  Expect<Equal<ToArrayWhole<string | number>, (string | number)[]>>,
+];
+```
+
+$$
+C\langle A_1 \cup A_2 \cup \dots \cup A_n \rangle = C\langle A_1 \rangle \cup C\langle A_2 \rangle \cup \dots \cup C\langle A_n \rangle
+$$
+
+where
+
+- $A_1, \dots, A_n$ are the members of the union passed for $T$;
+- $\cup$ is union, written `|` in TypeScript;
+- $C$ must be distributive: its checked type is the bare type parameter.
+
+Example with `ToArray<string | number>`: $n = 2$, so the result is $C\langle \texttt{string} \rangle \cup C\langle \texttt{number} \rangle = \texttt{string[]} \cup \texttt{number[]}$. And `IsString<string | number>` is $\texttt{true} \cup \texttt{false}$, which is `boolean`. Wrapping both sides in a one-element tuple, `[T] extends [unknown]`, makes the checked type a tuple instead of a naked parameter, so nothing is split: `ToArrayWhole<string | number>` is one array, `(string | number)[]`.
+
+Distribution plus `never` gives a **filter**, because `never` is the empty union and vanishes when joined. That is all `Exclude` and `Extract` are:
+
+```ts
+type MyExclude<T, U> = T extends U ? never : T;
+type MyExtract<T, U> = T extends U ? T : never;
+```
+
+Example: `MyExclude<'a' | 'b' | 'c', 'a'>` sorts three members. `'a'` matches and becomes `never`; `'b'` and `'c'` do not and stay. The result is $\texttt{never} \cup \texttt{'b'} \cup \texttt{'c'} = \texttt{'b'} \cup \texttt{'c'}$. The lab checks it against the built-in `Exclude`.
+
+### Level 3: `infer` names a part of the match
+
+Inside the `extends` clause, `infer E` declares a new type variable and asks the checker to **solve** for it. This finishes the problem:
+
+```ts
+type ElementOf<T> = T extends readonly (infer E)[] ? E : T;
+type Level3Element = [
+  Expect<Equal<ElementOf<string[]>, string>>,
+  Expect<Equal<ElementOf<number>, number>>,
+];
+function firstOrSelf<T>(value: T): ElementOf<T> {
+  return (Array.isArray(value) ? value[0] : value) as ElementOf<T>;
+}
+```
+
+`firstOrSelf(['a', 'b'])` is typed `string` and `firstOrSelf(7)` is typed `number`, and the lab checks both values. The `as` is needed because inside the function `T` is still unknown, so `ElementOf<T>` cannot be decided yet; narrowing `value` with `Array.isArray` does not narrow the type parameter `T`. Without the `as`:
+
+```ts
+function firstOrSelfUnchecked<T>(value: T): ElementOf<T> {
+  // @ts-expect-error Type 'T' is not assignable to type 'ElementOf<T>'.
+  return Array.isArray(value) ? value[0] : value;
+}
+```
+
+The same move, with a function shape in the `extends` clause, gives two famous built-ins:
+
+```ts
+type MyReturnType<F> = F extends (...args: any[]) => infer R ? R : never;
+type MyParameters<F> = F extends (...args: infer P) => any ? P : never;
+```
+
+For `greet(name: string, times: number): string`, the lab proves that `MyReturnType<typeof greet>` is `string` and `MyParameters<typeof greet>` is the labelled tuple `[name: string, times: number]`, both equal to the built-ins. Matching an **overloaded** function infers from its last signature only:
+
+```ts
+function parse(input: string): number;
+function parse(input: number): string;
+function parse(input: string | number): number | string {
+  return typeof input === 'string' ? Number(input) : String(input);
+}
+type LastOverloadWins = Expect<Equal<ReturnType<typeof parse>, string>>;
+```
+
+### Level 4: a conditional type may call itself
+
+A promise of a promise must be unwrapped twice. A conditional type can refer to itself in a branch (since TypeScript 4.1), so it loops until the condition fails:
+
+```ts
+type MyAwaited<T> = T extends PromiseLike<infer V> ? MyAwaited<V> : T;
+```
+
+$$
+A(T) =
+\begin{cases}
+A(V) & \text{if } T <: \texttt{PromiseLike}\langle V \rangle \text{ for some } V \\
+T & \text{otherwise}
+\end{cases}
+$$
+
+where
+
+- $A$ is `MyAwaited`;
+- $V$ is the type that `infer V` solves for: what the promise resolves to;
+- the first case recurses, and the second case stops.
+
+Example: $A(\texttt{Promise<Promise<number>>}) = A(\texttt{Promise<number>}) = A(\texttt{number}) = \texttt{number}$, two unwrapping steps and then a stop, because `number` has no `then`. The lab checks it equals the built-in `Awaited<Promise<Promise<number>>>`. The built-in is more careful: it unwraps only objects whose `then` is callable, and passes `null` and `undefined` through.
+
+Recursion also makes `Readonly` deep. Functions are kept as they are, objects are mapped with `readonly` and recursed into, and primitives stop:
+
+```ts
+type DeepReadonly<T> = T extends (...args: any[]) => any
+  ? T
+  : T extends object
+    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+    : T;
+```
+
+```ts
+const order: DeepReadonly<Order> = { id: 1, address: { city: 'Liverpool' }, tags: ['new'] };
+// @ts-expect-error Cannot assign to 'city' because it is a read-only property.
+order.address.city = 'Leeds';
+// @ts-expect-error Property 'push' does not exist on type 'readonly string[]'.
+order.tags.push('paid');
+```
+
+The `tags` array became `readonly string[]` because the mapped type is homomorphic ([Level 5 of the previous chapter](07-mapped-and-utility-types.qmd)). As always, the values are untouched at runtime: after these lines, the lab finds `city` is `'Leeds'` and `tags` is `['new', 'paid']`.
+
+Recursion has a budget. A recursive call in a branch's tail position is run as a loop, and the loop stops at 1000 steps:
+
+```ts
+type BuildTuple<N extends number, Acc extends unknown[] = []> =
+  Acc['length'] extends N ? Acc : BuildTuple<N, [...Acc, unknown]>;
+type Level4Depth = Expect<Equal<BuildTuple<999>['length'], 999>>;
+// @ts-expect-error Type instantiation is excessively deep and possibly infinite.
+type TooDeep = BuildTuple<1000>;
+```
+
+### Level 5: `never`, `any` and `boolean`
+
+Three inputs surprise almost everyone:
+
+```ts
+type NaiveIsNever<T> = T extends never ? true : false;
+type IsNever<T> = [T] extends [never] ? true : false;
+type Level5 = [
+  Expect<Equal<NaiveIsNever<never>, never>>,
+  Expect<Equal<IsNever<never>, true>>,
+  Expect<Equal<IsNever<string>, false>>,
+  Expect<Equal<ToArray<never>, never>>,
+];
+```
+
+`never` is the union of zero members. Distribution over it runs the condition zero times and joins zero results:
+
+$$
+C\langle \texttt{never} \rangle = \bigcup_{i=1}^{0} C\langle A_i \rangle = \texttt{never}
+$$
+
+where $\bigcup_{i=1}^{n}$ joins $n$ results with $\cup$, and a union of nothing is `never`.
+
+Example: with $n = 0$ members, `NaiveIsNever<never>` never reaches either branch, so it is `never`, not `true`. The tuple wrapper turns off distribution, so `[never] extends [never]` is checked once and gives `true`.
+
+```ts
+type Level5Surprises = [
+  Expect<Equal<IsString<any>, boolean>>,
+  Expect<Equal<ToArray<boolean>, false[] | true[]>>,
+];
+```
+
+`any` might be a string and might not be, so the checker returns **both** branches: `true | false`. And `boolean` is itself the union `true | false`, so a distributive type sees two members.
+
+## How it works underneath
+
+In TypeScript 7 the rule lives in `getConditionalType` in the Go checker, [internal/checker/checker.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/checker.go). For `T extends U ? X : Y` it does this:
+
+1. **Infer.** If the `extends` clause contains `infer` declarations, run type inference from the checked type to `U`, the same machinery that infers a generic function's type arguments, and substitute the results into `U`.
+2. **Defer** if the checked type or `U` is still generic. That is why `ElementOf<T>` stays unresolved inside `firstOrSelf`.
+3. **Definitely false?** Replace every type parameter by a *wildcard* that is assignable both ways, the most permissive instantiation. If even that is not assignable, take the false branch. If the checked type is `any`, also add the true branch: the Level 5 `boolean`.
+4. **Definitely true?** Replace type parameters by a *restrictive* form with no constraint. If that is assignable, take the true branch.
+5. Otherwise return a deferred conditional type.
+
+Distribution happens one step earlier, when the conditional type is instantiated. The root records `isDistributive: checkType.flags&TypeFlagsTypeParameter != 0`: the checked type is a bare type parameter. If the argument is a union **or `never`**, the checker maps the conditional type over its members and joins the results, which is Level 2's formula and Level 5's empty case. `[T]` is a tuple type, not a type parameter, so it is not distributive.
+
+The recursion budget is the variable `tailCount`. When a branch resolves directly to another conditional type, the function loops instead of nesting, and the source checks `if tailCount == 1000` before reporting `Type instantiation is excessively deep and possibly infinite.` TypeScript 4.5 introduced this tail-recursion elimination. A recursive call that is not in tail position, such as `T | Recurse<Rest>`, nests instead, and nesting stops much sooner: the checker gives up at an instantiation depth of 100 (or after 5,000,000 instantiations).
+
+The built-ins in `lib.es5.d.ts` are the Level 2 and Level 3 code almost word for word, with constraints added:
+
+```ts
+// sketch: from lib.es5.d.ts in TypeScript 7.0
+type Exclude<T, U> = T extends U ? never : T;
+type Extract<T, U> = T extends U ? T : never;
+type Parameters<T extends (...args: any) => any> = T extends (...args: infer P) => any ? P : never;
+type ReturnType<T extends (...args: any) => any> = T extends (...args: any) => infer R ? R : any;
+```
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Accidental distribution | `ToArray` of a two-member union gives two array types instead of one array of both | Wrap both sides: `[T] extends [U]` |
+| Testing for `never` with `T extends never` | The result is `never`, not `true` | `[T] extends [never] ? true : false` |
+| Passing `any` to a type predicate like `IsString` | The result is `boolean`, both branches | Detect `any` first with `0 extends 1 & T`, which only `any` satisfies |
+| Returning a value from a function whose return type is an unresolved conditional type | `Type 'T' is not assignable to type 'ElementOf<T>'.` | Add one checked `as` at the return, or use overloads |
+| `ReturnType` of an overloaded function | Only the last overload's return type | Pick the overload explicitly, or avoid overloads |
+| Deep non-tail recursion | `Type instantiation is excessively deep and possibly infinite.` | Use an accumulator so the recursive call is in tail position |
+
+## Interview questions
+
+### 1. What is a distributive conditional type, and how do you turn distribution off?
+
+**Answer.** A conditional type whose checked type is a naked type parameter, as in `T extends U ? X : Y`. When `T` is instantiated with a union, the condition is applied to each member and the results are joined: `ToArray<string | number>` is `string[] | number[]`. Distribution is decided by the **declaration**, not the call. To turn it off, make the checked type something other than a bare parameter, conventionally a one-element tuple: `[T] extends [U]`. The lab shows `ToArrayWhole<string | number>` is `(string | number)[]`.
+
+### 2. Implement `ReturnType` and `Awaited`.
+
+**Answer.** Match the shape and let `infer` solve for the part you want:
+
+```ts
+type MyReturnType<F> = F extends (...args: any[]) => infer R ? R : never;
+```
+
+`Awaited` must unwrap repeatedly, so it calls itself: `type MyAwaited<T> = T extends PromiseLike<infer V> ? MyAwaited<V> : T`. Both are proved equal to the built-ins on the lab's examples. The built-in `Awaited` additionally passes `null` and `undefined` through, and unwraps only objects with a callable `then`, which models what `await` actually does.
+
+### 3. Why is `NaiveIsNever<never>` equal to `never`, not `true`?
+
+**Answer.** `never` is the empty union. `NaiveIsNever` is distributive, so the checker maps the condition over the members of `never`, of which there are none, and the union of zero results is `never`. The fix is to stop distribution: `[T] extends [never]` compares the one-element tuple `[never]` once and is `true`. The Go checker states it explicitly: it distributes when the argument has the `Union` **or `Never`** flag.
+
+### 4. Why does `firstOrSelf` need an `as`?
+
+**Answer.** Inside the function, `T` is a type parameter, so `ElementOf<T>` is a **deferred** conditional type: the checker cannot pick a branch without knowing `T`. Control-flow narrowing changes the type of the variable `value`, but never the type parameter `T`, so the checker cannot see that the `Array.isArray` branch returns an `E`. It reports `Type 'T' is not assignable to type 'ElementOf<T>'.` One `as ElementOf<T>` at the return is the usual fix, and it is safe exactly when the runtime test mirrors the type-level test.
+
+### 5. What does `ReturnType` give for an overloaded function?
+
+**Answer.** The return type of the **last** overload signature. `infer` matches one signature, and for a type with several call signatures the checker uses the last one, which is usually the most general. For `parse(input: string): number` followed by `parse(input: number): string`, `ReturnType<typeof parse>` is `string`, as the lab proves.
+
+## Summary
+
+$$
+C\langle T \rangle = \begin{cases} X & T <: U \\ Y & \text{otherwise} \end{cases}
+\qquad
+C\langle A_1 \cup \dots \cup A_n \rangle = \bigcup_{i=1}^{n} C\langle A_i \rangle
+$$
+
+where $C$ is `T extends U ? X : Y`, $<:$ is assignability, $A_1, \dots, A_n$ are the members of a union, and the second rule holds when the checked type is a naked type parameter.
+
+Example: `MyExclude<'a' | 'b' | 'c', 'a'>` has $n = 3$: $\texttt{never} \cup \texttt{'b'} \cup \texttt{'c'} = \texttt{'b' | 'c'}$. With $n = 0$, the input `never` gives `never`.
+
+- `T extends U ? X : Y` is an if-statement on types; `extends` means "is assignable to".
+- A naked type parameter distributes over unions; `[T] extends [U]` stops it.
+- `never` in a distributive position gives `never`; `any` gives both branches.
+- `infer` solves for a piece of the matched type: return types, parameters, element types, promise values.
+- Conditional types may recurse; tail calls are looped up to 1000 steps.
+- Inside a generic function the conditional type is deferred, so returning a value needs one `as`.
+
+## References
+
+- TypeScript Handbook: [Conditional Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html) and [Utility Types](https://www.typescriptlang.org/docs/handbook/utility-types.html).
+- Release notes: [TypeScript 2.8](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-2-8.html) (conditional types, distribution, `infer`, `Exclude`, `Extract`, `ReturnType`), [TypeScript 4.1](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-1.html) (recursive conditional types), [TypeScript 4.5](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-5.html) (`Awaited`, tail-recursion elimination).
+- Anders Hejlsberg, [Conditional types](https://github.com/microsoft/TypeScript/pull/21316), microsoft/TypeScript pull request #21316 (2018).
+- The TypeScript 7 sources: [internal/checker/checker.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/checker.go) (`getConditionalType`) and [lib.es5.d.ts](https://github.com/microsoft/typescript-go/blob/main/internal/bundled/libs/lib.es5.d.ts).
+- Dan Vanderkam, [*Effective TypeScript*](https://effectivetypescript.com/), 2nd ed., O'Reilly, 2024, Item 53.
+- [type-challenges](https://github.com/type-challenges/type-challenges), a graded set of exercises built from exactly these tools.
+- Lab: [`labs/conditional-types-and-infer.ts`](labs/conditional-types-and-infer.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node conditional-types-and-infer.ts`.

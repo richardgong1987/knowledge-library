@@ -1,0 +1,74 @@
+---
+title: "TypeScript — Core Concepts"
+subtitle: "JavaScript with a type checker that disappears at runtime"
+description: "TypeScript 7 from structural typing to variance: twelve chapters on what the type checker guarantees, how it reasons, and where it deliberately stops, each with a lab that tsc and Node check."
+aliases: ["../typescript.html"]
+---
+
+## What TypeScript is for, and where it came from
+
+TypeScript is **JavaScript plus a static type checker**. You write ordinary JavaScript with type annotations; the compiler `tsc` checks them and then **erases** them, so what runs is plain JavaScript in a browser, in Node.js or anywhere else. Every JavaScript program is already a TypeScript program, which is why teams can adopt it one file at a time.
+
+Microsoft announced it on **1 October 2012**. S. Somasegar's announcement called it "a new programming language that solves a very specific problem – getting JavaScript development to scale", and described it as "a superset of JavaScript that combines type checking and static analysis, explicit interfaces, and best practices into a single language and compiler." Its designer is **Anders Hejlsberg**, Microsoft Technical Fellow and lead architect of TypeScript, who earlier wrote Turbo Pascal and led the design of C#. The compiler was open source from the first day, under the Apache 2.0 licence.
+
+Through version 6, the compiler was itself written in TypeScript and ran on JavaScript. On **11 March 2025** Hejlsberg announced *A 10x Faster TypeScript*: a native port of the compiler to **Go**, to be released as TypeScript 7. **TypeScript 7.0** shipped on **8 July 2026**, described in its announcement as "a 10x faster native port of TypeScript". It keeps the language the same, with one small change to template literal inference covered in [Template Literal Types](09-template-literal-types.qmd), and keeps the new defaults introduced by TypeScript 6.0, such as `strict` being on unless you turn it off.
+
+## The mental model
+
+A handful of ideas explain most of TypeScript:
+
+1. **Types are erased.** They exist only for the checker; nothing about them survives to runtime. That is why `private`, `readonly` and `as` protect nothing at runtime, and why Node.js can run a `.ts` file by blanking the types out. ([Classes and Interfaces](10-classes-and-interfaces.qmd))
+2. **Types are sets of values, compared by shape.** A value fits a type if it has the right members, whatever its name; assignability is the subset relation. ([Structural Typing](01-structural-typing.qmd))
+3. **The checker infers more than you write.** Literal types, widening and `as const` decide how precise each inferred type is. ([Inference and Literal Types](02-inference-and-literal-types.qmd))
+4. **Control flow narrows types.** A `typeof` test or a tag check shrinks a union inside each branch, and `never` proves a `switch` is exhaustive. ([Unions and Narrowing](03-unions-and-narrowing.qmd), [Discriminated Unions](04-discriminated-unions.qmd))
+5. **Types can be computed from types.** Generics, `keyof`, mapped, conditional and template literal types form a small functional language at the type level. ([Generics](05-generics.qmd) to [Template Literal Types](09-template-literal-types.qmd))
+6. **Soundness is traded for convenience, on purpose.** `any`, assertions, method bivariance and unchecked indexing are known holes; outside data must be checked at runtime. ([any, unknown and Runtime Validation](11-any-unknown-and-runtime-validation.qmd), [Variance and Soundness](12-variance-and-soundness.qmd))
+
+## The chapters
+
+### Part 1: How the checker sees values
+
+1. [Structural Typing](01-structural-typing.qmd): types as sets of values, assignability as subset, excess property checks, brands and erasure.
+2. [Inference and Literal Types](02-inference-and-literal-types.qmd): inference from initialisers and returns, widening with `let` and `const`, `as const` and contextual typing.
+3. [Unions and Narrowing](03-unions-and-narrowing.qmd): unions and intersections, narrowing with `typeof`, `in` and `instanceof`, type predicates and control-flow analysis.
+4. [Discriminated Unions](04-discriminated-unions.qmd): tagged unions, exhaustive switches with `never`, illegal states made unrepresentable, and a `Result` type.
+
+### Part 2: Computing with types
+
+5. [Generics](05-generics.qmd): type parameters as "for every type `T`", constraints, defaults, `const` type parameters and `NoInfer`.
+6. [keyof, typeof and Indexed Access](06-keyof-typeof-and-indexed-access.qmd): deriving types from values with `typeof`, `keyof`, `T[K]` and `T[number]`.
+7. [Mapped and Utility Types](07-mapped-and-utility-types.qmd): loops over keys, `?` and `readonly` modifiers, key remapping, and `Partial`, `Pick`, `Omit` and `Record` written by hand.
+8. [Conditional Types and infer](08-conditional-types-and-infer.qmd): if-statements on types, distribution over unions, `infer`, `ReturnType`, `Awaited` and recursion.
+9. [Template Literal Types](09-template-literal-types.qmd): string patterns, unions that multiply, letter-case intrinsics, and parsing `/users/:id` at the type level.
+
+### Part 3: Classes, boundaries and soundness
+
+10. [Classes and Interfaces](10-classes-and-interfaces.qmd): interface versus type alias, `private` versus `#private`, abstract classes, and why `enum` is not erasable.
+11. [any, unknown and Runtime Validation](11-any-unknown-and-runtime-validation.qmd): the type lattice, unchecked assertions, type guards, a small parser, brands and `satisfies`.
+12. [Variance and Soundness](12-variance-and-soundness.qmd): covariance, contravariance, method bivariance, `in` and `out`, and TypeScript's deliberate unsound spots.
+
+## How to run the labs
+
+Every chapter has one lab, `labs/<slug>.ts`. The folder's `tsconfig.json` is `strict` and sets `erasableSyntaxOnly`, so every lab both type-checks and runs directly on Node.js. Type errors that a chapter shows are written behind `// @ts-expect-error`, so `tsc` fails if one ever disappears; runtime results are checked with `node:assert`, and each lab prints `OK` last. From `programming-languages/typescript/labs`:
+
+```bash
+npx tsc -p .
+node mapped-and-utility-types.ts
+```
+
+The first command type-checks every lab at once; replace `mapped-and-utility-types` with any chapter's slug, such as `structural-typing` or `variance-and-soundness`. From the repository root, the checker verifies the chapters and runs every lab:
+
+```bash
+ONLY=typescript node --test programming-languages/check-languages.test.mjs
+```
+
+## Version and further reading
+
+These pages teach **TypeScript 7.0** (the labs pin 7.0.2) running on **Node.js 26**, which executes `.ts` files by type stripping. They say when a feature arrived where it matters, such as conditional types in 2.8, template literal types in 4.1, variance annotations in 4.7, `satisfies` in 4.9 and `erasableSyntaxOnly` in 5.8.
+
+- The [TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/intro.html) and the [TSConfig reference](https://www.typescriptlang.org/tsconfig/): the official description of the language and its options.
+- Daniel Rosenwasser, [Announcing TypeScript 7.0](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/) (2026), and Anders Hejlsberg, [A 10x Faster TypeScript](https://devblogs.microsoft.com/typescript/typescript-native-port/) (2025); the compiler's source is [microsoft/typescript-go](https://github.com/microsoft/typescript-go).
+- S. Somasegar, [TypeScript: JavaScript Development at Application Scale](https://learn.microsoft.com/en-us/archive/blogs/somasegar/typescript-javascript-development-at-application-scale) (2012), the original announcement.
+- Dan Vanderkam, [*Effective TypeScript*](https://effectivetypescript.com/), 2nd ed., O'Reilly, 2024.
+- Node.js, [Modules: TypeScript](https://nodejs.org/api/typescript.html): how type stripping works and what it refuses.
+- [type-challenges](https://github.com/type-challenges/type-challenges): graded exercises for the type-level chapters.

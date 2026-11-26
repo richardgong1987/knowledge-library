@@ -1,0 +1,348 @@
+---
+title: "Discriminated Unions"
+description: "Tagged unions in TypeScript: narrowing by a literal tag, exhaustive switches with never and assertNever, making illegal states unrepresentable with a small state machine, and a Result type."
+---
+
+## The problem
+
+A page loads a user's name from a server. A common first attempt stores the request's state in three independent fields:
+
+```ts
+type LooseState = { isLoading: boolean; data?: string; error?: string };
+const nonsense: LooseState = { isLoading: true, data: "Ada", error: "timeout" }; // compiles
+```
+
+`nonsense` is still loading, has already succeeded with `"Ada"`, **and** has failed with `"timeout"`. The type allows it, so sooner or later some code produces it, and the screen shows a spinner, a name and an error at once. Every reader of `LooseState` has to guess which combinations are real and check fields in the right order.
+
+The real request has exactly four situations: not started, loading, succeeded with data, failed with an error. A **discriminated union** (also called a tagged union or sum type) writes down those four and nothing else, so the impossible combinations cannot even be typed.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A traffic light and labelled lunchboxes
+
+- A **traffic light** is red, amber or green. It is never "red and green". Three separate on/off bulbs could be on together; one dial with three positions cannot.
+- Each **lunchbox** has a **sticker** on the lid: "sandwich" or "soup". Read the sticker and you know what is inside: a sandwich box always has bread, a soup box always has a spoon. The sticker is the **tag**.
+- **Exhaustiveness:** the lunch helper has a checklist with one line per sticker. If the school adds a "salad" sticker, the checklist is flagged as incomplete before lunch time, not when a child is left without a fork.
+
+Yaron Minsky of Jane Street popularised the slogan in his *Effective ML* talk, written up as the post *Effective ML Revisited* (2011): **"Make illegal states unrepresentable."** Scott Wlaschin's *F# for Fun and Profit* teaches the same idea, and Dan Vanderkam's *Effective TypeScript* has it as "Prefer Types That Always Represent Valid States".
+:::
+
+## From simple to advanced
+
+### Level 1: one tag, one shape per case
+
+Give every case a property with a **literal type**, here `status`, and list the cases as a union:
+
+```ts
+type RequestState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "success"; data: string }
+  | { status: "failure"; error: string };
+// @ts-expect-error: a success has no error property
+const confused: RequestState = { status: "success", data: "Ada", error: "timeout" };
+```
+
+```text
+error TS2353: Object literal may only specify known properties, and 'error' does not exist in type '{ status: "success"; data: string; }'.
+```
+
+The compiler read the tag `"success"`, picked that one member, and ran the excess property check of [Structural Typing](01-structural-typing.qmd) against it. Counting the possible shapes shows what we gained:
+
+$$
+|A \times B| = |A| \cdot |B|, \qquad |A + B| = |A| + |B|
+$$
+
+where
+
+- $|X|$ is the number of distinct cases a type allows (ignoring the contents of strings);
+- $A \times B$ is a **product**: a record with an $A$ field **and** a $B$ field, all combinations allowed;
+- $A + B$ is a **sum**: an $A$ **or** a $B$, never both. A tagged union is a sum, because the different tags keep the members apart.
+
+Example: `LooseState` is a product of three two-way choices, `isLoading` true or false, `data` present or not, `error` present or not, so $2 \times 2 \times 2 = 8$ cases. `RequestState` is a sum of four one-case members, $1 + 1 + 1 + 1 = 4$. Only 4 of the 8 loose cases make sense, so `LooseState` admits $8 - 4 = 4$ illegal states, and `RequestState` admits none.
+
+Code that tests the tag gets the matching member, so `data` and `error` are reachable exactly where they exist:
+
+```ts
+function render(state: RequestState): string {
+  if (state.status === "success") return `Hello, ${state.data}`; // data exists only here
+  if (state.status === "failure") return `Error: ${state.error}`;
+  type Here = Expect<Equal<typeof state, { status: "idle" } | { status: "loading" }>>;
+  return state.status;
+}
+```
+
+The `type Here` line is a compile-time proof: it fails unless `state` is exactly the remaining two members. Comparing the tag is the narrowing rule of [Unions and Narrowing](03-unions-and-narrowing.qmd), applied member by member:
+
+$$
+\operatorname{narrow}(U, \; x.s = v) = \lbrace\, M \in U \mid v \in V(M.s) \,\rbrace
+$$
+
+where
+
+- $U$ is the union, seen as the set of its members $M$;
+- $x.s = v$ is the test: the property $s$ (the tag) of the value $x$ equals the literal $v$;
+- $V(M.s)$ is the set of values the tag can have in member $M$.
+
+Example: with $U$ = the four members and $v = \texttt{"success"}$, only the third member's tag allows `"success"`, so `state` is `{ status: "success"; data: string }` and `state.data` compiles. After both `if`s have returned, the rest of the function sees $U$ minus those two, which the `type Here` line confirms. Without a test, `data` is off limits:
+
+```ts
+function dataOf(state: RequestState): string {
+  // @ts-expect-error: only the success case has data
+  return state.data;
+}
+```
+
+```text
+error TS2339: Property 'data' does not exist on type 'RequestState'.
+  Property 'data' does not exist on type '{ status: "idle"; }'.
+```
+
+### Level 2: exhaustive switches with `never`
+
+A `switch` on the tag handles one member per `case`. Each `case` that returns removes its member from the type of `state` in the code after it. When every member is handled, nothing is left, and the type of nothing is `never`:
+
+```ts
+function assertNever(value: never): never {
+  throw new Error(`Unexpected value: ${JSON.stringify(value)}`);
+}
+function label(state: RequestState): string {
+  switch (state.status) {
+    case "idle":
+      return "Not started";
+    case "loading":
+      return "Loading";
+    case "success":
+      return `Got ${state.data}`;
+    case "failure":
+      return `Failed: ${state.error}`;
+    default:
+      return assertNever(state); // state: never, because every case returned
+  }
+}
+```
+
+$$
+U \setminus \lbrace M_1 \rbrace \setminus \dots \setminus \lbrace M_k \rbrace = \emptyset \iff \text{the cases } M_1, \dots, M_k \text{ cover } U, \qquad S \le \texttt{never} \iff V(S) = \emptyset
+$$
+
+where
+
+- $M_1, \dots, M_k$ are the members handled by the $k$ cases, and $\setminus$ removes them one at a time;
+- $\emptyset$ is the empty set, which is the type `never`;
+- $S \le \texttt{never}$ means "a value of type $S$ may be passed where `never` is expected", which holds only for an empty $S$.
+
+Example: `RequestState` minus `idle`, `loading`, `success` and `failure` is $\emptyset$, so in `default` the type of `state` is `never` and `assertNever(state)` compiles. Now add a fifth case, `{ status: "cancelled" }`, and forget it:
+
+```ts
+type WithCancelled = RequestState | { status: "cancelled" };
+function isFinished(state: WithCancelled): boolean {
+  switch (state.status) {
+    case "idle":
+    case "loading":
+      return false;
+    case "success":
+    case "failure":
+      return true;
+    default:
+      // @ts-expect-error: "cancelled" was forgotten, so state is not never here
+      return assertNever(state);
+  }
+}
+```
+
+```text
+error TS2345: Argument of type '{ status: "cancelled"; }' is not assignable to parameter of type 'never'.
+```
+
+Four members removed from five leaves $\lbrace \texttt{cancelled} \rbrace \neq \emptyset$, and the error message even names the missing case. `assertNever` also guards the **runtime**: if bad data slips past the types (from JSON, say; see [any, unknown and Runtime Validation](11-any-unknown-and-runtime-validation.qmd)), the lab shows it throws `Error: Unexpected value: {"status":"cancelled"}` instead of silently returning `undefined`.
+
+### Level 3: a state machine that cannot reach a bad state
+
+Making illegal states unrepresentable is half the job; the other half is moving between legal states. A **state machine** lists the events and says, for each state, what each event does:
+
+```ts
+type RequestEvent =
+  | { type: "fetch" }
+  | { type: "resolve"; data: string }
+  | { type: "reject"; error: string };
+function transition(state: RequestState, event: RequestEvent): RequestState {
+  switch (state.status) {
+    case "idle":
+    case "failure":
+      return event.type === "fetch" ? { status: "loading" } : state;
+    case "loading":
+      if (event.type === "resolve") return { status: "success", data: event.data };
+      if (event.type === "reject") return { status: "failure", error: event.error };
+      return state;
+    case "success":
+      return state; // finished: every event is ignored
+  }
+}
+```
+
+$$
+\delta : S \times E \to S
+$$
+
+where
+
+- $S$ is the set of states (the four `RequestState` cases) and $E$ the set of events (the three `RequestEvent` cases);
+- $\delta$ is the transition function `transition`: given the current state and an event, it returns the next state;
+- $S \times E$ is every pair of a state and an event, here $4 \times 3 = 12$ pairs.
+
+| state \\ event | `fetch` | `resolve(d)` | `reject(e)` |
+|---|---|---|---|
+| `idle` | `loading` | `idle` | `idle` |
+| `loading` | `loading` | `success(d)` | `failure(e)` |
+| `success` | `success` | `success` | `success` |
+| `failure` | `loading` | `failure` | `failure` |
+
+Example: the lab's `run` folds a list of events over the start state `idle` with `reduce`. For `[fetch, resolve("Ada")]`: $\delta(\texttt{idle}, \texttt{fetch}) = \texttt{loading}$, then $\delta(\texttt{loading}, \texttt{resolve("Ada")}) = \texttt{success("Ada")}$, so the result is `{ status: "success", data: "Ada" }`. For `[fetch, reject("timeout"), fetch]`: idle, loading, failure, then loading again (a retry). For `[resolve("Ada")]` alone, the event arrives in `idle` and is ignored.
+
+The types do the bookkeeping. `data` can be set only by building a `success` value, and the compiler insists that a `success` value has `data`, so no path through `transition` can produce a spinner with a name. Notice also that `transition` has no `default` and no final `return`. The switch covers all four states, so the end of the function is unreachable, and TypeScript accepts it ([interview question 3](#interview-questions)).
+
+### Level 4: a Result type
+
+The same idea handles failure. A function that can fail returns one of two tagged cases, and the tag here is a **boolean literal**:
+
+```ts
+type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+function parseAge(text: string): Result<number, string> {
+  const age = Number(text);
+  if (!Number.isInteger(age) || age < 0) {
+    return { ok: false, error: `not an age: "${text}"` };
+  }
+  return { ok: true, value: age };
+}
+```
+
+$$
+|\texttt{Result<T, E>}| = |T| + |E|
+$$
+
+where
+
+- $T$ is the type of a successful value and $E$ the type of an error;
+- $|X|$ counts the possible values, and the $+$ says a result is one or the other, never both, never neither.
+
+Example: `parseAge("42")` is `{ ok: true, value: 42 }`, and `parseAge("-1")` is `{ ok: false, error: 'not an age: "-1"' }`. A caller cannot get at `value` without first asking `ok`:
+
+```ts
+function nextYear(text: string): string {
+  const parsed = parseAge(text);
+  if (!parsed.ok) return parsed.error; // the caller cannot forget this branch and read value
+  return `next year: ${parsed.value + 1}`;
+}
+```
+
+`nextYear("42")` is `"next year: 43"`, and `nextYear("abc")` is `'not an age: "abc"'`. Reading `parsed.value` without the test is `TS2339: Property 'value' does not exist on type 'Result<number, string>'.`, which is the compile-time version of an unhandled error.
+
+## How it works underneath
+
+**What counts as a discriminant.** When you read `state.status` on a union, the checker builds a synthetic property that collects the property's type from every member (`getUnionOrIntersectionProperty`). While doing so it sets two flags: `HasNonUniformType` if the members' types differ, and `HasLiteralType` if any of them is a literal. `isDiscriminantProperty` (in `internal/checker/relater.go` of `microsoft/typescript-go`) says yes only when both are set. That is why `Untagged`, whose `kind` is `string` in both members, does not narrow (interview question 1).
+
+**Narrowing.** A test such as `state.status === "success"` becomes a condition node in the control-flow graph. `narrowTypeByDiscriminant` (in `flow.go`) narrows the **property's** type first, then keeps each union member whose own tag type is comparable to the narrowed one, using `filterType`. That is the Level 1 formula, run member by member. A `switch` is handled by `narrowTypeBySwitchOnDiscriminant`, with one narrowing per `case` clause and the `default` clause getting what no clause matched, which is how `default` ends up `never`.
+
+**Exhaustiveness and implicit returns.** A function whose declared return type does not include `undefined` must not be able to "fall off the end". The checker asks `functionHasImplicitReturn`, which checks whether the flow node at the end of the body is reachable. A `switch` with no `default` counts as unreachable at its end when `isExhaustiveSwitchStatement` finds that the cases cover every member. So `transition` compiles; drop a case and the end becomes reachable (interview question 3).
+
+**Excess properties against the right member.** When an object literal is assigned to a union, `hasExcessProperties` first calls `findMatchingDiscriminantType`: if the literal's tag picks one member, the excess check runs against that member alone. That is why `confused` is reported against `{ status: "success"; data: string; }` and not against the whole union. The whole feature arrived in TypeScript 2.0, in Anders Hejlsberg's pull request #9163, "Discriminated union types".
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Booleans and optional fields for a status | Impossible combinations compile, like `{ isLoading: true, data, error }` | One union with a literal tag per case |
+| A tag typed `string` instead of a literal | No narrowing: `TS2339: Property 'radius' does not exist on type 'Untagged'.` | Give each member its own literal: `kind: "circle"` |
+| No `default` check in a `switch` | A new case is silently ignored and the function returns `undefined` | `default: return assertNever(x)`, or an annotated return type |
+| Reading a case-specific field before testing the tag | `TS2339: Property 'data' does not exist on type 'RequestState'.` | Test the tag first, or `switch` on it |
+| Throwing for expected failures such as bad input | Callers forget the `try`; `catch (e)` gives `unknown` | Return a `Result` and let the caller test `ok` |
+| Building a state with `as`: `{ status: "success" } as RequestState` | Compiles without `data`; `render` returns `"Hello, undefined"` | Annotate instead (`const s: RequestState = ...`), so a missing `data` is an error |
+
+## Interview questions
+
+### 1. What makes a union "discriminated"?
+
+**Answer.** Its members share a property whose types are **literal types** (string, number, boolean literals, `null` or `undefined`) that differ between members. The checker requires both conditions (`HasNonUniformType` and `HasLiteralType`). A tag typed `string` in every member is uniform and not a literal, so testing it narrows nothing:
+
+```ts
+type Untagged = { kind: string; radius: number } | { kind: string; side: number };
+function radiusOf(shape: Untagged): number {
+  if (shape.kind === "circle") {
+    // @ts-expect-error: kind is string in both members, so nothing was narrowed
+    return shape.radius;
+  }
+  return 0;
+}
+```
+
+```text
+error TS2339: Property 'radius' does not exist on type 'Untagged'.
+  Property 'radius' does not exist on type '{ kind: string; side: number; }'.
+```
+
+### 2. How do you make the compiler check that a `switch` handles every case, and why does `never` work?
+
+**Answer.** End the switch with `default: return assertNever(state)`, where `assertNever(value: never): never` throws. Each `case` removes its member from the union, so if every member is handled the type in `default` is the empty set, `never`, and only `never` is assignable to a `never` parameter. Forget one and the leftover member is not assignable: `TS2345: Argument of type '{ status: "cancelled"; }' is not assignable to parameter of type 'never'.` The function also throws at runtime if bad data arrives anyway. *Effective TypeScript* calls this "Use never Types to Perform Exhaustiveness Checking".
+
+### 3. `transition` has no `default` and no final `return`. Why does it compile, and what happens when a state is added?
+
+**Answer.** Its return type is `RequestState`, which does not include `undefined`, so the checker must be sure the end of the body is unreachable. The switch covers all four states (`isExhaustiveSwitchStatement`), so it is. With a fifth state and no case for it, the end becomes reachable:
+
+```ts
+// @ts-expect-error: without a case for "cancelled" the end of the function is reachable
+function stepCount(state: WithCancelled): number {
+  switch (state.status) {
+    case "idle":
+      return 0;
+    case "loading":
+      return 1;
+    case "success":
+    case "failure":
+      return 2;
+  }
+}
+```
+
+```text
+error TS2366: Function lacks ending return statement and return type does not include 'undefined'.
+```
+
+At runtime the lab confirms `stepCount({ status: "cancelled" })` returns `undefined`. This check needs an annotated return type; `assertNever` works even without one.
+
+### 4. When should a function return a `Result` instead of throwing?
+
+**Answer.** TypeScript has no checked exceptions: a function's type says nothing about what it throws, and `catch (e)` receives `unknown`. A `Result` puts the failure **in the return type**, so the compiler forces every caller to test `ok` before reading `value`. Use it for expected failures that the caller should handle: invalid input, a missing record, a parse error. Keep exceptions for bugs and situations no caller can sensibly handle, such as a broken invariant or running out of memory.
+
+### 5. How many states does `{ isLoading: boolean; data?: string; error?: string }` allow, and how many does the request need?
+
+**Answer.** It is a product of three two-way choices, $2 \times 2 \times 2 = 8$ shapes. The request needs four: idle, loading, success with data, failure with an error. The tagged union is a sum $1 + 1 + 1 + 1 = 4$, exactly the legal ones, so the four illegal shapes cannot be written, and no code has to defend against them.
+
+## Summary
+
+$$
+|A + B| = |A| + |B|, \qquad U \setminus \lbrace M_1, \dots, M_k \rbrace = \emptyset \iff \text{every case is handled}
+$$
+
+where $A + B$ is a tagged union of $A$ and $B$, $|X|$ counts the cases a type allows, $U$ is a union with members $M_1, \dots, M_k$ handled by a `switch`, and $\emptyset$ is `never`.
+
+Example: `RequestState` is $1 + 1 + 1 + 1 = 4$ cases where `LooseState` had $2 \times 2 \times 2 = 8$; a switch over all four leaves `never`, and `WithCancelled` with four cases handled leaves `{ status: "cancelled" }`, which `assertNever` reports.
+
+- Give every case a literal tag (`status: "success"`) and put the case's data next to it.
+- Testing the tag narrows to one member; the data is reachable exactly where it exists.
+- End every `switch` with `assertNever`; a new case then breaks the build, not production.
+- Model workflows as a transition function `transition(state, event)` that builds whole new states.
+- `Result<T, E>` makes expected failures part of the type, so callers cannot skip the check.
+
+## References
+
+- TypeScript Handbook: [Narrowing: Discriminated unions, The never type, Exhaustiveness checking](https://www.typescriptlang.org/docs/handbook/2/narrowing.html).
+- [TypeScript 2.0 release notes: tagged union types and the never type](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-2-0.html).
+- Anders Hejlsberg, [Discriminated union types](https://github.com/microsoft/TypeScript/pull/9163), TypeScript pull request #9163 (2016).
+- The checker source: [internal/checker/flow.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/flow.go) and [internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go) in `microsoft/typescript-go`.
+- Yaron Minsky, [Effective ML Revisited](https://blog.janestreet.com/effective-ml-revisited/), Jane Street blog (2011), "Make illegal states unrepresentable".
+- Scott Wlaschin, [Designing with types: Making illegal states unrepresentable](https://fsharpforfunandprofit.com/posts/designing-with-types-making-illegal-states-unrepresentable/), *F# for Fun and Profit*.
+- Dan Vanderkam, *Effective TypeScript*, 2nd ed. (O'Reilly, 2024), Items 29, 34 and 59 ([item list](https://github.com/danvk/effective-typescript)).
+- Basarat Ali Syed, *TypeScript Deep Dive*: [Discriminated Unions](https://basarat.gitbook.io/typescript/type-system/discriminated-unions).
+- Lab: [`labs/discriminated-unions.ts`](labs/discriminated-unions.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node discriminated-unions.ts`.

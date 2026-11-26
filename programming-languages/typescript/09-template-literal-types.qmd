@@ -1,0 +1,305 @@
+---
+title: "Template Literal Types"
+description: "TypeScript template literal types from a single string pattern to parsing at the type level: unions that multiply, the 100,000-member limit, Uppercase and Capitalize, key remapping into getters, and infer reading route parameters such as /users/:id."
+---
+
+## The problem
+
+A small router registers the path `'/users/:id/posts/:postId'`. When a request for `/users/7/posts/42` arrives, the handler receives `{ id: '7', postId: '42' }`. A handler that reads `params.postid` (lower-case `i`) gets `undefined`, and the bug surfaces far from the typo, as a "post not found" page.
+
+The information needed to catch it is already in the program: the path string itself says which parameters exist. Plain `string` throws that information away. A **template literal type** keeps it. It is a type made of string pieces and holes, so the compiler can build strings (`'btn-sm-red'`), check them (`'12px'` but not `'twelve px'`) and take them apart (`'/users/:id'` into `'id'`). The lab ends with a `matchRoute` whose return type has exactly the keys `id` and `postId`, so the typo is a compile error.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A menu board and a stencil
+
+- A café's menu board says **"a \_\_\_ juice in a \_\_\_ cup"**, with 3 fruits and 2 cup sizes. Every way to fill the blanks is on the menu: 3 × 2 = 6 drinks. That is a template literal type with unions in the holes.
+- A **stencil** reading **"/users/: \_\_\_"** works the other way. Lay it over a written address and you can read what shows through the hole. That is `infer` inside a template.
+
+Anders Hejlsberg added template literal types and key remapping in TypeScript 4.1 ([pull request #40336](https://github.com/microsoft/TypeScript/pull/40336), 2020). The handbook's first sentence says they "build on string literal types, and have the ability to expand into many strings via unions." Dan Vanderkam's *Effective TypeScript*, Item 54: *Use Template Literal Types to Model DSLs and Relationships Between Strings.*
+:::
+
+## From simple to advanced
+
+The lab proves type-level claims with `Expect<Equal<A, B>>` from [Mapped and Utility Types](07-mapped-and-utility-types.qmd), and quotes `tsc` errors with `// @ts-expect-error`.
+
+### Level 1: a pattern for strings
+
+A template literal type uses JavaScript's backtick syntax in a type position. A hole can hold a type such as `string` or `number`:
+
+```ts
+type Greeting = `hello ${string}`;
+type Pixels = `${number}px`;
+const greeting: Greeting = 'hello world';
+const width: Pixels = '12px';
+// @ts-expect-error Type '"hi world"' is not assignable to type '`hello ${string}`'.
+const rude: Greeting = 'hi world';
+// @ts-expect-error Type '"twelve px"' is not assignable to type '`${number}px`'.
+const vague: Pixels = 'twelve px';
+```
+
+`'hello world'` fits because it starts with `hello ` and the rest, `'world'`, is a string. `'12px'` fits because `'12'` reads as a number. `'twelve px'` does not. As with every type, the check is compile-time only: the lab's last line of Level 1 concatenates `rude` and `vague` at runtime without complaint.
+
+### Level 2: unions in the holes multiply
+
+Put a union in a hole and the result is a union of every combination. The lab builds the types from `as const` arrays, so the runtime list and the type stay in step:
+
+```ts
+const sizes = ['sm', 'md', 'lg'] as const;
+const colors = ['red', 'blue'] as const;
+type Size = (typeof sizes)[number];
+type Color = (typeof colors)[number];
+type ButtonClass = `btn-${Size}-${Color}`;
+```
+
+```ts
+type Level2 = Expect<Equal<ButtonClass,
+  'btn-sm-red' | 'btn-sm-blue' | 'btn-md-red' | 'btn-md-blue' | 'btn-lg-red' | 'btn-lg-blue'>>;
+```
+
+The count is a product:
+
+$$
+T = \lbrace\, \texttt{"btn-"} + s + \texttt{"-"} + c \;\mid\; s \in S,\ c \in C \,\rbrace,
+\qquad |T| = |S| \times |C|
+$$
+
+where
+
+- $S$ is the set of sizes and $C$ the set of colours;
+- $+$ joins strings;
+- $T$ is the set of strings the template type allows;
+- $|X|$ is the number of members of $X$.
+
+Example: $|S| = 3$ (`sm`, `md`, `lg`) and $|C| = 2$ (`red`, `blue`), so $|T| = 3 \times 2 = 6$. The lab builds the same six strings at runtime with `flatMap` and checks `allClasses.length === sizes.length * colors.length`:
+
+```ts
+const allClasses: ButtonClass[] = sizes.flatMap(size => colors.map(color => `btn-${size}-${color}` as const));
+assert.equal(allClasses.length, sizes.length * colors.length);
+```
+
+With $k$ holes the product has $k$ factors, so it grows fast. The checker refuses a cross product of 100,000 members or more:
+
+```ts
+type Digit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
+type FourDigits = `${Digit}${Digit}${Digit}${Digit}`; // 10 ** 4 = 10,000 members
+// @ts-expect-error Expression produces a union type that is too complex to represent.
+type FiveDigits = `${Digit}${Digit}${Digit}${Digit}${Digit}`; // 10 ** 5 = 100,000 members
+```
+
+Example: four holes give $10 \times 10 \times 10 \times 10 = 10^4 = 10{,}000 < 100{,}000$, which is accepted. Five give $10^5 = 100{,}000$, which is not below the limit, so `tsc` reports error TS2590. When the set really is that large, use a wider pattern such as `` `${number}` `` instead of a union.
+
+### Level 3: four built-in letter-case types
+
+`Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize` change letter case at the type level, and they distribute over unions like every other string operation:
+
+```ts
+type Level3 = [
+  Expect<Equal<Uppercase<'ada'>, 'ADA'>>,
+  Expect<Equal<Lowercase<'ADA'>, 'ada'>>,
+  Expect<Equal<Capitalize<'click'>, 'Click'>>,
+  Expect<Equal<Uncapitalize<'Click'>, 'click'>>,
+  Expect<Equal<Capitalize<'click' | 'focus'>, 'Click' | 'Focus'>>,
+];
+```
+
+A runtime function can promise the same result in its signature. One `as` is needed, because `toUpperCase` is typed to return a plain `string`:
+
+```ts
+function capitalize<S extends string>(word: S): Capitalize<S> {
+  return (word.charAt(0).toUpperCase() + word.slice(1)) as Capitalize<S>;
+}
+```
+
+`` `on${capitalize('click')}` as const `` then has the type `'onClick'`, and the lab checks the value is `'onClick'` too.
+
+### Level 4: remap keys into method names
+
+Key remapping with `as` ([Level 4 of Mapped and Utility Types](07-mapped-and-utility-types.qmd)) can compute each new key with a template. This turns every property into a getter:
+
+```ts
+type Getters<T> = { [K in keyof T as `get${Capitalize<K & string>}`]: () => T[K] };
+type Person = { name: string; age: number };
+type Level4 = Expect<Equal<Getters<Person>, { getName: () => string; getAge: () => number }>>;
+```
+
+Why `K & string`? Keys can be strings, numbers or symbols, and `Capitalize` accepts only strings. Intersecting with `string` keeps the string keys and turns numbers and symbols into `never`, which drops them. Without it:
+
+```ts
+// @ts-expect-error Type 'K' does not satisfy the constraint 'string'.
+type BrokenGetters<T> = { [K in keyof T as `get${Capitalize<K>}`]: () => T[K] };
+```
+
+```text
+error TS2344: Type 'K' does not satisfy the constraint 'string'.
+  Type 'keyof T' is not assignable to type 'string'.
+    Type 'string | number | symbol' is not assignable to type 'string'.
+      Type 'number' is not assignable to type 'string'.
+```
+
+The runtime half builds the object, and the return type tells callers exactly which methods exist:
+
+```ts
+function makeGetters<T extends object>(source: T): Getters<T> {
+  const entries = Object.entries(source).map(([key, value]) => [`get${capitalize(key)}`, () => value]);
+  return Object.fromEntries(entries) as Getters<T>;
+}
+```
+
+`makeGetters({ name: 'Ada', age: 36 }).getAge()` is typed `number` and returns 36.
+
+### Level 5: `infer` reads strings apart
+
+Inside a conditional type ([Conditional Types and infer](08-conditional-types-and-infer.qmd)), a template with `infer` holes works as a pattern match:
+
+```ts
+type SplitOnce<S extends string> = S extends `${infer Head}/${infer Tail}` ? [Head, Tail] : [S];
+type HeadTail<S extends string> = S extends `${infer Head}${infer Tail}` ? [Head, Tail] : never;
+type Level5Split = [
+  Expect<Equal<SplitOnce<'a/b/c'>, ['a', 'b/c']>>,
+  Expect<Equal<SplitOnce<'abc'>, ['abc']>>,
+  Expect<Equal<HeadTail<'abc'>, ['a', 'bc']>>,
+  Expect<Equal<HeadTail<'😀abc'>, ['😀', 'abc']>>, // TypeScript 7: one code point, not half of one
+];
+```
+
+The matching rule is "shortest first": each `infer` hole that is followed by a fixed piece of text stops at the **first** place that text occurs, and the last hole takes the rest:
+
+$$
+i = \min \lbrace\, j \mid s_j = \texttt{"/"} \,\rbrace,
+\qquad
+\texttt{Head} = s_0 \dots s_{i-1},
+\qquad
+\texttt{Tail} = s_{i+1} \dots s_{n-1}
+$$
+
+where
+
+- $s$ is the string being matched, with characters $s_0, s_1, \dots, s_{n-1}$ and length $n$;
+- $j$ ranges over positions, and $\min$ picks the smallest;
+- $i$ is the position of the first `/`;
+- if no `/` exists, the set is empty and the false branch is taken.
+
+Example with $s = \texttt{"a/b/c"}$, so $n = 5$: the slashes are at $j = 1$ and $j = 3$, so $i = 1$. Then `Head` is $s_0 = \texttt{"a"}$ and `Tail` is $s_2 s_3 s_4 = \texttt{"b/c"}$. For `'abc'` there is no slash, so the result is `['abc']`.
+
+When two holes touch, with no text between them, the first takes exactly one character. TypeScript 7.0 changed what "one character" means: it now takes one **code point**, like `for...of` and `[...str]`, so `HeadTail<'😀abc'>` is `['😀', 'abc']`. TypeScript 6 and earlier took one UTF-16 code unit and split the emoji into two invalid halves. JavaScript itself still has both behaviours, and the lab checks them:
+
+```ts
+assert.equal([...'😀abc'][0], '😀'); // for...of and spread also walk code points
+assert.notEqual('😀abc'[0], '😀'); // indexing returns one UTF-16 code unit
+```
+
+Recursion turns one match into a parser. `RouteParams` peels off one `:param/` at a time:
+
+```ts
+type RouteParams<P extends string> =
+  P extends `${string}:${infer Param}/${infer Rest}`
+    ? Param | RouteParams<Rest>
+    : P extends `${string}:${infer Param}`
+      ? Param
+      : never;
+```
+
+Example with `'/users/:id/posts/:postId'`:
+
+1. The first pattern needs a `:` and then a `/`. The leading `${string}` stops at the first `:`, consuming `'/users/'`. `Param` stops at the next `/`: `'id'`. `Rest` is `'posts/:postId'`.
+2. Recurse on `'posts/:postId'`. After the `:` there is no `/`, so the first pattern fails. The second gives `Param = 'postId'`.
+3. Recurse no further. The result is `'id' | 'postId'`, and for `'/about'` it is `never`.
+
+Mapping those names to `string` gives the parameter object, and the router's signature carries it to the caller:
+
+```ts
+type Params<P extends string> = { [K in RouteParams<P>]: string };
+function matchRoute<P extends string>(pattern: P, path: string): Params<P> | undefined {
+  const patternParts = pattern.split('/');
+  const pathParts = path.split('/');
+  if (patternParts.length !== pathParts.length) return undefined;
+  const params: Record<string, string> = {};
+  for (const [i, part] of patternParts.entries()) {
+    if (part.startsWith(':')) params[part.slice(1)] = pathParts[i];
+    else if (part !== pathParts[i]) return undefined;
+  }
+  return params as Params<P>;
+}
+```
+
+```ts
+const params = matchRoute('/users/:id/posts/:postId', '/users/7/posts/42');
+assert.deepEqual(params, { id: '7', postId: '42' });
+assert.equal(matchRoute('/users/:id', '/teams/7'), undefined);
+// @ts-expect-error Property 'postid' does not exist on type 'Params<"/users/:id/posts/:postId">'.
+const typo = params?.postid;
+```
+
+The full message even suggests the fix: `Did you mean 'postId'?`
+
+## How it works underneath
+
+The checker stores a template literal type as two arrays: `texts`, the fixed pieces, and `types`, the holes, with `texts` always one longer than `types`. `` `btn-${Size}-${Color}` `` is `texts = ['btn-', '-', '']` and `types = [Size, Color]`.
+
+**Building.** `getTemplateLiteralType` in the Go checker ([internal/checker/checker.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/checker.go)) first looks for a hole holding a union. If there is one, it calls `checkCrossProductUnion`, which multiplies the sizes of all union holes and reports TS2590 when `size >= 100_000`. Otherwise it maps over that union's members, building one template per member, recursively, which produces the Level 2 cross product. When every hole holds a literal, the pieces are concatenated into a single string literal type, so `` `btn-${'sm'}-${'red'}` `` is just `'btn-sm-red'`.
+
+**Matching.** Assigning `'12px'` to `` `${number}px` `` and solving `infer` holes share one routine, `inferFromLiteralPartsToTemplateLiteral` in [internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go). It checks that the source starts with the first text piece and ends with the last. Then, for each middle piece, it searches with `strings.Index`, which finds the **first** occurrence: that is the "shortest first" rule. A piece of length zero, between two touching holes, consumes one code point via `DecodeJSStringRune`; the comment there says this "intentionally diverges" from the old compiler, which advanced one UTF-16 code unit. For plain assignability, `isTypeMatchedByTemplateLiteralType` then checks each captured piece against its hole: anything fits `string`, and `'12'` fits `number` because it is a valid numeric string.
+
+**Case changes.** `lib.es5.d.ts` declares `type Uppercase<S extends string> = intrinsic;` and the same for the other three. `intrinsic` is a keyword that means "the compiler implements this": for a literal it applies the string operation, and for a generic `S` it keeps the type as a deferred string mapping.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Passing `keyof T` straight to `Capitalize` | `Type 'K' does not satisfy the constraint 'string'.` | Use `K & string` |
+| Several large unions in one template | `Expression produces a union type that is too complex to represent.` | Keep the product below 100,000, or use `${string}` or `${number}` holes |
+| Trusting a template type for data from outside | A `Pixels` value read from JSON can be anything | Template types are compile-time only; validate at runtime ([any, unknown and Runtime Validation](11-any-unknown-and-runtime-validation.qmd)) |
+| Expecting `infer` to take the longest match | `SplitOnce<'a/b/c'>` is `['a', 'b/c']`, not `['a/b', 'c']` | Recurse on the tail, or match from the other end with a fixed suffix |
+| Counting characters with a recursive `Length` type written for TypeScript 6 | Emoji now count as 1 instead of 2 | TypeScript 7 matches by code point; update tests that assumed UTF-16 units |
+
+## Interview questions
+
+### 1. How many members does `` `${A}-${B}-${C}` `` have?
+
+**Answer.** $|A| \times |B| \times |C|$, provided the members are distinct strings: each hole multiplies the count by the size of its union. With $|A| = 3$, $|B| = 2$ and $|C| = 4$ that is $3 \times 2 \times 4 = 24$ string literal types. The checker computes this product before building anything, and refuses it with TS2590 when it reaches 100,000. The lab shows `${Digit}` four times (10,000) compiles and five times (100,000) fails.
+
+### 2. Write a type that turns `'/users/:id/posts/:postId'` into `{ id: string; postId: string }`.
+
+**Answer.** Two steps. First a recursive conditional type collects the parameter names: match `` `${string}:${infer Param}/${infer Rest}` ``, keep `Param` and recurse on `Rest`; when there is no `/` left, match `` `${string}:${infer Param}` ``; otherwise `never`. That gives `'id' | 'postId'`. Then a mapped type turns names into properties: `{ [K in RouteParams<P>]: string }`. Making the router generic in `P extends string` lets the compiler see the literal path, so `params.postid` is an error.
+
+### 3. Implement `Getters<T>`. Why is `K & string` needed?
+
+**Answer.** ``{ [K in keyof T as `get${Capitalize<K & string>}`]: () => T[K] }``. `keyof T` may contain `number` and `symbol` keys, and `Capitalize<S extends string>` rejects them with `Type 'K' does not satisfy the constraint 'string'.` The intersection `K & string` is `K` for string keys and `never` for the rest, and a remapped key of `never` is dropped. Note that `T[K]` still uses the original `K`, so the value types are preserved: `getAge` returns `number`.
+
+### 4. What changed for template literal types in TypeScript 7?
+
+**Answer.** Inference between two adjacent holes now takes one Unicode **code point** instead of one UTF-16 code unit. `` S extends `${infer Head}${infer Tail}` `` on `'😀abc'` used to give `Head = '\ud83d'`, half of a surrogate pair; TypeScript 7 gives `'😀'`, matching `[...'😀abc'][0]`. The TypeScript 7 release notes call this a breaking change for types that "intentionally modeled UTF-16 code units, such as some string Length utilities." The lab's `HeadTail<'😀abc'>` check would fail under TypeScript 6.
+
+### 5. Can a template literal type validate user input?
+
+**Answer.** Only input the compiler can see. `` `${number}px` `` rejects the literal `'twelve px'` written in source code, but a string read from a form or from `JSON.parse` has type `string` (or `any`), and nothing checks it at runtime because the type is erased. The same applies to `matchRoute`: the type knows which keys exist, and the runtime code fills them. For outside data, write a parser that checks the string and returns the narrow type, as in [any, unknown and Runtime Validation](11-any-unknown-and-runtime-validation.qmd).
+
+## Summary
+
+$$
+|T| = \prod_{i=1}^{k} |A_i| < 100{,}000
+$$
+
+where $T$ is a template literal type with $k$ holes, $A_1, \dots, A_k$ are the unions in those holes, $|X|$ is the number of members of $X$, and $\prod$ multiplies the $k$ sizes.
+
+Example: `` `btn-${Size}-${Color}` `` has $k = 2$, so $3 \times 2 = 6 < 100{,}000$ members. Five `Digit` holes give $10^5 = 100{,}000$, which fails.
+
+- A template literal type is a string pattern: fixed text plus typed holes.
+- Unions in holes multiply; the checker stops at 100,000 members.
+- `Uppercase`, `Lowercase`, `Capitalize` and `Uncapitalize` are compiler intrinsics.
+- With `as`, mapped types rename keys: `` `get${Capitalize<K & string>}` ``.
+- `infer` in a template matches shortest-first, and recursion turns that into a parser.
+- TypeScript 7 splits adjacent holes by code point, not UTF-16 unit.
+- All of it is compile-time only: runtime strings still need runtime checks.
+
+## References
+
+- TypeScript Handbook: [Template Literal Types](https://www.typescriptlang.org/docs/handbook/2/template-literal-types.html) (including "Intrinsic String Manipulation Types").
+- [TypeScript 4.1 release notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-1.html): template literal types, key remapping, recursive conditional types.
+- Anders Hejlsberg, [Template literal types and mapped type 'as' clauses](https://github.com/microsoft/TypeScript/pull/40336), microsoft/TypeScript pull request #40336 (2020).
+- Daniel Rosenwasser, [Announcing TypeScript 7.0](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/) (2026), section on template literal types and Unicode code points.
+- The TypeScript 7 sources: [internal/checker/checker.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/checker.go) (`getTemplateLiteralType`, `checkCrossProductUnion`) and [internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go) (`inferFromLiteralPartsToTemplateLiteral`).
+- Dan Vanderkam, [*Effective TypeScript*](https://effectivetypescript.com/), 2nd ed., O'Reilly, 2024, Item 54.
+- Lab: [`labs/template-literal-types.ts`](labs/template-literal-types.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node template-literal-types.ts`.

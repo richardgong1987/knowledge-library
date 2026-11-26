@@ -1,0 +1,345 @@
+---
+title: "Classes and Interfaces"
+description: "TypeScript classes and interfaces from first shapes to erasable syntax: interface versus type alias, declaration merging, extends versus &, implements, private and protected versus #private, readonly, abstract classes, structural compatibility, and why enum, namespace and parameter properties are not erasable."
+---
+
+## The problem
+
+A bank account class keeps a balance of 100 and marks it `private`. Somewhere else, someone writes `account.balance = -1000`. TypeScript refuses to compile that line, which feels like protection. But TypeScript's `private` is erased before the code runs. A JavaScript caller, a line with `as any`, or bracket access `account['balance']` reaches the field anyway, and the lab shows the balance really becomes −1000.
+
+Classes and interfaces are where TypeScript's two worlds meet: **types**, which the compiler checks and then deletes, and **JavaScript**, which runs. Some class features (`private`, `readonly`, `abstract`, `implements`) belong to the first world only. Others (`#private`, the class itself) are JavaScript and survive. And a few old TypeScript features (`enum`, `namespace`, parameter properties) generate code, which is why Node.js refuses to run them and why this project's `tsconfig.json` sets `erasableSyntaxOnly`. Knowing which world a feature lives in tells you what it can and cannot protect.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A sign on the door and a lock on the door
+
+- **`private`** is a sign saying "Staff only". The teacher (the compiler) checks every visitor during rehearsal and stops anyone who ignores it. On the real day the teacher has gone home, and the sign stops nobody.
+- **`#private`** is a **lock**. It works on the real day, whoever comes along, because the building (the JavaScript engine) enforces it.
+- An **interface** is a job advert: "must be able to drive". Anyone who can drive fits, whatever their name. That is structural typing ([Structural Typing](01-structural-typing.qmd)).
+- An **abstract class** is a colouring book: the outlines are printed, and each child must fill in the empty shapes before it counts as a picture.
+
+The TypeScript 3.8 release notes use the same split: `private` is "soft privacy" that "is only enforced at compile-time/design-time", while `#` fields "can't be accessed or even detected outside of the containing class - even by JS users!" Dan Vanderkam's *Effective TypeScript* turns the last part into a rule, Item 72: *Prefer ECMAScript Features to TypeScript Features.*
+:::
+
+## From simple to advanced
+
+As in earlier chapters, the lab proves type-level claims with `Expect<Equal<A, B>>` and quotes `tsc` errors with `// @ts-expect-error`.
+
+### Level 1: interface or type alias
+
+For an object shape, the two are almost interchangeable. The [handbook](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#differences-between-type-aliases-and-interfaces) states the key difference: "a type cannot be re-opened to add new properties vs an interface which is always extendable." Two interfaces with the same name **merge**; two type aliases with the same name are an error on both lines:
+
+```ts
+interface Settings { theme: string }
+interface Settings { fontSize: number } // merges into the declaration above
+const settings: Settings = { theme: 'dark', fontSize: 14 };
+```
+
+```ts
+// @ts-expect-error Duplicate identifier 'Pair'.
+type Pair = { left: number };
+// @ts-expect-error Duplicate identifier 'Pair'.
+type Pair = { right: number };
+```
+
+The second difference is how they combine. `interface ... extends` **checks** that the new members are compatible with the old ones. An intersection `&` does not check; it intersects each property's type, and an impossible property quietly becomes `never`:
+
+```ts
+interface Animal { name: string; id: number }
+// @ts-expect-error Interface 'Pet' incorrectly extends interface 'Animal'.
+interface Pet extends Animal { id: string }
+type PetAlias = Animal & { id: string };
+type Level1 = Expect<Equal<PetAlias['id'], never>>;
+```
+
+$$
+\operatorname{members}(I) = \operatorname{members}(I_1) \cup \operatorname{members}(I_2),
+\qquad
+(A \mathbin{\&} B)[k] = A[k] \mathbin{\&} B[k]
+$$
+
+where
+
+- $I_1$ and $I_2$ are two declarations of the same interface $I$, and $\operatorname{members}$ is the set of its properties;
+- $A \mathbin{\&} B$ is the intersection of two object types, and $k$ is a property name;
+- $X[k]$ is the type of property $k$ in $X$.
+
+Example: $\operatorname{members}(\texttt{Settings}) = \lbrace \texttt{theme} \rbrace \cup \lbrace \texttt{fontSize} \rbrace = \lbrace \texttt{theme}, \texttt{fontSize} \rbrace$, so `settings` must have both. For `PetAlias`, $k = \texttt{id}$ gives $\texttt{number} \mathbin{\&} \texttt{string}$. No value is both a number and a string, so the type is `never` and no object can ever satisfy `PetAlias`. The interface version reports the conflict at once, at the declaration, with the detail `Types of property 'id' are incompatible.`
+
+Only a type alias can name a union, a tuple, a primitive, or a mapped or conditional type. The handbook's heuristic: "use `interface` until you need to use features from `type`."
+
+### Level 2: a class is a value and a type; `implements` only checks
+
+`class Circle` creates two things with one name: a **value**, the constructor function that runs, and a **type**, the shape of its instances.
+
+```ts
+interface Shape { area(): number }
+class Circle implements Shape {
+  radius: number;
+  constructor(radius: number) {
+    this.radius = radius;
+  }
+  area(): number {
+    return Math.PI * this.radius ** 2;
+  }
+}
+```
+
+`implements Shape` asks the compiler to check that `Circle` fits `Shape`, and nothing else. It is erased, it adds no members, and it does not even give types to parameters, which surprises many people:
+
+```ts
+// @ts-expect-error Class 'Square' incorrectly implements interface 'Shape'.
+class Square implements Shape { side = 2 }
+```
+
+```ts
+interface Validator { check(input: string): boolean }
+class LengthValidator implements Validator {
+  // @ts-expect-error Parameter 'input' implicitly has an 'any' type.
+  check(input) {
+    return input.length > 3;
+  }
+}
+```
+
+Because types are structural, a class type accepts any object with the right members, even one that never touched the class:
+
+```ts
+const fake: Circle = { radius: 2, area: () => 12 };
+assert.equal(fake instanceof Circle, false); // the checker says Circle; the runtime disagrees
+```
+
+That is the price of structural typing: `instanceof` is a runtime question about the prototype chain ([Objects and Prototypes](../javascript/04-objects-and-prototypes.qmd)), and the type `Circle` does not answer it.
+
+### Level 3: `private` is a sign, `#private` is a lock
+
+```ts
+class Account {
+  readonly owner: string;
+  private balance = 100;
+  #pin = 1234;
+  constructor(owner: string) {
+    this.owner = owner;
+  }
+  checkPin(pin: number): boolean {
+    return pin === this.#pin;
+  }
+  static isAccount(value: object): boolean {
+    return #pin in value;
+  }
+}
+```
+
+The three fields behave very differently once the program runs:
+
+```ts
+const account = new Account('Ada');
+// @ts-expect-error Property 'balance' is private and only accessible within class 'Account'.
+account.balance = -1000;
+// @ts-expect-error Cannot assign to 'owner' because it is a read-only property.
+account.owner = 'Eve';
+assert.equal(account['balance'], -1000); // the write happened, and brackets are allowed to read it
+assert.deepEqual(Object.keys(account), ['owner', 'balance']); // #pin is not a property
+assert.equal(JSON.stringify(account), '{"owner":"Eve","balance":-1000}');
+```
+
+- `readonly owner` and `private balance` are ordinary JavaScript properties. The compiler rejects the two writes, but the lab suppresses those errors to show what the erased code does: both writes happen. TypeScript also deliberately allows `account['balance']`, an escape hatch the handbook calls "soft private".
+- `#pin` is a JavaScript private field (ES2022). It is not a property, so `Object.keys` and `JSON.stringify` cannot see it, and code outside the class body cannot even be **parsed**. The lab compiles `account.#pin` with `eval` and catches `SyntaxError: Private field '#pin' must be declared in an enclosing class`. Written directly in a `.ts` file, `tsc` reports:
+
+```ts
+// sketch: does not compile, and does not parse as JavaScript
+account.#pin; // error TS18013: Property '#pin' is not accessible outside class 'Account' because it has a private identifier.
+```
+
+`#pin in value` is the ES2022 **brand check**: it is true only for objects built by this class. `Account.isAccount({ owner: 'Ada', balance: 100 })` is `false`, however similar the shape. `protected` is a sign too: in the lab, the subclass `AuditedLedger` may push to the inherited `entries` array, while outside code gets `Property 'entries' is protected and only accessible within class 'Ledger' and its subclasses.`
+
+A `private` member also changes **assignability**: it makes the class nominal. Two classes with the same private field are not interchangeable, even with identical shapes:
+
+```ts
+class Meters {
+  private value: number;
+  constructor(value: number) {
+    this.value = value;
+  }
+}
+class Feet {
+  private value: number;
+  constructor(value: number) {
+    this.value = value;
+  }
+}
+// @ts-expect-error Types have separate declarations of a private property 'value'.
+const height: Meters = new Feet(6);
+```
+
+$$
+A <: B \iff \forall p \in \operatorname{props}(B):\;
+p \in \operatorname{props}(A) \;\land\; A[p] <: B[p] \;\land\;
+\big(\operatorname{priv}(p) \Rightarrow \operatorname{decl}_A(p) = \operatorname{decl}_B(p)\big)
+$$
+
+where
+
+- $A <: B$ means a value of type $A$ may be used where $B$ is expected;
+- $\operatorname{props}(X)$ is the set of property names of $X$, and $p$ is one of them;
+- $\forall$ means "for every", $\land$ "and", $\Rightarrow$ "implies";
+- $\operatorname{priv}(p)$ is true when $p$ is `private` (or `protected`) in $A$ or in $B$;
+- $\operatorname{decl}_X(p)$ is the source-code declaration that property $p$ of $X$ comes from.
+
+Example 1, `fake` against `Circle`: $\operatorname{props}(\texttt{Circle}) = \lbrace \texttt{radius}, \texttt{area} \rbrace$. The object literal has both, `2` is a `number`, `() => 12` returns a `number`, and nothing is private, so every condition holds and the assignment compiles. Example 2, `Feet` against `Meters`: $\operatorname{props} = \lbrace \texttt{value} \rbrace$ on both sides with type `number`, but $\operatorname{priv}(\texttt{value})$ is true and $\operatorname{decl}_{\texttt{Feet}}(\texttt{value}) \ne \operatorname{decl}_{\texttt{Meters}}(\texttt{value})$, two different lines of source, so the rule fails.
+
+### Level 4: abstract classes
+
+An abstract class is a base class with holes. It can hold real code (`render`) and declare members that subclasses must provide (`body`):
+
+```ts
+abstract class Report {
+  abstract body(): string;
+  render(): string {
+    return `# Report\n${this.body()}`;
+  }
+}
+```
+
+```ts
+// @ts-expect-error Non-abstract class 'EmptyReport' does not implement inherited abstract member body from class 'Report'.
+class EmptyReport extends Report {}
+// @ts-expect-error Cannot create an instance of an abstract class.
+const blank = new Report();
+assert.equal(new SalesReport().render(), '# Report\nsales: 3');
+assert.equal(typeof blank.body, 'undefined'); // abstract is erased: the runtime made the object anyway
+```
+
+`abstract` is another sign. Once erased, `Report` is an ordinary JavaScript class, so `new Report()` runs and builds an object with no `body` method. Choose an abstract class when subclasses should **share code**; choose an interface when unrelated classes only need to **share a shape**.
+
+### Level 5: erasable syntax, and the three features that are not
+
+Node.js runs `.ts` files directly. In the words of its [documentation](https://nodejs.org/api/typescript.html), "Node.js will replace TypeScript syntax with whitespace, and no type checking is performed." That only works when deleting the types leaves a correct JavaScript program:
+
+$$
+p \text{ is erasable} \iff \operatorname{run}(\operatorname{strip}(p)) = \operatorname{run}(\operatorname{tsc}(p))
+$$
+
+where
+
+- $p$ is a TypeScript program;
+- $\operatorname{strip}(p)$ is $p$ with every type annotation, type declaration and modifier such as `private` replaced by spaces;
+- $\operatorname{tsc}(p)$ is the JavaScript the full compiler would emit;
+- $\operatorname{run}$ is what the program does when executed.
+
+Example 1: `private balance = 100;` strips to `balance = 100;`, which is exactly what `tsc` emits, so it is erasable. Example 2: `enum Direction { Up, Down }` strips to nothing valid, while `tsc` emits real code:
+
+```text
+var Direction;
+(function (Direction) {
+    Direction[Direction["Up"] = 0] = "Up";
+    Direction[Direction["Down"] = 1] = "Down";
+})(Direction || (Direction = {}));
+```
+
+Example 3: the parameter property `constructor(readonly cents: number) {}` strips to `constructor(cents) {}`, but `tsc` emits `this.cents = cents;` inside it. Stripping would lose a line of behaviour. A `namespace` with values is compiled to an object-building function like the enum's. So these three are rejected by both tools:
+
+```ts
+// sketch: rejected by tsc with erasableSyntaxOnly, and by node
+enum Direction { Up, Down }
+namespace Shapes { export const unit = 1; }
+class Money { constructor(readonly cents: number) {} }
+```
+
+```text
+error TS1294: This syntax is not allowed when 'erasableSyntaxOnly' is enabled.
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript enum is not supported in strip-only mode
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript namespace declaration is not supported in strip-only mode
+SyntaxError [ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX]: TypeScript parameter property is not supported in strip-only mode
+```
+
+`tsc` reports TS1294 once for each line; Node stops at the first one. Every feature has an erasable replacement. For an enum, an `as const` object plus a union of its values:
+
+```ts
+const Direction = { Up: 'UP', Down: 'DOWN' } as const;
+type Direction = (typeof Direction)[keyof typeof Direction];
+function move(direction: Direction): string {
+  return `moving ${direction}`;
+}
+```
+
+The value `Direction` and the type `Direction` share one name, like a class. `Direction.Up` reads like an enum member, `'DOWN'` is accepted directly, and `move('LEFT')` is a compile error. For a namespace, use an ES module file. For a parameter property, declare the field and assign it:
+
+```ts
+class Money {
+  readonly cents: number;
+  constructor(cents: number) {
+    this.cents = cents; // what `constructor(readonly cents: number) {}` would generate
+  }
+}
+```
+
+A namespace that contains only types, such as `namespace Ids { export type User = string }`, has nothing to emit and is allowed.
+
+## How it works underneath
+
+**Two namespaces of names.** The binder records every declaration as a symbol with flags for the meanings it has. A `class` symbol has both a value meaning and a type meaning; an `interface` or `type` symbol has only a type meaning; a `const` has only a value meaning. That is why `const Direction` and `type Direction` can share a name, and why `typeof Circle` (the constructor's type) differs from `Circle` (the instance type). When two declarations of the same name meet in one scope, the binder **merges** their symbols if the flags allow it: interface with interface, or a namespace with a class, function or enum of the same name (the handbook's [Declaration Merging](https://www.typescriptlang.org/docs/handbook/declaration-merging.html) page lists the combinations). Two type aliases do not merge, hence the duplicate-identifier error.
+
+**Privacy in the checker.** In TypeScript 7's relater ([internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go)), `propertyRelatedTo` starts with the Level 3 rule: if either property is `private`, the two must have the same `ValueDeclaration`, or it reports `Types have separate declarations of a private property`. `protected` follows the same idea with a subclass allowance. Nothing of this reaches the output.
+
+**Privacy in the engine.** A `#name` is not a string key at all. Each evaluation of a class body creates a fresh private name, and each instance keeps its private fields in an internal list (the specification calls it `[[PrivateElements]]`), apart from its properties. The parser resolves `#pin` lexically, like a variable, so outside the class body it does not exist and the code is a syntax error. `#pin in value` asks whether that hidden slot exists, which is why it works as a brand check.
+
+**Stripping.** Node's type stripping is built on [Amaro](https://github.com/nodejs/amaro), which the TypeScript 5.8 release notes describe as "the underlying library for type-stripping in Node.js". The Node documentation gives the reason for whitespace: "Since inline types are replaced by whitespace, source maps are unnecessary for correct line numbers in stack traces". TypeScript 5.8 added `--erasableSyntaxOnly` so that `tsc` reports what Node would refuse, before you run it.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| Relying on `private` to protect data at runtime | JavaScript callers, `as any` and `obj['field']` reach it | Use `#field` when privacy must hold at runtime |
+| Expecting `implements` to type the method parameters | `Parameter 'input' implicitly has an 'any' type.` | Annotate parameters in the class; `implements` only checks |
+| Combining conflicting types with `&` | The property becomes `never`; the error appears far away, at the first assignment | Use `interface ... extends`, which reports `TS2430` at the declaration |
+| Using `instanceof` on a value typed as a class | `false` for a structurally compatible plain object | Check the shape, or use a `#field in value` brand check |
+| Writing `enum`, a value `namespace` or a parameter property | `TS1294`, and Node's `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` | An `as const` object with a union type, an ES module, an explicit field |
+| Reopening a type alias to add a field | `Duplicate identifier 'Pair'.` | Use an interface for declarations meant to be extended |
+
+## Interview questions
+
+### 1. When do you choose an interface, and when a type alias?
+
+**Answer.** For a plain object shape either works. Choose an **interface** when the shape should be extendable by other declarations (declaration merging, as in library augmentation), or when you build on another shape with `extends`, which checks compatibility at the declaration and is cheaper for the checker than an intersection. Choose a **type alias** for anything that is not a single object shape: unions, tuples, primitives, function types, mapped and conditional types. The handbook's rule of thumb is "use `interface` until you need to use features from `type`".
+
+### 2. What is the difference between `private` and `#private`?
+
+**Answer.** `private` is a TypeScript modifier, checked by `tsc` and erased: at runtime the field is an ordinary property, visible to `Object.keys`, `JSON.stringify` and `obj['name']`, which TypeScript even allows on purpose. `#private` is JavaScript (ES2022): the engine stores it outside the property table, it is a syntax error outside the class body, and `#x in obj` can test for it. The lab shows `Object.keys(account)` is `['owner', 'balance']`, without `#pin`. Choose `#` when privacy must hold against all code; `private` is enough when you only want the compiler to stop accidents.
+
+### 3. Are TypeScript classes nominal or structural?
+
+**Answer.** Structural, with one exception. An object literal with `radius` and `area` is assignable to `Circle`, as the lab's `fake` shows, even though `fake instanceof Circle` is `false`. The exception is a `private`, `protected` or `#private` member: such properties match only if they come from the same declaration. So `Meters` and `Feet`, each with `private value: number`, are not assignable to each other: `Types have separate declarations of a private property 'value'.` Adding a private member is therefore one way to make a class nominal on purpose.
+
+### 4. Why does `erasableSyntaxOnly` reject `enum`, and what do you use instead?
+
+**Answer.** Because an enum is not only a type: `tsc` emits a JavaScript object for it (Level 5 shows the emitted function), with reverse mappings for numeric members. Removing the TypeScript syntax cannot produce that object, so Node's whitespace-based stripping refuses it with `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`, and `erasableSyntaxOnly` makes `tsc` report the same thing as TS1294. Parameter properties and value namespaces fail for the same reason: they generate code. Replace an enum with `const Direction = { Up: 'UP', Down: 'DOWN' } as const` and `type Direction = (typeof Direction)[keyof typeof Direction]`, or with a plain union of string literals when no runtime object is needed.
+
+## Summary
+
+$$
+p \text{ is erasable} \iff \operatorname{run}(\operatorname{strip}(p)) = \operatorname{run}(\operatorname{tsc}(p)),
+\qquad
+\operatorname{priv}(p) \Rightarrow \operatorname{decl}_A(p) = \operatorname{decl}_B(p)
+$$
+
+where $p$ in the first rule is a program, $\operatorname{strip}$ replaces TypeScript syntax with spaces, $\operatorname{tsc}$ is the full compiler's output and $\operatorname{run}$ is the behaviour; in the second rule $p$ is a property, $\operatorname{priv}(p)$ says it is private, and $\operatorname{decl}_X(p)$ is where type $X$ declares it.
+
+Example: `private balance = 100` strips to `balance = 100`, the same as `tsc`'s output, so it is erasable; `constructor(readonly cents: number)` loses `this.cents = cents`, so it is not. And `Feet` is not assignable to `Meters` because their private `value` fields come from 2 different declarations.
+
+- Interfaces merge and `extends` checks; type aliases do not merge and `&` intersects silently.
+- A class is a value and a type at once; `implements` is a check, nothing more.
+- `private`, `protected`, `readonly`, `abstract` and `implements` are erased; `#private` is enforced by JavaScript.
+- Classes are structural unless they have private members, which make them nominal.
+- `enum`, value `namespace` and parameter properties generate code, so Node and `erasableSyntaxOnly` reject them; use `as const` objects, modules and explicit fields.
+
+## References
+
+- TypeScript Handbook: [Classes](https://www.typescriptlang.org/docs/handbook/2/classes.html), [Everyday Types: differences between type aliases and interfaces](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#differences-between-type-aliases-and-interfaces), [Declaration Merging](https://www.typescriptlang.org/docs/handbook/declaration-merging.html), [Type Compatibility](https://www.typescriptlang.org/docs/handbook/type-compatibility.html) (private and protected members).
+- Release notes: [TypeScript 3.8](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-8.html) (ECMAScript private fields), [TypeScript 5.8](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html) (`--erasableSyntaxOnly`).
+- Node.js: [Modules: TypeScript](https://nodejs.org/api/typescript.html) (type stripping, unsupported features) and [Amaro](https://github.com/nodejs/amaro).
+- MDN: [Private properties](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes/Private_properties).
+- The TypeScript 7 source: [internal/checker/relater.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/relater.go) (`propertyRelatedTo`).
+- Dan Vanderkam, [*Effective TypeScript*](https://effectivetypescript.com/), 2nd ed., O'Reilly, 2024, Item 13 (type versus interface) and Item 72 (prefer ECMAScript features).
+- Lab: [`labs/classes-and-interfaces.ts`](labs/classes-and-interfaces.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node classes-and-interfaces.ts`.

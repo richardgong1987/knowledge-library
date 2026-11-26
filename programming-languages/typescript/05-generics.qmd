@@ -1,0 +1,306 @@
+---
+title: "Generics"
+description: "TypeScript generics as 'for every type T': type parameters and inference, constraints with extends and keyof, generic interfaces, classes and defaults, const type parameters (5.0), NoInfer (5.4), and erasure."
+---
+
+## The problem
+
+You want one function that returns the first element of any array. With `any` it is easy to write and easy to misuse:
+
+```ts
+function firstAny(items: any[]): any {
+  return items[0];
+}
+const crash = () => firstAny(["apple"]).toFixed(2); // compiles
+```
+
+The compiler accepts `toFixed` on `"apple"` because `any` switches checking off, and at runtime the lab gets `TypeError: firstAny(...).toFixed is not a function`. The alternative, writing `firstString`, `firstNumber`, `firstUser` and so on, repeats the same three lines for every element type.
+
+What we want to say is: "whatever type the elements have, the result has **that same type**". A **type parameter** says exactly that. It turns the function into a family of functions, one for every type, while the runtime code stays a single function.
+
+## Explain it like I'm ten
+
+::: {.callout-tip}
+## A photocopier and a shape-sorter
+
+- A **generic function** is a photocopier: whatever you put in, you get back copies of the **same thing**. Put in a drawing, get drawings; put in a letter, get letters. The copier does not need to know what a drawing is.
+- The **type parameter** `T` is the copier's "whatever you put in". You rarely name it out loud; the copier sees what you fed it (**inference**).
+- A **constraint** (`T extends { length: number }`) is a sign on the slot: "only things with a length fit here".
+- **`NoInfer`** is a rule that says "decide what kind of paper this is from the tray, not from the sticky note on top".
+
+The TypeScript Handbook describes generics as *"being able to create a component that can work over a variety of types rather than a single one."* Dan Vanderkam's *Effective TypeScript* puts it in one line, "Think of Generics as Functions Between Types", and Philip Wadler's paper *Theorems for free!* (1989) shows why a function that works "for every type" is so constrained that its type alone tells you what it can do.
+:::
+
+## From simple to advanced
+
+### Level 1: a type parameter remembers the type
+
+```ts
+function first<T>(items: T[]): T | undefined {
+  return items[0];
+}
+const word = first(["apple", "pear"]); // T = string
+const count = first([3, 7]); // T = number
+const explicit = first<number>([3, 7]); // T written by hand
+const mixed = first([1, "a"]); // T = string | number
+```
+
+`<T>` declares a type parameter; `items: T[]` and the return type use it. Read the signature as a statement about **every** type:
+
+$$
+\texttt{first} : \forall T.\; T[\,] \to T \mid \texttt{undefined}
+$$
+
+where
+
+- $\forall T$ means "for every type $T$";
+- $T[\,]$ is an array of $T$, the parameter type;
+- $\to$ separates the parameter type from the result type, and $T \mid \texttt{undefined}$ is "a $T$ or `undefined`" (an empty array has no first element).
+
+A call picks one $T$. TypeScript **infers** it by matching each argument's type against the parameter type, then substitutes it everywhere, written $[T := \dots]$.
+
+Example: `first(["apple", "pear"])` has an argument of type `string[]`. Matching `T[]` against `string[]` gives $[T := \texttt{string}]$, so the result type is `string | undefined` and the value is `"apple"`. `first([3, 7])` gives $[T := \texttt{number}]$ and the value 3. In `first([1, "a"])` the array literal's own type is `(string | number)[]` ([Inference and Literal Types](02-inference-and-literal-types.qmd)), so $[T := \texttt{string} \mid \texttt{number}]$. `first([])` returns `undefined`, which is why `undefined` is in the result type. Unlike `firstAny`, the result is now checked:
+
+```ts
+// @ts-expect-error: first(["apple"]) is a string or undefined, not a number
+const rounded = Math.round(first(["apple"]));
+```
+
+```text
+error TS2345: Argument of type 'string | undefined' is not assignable to parameter of type 'number'.
+  Type 'undefined' is not assignable to type 'number'.
+```
+
+### Level 2: "for every T" means the body may assume nothing, until you add a constraint
+
+The $\forall$ binds the function's author, not only its caller. The caller chooses $T$, so the body must work for **every** choice, including `number`, `boolean` and `null`:
+
+```ts
+function lengthOfAnything<T>(value: T): number {
+  // @ts-expect-error: not every T has a length
+  return value.length;
+}
+function notIdentity<T>(value: T): T {
+  // @ts-expect-error: the caller picks T, so a number is not necessarily a T
+  return 42;
+}
+```
+
+```text
+error TS2339: Property 'length' does not exist on type 'T'.
+error TS2322: Type 'number' is not assignable to type 'T'.
+  'T' could be instantiated with an arbitrary type which could be unrelated to 'number'.
+```
+
+The second message is the universal quantifier in the compiler's own words. If the caller chose $T = \texttt{string}$, returning `42` would break the promise. This property is called **parametricity**, and Wadler's *Theorems for free!* shows how much it lets you conclude from a type alone: a function of type $\forall T.\; T \to T$ cannot invent a $T$, so (without casts) all it can do is return its argument or throw.
+
+To use `length`, narrow "every $T$" to "every $T$ that has a length" with `extends`:
+
+```ts
+function longest<T extends { length: number }>(a: T, b: T): T {
+  return b.length > a.length ? b : a;
+}
+const longerText = longest("ab", "abc");
+const longerList = longest([1, 2], [1]);
+// @ts-expect-error: numbers have no length
+const longerNumber = longest(10, 20);
+```
+
+$$
+\texttt{longest} : \forall T \le \lbrace \texttt{length} : \texttt{number} \rbrace.\; (T, T) \to T
+$$
+
+where
+
+- $T \le B$ means "$T$ must be assignable to the bound $B$", here an object type with a numeric `length`;
+- $(T, T)$ is a pair of parameters of the same type $T$.
+
+Example: strings have a numeric `length`, so $T$ may be a string; the lengths are 2 and 3, $3 > 2$, and the result is `"abc"`. Arrays also qualify: lengths 2 and 1, so `[1, 2]` wins. `number` has no `length`, so `longest(10, 20)` is rejected with `TS2345: Argument of type 'number' is not assignable to parameter of type '{ length: number; }'.`
+
+### Level 3: `keyof` constraints tie one parameter to another
+
+A constraint can mention **another** type parameter. `K extends keyof T` says "$K$ must be one of the keys of $T$" ([keyof, typeof and Indexed Access](06-keyof-typeof-and-indexed-access.qmd) covers `keyof` and `T[K]` in full):
+
+```ts
+function pluck<T, K extends keyof T>(items: T[], key: K): T[K][] {
+  return items.map(item => item[key]);
+}
+```
+
+$$
+\texttt{pluck} : \forall T.\; \forall K \le \operatorname{keyof} T.\; (T[\,], K) \to T[K][\,]
+$$
+
+where
+
+- $\operatorname{keyof} T$ is the union of the property names of $T$;
+- $T[K]$ is the type of property $K$ in $T$, so $T[K][\,]$ is an array of those values.
+
+Example: for `people`, $T = \lbrace \texttt{name}: \texttt{string}; \texttt{born}: \texttt{number} \rbrace$ and $\operatorname{keyof} T = \texttt{"name"} \mid \texttt{"born"}$. `pluck(people, "name")` infers $[K := \texttt{"name"}]$, so the result is $T[\texttt{"name"}][\,] = \texttt{string[]}$, the value `["Ada", "Alan"]`. With `"born"` it is `number[]`, `[1815, 1912]`. `"email"` is not in $\operatorname{keyof} T$:
+
+```text
+error TS2345: Argument of type '"email"' is not assignable to parameter of type '"born" | "name"'.
+```
+
+The return type **depends on the argument**. That is something `any` or overloads cannot express in one line.
+
+### Level 4: generic interfaces, classes and defaults
+
+Types can take parameters too. A generic type is a function from types to types: `Box` maps $T$ to `{ value: T }`.
+
+```ts
+interface Box<T> {
+  value: T;
+}
+const boxed: Box<string> = { value: "Ada" };
+class Stack<T> {
+  #items: T[] = [];
+  push(item: T): void {
+    this.#items.push(item);
+  }
+  pop(): T | undefined {
+    return this.#items.pop();
+  }
+}
+```
+
+A `new Stack<number>()` accepts only numbers: `stack.push("three")` is `TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.` A type parameter can also have a **default**, used when the caller gives none:
+
+```ts
+type ApiResponse<T = unknown> = { status: number; body: T };
+const raw: ApiResponse = { status: 200, body: "ok" }; // T defaults to unknown
+const typed: ApiResponse<string[]> = { status: 200, body: ["Ada"] };
+```
+
+The lab proves `ApiResponse` with no argument is exactly `{ status: number; body: unknown }`. A default of `unknown` is a safe choice: the caller must narrow the body before using it. Whether a `Box<Dog>` may be used where a `Box<Animal>` is expected is a separate question, answered in [Variance and Soundness](12-variance-and-soundness.qmd).
+
+### Level 5: `const` type parameters and `NoInfer`
+
+Two modern modifiers control **how** $T$ is inferred.
+
+A `const` type parameter (TypeScript 5.0) infers as if the argument had been written with `as const`:
+
+```ts
+function routesPlain<T extends readonly string[]>(paths: T): T {
+  return paths;
+}
+function routesExact<const T extends readonly string[]>(paths: T): T {
+  return paths;
+}
+const plain = routesPlain(["/", "/users"]);
+const exact = routesExact(["/", "/users"]);
+```
+
+`plain` is `string[]`; `exact` is `readonly ["/", "/users"]`, and the lab proves both. The caller gets the exact routes without writing `as const`.
+
+`NoInfer<T>` (TypeScript 5.4) marks a parameter that must **not** be used to infer $T$; it is only checked against the $T$ found elsewhere. This is the release notes' traffic-light example:
+
+```ts
+function createLight<C extends string>(colours: C[], start: C): C {
+  return start;
+}
+function createLightSafe<C extends string>(colours: C[], start: NoInfer<C>): C {
+  return start;
+}
+const blue = createLight(["red", "green"], "blue"); // C grew to include "blue"
+// @ts-expect-error: "blue" is not one of the colours
+const blueSafe = createLightSafe(["red", "green"], "blue");
+```
+
+```text
+error TS2345: Argument of type '"blue"' is not assignable to parameter of type '"green" | "red"'.
+```
+
+Without `NoInfer`, both parameters are inference sites, so $C$ becomes `"red" | "green" | "blue"` and the typo compiles. With it, only `colours` decides $C$, and `"blue"` is checked against `"red" | "green"`.
+
+## How it works underneath
+
+At each call, the checker (`internal/checker/inference.go` in `microsoft/typescript-go`) runs `inferTypes` for every argument: it walks the parameter type and the argument type side by side and records a **candidate** whenever it meets a type parameter. Matching `T[]` against `string[]` records `string` for `T`. A parameter wrapped in `NoInfer` is skipped by this walk. Then `getInferredType` turns the candidates into one type. For the usual covariant case, `getCovariantInference` first decides whether to widen literal candidates. Its source comment gives the rule: widen if *"the type parameter has no constraint or its constraint includes no primitive or literal types, and the type parameter was fixed during inference or does not occur at top-level in the return type"*. A `const` type parameter counts as having a primitive constraint, so it never widens. Then `getCommonSupertype` combines what is left:
+
+$$
+\operatorname{infer}(T) = \begin{cases} c_1 \mid c_2 \mid \dots \mid c_n & \text{if every } c_i \text{ is a literal type with the same base type} \\ \text{the leftmost } c_i \text{ that no later } c_j \text{ is a supertype of} & \text{otherwise} \end{cases}
+$$
+
+where
+
+- $c_1, \dots, c_n$ are the candidates for $T$ in argument order, after widening;
+- the **base type** of a literal is its general type: `string` for `"red"`, `number` for `1`;
+- $c_j$ is a supertype of $c_i$ when every $c_i$ value is also a $c_j$ value.
+
+Example 1: `createLight(["red", "green"], "blue")`. The constraint `string` is primitive, so nothing widens; the candidates are `"red" | "green"` and `"blue"`, all string literals, so $C$ is their union `"red" | "green" | "blue"`. Example 2: a `pair<T>(a: T, b: T): [T, T]` called as `pair(1, "a")`. $T$ is unconstrained and not at the top level of the return type `[T, T]`, so the candidates widen to `number` and `string`. They are not literals any more, `string` is not a supertype of `number`, so the leftmost, `number`, wins. The checker then checks every argument against $[T := \texttt{number}]$ and reports the second:
+
+```ts
+// @ts-expect-error: T was inferred as number from the first argument
+const clash = pair(1, "a");
+```
+
+```text
+error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+```
+
+If there are no candidates at all, $T$ falls back to its default, then to its constraint, then to `unknown`. Finally, the inferred type is checked against the constraint, which is where `longest(10, 20)` fails.
+
+**Erasure.** Like every other type, type parameters vanish before the program runs ([Structural Typing](01-structural-typing.qmd)). There is one `first` function at runtime, and Node's type stripping turns its header into `function first   (items     )                {`, as the lab checks. A type parameter cannot be used as a value: `new T()` is `TS2693: 'T' only refers to a type, but is being used as a value here.`, and running it throws `ReferenceError: T is not defined`. Java also erases type parameters; C# is the opposite, and its runtime creates a specialised type for each value-type argument and lets reflection see the type argument at run time.
+
+## Common mistakes
+
+| Mistake | Symptom | Fix |
+|---|---|---|
+| `any` where the type should flow through | `firstAny(["apple"]).toFixed(2)` compiles and throws `TypeError` | A type parameter: `first<T>(items: T[])` keeps the element type |
+| Using a property of an unconstrained `T` | `TS2339: Property 'length' does not exist on type 'T'.` | Add a constraint: `T extends { length: number }` |
+| Returning a concrete value as `T` | `TS2322: ... 'T' could be instantiated with an arbitrary type which could be unrelated to 'number'.` | Return something built from the arguments, or drop the type parameter |
+| A type parameter used only once | Extra noise, no extra safety | Use the constraint directly: `value: { length: number }` |
+| Expecting two arguments to infer a union | `pair(1, "a")`: `TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.` | Pass the union as the type argument explicitly |
+| A default argument that widens `T` | A typo such as `"blue"` becomes part of `T` | `NoInfer<T>` on that parameter |
+| `new T()` or `typeof x === T` | `TS2693`, then `ReferenceError` at runtime | Pass the constructor or a type guard as an ordinary argument |
+
+## Interview questions
+
+### 1. What is the difference between `any[]`, `unknown[]` and `T[]` as a parameter type?
+
+**Answer.** `any[]` turns checking off: anything goes in, and the result is `any`, so mistakes compile (`firstAny(...).toFixed`). `unknown[]` is safe but forgetful: anything goes in, and the result is `unknown`, which must be narrowed before use. `T[]` **relates** input and output: $\forall T.\; T[\,] \to T \mid \texttt{undefined}$ says the result has the element type of this particular call, so `first(["apple"])` is `string | undefined` and `Math.round` of it is rejected.
+
+### 2. When is a type parameter unnecessary?
+
+**Answer.** When it appears only once. The Handbook's rule is *"If a type parameter only appears in one location, strongly reconsider if you actually need it"*, and Dan Vanderkam calls it "The Golden Rule of Generics": type parameters are for **relating** the types of several values. `lengthOnce<T extends { length: number }>(value: T): number` uses `T` once, so it is exactly `lengthPlain(value: { length: number }): number`, and the lab checks they agree. `first` uses `T` twice (parameter and result), so its `T` earns its place.
+
+### 3. What do `const` type parameters and `NoInfer` change?
+
+**Answer.** Both change inference, not checking. `const T` (5.0) makes the argument be inferred in a const context: literals are not widened and array literals become readonly tuples, so `routesExact(["/", "/users"])` is `readonly ["/", "/users"]` where the plain version is `string[]`. `NoInfer<T>` (5.4) removes one parameter from inference; it is checked against the `T` inferred elsewhere, so `createLightSafe(["red", "green"], "blue")` is an error instead of silently widening `C` to include `"blue"`.
+
+### 4. Why does `pair(1, "a")` fail instead of inferring `string | number`?
+
+**Answer.** Each argument gives a candidate for `T`: `number` and `string` after widening. Since they are not literals of one base type, `getCommonSupertype` does not form a union; it takes the leftmost candidate that no later one is a supertype of, here `number`. The second argument is then checked against `number` and fails. The Handbook shows the same behaviour with `combine([1, 2, 3], ["hello"])` under "Specifying Type Arguments", and the same fix: write `pair<number | string>(1, "a")` when the mix is intended.
+
+### 5. Can you read a type argument at runtime?
+
+**Answer.** No. Type parameters are erased like all types: the lab shows `first` has no trace of `T` after stripping, and `new T()` throws `ReferenceError: T is not defined`. If a function needs runtime information about the type, pass it as a value, such as a constructor, a parse function or a type guard. This is the same as Java's erasure and the opposite of C#, whose runtime keeps type arguments.
+
+## Summary
+
+$$
+\forall T \le B.\; P(T) \to R(T)
+$$
+
+where $T$ is a type parameter, $B$ its constraint (`unknown` if none), $P(T)$ the parameter types and $R(T)$ the result type, both written in terms of $T$; each call chooses one $T$ by inference.
+
+Example: `longest` is $\forall T \le \lbrace \texttt{length}: \texttt{number} \rbrace.\; (T, T) \to T$. The call `longest("ab", "abc")` chooses a string type for $T$, satisfies the bound because strings have a length, and returns `"abc"` because $3 > 2$.
+
+- A type parameter relates types: what goes in decides what comes out.
+- "For every $T$" binds the author: without a constraint the body can assume nothing about $T$.
+- `extends` bounds $T$; `K extends keyof T` ties one parameter to another; `T[K]` follows the key.
+- Interfaces, classes and type aliases take parameters too, and parameters can have defaults.
+- `const T` keeps literals and tuples; `NoInfer<T>` stops a parameter from steering inference.
+- Type parameters are erased: one function at runtime, and no `T` to inspect.
+
+## References
+
+- TypeScript Handbook: [Generics](https://www.typescriptlang.org/docs/handbook/2/generics.html), [More on Functions: Guidelines for Writing Good Generic Functions](https://www.typescriptlang.org/docs/handbook/2/functions.html).
+- Release notes: [TypeScript 5.0 (`const` type parameters)](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-0.html), [TypeScript 5.4 (the `NoInfer` utility type)](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-4.html).
+- Anders Hejlsberg, [`const` modifier on type parameters](https://github.com/microsoft/TypeScript/pull/51865), pull request #51865 (2022), and [Add `NoInfer<T>` intrinsic](https://github.com/microsoft/TypeScript/pull/56794), pull request #56794 (2024).
+- The checker source: [internal/checker/inference.go](https://github.com/microsoft/typescript-go/blob/main/internal/checker/inference.go) in `microsoft/typescript-go`.
+- Philip Wadler, *Theorems for free!*, FPCA 1989, [doi:10.1145/99370.99404](https://doi.org/10.1145/99370.99404).
+- Dan Vanderkam, *Effective TypeScript*, 2nd ed. (O'Reilly, 2024), Items 50 and 51 ([item list](https://github.com/danvk/effective-typescript)), and [The Golden Rule of Generics](https://effectivetypescript.com/2020/08/12/generics-golden-rule/) (2020).
+- Matt Pocock, [Const type parameters bring 'as const' to functions](https://www.totaltypescript.com/const-type-parameters) and [NoInfer: TypeScript 5.4's New Utility Type](https://www.totaltypescript.com/noinfer).
+- For comparison: Oracle, [The Java Tutorials: Type Erasure](https://docs.oracle.com/javase/tutorial/java/generics/erasure.html); Microsoft, [Generics in the runtime (C#)](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/generics/generics-in-the-run-time).
+- Lab: [`labs/generics.ts`](labs/generics.ts). Run it from `programming-languages/typescript/labs` with `npx tsc -p .` and then `node generics.ts`.
