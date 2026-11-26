@@ -68,11 +68,13 @@ jobs:
         uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
+      # Ubuntu's own package: the SWI-Prolog PPA does not install on the ubuntu-26.04 runner.
+      # The labs are written on SWI-Prolog 10 and must also pass on this older release.
       - name: Install SWI-Prolog for the Prolog labs
         run: |
-          sudo apt-add-repository -y ppa:swi-prolog/stable
           sudo apt-get update
           sudo apt-get install -y swi-prolog-nox
+          swipl --version
       - name: Install the TypeScript compiler for the TypeScript labs
         run: npm ci --no-audit --no-fund --prefix programming-languages/typescript/labs
       - name: Verify every language chapter and run its lab

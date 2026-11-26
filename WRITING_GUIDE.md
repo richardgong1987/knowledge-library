@@ -143,8 +143,8 @@ Sections, in this order and with these exact headings:
   | Python 3.14 | `<slug>.py` | `python3 -I <slug>.py` |
   | JavaScript (Node 26) | `<slug>.mjs` | `node <slug>.mjs` |
   | TypeScript 7 | `<slug>.ts` | `npx tsc -p .` (strict, erasable syntax only), then `node <slug>.ts` |
-  | C# 14 (.NET 10) | `<slug>.cs` | `dotnet run --no-cache <slug>.cs` (`labs/Directory.Build.props` turns off Native AOT) |
-  | SWI-Prolog | `<slug>.pl` | `swipl -q -g main -t halt <slug>.pl` |
+  | C# 14 (.NET 10) | `<slug>.cs` | `dotnet run --no-cache <slug>.cs` (`labs/global.json` pins the .NET 10 SDK, because a file-based app targets whichever SDK runs it; `labs/Directory.Build.props` turns off Native AOT) |
+  | SWI-Prolog 10 (CI also runs Ubuntu's 9.2) | `<slug>.pl` | `swipl -q -g main -t halt <slug>.pl`; never assert exact `statistics(inferences)` counts, which change between releases |
 
 - **Lesson code comes from the lab.** Every code block tagged with the language (`go`, `python`, `js`, `ts`, `csharp`, `prolog`) must be an exact excerpt of the chapter's lab, compared line by line after trimming. A block whose first line is a `sketch` comment (`// sketch`, `# sketch`, `% sketch`) is exempt; use it only for code that cannot run in the lab, such as a compile error, a deadlock, or trimmed runtime source. Program output and REPL or Prolog query transcripts go in `text` blocks; commands go in `bash` blocks.
 - **Prove compile-time claims.** TypeScript labs use `// @ts-expect-error` for every type error the chapter shows, so `tsc` fails if the error ever disappears.
