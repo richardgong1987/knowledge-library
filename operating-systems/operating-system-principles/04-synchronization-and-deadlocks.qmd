@@ -1,0 +1,42 @@
+---
+title: "Locks and Deadlocks — When Two Helpful Workers Freeze"
+description: "A rigorous introductory lesson with one small example, mathematical notation and a proof-oriented explanation."
+---
+
+## Start with an ordinary situation
+
+Two workers need locks A and B. Worker 1 holds A and waits for B; worker 2 holds B and waits for A. Nobody makes progress.
+
+## The core concept
+
+A lock ensures exclusion, but a poor order of lock acquisition can create a cycle of waiting.
+
+## Express it mathematically
+
+$$
+T_1\to L_B\to T_2\to L_A\to T_1
+$$
+
+**Every symbol explained:** T_1 and T_2 are threads; L_A and L_B are locks A and B; each arrow means 'waits for a resource held by' or the corresponding resource-to-owner dependency. The cycle means no member can advance while all resources stay held.
+
+**Substitute actual numbers:** Worker 1 owns A, requires B; worker 2 owns B, requires A. Both wait forever. If both always acquire A before B, worker 2 must wait outside before taking B, so this exact cycle cannot form.
+
+## Why it works
+
+The classic Coffman conditions are mutual exclusion, hold-and-wait, no preemption, and circular wait. Breaking the circular-wait condition by acquiring locks in a consistent global order can prevent this class of deadlock.
+
+## Go one level deeper
+
+Deadlock is distinct from a data race, starvation and livelock; safe memory access alone does not guarantee progress.
+
+## Common misunderstanding
+
+A deadlock detector can identify cycles in a resource graph, but it does not always imply recovery is cheap or safe.
+
+## Check your understanding
+
+Explain the example with different numbers. Identify which assumption makes the derivation work, and which assumption would invalidate it. Then write the mathematical model again without looking.
+
+**Primary reference:** [Official documentation](https://docs.kernel.org/locking/). This is an independent educational derivation, not a reproduction of the reference text.
+
+[← operating system principles](index.qmd) · [Operating Systems home](../index.qmd)

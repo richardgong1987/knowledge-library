@@ -1,0 +1,42 @@
+---
+title: "Quantum Circuits — Operations First, Measurement Last"
+description: "A rigorous introductory lesson with one small example, mathematical notation and a proof-oriented explanation."
+---
+
+## Start with an ordinary situation
+
+What happens when a Hadamard gate is followed by another Hadamard gate on |0⟩? Many beginners expect two random outcomes, but there is only one final measurement.
+
+## The core concept
+
+The amplitudes can interfere. Intermediate operations are not necessarily observations. Two Hadamard gates reverse one another on an isolated qubit.
+
+## Express it mathematically
+
+$$
+H^2|0\rangle=I|0\rangle=|0\rangle
+$$
+
+**Every symbol explained:** H² means apply Hadamard twice; I is the identity operation that leaves a state unchanged; |0⟩ is the original and final state.
+
+**Substitute actual numbers:** Start from amplitude vector [1,0]. After the first H, get [1/√2,1/√2]. After the second H, the first component becomes (1/√2+1/√2)/√2=1; the second becomes (1/√2−1/√2)/√2=0. A final measurement returns 0 with 100% probability ideally.
+
+## Why it works
+
+This is interference: relative amplitudes may reinforce or cancel. A circuit works by composing operators before measurement, and the ordering of gates is significant when gates do not commute.
+
+## Go one level deeper
+
+On noisy hardware two H gates may still yield some 1 outcomes due to imperfect gates and measurements. Sampling outcomes from a real device differs from exact statevector simulation.
+
+## Common misunderstanding
+
+Quantum speedup does not follow merely from using qubits; algorithms need structure that turns interference into useful answer probabilities.
+
+## Check your understanding
+
+Explain the example with different numbers. Identify which assumption makes the derivation work, and which assumption would invalidate it. Then write the mathematical model again without looking.
+
+**Primary reference:** [Official documentation](https://quantum.cloud.ibm.com/docs/en/qiskit/construct-circuits). This is an independent educational derivation, not a reproduction of the reference text.
+
+[← quantum computing](index.qmd) · [Operating Systems home](../index.qmd)

@@ -1,0 +1,42 @@
+---
+title: "Quantum Gates — Matrices that Preserve Probability"
+description: "A rigorous introductory lesson with one small example, mathematical notation and a proof-oriented explanation."
+---
+
+## Start with an ordinary situation
+
+What happens if we apply a Hadamard gate to a qubit initially in |0⟩?
+
+## The core concept
+
+A quantum gate is a linear transformation of amplitudes. For a closed-system circuit, its matrix must be unitary so the state remains normalised.
+
+## Express it mathematically
+
+$$
+H|0\rangle=\frac{|0\rangle+|1\rangle}{\sqrt2}
+$$
+
+**Every symbol explained:** H is the Hadamard gate; |0⟩ is the input basis state; |1⟩ is the other basis state; √2 is a normalisation factor; '+' combines amplitudes, not classical stored bits.
+
+**Substitute actual numbers:** After H, amplitudes are α=1/√2 and β=1/√2, so the two measurement probabilities are (1/√2)²=1/2 each. On 100 ideal independent repetitions, we expect about 50 zero results and 50 one results, but exact counts fluctuate.
+
+## Why it works
+
+The Hadamard matrix is (1/√2)[[1,1],[1,−1]]. Its columns are orthonormal, giving H†H=I; hence it preserves total probability. Applying H again to the same qubit ideally returns |0⟩.
+
+## Go one level deeper
+
+A NOT gate X switches |0⟩ and |1⟩, but a general gate does not represent ordinary Boolean if/else control flow.
+
+## Common misunderstanding
+
+Do not treat a simulator's floating-point output as noise-free hardware evidence.
+
+## Check your understanding
+
+Explain the example with different numbers. Identify which assumption makes the derivation work, and which assumption would invalidate it. Then write the mathematical model again without looking.
+
+**Primary reference:** [Official documentation](https://quantum.cloud.ibm.com/learning/en/courses/utility-scale-quantum-computing/bits-gates-and-circuits). This is an independent educational derivation, not a reproduction of the reference text.
+
+[← quantum computing](index.qmd) · [Operating Systems home](../index.qmd)

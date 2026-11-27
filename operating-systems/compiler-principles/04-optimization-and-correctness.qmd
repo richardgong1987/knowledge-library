@@ -1,0 +1,42 @@
+---
+title: "Compiler Optimisation — Faster Without Changing the Answer"
+description: "A rigorous introductory lesson with one small example, mathematical notation and a proof-oriented explanation."
+---
+
+## Start with an ordinary situation
+
+A program computes (3 * 4) + (3 * 4). Can a compiler compute the multiplication only once?
+
+## The core concept
+
+Optimisation is justified only when transformed code preserves the source program's required observable behaviour.
+
+## Express it mathematically
+
+$$
+\llbracket P\rrbracket(x)=\llbracket P'\rrbracket(x)
+$$
+
+**Every symbol explained:** P is the original program and P-prime is the transformed program; double brackets mean its externally observable result under input x. The equality is a simplified semantic-equivalence requirement for transformations.
+
+**Substitute actual numbers:** For pure integer arithmetic with safe ranges, original: 3×4+3×4=24. Transform into t=3×4; result=t+t=24. The result stays equal while duplicated multiplication can be removed.
+
+## Why it works
+
+Common-subexpression elimination is safe for pure deterministic expressions when its language-specific semantics permit reuse. If the repeated expression calls a function with side effects, merging calls may change behaviour.
+
+## Go one level deeper
+
+Compiler optimisation often trades runtime speed, compilation time, code size and power. Proving equality on one input is not proof for all inputs.
+
+## Common misunderstanding
+
+Always distinguish a mathematical arithmetic identity from an identity that is valid for floats, integer overflow, concurrency or side-effectful code.
+
+## Check your understanding
+
+Explain the example with different numbers. Identify which assumption makes the derivation work, and which assumption would invalidate it. Then write the mathematical model again without looking.
+
+**Primary reference:** [Official documentation](https://llvm.org/docs/Passes.html). This is an independent educational derivation, not a reproduction of the reference text.
+
+[← compiler principles](index.qmd) · [Operating Systems home](../index.qmd)

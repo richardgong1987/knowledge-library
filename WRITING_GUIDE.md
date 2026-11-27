@@ -183,3 +183,14 @@ A puzzle lesson must include:
 8. A genuinely useful independent exercise, plus a book puzzle/page reference.
 
 Keep program code separate and optional. The purpose is to learn abstract mathematics and reasoning **without requiring programming**. When a checker or script is added, require deterministic tests and distinguish example verification from a general proof.
+
+
+## Computing Foundations: Operating Systems, Compilers, Quantum Computing
+
+This top-level category includes three requested second-level subjects: Operating System Principles, Compiler Principles, and Quantum Computing. Quantum computing is interdisciplinary, **not literally a subfield of classical operating-system engineering**; keep the conceptual distinction explicit.
+
+Use current primary sources from Linux kernel documentation, LLVM's official tutorial and IBM Quantum Learning. Avoid version-specific claims unless dated and supported.
+
+Every chapter requires a real motivating problem, exactly one principal mathematical expression, an immediate explanation of **every symbol**, numerical substitution with worked arithmetic, an explanation of why the relationship holds, and a limitation or counterexample. Explain like teaching a child without deleting the mathematical derivation.
+
+Prefer a 10-line minimal example to a complicated framework. Python examples are independent numerical checks, not OS kernels, compiler toolchains or quantum-hardware simulators. The curriculum and examples must pass automated checks. Do not create placeholder pages.

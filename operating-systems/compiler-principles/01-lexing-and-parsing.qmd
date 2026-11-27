@@ -1,0 +1,42 @@
+---
+title: "Lexing and Parsing — From Characters to a Tree"
+description: "A rigorous introductory lesson with one small example, mathematical notation and a proof-oriented explanation."
+---
+
+## Start with an ordinary situation
+
+The string 2 + 3 * 4 should evaluate to 14, not 20. How does a compiler know multiplication binds more tightly?
+
+## The core concept
+
+Lexing groups characters into tokens; parsing arranges tokens into a structure according to a grammar that encodes operator precedence.
+
+## Express it mathematically
+
+$$
+E\to T\,(+\;T)^*,\qquad T\to F\,(*\;F)^*
+$$
+
+**Every symbol explained:** E denotes an expression, T a term and F a factor such as an integer; arrows mean 'can be formed as'; the star means zero or more repetitions. The grammar puts multiplication inside T, so it binds more tightly than addition in E.
+
+**Substitute actual numbers:** Tokenise '2+3*4' as [2,+,3,*,4]. Parse it as Add(2, Mul(3,4)). Evaluate Mul first: 3×4=12, then 2+12=14. A flat left-to-right interpretation would incorrectly produce (2+3)×4=20.
+
+## Why it works
+
+A parser constructs an abstract syntax tree (AST) preserving the relevant structure. A lexer need not understand evaluation; a parser need not execute code.
+
+## Go one level deeper
+
+Parentheses can override precedence. For '(2+3)*4' the AST is Mul(Add(2,3),4), producing 20.
+
+## Common misunderstanding
+
+A grammar is not a regular expression for arbitrary nested syntax. Avoid conflating token recognition with structural parsing.
+
+## Check your understanding
+
+Explain the example with different numbers. Identify which assumption makes the derivation work, and which assumption would invalidate it. Then write the mathematical model again without looking.
+
+**Primary reference:** [Official documentation](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/). This is an independent educational derivation, not a reproduction of the reference text.
+
+[← compiler principles](index.qmd) · [Operating Systems home](../index.qmd)

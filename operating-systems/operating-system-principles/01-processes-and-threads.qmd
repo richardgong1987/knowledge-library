@@ -1,0 +1,42 @@
+---
+title: "Processes and Threads — Who Owns Memory?"
+description: "A rigorous introductory lesson with one small example, mathematical notation and a proof-oriented explanation."
+---
+
+## Start with an ordinary situation
+
+Imagine two chefs working in two different kitchens. Each kitchen is a process with its own address space; chefs sharing one kitchen are threads. They can share ingredients, but must coordinate access.
+
+## The core concept
+
+A process provides a resource and protection boundary; a thread is an execution path within a process. Neither is exactly one CPU core.
+
+## Express it mathematically
+
+$$
+P=\{T_1,T_2,\ldots,T_n\}
+$$
+
+**Every symbol explained:** P denotes one process in this teaching abstraction, and T_i are its n threads; the braces indicate a set. This is a conceptual relationship, not a full kernel implementation definition.
+
+**Substitute actual numbers:** For n=2, P contains T_1 and T_2. If both increment one shared counter from 0 without synchronisation, a lost update may leave 1 instead of 2. If they hold a lock across the read-modify-write, the counter reaches 2.
+
+## Why it works
+
+Threads in the same process generally share a virtual address space; processes normally have distinct virtual address spaces, though OS facilities explicitly allow shared memory. Scheduling concerns execution units, while memory isolation concerns address-space mappings.
+
+## Go one level deeper
+
+A process can have one thread or many; a thread may block or be runnable. Linux represents schedulable execution units as tasks and uses sharing flags to express common resources.
+
+## Common misunderstanding
+
+Do not conclude that two threads always run in parallel. On one core they may interleave; on multiple cores they may actually overlap.
+
+## Check your understanding
+
+Explain the example with different numbers. Identify which assumption makes the derivation work, and which assumption would invalidate it. Then write the mathematical model again without looking.
+
+**Primary reference:** [Official documentation](https://docs.kernel.org/). This is an independent educational derivation, not a reproduction of the reference text.
+
+[← operating system principles](index.qmd) · [Operating Systems home](../index.qmd)
