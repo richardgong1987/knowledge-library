@@ -205,3 +205,10 @@ Preserve the book's progression: math prerequisites; vector and matrix operation
 Every written lesson must have one clear question, one mathematical relationship, **immediate definitions of all symbols**, a numerical substitution, a derivation or explanation of why the relationship holds, a limitation and a practice question. Reuse the tablet-to-wall linear transformation and very small 2×2 matrices to build connected intuition. Do not turn the category into 24 unconnected definitions or a large programming framework.
 
 Tests verify selected arithmetic; they do not replace formal proof.
+
+
+## Interviews (future book-based section)
+
+Interviews is a separate top-level Knowledge Library category. Its content is intentionally **source-led**. Only the landing page and the editorial guide exist until the user uploads interview-preparation books. Do not claim any future source has been read or generate numerous empty topic pages.
+
+When an interview source is uploaded, inspect its actual chapters, terminology and examples before designing second-level categories. Build rigorous, independently worded learning chapters with small examples, symbol definitions and numerical substitutions, concise interview explanations and follow-up challenges. Attribute sources, distinguish source material from illustrative extensions, and avoid copyrighted prose or illustrations. Preserve the user's established English-language teaching style; prefer British English for spoken interview answers.
