@@ -1,0 +1,56 @@
+---
+title: "Puzzle #35 — Water Jugs as a Shortest-Path Problem"
+description: "A mathematical explanation of an Algorithmic Puzzles problem, from small cases to proof."
+---
+
+## 1. State the problem clearly
+
+You start with eight units of water in an 8-unit container; the 5-unit and 3-unit containers are empty. Pour between containers until one holds exactly four units, without wasting water. How can we PROVE a route is shortest?
+
+## 2. Start with the simplest useful observation
+
+Represent each situation by just three integers: quantities in the large, medium and small jug. All transfers preserve their total, and no jug can exceed its capacity.
+
+## 3. Express the relationship mathematically
+
+$$
+x+y+z=8,\quad 0\le x\le8,\ 0\le y\le5,\ 0\le z\le3
+$$
+
+**Explain every symbol:** x,y,z are the amounts in the 8-, 5- and 3-unit jugs. The equality says total water is conserved. Each inequality gives a physical jug's allowed capacity range.
+
+**Substitute actual numbers:** Start (8,0,0). Pour from 8 to 5 until the 5-unit jug fills: (3,5,0). Pour from 5 to 3: (3,2,3). Every state still adds up to eight. A hypothetical (7,4,2) adds to 13, so it is impossible without extra water.
+
+## 4. Derive the answer and prove it works
+
+One successful six-pour route is:
+
+~~~text
+(8,0,0)
+(3,5,0)
+(3,2,3)
+(6,2,0)
+(6,0,2)
+(1,5,2)
+(1,4,3)   ← four in the middle jug
+~~~
+
+Each step pours until the source empties or the destination fills. The six transitions are all legal.
+
+## 5. Check the result step by step
+
+A shortest-path proof can use BFS on a FINITE graph: nodes are legal amount triples; edges are permitted complete pours. BFS examines every state reachable in zero pours, then one, then two, etc. Running it on these small capacities first reaches any jug containing four after **six** pours; no shorter path exists under the stated move rules.
+
+## 6. What survives when the numbers change?
+
+For capacities A,B,C, states are bounded by (A+1)(B+1)(C+1), although conservation and reachability exclude many. The mathematics of a move may be written as transferring δ=min(source amount, free space at destination).
+
+## 7. Try it yourself
+
+Why is pouring only one unit from a jug not an allowed edge in this version? Explain how changing the move rule could change the shortest answer.
+
+**Techniques:** Invariant, constrained state space, BFS, shortest-path optimality..
+
+**Book reference:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Easier #35, printed p. 40; hint p. 74; solution p. 109.. The explanation and formulation here are written independently.
+
+[← Mathematical Puzzles](index.qmd) · [Symbol Guide](symbol-guide.qmd) · [Strategy Guide](strategy-guide.qmd)

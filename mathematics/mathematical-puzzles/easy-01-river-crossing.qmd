@@ -1,0 +1,44 @@
+---
+title: "Puzzle #1 — River Crossing as a State Graph"
+description: "A mathematical explanation of an Algorithmic Puzzles problem, from small cases to proof."
+---
+
+## 1. State the problem clearly
+
+A traveller has a wolf, a goat and cabbage on the near riverbank. Only one can ride alongside the traveller. Leaving the wolf alone with the goat or the goat alone with the cabbage is unsafe. We need a legal route, preferably with the fewest crossings.
+
+## 2. Start with the simplest useful observation
+
+One state records which riverbank holds each participant. The simplest labels are 0=near bank and 1=far bank. Initially everyone is 0; the goal is everyone 1.
+
+## 3. Express the relationship mathematically
+
+$$
+s=(m,w,g,c)\in\{0,1\}^{4}
+$$
+
+**Explain every symbol:** s is one complete state; m,w,g,c record the traveller, wolf, goat and cabbage. The expression {0,1}^4 says there are four positions, each chosen from 0 or 1. There are at most 2×2×2×2=16 raw configurations.
+
+**Substitute actual numbers:** Start s=(0,0,0,0). If the traveller takes the goat, the new state is (1,0,1,0). The wolf and cabbage remain on the near bank, which is safe because they do not threaten each other.
+
+## 4. Derive the answer and prove it works
+
+A state is forbidden when the goat is beside the wolf without the traveller, or beside the cabbage without the traveller. Each legal crossing switches the traveller's bit and at most one passenger bit. This converts a colourful story into a SMALL graph. Breadth-first search explores routes by trip count; it reaches the goal first after seven edges.
+
+## 5. Check the result step by step
+
+The seven crossings are: goat across; traveller back alone; wolf across; goat back; cabbage across; traveller back alone; goat across. Verify the unsafe pairs are never unattended after any move. A complete search of the at-most-16 states has no path to the goal in six or fewer crossings, establishing minimum **7**.
+
+## 6. What survives when the numbers change?
+
+If a puzzle gives several people, boats or dangerous pairs, represent the state as bits and write a Boolean legality predicate. The number of configurations may grow exponentially, so pruning invalid states matters.
+
+## 7. Try it yourself
+
+Which of the four bits change when the traveller returns alone? Is (1,0,0,1) a safe state? Explain why.
+
+**Techniques:** Graph states, Boolean constraints, BFS shortest paths..
+
+**Book reference:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Easier #1, printed p. 32; hint p. 72; solution p. 82.. The explanation and formulation here are written independently.
+
+[← Mathematical Puzzles](index.qmd) · [Symbol Guide](symbol-guide.qmd) · [Strategy Guide](strategy-guide.qmd)

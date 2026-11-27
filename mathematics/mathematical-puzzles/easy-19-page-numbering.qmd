@@ -1,0 +1,44 @@
+---
+title: "Puzzle #19 — Count Printed Page Digits"
+description: "A mathematical explanation of an Algorithmic Puzzles problem, from small cases to proof."
+---
+
+## 1. State the problem clearly
+
+The page labels of a book are 1,2,3,...,N, and printing all those labels uses exactly **1,578 decimal digits**. How many pages are there? The trap is to divide 1,578 by a guessed average length.
+
+## 2. Start with the simplest useful observation
+
+Count the groups whose digit lengths are easy: pages 1–9 use one digit, 10–99 use two, and 100–999 use three.
+
+## 3. Express the relationship mathematically
+
+$$
+D(N)=9+2(90)+3(N-99)\quad(100\le N\le999)
+$$
+
+**Explain every symbol:** D(N) is the number of printed decimal digits for pages 1 through N. The 9 counts one-digit pages; 90 counts pages 10–99; the factor 2 gives two characters for each of them; N−99 counts three-digit pages from 100 to N.
+
+**Substitute actual numbers:** Substitute D(N)=1,578: first 9+2×90=189 characters cover pages 1–99. Remaining 1,578−189=1,389 characters belong to three-digit page labels. Divide by 3: 1,389/3=463 further pages. So N=99+463=**562**.
+
+## 4. Derive the answer and prove it works
+
+The piecewise approach is exact because no page in the range 100–999 uses a different number of digits. As a check: pages 100–562 number 463, using 1,389 digits, and the first 99 use 189. Their sum is 1,578.
+
+## 5. Check the result step by step
+
+This is an example of partitioning a count by **place value**, not counting each page separately. For a much larger book, add the four-digit group 1,000–9,999 with 4 digits per page, and so on.
+
+## 6. What survives when the numbers change?
+
+How many digits are required to print pages 1–120? Work through the same three groups.
+
+## 7. Try it yourself
+
+Counting, place-value ranges, piecewise arithmetic.
+
+**Techniques:** undefined.
+
+**Book reference:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Easier #19, printed p. 36; hint p. 73; solution p. 94.. The explanation and formulation here are written independently.
+
+[← Mathematical Puzzles](index.qmd) · [Symbol Guide](symbol-guide.qmd) · [Strategy Guide](strategy-guide.qmd)

@@ -1,0 +1,44 @@
+---
+title: "Puzzle #94 — Search a Sorted Table in 19 Reveals"
+description: "A fully explained mathematical puzzle with symbols, small numbers, derivation and proof."
+---
+
+## 1. Turn the story into a precise problem
+
+A 10-by-10 table contains different values increasing left-to-right in each row and top-to-bottom in each column. You can reveal one cell at a time. Can you check whether a target exists without reading all 100?
+
+## 2. Check a small case first
+
+Begin at the UPPER-RIGHT cell. Its entries to the left are smaller; those below are larger. So comparing the target with this single value tells you an entire row or column that can be discarded.
+
+## 3. Express the key relationship
+
+$$
+Q(r,c)\le r+c-1
+$$
+
+**What every symbol means:** Q(r,c) is the maximum number of inspected cells for an r-row, c-column sorted table using the corner-walk method. Each step reduces the still-possible row count or column count by one; the −1 accounts for the starting corner.
+
+**Substitute actual numbers:** For a 10-by-10 array, Q≤10+10−1=**19**. For a 3-by-3 example with rows [1,3,8], [2,5,9], [4,7,10], search for 7: reveal 8, move LEFT to 3, move DOWN to 5, move DOWN to 7. Only four reveals.
+
+## 4. Derive the result — why it must be true
+
+If target < current upper-right value, the entire current rightmost column is too large or equal to a larger value below, so move left. If target > current value, the entire current top row is too small, so move down. If equal, stop. Every discarded row/column is mathematically impossible to contain the target.
+
+## 5. Validate the answer
+
+The algorithm cannot revisit any cell and every unsuccessful comparison discards one complete row or column. The maximum zigzag path from the upper-right to the bottom-left corner uses r+c−1 distinct cells. That proves the guarantee even if the target is absent.
+
+## 6. Generalise and identify the limitation
+
+What breaks if the table is sorted in every ROW but the columns have arbitrary order? Give a counterexample where the corner-walk wrongly discards a column.
+
+## 7. Try another example
+
+Order constraints, elimination, linear search bound in the grid dimensions.
+
+**Techniques:** undefined
+
+**Source:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Medium #94, printed p. 55; hint p. 77; solution p. 165.. Puzzle statements are paraphrased and the teaching text is independently written.
+
+[← Mathematical Puzzles](index.qmd) · [Mathematical Symbols](symbol-guide.qmd) · [Strategies](strategy-guide.qmd)

@@ -1,0 +1,57 @@
+---
+title: "Seven Ways to Think Before You Write Code"
+description: "Mathematical versions of the general strategies in Levitin and Levitin."
+---
+
+# Seven reusable tools for solving puzzles
+
+The source book's first tutorial distinguishes algorithm design strategies and its second tutorial explains analysis. We translate those ideas into seven mental questions rather than making a list of fashionable algorithm names.
+
+## 1. Look for an invariant
+
+**Question:** What does EVERY allowed move preserve? In the water-jug puzzle, transferring water preserves the total quantity, even though each individual jug changes.
+
+$$
+x+y+z=8
+$$
+
+**Symbols:** $x,y,z$ are current water quantities in the 8-, 5- and 3-unit jugs. The right-hand side is their fixed total.
+
+**Substitute numbers:** $(8,0,0)$ has sum 8; $(3,5,0)$ also has sum 8; $(1,4,3)$ again has sum 8. A proposed state $(4,4,3)$ would total 11, so it is impossible.
+
+## 2. Count cases before guessing
+
+**Question:** How many different things must be distinguished, and how many outcomes does each action produce? This yields lower bounds such as $3^2\ge8$ for eight coins. The [coin lesson](easy-10-eight-coins.qmd) constructs the matching two-weighing method.
+
+## 3. Replace the story with a graph
+
+A state is a point; a legal move is an edge; solving the puzzle means reaching a target point. For unit-cost actions, shortest-path reasoning explains minimal step counts. Read [river crossing](easy-01-river-crossing.qmd) and [water jugs](easy-35-water-jugs.qmd).
+
+## 4. Decrease the problem
+
+If a tournament has $n$ participants and every match removes exactly one contender, solve the problem by the number of remaining competitors. A [knockout tournament](easy-32-tournament.qmd) needs $n-1$ matches, regardless of how uneven its bracket is.
+
+## 5. Divide and combine
+
+Break a problem into smaller cases of the same kind, solve them, then combine answers. A right triangle split by an altitude gives **two** right triangles. Repeating that split builds a [rectangle dissection](easy-03-rectangle-dissection.qmd) for any larger number of pieces.
+
+## 6. Optimise only what matters
+
+A greedy move chooses what looks best now, but it can make the overall answer worse. The [night bridge](tutorial-bridge-crossing.qmd) takes 19 minutes with a plausible greedy schedule but only 17 minutes with a better plan. A claim of optimality needs an argument for why faster is impossible.
+
+## 7. Record the best smaller answer
+
+Dynamic programming avoids recomputing the same decisions. A triangle path can be solved by recording the best value at each triangle cell rather than enumerating every path. See [maximum-sum descent](easy-20-maximum-path.qmd).
+
+## How do we prove a puzzle solution?
+
+Most puzzles need two parts:
+
+- **Construction:** show an action sequence or numerical object that achieves the desired result.
+- **Lower bound or impossibility:** show no sequence or object can do better, or why an impossible target violates a constraint.
+
+If the question asks for the *minimum*, a construction alone is insufficient. For example, giving 14 drops in the egg puzzle is not proof that 13 cannot work; the recurrence supplies the missing bound.
+
+**Textbook basis:** *Algorithmic Puzzles*, Tutorials 1–2 (printed pp. 3–31), independently paraphrased with new computations.
+
+[← Mathematical Puzzles](index.qmd)

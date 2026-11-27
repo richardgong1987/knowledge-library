@@ -1,0 +1,55 @@
+---
+title: "Night Bridge: Why the Obvious Greedy Choice Loses"
+description: "A rigorous but beginner-friendly mathematical explanation from the Algorithmic Puzzles study path."
+---
+
+## 1. Understand the situation
+
+Four people need one shared flashlight to cross a bridge, at most two at a time. Their individual crossing times are 1, 2, 5 and 10 minutes. Two crossing together take as long as the slower person. The flashlight must return for the others. Find the MINIMUM total time.
+
+## 2. Try the smallest useful observation
+
+A natural strategy repeatedly sends the fastest available pair. It can produce a valid schedule taking **19 minutes**. This proves only that 19 is possible—not that 19 is optimal.
+
+## 3. Write the mathematics
+
+$$
+T=\max(a,b)+r_1+\max(c,d)+r_2+\max(a,b)
+$$
+
+**Explain every symbol:** T is total elapsed time; a,b,c,d name the people with respective times 1,2,5,10. The max operation takes the slower person's time for each pair. r_1 and r_2 are the two return-trip times.
+
+**Substitute actual numbers:** Choose the schedule: (1,2) cross in 2; person 1 returns in 1; (5,10) cross in 10; person 2 returns in 2; (1,2) cross in 2. Add: 2+1+10+2+2=**17 minutes**.
+
+## 4. Why the solution follows
+
+Why cannot a better strategy finish in 16? The two slow walkers must reach the far bank. In an optimal solution we can compare two essential ways of transporting them: send 5 and 10 together (requiring the pair of fast people as flashlight shuttles), or send them separately with the fastest helper returning. For times a≤b≤c≤d, their canonical costs are a+3b+d and 2a+b+c+d. With (1,2,5,10), these are 1+6+10=17 and 2+2+5+10=19. Thus the first plan wins; alternative unnecessary trips can only add time.
+
+## 5. Work through the answer
+
+A timeline:
+
+~~~text
+Time 0  : 1 and 2 cross
+Time 2  : 1 returns
+Time 3  : 5 and 10 cross
+Time 13 : 2 returns
+Time 15 : 1 and 2 cross
+Time 17 : everyone has arrived
+~~~
+
+The tempting 19-minute alternative sends 1+2, brings 1 back, sends 1+5, brings 1 back, then sends 1+10.
+
+## 6. Generalise the idea
+
+The problem is an example of **optimisation**. A local decision ('always choose the two fastest') ignores the future costs of carrying the flashlight back. A proof of optimality compares the necessary transport patterns, not just one successful schedule.
+
+## 7. Your turn
+
+If the four crossing times were 1,2,3,4, which of the two canonical strategies would win? Compute both numbers before deciding.
+
+**Mathematical tools:** Greedy counterexample, constructive schedule and lower-bound comparison.
+
+**Source:** Anany and Maria Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Tutorial puzzle (Bridge Crossing at Night), printed p. 17; related numbered puzzle #7, printed p. 33.. The wording, mathematical explanations and walkthroughs here are independently written.
+
+[← Mathematical Puzzles](index.qmd) · [Symbols](symbol-guide.qmd) · [Strategies](strategy-guide.qmd)

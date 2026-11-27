@@ -124,6 +124,10 @@ jobs:
           cd ../03-module
           terraform init -input=false
           terraform validate
+      - name: Verify the mathematical puzzle curriculum and notation explanations
+        run: python3 mathematics/mathematical-puzzles/check_curriculum.py
+      - name: Run the original mathematical-puzzle example tests
+        run: python3 -m unittest discover -s mathematics/mathematical-puzzles/examples -p 'test_*.py'
       - name: Install Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:

@@ -1,0 +1,52 @@
+---
+title: "Magic Square: Prove the Sum Is 15 and the Centre Is 5"
+description: "A rigorous but beginner-friendly mathematical explanation from the Algorithmic Puzzles study path."
+---
+
+## 1. Understand the situation
+
+Place the nine different numbers from 1 to 9 into a 3-by-3 square. Every row, column and long diagonal must add to the same number. Before trying arrangements, ask what that common number MUST be.
+
+## 2. Try the smallest useful observation
+
+Adding 1 through 9 gives 45. Since each number belongs to exactly one row, the three row totals together must be 45. Therefore every row must total 45/3 = **15**.
+
+## 3. Write the mathematics
+
+$$
+3M=1+2+\cdots+9=45
+$$
+
+**Explain every symbol:** M is the common row sum. There are three rows, so adding their three identical totals gives 3M. The dots mean all integers from 3 through 8.
+
+**Substitute actual numbers:** Substitute the known total 45: 3M=45, so M=15. If someone claims M=14, three rows would sum to 42, contradicting the fact that all nine entries total 45.
+
+## 4. Why the solution follows
+
+Now call the centre value c. Add the middle row, the middle column, and both diagonals. Their total is 4×15=60. Every non-centre cell appears ONCE, while the centre appears FOUR times. Compared with the total of all entries (45), this extra counting adds the centre three extra times. Thus 60=45+3c and c=5. The centre is forced, not guessed.
+
+## 5. Work through the answer
+
+One completed square is:
+
+~~~text
+8   1   6
+3   5   7
+4   9   2
+~~~
+
+Top row: 8+1+6=15. First column: 8+3+4=15. Main diagonal: 8+5+2=15. Checking the other rows, column and diagonal gives the same 15.
+
+## 6. Generalise the idea
+
+For an n-by-n normal magic square containing 1 through n², the total of all entries is n²(n²+1)/2. Dividing by n rows gives the forced common line sum n(n²+1)/2. Our case n=3 gives 3(9+1)/2=15.
+
+## 7. Your turn
+
+Can you prove the centre must be 5 BEFORE writing any arrangement? Then try to construct a square by placing opposite-number pairs around the centre.
+
+**Mathematical tools:** Counting constraints, double counting and proof before search.
+
+**Source:** Anany and Maria Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Tutorial puzzle (Magic Square), printed p. 4; tutorial discussion of exhaustive search, printed pp. 4–5.. The wording, mathematical explanations and walkthroughs here are independently written.
+
+[← Mathematical Puzzles](index.qmd) · [Symbols](symbol-guide.qmd) · [Strategies](strategy-guide.qmd)

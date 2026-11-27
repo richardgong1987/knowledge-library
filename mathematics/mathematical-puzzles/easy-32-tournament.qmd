@@ -1,0 +1,44 @@
+---
+title: "Puzzle #32 — Why a Champion Needs n−1 Matches"
+description: "A mathematical explanation of an Algorithmic Puzzles problem, from small cases to proof."
+---
+
+## 1. State the problem clearly
+
+In a knockout competition, losing one match eliminates you permanently. Starting with n players, how many matches are needed for one champion? How many rounds are needed in a balanced bracket?
+
+## 2. Start with the simplest useful observation
+
+Count losers, not schedules. Every actual match has exactly ONE loser. To finish with one survivor, exactly n−1 people must lose.
+
+## 3. Express the relationship mathematically
+
+$$
+M(n)=n-1
+$$
+
+**Explain every symbol:** M(n) is the total number of knockout matches and n is the number of players. The right-hand side counts all participants other than the sole champion.
+
+**Substitute actual numbers:** With n=8, there must be 8−1=**7 matches**: four quarterfinals, two semifinals, one final. With n=10, there must be **9 matches**, even though some players may get a bye into a later round.
+
+## 4. Derive the answer and prove it works
+
+For a standard bracket arranged to have as few rounds as possible, each round can at best halve the number of contenders. Thus the round count is ceil(log₂ n). For n=8, log₂8=3. For n=10, 2³=8<10≤16=2⁴, so at least four rounds are required and a balanced bracket can achieve four.
+
+## 5. Check the result step by step
+
+To find the second-best player when outcomes consistently reflect a true strength ordering, only people who LOST to the eventual champion can be second-best. If the champion played k matches, comparing the k defeated players costs k−1 further matches. In a balanced n-player bracket, k is at most ceil(log₂n).
+
+## 6. What survives when the numbers change?
+
+The n−1 match count uses a conservation argument: every match reduces the number of surviving players by one. It does not depend on how you arrange the bracket. The logarithmic round bound, however, assumes matches may be played in parallel and byes are scheduled sensibly.
+
+## 7. Try it yourself
+
+For 13 players, calculate the total number of matches and the minimum balanced-bracket rounds. Explain why these are different measures of work.
+
+**Techniques:** Counting elimination, tight bounds, logarithmic depth..
+
+**Book reference:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Easier #32, printed p. 40; hint p. 74; solution p. 106.. The explanation and formulation here are written independently.
+
+[← Mathematical Puzzles](index.qmd) · [Symbol Guide](symbol-guide.qmd) · [Strategy Guide](strategy-guide.qmd)

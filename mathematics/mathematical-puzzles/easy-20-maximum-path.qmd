@@ -1,0 +1,44 @@
+---
+title: "Puzzle #20 — Maximum-Sum Path Without Enumerating Every Route"
+description: "A mathematical explanation of an Algorithmic Puzzles problem, from small cases to proof."
+---
+
+## 1. State the problem clearly
+
+Numbers sit in a triangular arrangement. You start at the top and descend one row at a time, stepping only to one of the two neighbouring entries immediately below. Find the greatest total you can collect.
+
+## 2. Start with the simplest useful observation
+
+Start from the bottom. Each position needs to know only the BEST result achievable from its two children. That is exactly what a recurrence records.
+
+## 3. Express the relationship mathematically
+
+$$
+F(i,j)=a(i,j)+\max(F(i+1,j),F(i+1,j+1))
+$$
+
+**Explain every symbol:** a(i,j) is the actual number in row i and position j; F(i,j) is the largest sum from there to the bottom; max chooses the better of the two downward moves. On the bottom row, F equals a because there are no further choices.
+
+**Substitute actual numbers:** Use the book's triangular numbers: top 2; second row 5,4; third 3,4,7; bottom 1,6,9,6. From the bottom, third-row best values are 3+max(1,6)=9, 4+max(6,9)=13 and 7+max(9,6)=16. One row higher we get 5+max(9,13)=18 and 4+max(13,16)=20. At the top: 2+max(18,20)=**22**.
+
+## 4. Derive the answer and prove it works
+
+The best route is 2→4→7→9, totalling 22. Why does the recurrence give the optimum? Every legal route starting from a position MUST choose one of exactly two children, and no future decision before leaving that child affects its own best remainder. The optimal remainder is therefore the larger child value.
+
+## 5. Check the result step by step
+
+For a height-h triangle, each of its roughly h(h+1)/2 cells is processed once, so the method uses O(h²) arithmetic operations. Enumerating all top-to-bottom paths instead examines 2^(h−1) candidates; this becomes much more expensive as h grows.
+
+## 6. What survives when the numbers change?
+
+If the third row changes from 3,4,7 to 30,4,7, recompute only the affected ancestor values. Does the winning route change?
+
+## 7. Try it yourself
+
+Dynamic programming, recurrence, optimal substructure, bottom-up evaluation.
+
+**Techniques:** undefined.
+
+**Book reference:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Easier #20, printed p. 36; hint p. 73; solution p. 95.. The explanation and formulation here are written independently.
+
+[← Mathematical Puzzles](index.qmd) · [Symbol Guide](symbol-guide.qmd) · [Strategy Guide](strategy-guide.qmd)

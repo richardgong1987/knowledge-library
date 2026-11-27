@@ -1,0 +1,44 @@
+---
+title: "Puzzle #57 — Fibonacci Rabbits and a Two-Month Memory"
+description: "A fully explained mathematical puzzle with symbols, small numbers, derivation and proof."
+---
+
+## 1. Turn the story into a precise problem
+
+A mathematical rabbit population begins with one newborn pair. Every pair needs its first month to mature and then produces one new pair every following month. The model makes the simplifying assumption that none die and every eligible pair reproduces.
+
+## 2. Check a small case first
+
+Break the pairs into **old enough to reproduce** and **new**. At the next month, every currently existing pair survives, and mature pairs add one new pair. The key is that the new pairs depend on how many pairs were alive two months ago.
+
+## 3. Express the key relationship
+
+$$
+F(n)=F(n-1)+F(n-2),\quad F(0)=F(1)=1
+$$
+
+**What every symbol means:** F(n) is the total pairs after n months; F(n−1) is last month's existing population; F(n−2) is the population old enough to generate the new pairs under this age convention. F(0)=F(1)=1 are the starting conditions.
+
+**Substitute actual numbers:** Month 0:1 pair; month 1:1; month 2:1+1=2; month 3:2+1=3; month 4:3+2=5; month 5:5+3=8. Continuing gives months 6–12 totals 13,21,34,55,89,144,**233**.
+
+## 4. Derive the result — why it must be true
+
+The recurrence arises by partitioning the current population into disjoint groups: all previous survivors, plus newly born pairs. The survivors account for F(n−1), and the reproducing pairs correspond to F(n−2). These groups do not overlap when we count CURRENT new births.
+
+## 5. Validate the answer
+
+At month 12 the sequence has 233 pairs, matching the solution for this specific idealised model. This does NOT mean real rabbits follow Fibonacci numbers: finite food, deaths, mating details and different maturity intervals invalidate the toy assumptions.
+
+## 6. Generalise and identify the limitation
+
+A recurrence needs base conditions. Without F(0) and F(1), the equation alone describes infinitely many sequences. Change the starting population to two newborn pairs: what happens to every later term?
+
+## 7. Try another example
+
+Recurrence relation, modelling assumptions, induction.
+
+**Techniques:** undefined
+
+**Source:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Medium #57, printed p. 46; hint p. 75; solution p. 126.. Puzzle statements are paraphrased and the teaching text is independently written.
+
+[← Mathematical Puzzles](index.qmd) · [Mathematical Symbols](symbol-guide.qmd) · [Strategies](strategy-guide.qmd)

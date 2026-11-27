@@ -164,3 +164,22 @@ Each finance page must contain a **dated cash-flow story**, one important concep
 Prefer extending the same bond (face 100, annual coupon 5, two years remaining) rather than inventing an unrelated bond for every section. For advanced concepts such as duration, convexity, spot/forward rates, bootstrapping, default/recovery, portfolio covariance, CAPM and option pricing, never erase the derivation just because it seems difficult. Translate the math into ordinary language, then back into a tiny Python demonstration. All interest rates in code are **decimals**, so 5% is 0.05 and 1bp is 0.0001.
 
 The Finance lab must stay dependency-free and must pass its numeric tests before publication. Explicitly distinguish market prices from contractual payments, yield from realised return, and risk-neutral parameters from observed historical probabilities.
+
+
+## Mathematics and Mathematical Puzzles
+
+The mathematics category is separate from AI & Mathematics (which serves machine learning). The second-level Mathematics category is **Mathematical Puzzles**, grounded in Anany and Maria Levitin's *Algorithmic Puzzles* (Oxford University Press, 2011).
+
+Preserve the source's difficulty distinctions and puzzle numbers, but paraphrase its puzzles and create original explanations, diagrams, examples and proofs. Do not reproduce copyrighted page text, solution prose, hint text or book figures. Do not create hundreds of empty topic pages: publish only fully written lessons.
+
+A puzzle lesson must include:
+1. A simple real-world interpretation and an explicit goal;
+2. One or more small numerical cases before any unfamiliar notation;
+3. A mathematical formula or invariant appropriate for the puzzle;
+4. The meaning of **every** symbol, immediately under its displayed formula;
+5. Substitution with actual values, immediately after the notation explanation;
+6. A solution derivation and proof, including an optimality/lower-bound argument if the puzzle asks for a minimum;
+7. A generalisation and the assumptions under which it remains valid;
+8. A genuinely useful independent exercise, plus a book puzzle/page reference.
+
+Keep program code separate and optional. The purpose is to learn abstract mathematics and reasoning **without requiring programming**. When a checker or script is added, require deterministic tests and distinguish example verification from a general proof.

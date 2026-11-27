@@ -1,0 +1,44 @@
+---
+title: "Puzzle #3 — Make Any Number of Right Triangles"
+description: "A mathematical explanation of an Algorithmic Puzzles problem, from small cases to proof."
+---
+
+## 1. State the problem clearly
+
+Can a rectangle be covered exactly by n right triangles, for every integer n greater than one, if triangles may have different sizes? The important word is EVERY, not just 'find a nice picture for four triangles'.
+
+## 2. Start with the simplest useful observation
+
+Cut a rectangle from one corner to the opposite corner. You immediately obtain TWO right triangles. What if we could always replace one right triangle by two smaller ones?
+
+## 3. Express the relationship mathematically
+
+$$
+T(n)\Longrightarrow T(n+1)\qquad(n\ge2)
+$$
+
+**Explain every symbol:** T(n) means 'there exists a dissection of some rectangle into exactly n right triangles'. The arrow means if T(n) holds, then T(n+1) also holds. n is the current number of triangles.
+
+**Substitute actual numbers:** Starting with n=2, split one existing right triangle into two right triangles by drawing the altitude from its right-angle vertex to its hypotenuse. The old piece is replaced by two pieces, so the count becomes 2−1+2=3. Do it again to get 4, and again to get 5.
+
+## 4. Derive the answer and prove it works
+
+The new line reaches the hypotenuse at a right angle, so BOTH smaller triangles are right triangles. It stays entirely inside the original piece, so it introduces neither gaps nor overlap. This establishes the induction step for every n≥2.
+
+## 5. Check the result step by step
+
+**Proof by induction:** Base case T(2) is true by a diagonal cut. Assume T(k) for some k≥2. Choose any right triangle in that dissection, split it as above, and obtain T(k+1). Therefore T(n) is true for every integer n≥2. There is no missing n in the allowed range.
+
+## 6. What survives when the numbers change?
+
+The same method illustrates constructive existence proofs: demonstrating that an object can be extended by one preserves a useful property. The choice of which triangle to split may change the shape, but not the argument.
+
+## 7. Try it yourself
+
+Why is it important to say the two new pieces remain right triangles? What would go wrong if we just drew an arbitrary line?
+
+**Techniques:** Mathematical induction, construction, preservation of constraints..
+
+**Book reference:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Easier #3, printed p. 32; hint p. 72; solution p. 83.. The explanation and formulation here are written independently.
+
+[← Mathematical Puzzles](index.qmd) · [Symbol Guide](symbol-guide.qmd) · [Strategy Guide](strategy-guide.qmd)

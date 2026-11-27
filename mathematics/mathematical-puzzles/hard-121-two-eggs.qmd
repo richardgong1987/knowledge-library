@@ -1,0 +1,44 @@
+---
+title: "Puzzle #121 — Two Eggs, 100 Floors, Exactly 14 Drops"
+description: "A fully explained mathematical puzzle with symbols, small numbers, derivation and proof."
+---
+
+## 1. Turn the story into a precise problem
+
+A special fragile item can be dropped from floors of a 100-story building. It breaks above an unknown threshold. You have two identical items; broken ones cannot be reused. How few drops GUARANTEE identifying the highest safe floor?
+
+## 2. Check a small case first
+
+If you used the first item at floor 50 and it broke, only one item would remain and you might need 49 sequential checks. Equal jump sizes are not optimal: the jumps should get SHORTER as the remaining drop allowance shrinks.
+
+## 3. Express the key relationship
+
+$$
+H(d,2)=\frac{d(d+1)}{2}
+$$
+
+**What every symbol means:** H(d,2) is the largest number of consecutive floors whose threshold can always be determined with d drops and two items. d(d+1)/2 is the sum d+(d−1)+...+1.
+
+**Substitute actual numbers:** Try d=13: 13×14/2=**91**, too few for 100 floors. Try d=14: 14×15/2=**105**, enough. Therefore the optimum worst-case allowance is **14 drops**.
+
+## 4. Derive the result — why it must be true
+
+Use decreasing jump sizes. First try floor 14. If it breaks, examine floors 1 through 13 sequentially with the remaining item: at most 14 total drops. If it survives, next try floor 14+13=27; after a break there are at most 12 intermediate floors to check. Then jump +12 to 39, +11 to 50, +10 to 60, and so on. Every case fits within 14 drops.
+
+## 5. Validate the answer
+
+The recurrence behind this bound is H(d,e)=1+H(d−1,e−1)+H(d−1,e): one test floor plus the floors below if it breaks plus the floors above if it survives. With one item, H(d,1)=d because you must test from bottom up. Substituting e=2 and expanding yields 1+2+...+d. Since 13 drops cover at most 91 floors, no 13-drop strategy can guarantee success for all 100.
+
+## 6. Generalise and identify the limitation
+
+For 36 floors and two items, what is the smallest d with d(d+1)/2≥36? Try d=8 (36) and d=7 (28). Explain why eight is necessary and sufficient.
+
+## 7. Try another example
+
+Recurrence, worst-case optimality, triangular numbers, adaptive experiment design.
+
+**Techniques:** undefined
+
+**Source:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Hard #121, printed p. 63; hint p. 79; solution p. 197.. Puzzle statements are paraphrased and the teaching text is independently written.
+
+[← Mathematical Puzzles](index.qmd) · [Mathematical Symbols](symbol-guide.qmd) · [Strategies](strategy-guide.qmd)

@@ -1,0 +1,42 @@
+---
+title: "Puzzle Mathematics: Verify a Claim With One Tiny Program"
+description: "Dependency-free checks for the mathematical reasoning in Algorithmic Puzzles lessons."
+---
+
+# The maths comes first. Code checks the maths.
+
+We deliberately do not ask the reader to begin with Python. Every puzzle page first derives its mathematical model and proof. This folder contains **one optional Python file** for checking the numerical examples, plus tests that make accidental mistakes visible.
+
+## Try it from the repository root
+
+~~~bash
+python3 mathematics/mathematical-puzzles/examples/puzzle_math.py
+python3 -m unittest discover -s mathematics/mathematical-puzzles/examples -p 'test_*.py'
+~~~
+
+No packages to install; Python's standard library is enough.
+
+## What is actually verified?
+
+- 3×3 magic-square row/column/diagonal totals;
+- safe and unsafe four-queen placements;
+- 17-minute bridge plan versus 19-minute alternative;
+- the seven-crossing optimal river route;
+- gloves: 11 for one match, 19 for all colours;
+- triangle dissection count and the 2-weighing information bound;
+- 1,578 page-number digits ending at page 562;
+- maximum triangle path sum 22;
+- 8- and 10-player tournament match counts;
+- water-jug shortest route of six legal pours;
+- 233 rabbit pairs at the end of 12 model months;
+- ten open lockers in a 100-locker hallway;
+- celebrity candidate verification, sorted-table searching;
+- 14 drops for two eggs and 100 floors;
+- ten binary outcomes for 1,000 labels;
+- Josephus survivors for ten and forty-one participants.
+
+**What code does NOT prove:** A test may verify a few examples without proving a general statement. The proof lives in each lesson: induction, invariants, counting or a lower bound. Treat the programme as a calculator, not a substitute for reasoning.
+
+**Source:** *Algorithmic Puzzles*, Anany and Maria Levitin, Oxford University Press, 2011; original code and examples.
+
+[← Mathematical Puzzles](../index.qmd)

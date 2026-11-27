@@ -1,0 +1,44 @@
+---
+title: "Puzzle #81 — Find a Celebrity with Linear Questions"
+description: "A fully explained mathematical puzzle with symbols, small numbers, derivation and proof."
+---
+
+## 1. Turn the story into a precise problem
+
+A celebrity in a group knows nobody else, but everyone else knows that celebrity. We may ask about a directed relation: 'Does A know B?' Determine whether a celebrity exists using as few questions as practical.
+
+## 2. Check a small case first
+
+Choose two possible candidates A and B. Ask whether A knows B. If YES, A cannot be a celebrity. If NO, B cannot be a celebrity. Either answer removes one candidate.
+
+## 3. Express the key relationship
+
+$$
+The next relationship is a logical elimination rule, not merely a counting formula:
+$$
+
+**What every symbol means:** K(a,b)\Rightarrow a\notin C,\quad\neg K(a,b)\Rightarrow b\notin C
+
+**Substitute actual numbers:** K(a,b) means 'a knows b'; C is the set of currently possible celebrity candidates; ⇒ means logical implication; ∉ means not in the set; ¬ means NOT.
+
+## 4. Derive the result — why it must be true
+
+With four candidates A,B,C,D: suppose A knows B, so eliminate A; B does not know C, so eliminate C; B knows D, so eliminate B. Only D remains. BUT the three answers do not prove D is a celebrity: we must now verify that D knows nobody and that all others know D.
+
+## 5. Validate the answer
+
+Each question eliminates one candidate because a true celebrity could not be the person that answer disqualifies. Starting with n people, n−1 questions leave at most one potential celebrity. Verify the survivor by asking remaining necessary in/out questions. One already-known relation from the elimination pass can be reused; this gives a worst-case bound of **3n−4** questions for n>1.
+
+## 6. Generalise and identify the limitation
+
+For n=4, at most 3×4−4=8 directed knowledge questions are sufficient, compared with 4×3=12 possible ordered pairs if you tested every relation. If verification fails, no celebrity exists; you must not simply declare the final candidate to be one.
+
+## 7. Try another example
+
+Does a celebrity necessarily exist? No. Draw a four-person directed graph where each person knows someone, then explain why the elimination step returns only a candidate, not a guaranteed celebrity.
+
+**Techniques:** Elimination, directed relations, candidate proof and verification.
+
+**Source:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Medium #81, printed p. 51; hint p. 77; solution p. 149.. Puzzle statements are paraphrased and the teaching text is independently written.
+
+[← Mathematical Puzzles](index.qmd) · [Mathematical Symbols](symbol-guide.qmd) · [Strategies](strategy-guide.qmd)

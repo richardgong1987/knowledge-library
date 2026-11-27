@@ -1,0 +1,44 @@
+---
+title: "Puzzle #79 — Why Only Perfect-Square Lockers Stay Open"
+description: "A fully explained mathematical puzzle with symbols, small numbers, derivation and proof."
+---
+
+## 1. Turn the story into a precise problem
+
+Imagine doors numbered 1 through 100, initially shut. On pass 1 you toggle every door; on pass 2, every second door; on pass 3, every third door; and so forth. After the hundredth pass, which doors are still open?
+
+## 2. Check a small case first
+
+Instead of simulating a hundred passes, focus on ONE door. Door 12 changes on passes 1,2,3,4,6,12 — exactly the positive divisors of 12.
+
+## 3. Express the key relationship
+
+$$
+L(k)=\#\{d\in\mathbb N:d\mid k\}\pmod2
+$$
+
+**What every symbol means:** L(k) records whether locker k has been toggled an odd (1) or even (0) number of times; # means number of elements; d∣k means d divides k exactly; mod 2 means retain only the remainder after division by 2.
+
+**Substitute actual numbers:** Door 12 has six divisors (1,2,3,4,6,12), so L(12)=6 mod2=0 and it ends closed. Door 16 has five divisors (1,2,4,8,16), so L(16)=5 mod2=1 and it ends open.
+
+## 4. Derive the result — why it must be true
+
+For any nonsquare k, divisors form distinct pairs (d,k/d): for 12 the pairs are (1,12),(2,6),(3,4). Every pair contributes two toggles, so the final state is closed. For a perfect square, the square root pairs with itself, producing one UNPAIRED divisor: for 16, (4,4). Exactly squares receive odd toggles.
+
+## 5. Validate the answer
+
+Among 1 through 100, open doors are 1²,2²,...,10²: **1,4,9,16,25,36,49,64,81,100**. There are 10. For doors 1 through n, the general count is floor(sqrt(n)).
+
+## 6. Generalise and identify the limitation
+
+Why does door 18 close even though it has many divisors? List its divisor pairs. Now try 1 through 20: floor(sqrt(20))=4; identify the four open doors.
+
+## 7. Try another example
+
+Divisors, parity, perfect squares, invariant after toggles.
+
+**Techniques:** undefined
+
+**Source:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Medium #79, printed p. 51; hint p. 77; solution p. 148.. Puzzle statements are paraphrased and the teaching text is independently written.
+
+[← Mathematical Puzzles](index.qmd) · [Mathematical Symbols](symbol-guide.qmd) · [Strategies](strategy-guide.qmd)

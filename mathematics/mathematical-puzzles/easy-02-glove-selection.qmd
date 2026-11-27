@@ -1,0 +1,44 @@
+---
+title: "Puzzle #2 — Gloves and the Worst Case"
+description: "A mathematical explanation of an Algorithmic Puzzles problem, from small cases to proof."
+---
+
+## 1. State the problem clearly
+
+A drawer holds ten black gloves (five left, five right), six brown (three of each hand) and four grey (two of each hand). You draw without looking. How many guarantee one matching left/right colour pair? What guarantees one pair of EVERY colour?
+
+## 2. Start with the simplest useful observation
+
+Pretend a very unlucky adversary chooses the next glove to delay your success. The worst case—not the most likely case—determines a guarantee.
+
+## 3. Express the relationship mathematically
+
+$$
+N_{\rm one}=5+3+2+1=11
+$$
+
+**Explain every symbol:** N_one is the smallest guaranteed number for at least one matching pair. The 5,3,2 count the maximum gloves of one hand from black, brown and grey; the final 1 is the glove that forces a match.
+
+**Substitute actual numbers:** You could first draw all FIVE black left gloves, THREE brown left gloves, and TWO grey left gloves. That is 10 without any pair. An eleventh glove must be a right glove of one of those colours and creates a pair. Thus 11 is both necessary and sufficient.
+
+## 4. Derive the answer and prove it works
+
+For a pair in EVERY colour, the adversary can draw all ten black and six brown gloves, then both grey gloves of the SAME hand: 18 draws without a grey pair. The nineteenth glove must be the opposite grey hand, hence guarantees all three colours. Answer: **19**.
+
+## 5. Check the result step by step
+
+This is the pigeonhole principle with a twist. The pigeonholes are not merely colours: left and right matter. For the first task, the adversary can use one side from each colour until forced into a duplicate colour with the opposite hand.
+
+## 6. What survives when the numbers change?
+
+Consider a new drawer with 2 left + 2 right red gloves and 1 left + 1 right blue glove. What number guarantees at least one complete pair? Use the same worst-case construction.
+
+## 7. Try it yourself
+
+Pigeonhole principle, adversary method, tight lower and upper bounds.
+
+**Techniques:** undefined.
+
+**Book reference:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Easier #2, printed p. 32; hint p. 72; solution p. 83.. The explanation and formulation here are written independently.
+
+[← Mathematical Puzzles](index.qmd) · [Symbol Guide](symbol-guide.qmd) · [Strategy Guide](strategy-guide.qmd)

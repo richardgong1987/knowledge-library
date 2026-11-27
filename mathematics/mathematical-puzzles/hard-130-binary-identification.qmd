@@ -1,0 +1,44 @@
+---
+title: "Puzzle #130 — Identify 1,000 Cases with Ten Binary Outcomes"
+description: "A fully explained mathematical puzzle with symbols, small numbers, derivation and proof."
+---
+
+## 1. Turn the story into a precise problem
+
+The source presents a historical identification puzzle with 1,000 labelled alternatives and tests that each produce a yes/no observation. We focus on the safe, general **coding problem**: how many independent binary indicators do we need to distinguish exactly one unknown item from 1,000 possibilities?
+
+## 2. Check a small case first
+
+One yes/no observation has two possible results; two observations can encode 00,01,10,11. Three yield eight binary strings. Ten such observations may represent up to 1,024 unique patterns.
+
+## 3. Express the key relationship
+
+$$
+2^k\ge1000\quad\Longrightarrow\quad k=10
+$$
+
+**What every symbol means:** 2 is the number of states of each binary indicator; k is the number of indicators; 1,000 is the number of alternatives. The inequality ensures enough distinguishable binary outcome strings.
+
+**Substitute actual numbers:** Nine bits represent only 2^9=**512** patterns, too few for 1,000 alternatives. Ten represent 2^10=**1,024**, enough. We can assign each item a unique ten-bit code and recover its label from the observed bit string.
+
+## 4. Derive the result — why it must be true
+
+For example, label **517** can be written as 512+4+1 = 2^9+2²+2⁰. Its ten-bit code is **1000000101** (positions indexed from 9 down to 0). Decode the ones by adding 512+4+1. The fact that every integer 0–999 has a unique binary expansion makes the scheme unambiguous.
+
+## 5. Validate the answer
+
+The lower bound is a simple application of the pigeonhole principle: fewer than 1,000 distinct patterns would force two alternatives to share a code. The construction meets the bound with ten slots, so ten is the minimum number of independent binary observations. The source's story includes further timing conditions; this chapter deliberately extracts the general mathematics without treating it as a real-world experimental procedure.
+
+## 6. Generalise and identify the limitation
+
+What if there are only 250 possibilities? Eight bits give 256 patterns while seven give 128. How many bits are needed? Why doesn't assigning only one repeated bit pattern work?
+
+## 7. Try another example
+
+Binary encoding, information capacity, pigeonhole principle.
+
+**Techniques:** undefined
+
+**Source:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Hard #130, printed p. 64; hint p. 80; solution p. 209.. Puzzle statements are paraphrased and the teaching text is independently written.
+
+[← Mathematical Puzzles](index.qmd) · [Mathematical Symbols](symbol-guide.qmd) · [Strategies](strategy-guide.qmd)

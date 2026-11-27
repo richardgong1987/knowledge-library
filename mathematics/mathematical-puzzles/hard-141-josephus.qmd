@@ -1,0 +1,44 @@
+---
+title: "Puzzle #141 — The Josephus Circle and Powers of Two"
+description: "A fully explained mathematical puzzle with symbols, small numbers, derivation and proof."
+---
+
+## 1. Turn the story into a precise problem
+
+People numbered 1 through n form a circle. Starting at 1, count around and eliminate every SECOND person. Repeat until one survivor remains. Instead of simulating hundreds of removals, find the survivor's original label.
+
+## 2. Check a small case first
+
+Try small circles. With 1 person, survivor=1. With 2, survivor=1. With 3, the order of elimination is 2,1, leaving 3. With 4, survivors after the first lap are 1 and 3, and 1 wins.
+
+## 3. Express the key relationship
+
+$$
+n=2^m+r,\quad0\le r<2^m\quad\Rightarrow\quad J(n)=2r+1
+$$
+
+**What every symbol means:** n is the number of people; 2^m is the largest power of two not exceeding n; r is the remainder after removing that power; J(n) is the survivor's original 1-based label. The arrow states the resulting closed form.
+
+**Substitute actual numbers:** For n=10, the largest power of two not exceeding 10 is 8=2³, and r=10−8=2. Then J(10)=2×2+1=**5**. For n=41, largest power is 32 and r=9, so J(41)=19.
+
+## 4. Derive the result — why it must be true
+
+Why do powers of two matter? On a complete first sweep, even labels are eliminated, effectively halving the number of people. With n=2^m, repeated halving eventually leaves label 1. If r extra people are added after that power-of-two boundary, the survivor advances by two original labels for each extra person, producing 2r+1. A formal derivation can be obtained from the recurrences J(2k)=2J(k)−1 and J(2k+1)=2J(k)+1, with J(1)=1.
+
+## 5. Validate the answer
+
+Check n=10 by hand: eliminate 2,4,6,8,10; continue counting cyclically among the survivors. The computed winner should be original person 5. This verifies the formula on one small case, while the recurrence explains why it works for all n.
+
+## 6. Generalise and identify the limitation
+
+If the problem eliminated every THIRD person, this closed form would NOT apply. The step size is part of the mathematical model; a small change in a rule can require a new recurrence.
+
+## 7. Try another example
+
+Recurrence, parity, powers of two, closed-form derivation.
+
+**Techniques:** undefined
+
+**Source:** Levitin and Levitin, *Algorithmic Puzzles* (Oxford University Press, 2011), Hard #141, printed p. 67; hint p. 80; solution p. 223.. Puzzle statements are paraphrased and the teaching text is independently written.
+
+[← Mathematical Puzzles](index.qmd) · [Mathematical Symbols](symbol-guide.qmd) · [Strategies](strategy-guide.qmd)
