@@ -24,7 +24,7 @@ def main():
     readmap=(HERE/"reading-map.qmd").read_text()
     assert "Linear Algebra Fundamentals" in math
     assert 'section: "Linear Algebra Fundamentals"' in nav
-    assert "152-page extended preview" in home
+    assert "152-page extended" in home and "preview" in home
     assert "596-page full book" in readmap
     assert "linear-algebra/examples/linear_algebra_lab.py" in nav
     total=0

@@ -1,0 +1,36 @@
+---
+title: "Structure an Interview Answer"
+description: "A short answer that demonstrates a technical principle, not a memorised script."
+---
+
+# Explain the idea before the implementation
+
+A useful answer has five parts: **define the problem → state the principle → demonstrate one small example → discuss limitations → summarise the decision**.
+
+## Example: what is a sliding window?
+
+**Problem:** Find the greatest sum of any three adjacent elements in an array.
+
+Start with the basic idea: instead of summing every group of three from scratch, reuse the previous total when the window moves one place.
+
+$$
+S_{i+1}=S_i-a_i+a_{i+k}
+$$
+
+**Every symbol explained:** $S_i$ is the sum of the window starting at position $i$; $k$ is its fixed length; $a_i$ is the old element leaving the window, and $a_{i+k}$ is the new element entering.
+
+**Substitute real numbers:** In the array $(2,4,1,5)$ with $k=3$, the first sum is $S_0=2+4+1=7$. Move the window: subtract the outgoing 2 and add the incoming 5, giving $S_1=7-2+5=10$. The greatest sum is 10.
+
+**Why it works:** Two neighbouring windows share exactly $k-1$ elements. Only one old element disappears and one new element appears. We therefore perform constant work per move instead of recomputing the entire sum.
+
+## A natural short interview answer
+
+> A sliding window maintains information about a contiguous range. For a fixed-size window, when we move one position, we remove the old leftmost element and include the new rightmost element. That reduces the work to one update per move. The important limitation is that this sum-based approach needs an appropriate maintained state; for a variable-size window with negative numbers, a simple monotonic two-pointer argument may fail.
+
+## Follow-up question
+
+What if the problem asks for the *shortest subarray whose sum reaches a target*, and the numbers can be negative? State which property your initial two-pointer method relies on and why negative numbers may invalidate it.
+
+**Practice:** Say the idea without reading the equation, then write the equation again from memory.
+
+[← Tips & Notes](index.qmd)

@@ -1,0 +1,36 @@
+---
+title: "Explain System Design Trade-offs with Numbers"
+description: "Turn a vague 'which design is better?' question into measurable alternatives."
+---
+
+# A good design answer compares objectives
+
+Suppose a service processes document uploads. One customer may upload a 1 GB file; others upload 1 MB files. Compute resources are limited. The challenge is to maintain fairness and avoid starving the large job.
+
+## First: define what fairness means
+
+One possible criterion is how much service a tenant has already received relative to its assigned share. For an illustrative weighted-fair allocation, let:
+
+$$
+q_i=rac{s_i}{w_i}
+$$
+
+**Every symbol explained:** $q_i$ is a tenant's normalised amount of service received; $s_i$ is the compute time already allocated to tenant $i$; and $w_i$ is its positive weight, representing its relative service entitlement.
+
+**Substitute real numbers:** Tenant A has used 8 CPU-seconds with weight 2, so $q_A=8/2=4$. Tenant B has used 3 CPU-seconds with weight 1, so $q_B=3/1=3$. A scheduler prioritising the smaller normalised service might serve B next, subject to availability and operational constraints.
+
+**Why:** Raw CPU usage alone unfairly compares tenants with different entitlements. Normalising by their weights makes the comparison meaningful. But this rule by itself is not a complete production scheduler.
+
+## Compare real choices
+
+**Small-file-first** can improve average latency but may starve a large task under continuous short-job arrivals. **FIFO** is simple but a huge task can block smaller tasks. **Per-tenant weighted fairness** can limit domination by one tenant, but requires accounting and scheduling overhead.
+
+A stronger design splits large documents into bounded processing chunks, places chunks in per-tenant queues, and schedules them with a defined fairness rule. That makes it possible to pause between chunks rather than forcing one worker to occupy a resource for the entirety of a gigabyte-scale document.
+
+## The interview skill
+
+Always explain the evaluation criteria: waiting time, tail latency, throughput, maximum queue age, CPU utilisation, and the guarantee against starvation. Say what your design solves **and what it does not solve**.
+
+**Follow-up:** What changes if one customer's files require ten times more compute per megabyte than another customer's files? File size is no longer an adequate proxy for computing cost.
+
+[← Tips & Notes](index.qmd)

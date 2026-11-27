@@ -1,0 +1,37 @@
+---
+title: "Handle Follow-ups and Unknowns"
+description: "Reason accurately when requirements change or information is missing."
+---
+
+# Treat a follow-up as a change in assumptions
+
+An interviewer may challenge your initial answer with an unexpected condition. That does not necessarily mean your initial reasoning was wrong. A condition that changes can make a different algorithm or design preferable.
+
+## Use four steps
+
+1. **Identify the changed assumption.** Say precisely what is new.
+2. **Restate your invariant or objective.** Which part of the original reasoning depended on the old assumption?
+3. **Test one tiny counterexample.** Do not immediately propose a large new architecture.
+4. **Revise the approach and state its cost.** Explain what improves and what trade-off remains.
+
+## A mathematical example
+
+Consider a two-pointer method for finding a shortest subarray whose sum is at least 5. For nonnegative numbers, adding more elements cannot decrease the sum. That makes some window-shrinking rules safe.
+
+$$
+a_ige0 Longrightarrow S_{i+1}ge S_i
+$$
+
+**Every symbol explained:** $a_i$ is an element newly added to the current range; $S_i$ is the current sum; $S_{i+1}$ is the sum after adding it; and the arrow means the stated condition implies the nondecreasing sum relationship.
+
+**Substitute real numbers:** With current sum 3 and next number 4, the new sum is 7, never below 3. But if the next number is −5, the new sum is 3−5=−2, so the monotonic argument breaks.
+
+**Why:** The correctness of a technique is a conditional proof. A follow-up that permits negative numbers removes a premise, so the original proof no longer applies.
+
+## What to say when uncertain
+
+Be specific: “My proposed approach depends on nonnegative values. If negative values are allowed, I would first construct a counterexample and consider prefix sums with a suitable data structure.” This is more credible than inventing a complexity claim.
+
+After the interview, document the problem statement, your assumptions, the counterexample and the improved reasoning. Keep the note short enough to practise aloud.
+
+[← Tips & Notes](index.qmd)
