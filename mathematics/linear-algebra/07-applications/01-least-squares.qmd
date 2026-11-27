@@ -1,0 +1,38 @@
+---
+title: "Least Squares — The Best Approximate Line"
+description: "A compact linear-algebra lesson with mathematical definitions, real values and reasoning."
+---
+
+## Start with a question
+
+Three measurements do not lie on one perfect line. How do we draw a line that is as close as possible to all three?
+
+## Understand the central idea
+
+When a system has no exact solution, choose model parameters that minimise the sum of squared residuals.
+
+## Express it with mathematics
+
+$$
+\hat{\beta}=\arg\min_{\beta}\|X\beta-y\|_2^2
+$$
+
+**Every symbol explained:** X is the design matrix of input measurements, β is a vector of unknown model coefficients, y is the measured output vector, ||·||² is the sum of squared residuals, arg min is the parameter choice achieving the smallest value, and the hat denotes the fitted estimate.
+
+**Substitute real numbers:** Fit a constant prediction β to observations y=(1,2,3). The squared error is (β−1)²+(β−2)²+(β−3)². At β=2 it is 1+0+1=2; at β=1 it is 0+1+4=5. Differentiating gives 6β−12=0, so β=2 is optimal.
+
+## Why this works
+
+For a constant predictor, minimising squared differences gives the arithmetic mean. For multiple columns, the normal equations XᵀXβ=Xᵀy arise from setting derivatives to zero.
+
+## What can go wrong?
+
+In numerical software, directly forming (XᵀX)^−1 can be unstable or impossible if X lacks full column rank. QR or SVD-based solvers are preferred.
+
+## Your turn
+
+Find the best constant for observations (2,4,9), and compute the squared error.
+
+**Textbook topic:** Ivan Savov, *No Bullshit Guide to Linear Algebra*, second edition, Applications, §7.7. This is original educational content guided by the user's **extended preview** and its contents, not a reproduction of the full commercial book.
+
+[← Topic map](index.qmd) · [Linear Algebra home](../index.qmd)

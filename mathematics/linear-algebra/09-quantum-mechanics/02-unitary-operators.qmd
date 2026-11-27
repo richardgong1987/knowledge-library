@@ -1,0 +1,38 @@
+---
+title: "Unitary Matrices — Transform Without Losing Probability"
+description: "A compact linear-algebra lesson with mathematical definitions, real values and reasoning."
+---
+
+## Start with a question
+
+If a quantum gate changes a state vector, what mathematical property prevents its probability total from exceeding 100%?
+
+## Understand the central idea
+
+A unitary matrix preserves vector length in complex space. That is the mathematical reason quantum gates on closed systems preserve total probability.
+
+## Express it with mathematics
+
+$$
+U^\dagger U=I,\qquad\|U\psi\|^2=\|\psi\|^2
+$$
+
+**Every symbol explained:** U is a quantum gate matrix; U† means conjugate transpose; I is the identity matrix; ψ is a state vector; ||·||² means sum of squared amplitude magnitudes.
+
+**Substitute real numbers:** The bit-flip gate X=[[0,1],[1,0]] sends input ψ=(1,0) to (0,1). Both vectors have squared norm 1²+0²=1; the gate switched outcomes without creating probability.
+
+## Why this works
+
+For any state ψ, squared norm of Uψ is ψ†U†Uψ=ψ†Iψ=ψ†ψ. The middle substitution uses the unitary condition. This is a proof for every input, not merely one example.
+
+## What can go wrong?
+
+Measurement is not generally a unitary reversible operation, and real quantum devices have noise. Do not confuse unitary evolution with the whole physical process.
+
+## Your turn
+
+Show directly that applying the X gate twice restores input (1,0).
+
+**Textbook topic:** Ivan Savov, *No Bullshit Guide to Linear Algebra*, second edition, Quantum mechanics, §9.5. This is original educational content guided by the user's **extended preview** and its contents, not a reproduction of the full commercial book.
+
+[← Topic map](index.qmd) · [Linear Algebra home](../index.qmd)

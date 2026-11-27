@@ -1,0 +1,38 @@
+---
+title: "Markov Chains — Predict the Next State With a Matrix"
+description: "A compact linear-algebra lesson with mathematical definitions, real values and reasoning."
+---
+
+## Start with a question
+
+A machine is working today. Tomorrow it stays working with 90% probability and breaks with 10%. A broken machine is repaired with 50% probability. How likely is it to work tomorrow?
+
+## Understand the central idea
+
+A transition matrix converts today's state probabilities into tomorrow's. Under the Markov assumption, the next state depends only on the present state.
+
+## Express it with mathematics
+
+$$
+\mathbf p_{t+1}=P\mathbf p_t,\quad P=\begin{bmatrix}0.9&0.5\\0.1&0.5\end{bmatrix}
+$$
+
+**Every symbol explained:** p_t is today's probability column, p_{t+1} tomorrow's; P is the transition matrix. Its first column describes tomorrow's outcomes given working today, second column given broken today. Each column totals 1.
+
+**Substitute real numbers:** If today is certainly working, p_t=(1,0). Multiply: first entry 0.9×1+0.5×0=0.9; second 0.1×1+0.5×0=0.1. Tomorrow's vector is (0.9,0.1). If today's vector is (0.8,0.2), tomorrow working probability becomes 0.9×0.8+0.5×0.2=0.82.
+
+## Why this works
+
+The matrix applies the law of total probability to each future state. Repeated multiplication models later steps; a stationary distribution satisfies p*=Pp*, connecting Markov chains to eigenvectors. PageRank uses a related stochastic-matrix idea on web links.
+
+## What can go wrong?
+
+Real failure rates may depend on machine age or operating conditions. The Markov assumption may need a richer state description; PageRank also requires care with dangling nodes and teleportation.
+
+## Your turn
+
+Multiply P by p_t=(0,1). What happens when the machine starts broken?
+
+**Textbook topic:** Ivan Savov, *No Bullshit Guide to Linear Algebra*, second edition, Probability theory, §§8.2–8.3. This is original educational content guided by the user's **extended preview** and its contents, not a reproduction of the full commercial book.
+
+[← Topic map](index.qmd) · [Linear Algebra home](../index.qmd)

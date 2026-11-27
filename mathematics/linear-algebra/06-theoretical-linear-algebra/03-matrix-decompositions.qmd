@@ -1,0 +1,38 @@
+---
+title: "Matrix Decompositions — Build Big Work From Simple Pieces"
+description: "A compact linear-algebra lesson with mathematical definitions, real values and reasoning."
+---
+
+## Start with a question
+
+Instead of solving a brand-new system from scratch every time, can a matrix be split into reusable simpler pieces?
+
+## Understand the central idea
+
+One common decomposition is LU: a lower-triangular matrix followed by an upper-triangular one. This separates a system into two easier triangular solves.
+
+## Express it with mathematics
+
+$$
+A=LU,\qquad \begin{bmatrix}2&1\\4&3\end{bmatrix}=\begin{bmatrix}1&0\\2&1\end{bmatrix}\begin{bmatrix}2&1\\0&1\end{bmatrix}
+$$
+
+**Every symbol explained:** A is the original matrix; L is lower triangular (zeros above the diagonal) and U is upper triangular (zeros below the diagonal). Multiplication LU reconstructs A.
+
+**Substitute real numbers:** Multiply first row of L by U: [2,1]. Multiply second row: 2×[2,1]+[0,1]=[4,3]. Thus the product really is [[2,1],[4,3]].
+
+## Why this works
+
+For Ax=b, first solve Ly=b for the intermediate y, then Ux=y. Triangular solves are simpler than unconstrained dense systems and can reuse factors for multiple right-hand sides.
+
+## What can go wrong?
+
+Not every matrix admits this exact LU form without row permutation; robust implementations commonly use PA=LU, where P records pivoting. Also explain QR and SVD separately when a task requires them.
+
+## Your turn
+
+For b=(3,7), solve Ly=b, then Ux=y. Check by multiplying Ax.
+
+**Textbook topic:** Ivan Savov, *No Bullshit Guide to Linear Algebra*, second edition, Theoretical linear algebra, §6.6. This is original educational content guided by the user's **extended preview** and its contents, not a reproduction of the full commercial book.
+
+[← Topic map](index.qmd) · [Linear Algebra home](../index.qmd)

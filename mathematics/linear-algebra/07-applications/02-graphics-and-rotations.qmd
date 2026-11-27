@@ -1,0 +1,38 @@
+---
+title: "Computer Graphics — Rotate Every Point With One Matrix"
+description: "A compact linear-algebra lesson with mathematical definitions, real values and reasoning."
+---
+
+## Start with a question
+
+A small arrow points east. How can a graphics program rotate it 90° counterclockwise without hand-moving every point?
+
+## Understand the central idea
+
+A rotation is a linear transformation represented by a matrix. One multiplication moves any input coordinate pair.
+
+## Express it with mathematics
+
+$$
+R_{90}\begin{bmatrix}x\\y\end{bmatrix}=\begin{bmatrix}0&-1\\1&0\end{bmatrix}\begin{bmatrix}x\\y\end{bmatrix}=\begin{bmatrix}-y\\x\end{bmatrix}
+$$
+
+**Every symbol explained:** R₉₀ is a rotation by 90 degrees counterclockwise; x,y are input coordinates; −y,x are the new coordinates. The matrix represents the transformation relative to standard axes.
+
+**Substitute real numbers:** For point (3,2), the result is (−2,3). The original squared distance is 3²+2²=13; the new squared distance is (−2)²+3²=13, so rotation preserved length.
+
+## Why this works
+
+The two columns are the rotated basis vectors: (1,0) becomes (0,1), and (0,1) becomes (−1,0). Linearity then determines every other point's image.
+
+## What can go wrong?
+
+Rotations around a point other than the origin need translation as well; homogeneous coordinates are commonly used to represent such affine operations.
+
+## Your turn
+
+Rotate (0,−2) once, then again. Where do you end up?
+
+**Textbook topic:** Ivan Savov, *No Bullshit Guide to Linear Algebra*, second edition, Applications, §7.8. This is original educational content guided by the user's **extended preview** and its contents, not a reproduction of the full commercial book.
+
+[← Topic map](index.qmd) · [Linear Algebra home](../index.qmd)

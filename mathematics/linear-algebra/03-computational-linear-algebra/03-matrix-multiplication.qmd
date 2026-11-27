@@ -1,0 +1,38 @@
+---
+title: "Matrix Multiplication — Compose Two Machines"
+description: "An original mathematical walkthrough with one running example, concrete numbers and a proof."
+---
+
+## Ask a simple question
+
+First double the horizontal coordinate, then swap the horizontal and vertical coordinates. Can we do both steps at once?
+
+## Build the intuition
+
+Multiplying matrices corresponds to composing transformations; the right-hand matrix acts first on a column vector.
+
+## Write the mathematical relationship
+
+$$
+BA=\begin{bmatrix}0&1\\1&0\end{bmatrix}\begin{bmatrix}2&0\\0&1\end{bmatrix}=\begin{bmatrix}0&1\\2&0\end{bmatrix}
+$$
+
+**Every symbol explained:** A first scales the x-coordinate by 2; B swaps the coordinates; BA means apply A THEN B to any column vector; the rightmost matrix is the combined transformation.
+
+**Substitute real numbers:** Start with (3,4). A produces (6,4). B swaps this to (4,6). Combined BA directly maps (3,4) to (4,6): first row 0×3+1×4=4, second 2×3+0×4=6.
+
+## Why the relationship is true
+
+Each column of BA is what B does to the corresponding column of A; that is exactly how composing linear transformations works.
+
+## Where the shortcut stops working
+
+AB and BA are usually different: reversing the order would first swap then scale, producing (8,3) instead.
+
+## Your turn
+
+Compute AB(3,4) and explain which step changed.
+
+**Source structure:** Ivan Savov, *No Bullshit Guide to Linear Algebra*, second edition, Computational linear algebra, §3.3. This is an independently written explanation based on the uploaded **extended preview**, not a transcription of the commercial full book.
+
+[← Topic map](index.qmd) · [Linear Algebra home](../index.qmd)

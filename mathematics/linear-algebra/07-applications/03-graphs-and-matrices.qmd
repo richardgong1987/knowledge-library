@@ -1,0 +1,38 @@
+---
+title: "Graphs as Matrices — Count Paths With Multiplication"
+description: "A compact linear-algebra lesson with mathematical definitions, real values and reasoning."
+---
+
+## Start with a question
+
+Three rooms are joined by one-way doors. How can a computer count routes consisting of exactly two doors?
+
+## Understand the central idea
+
+An adjacency matrix records which direct edges exist. Squaring it counts length-two walks through possible intermediate vertices.
+
+## Express it with mathematics
+
+$$
+(A^2)_{ij}=\sum_{k=1}^{n}A_{ik}A_{kj}
+$$
+
+**Every symbol explained:** A is an adjacency matrix with entries A_ij equal to 1 when a directed edge i→j exists and 0 otherwise; A² is its matrix square; i,j name start and destination nodes; k is an intermediate node; Σ adds possible intermediate routes.
+
+**Substitute real numbers:** Let rooms 1→2, 2→3 and 1→3 be the only doors. A=[[0,1,1],[0,0,1],[0,0,0]]. Entry (A²)₁₃ is A₁₁A₁₃+A₁₂A₂₃+A₁₃A₃₃ =0+1+0=1. Exactly one two-door route connects 1 to 3, via room 2.
+
+## Why this works
+
+A length-two walk must select an intermediate vertex k. The product A_ik A_kj is 1 exactly when both required doors exist, so summing these products counts valid walks.
+
+## What can go wrong?
+
+For graphs with parallel edges, weights or probabilities, matrix multiplication has different interpretations. A walk may revisit vertices; it is not always a simple path.
+
+## Your turn
+
+Add a door 3→1. How many two-step walks begin and end at room 1?
+
+**Textbook topic:** Ivan Savov, *No Bullshit Guide to Linear Algebra*, second edition, Applications, §7.4. This is original educational content guided by the user's **extended preview** and its contents, not a reproduction of the full commercial book.
+
+[← Topic map](index.qmd) · [Linear Algebra home](../index.qmd)

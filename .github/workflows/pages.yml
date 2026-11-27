@@ -132,6 +132,10 @@ jobs:
         run: python3 operating-systems/check_curriculum.py
       - name: Test minimal computing foundations lab
         run: python3 -m unittest discover -s operating-systems/examples -p 'test_*.py'
+      - name: Audit 24 linear algebra lessons and mathematical substitutions
+        run: python3 mathematics/linear-algebra/check_curriculum.py
+      - name: Run independent linear algebra numerical checks
+        run: python3 -m unittest discover -s mathematics/linear-algebra/examples -p 'test_*.py'
       - name: Install Quarto
         uses: quarto-dev/quarto-actions/setup@v2
         with:

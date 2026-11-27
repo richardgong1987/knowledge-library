@@ -194,3 +194,14 @@ Use current primary sources from Linux kernel documentation, LLVM's official tut
 Every chapter requires a real motivating problem, exactly one principal mathematical expression, an immediate explanation of **every symbol**, numerical substitution with worked arithmetic, an explanation of why the relationship holds, and a limitation or counterexample. Explain like teaching a child without deleting the mathematical derivation.
 
 Prefer a 10-line minimal example to a complicated framework. Python examples are independent numerical checks, not OS kernels, compiler toolchains or quantum-hardware simulators. The curriculum and examples must pass automated checks. Do not create placeholder pages.
+
+
+## Mathematics / Linear Algebra Fundamentals
+
+Base the curriculum on the uploaded *No Bullshit Guide to Linear Algebra*, second edition by Ivan Savov. **The supplied PDF is a 152-page extended preview of a 596-page full textbook.** Use its actual contents and excerpts as the source of the chapter taxonomy. Do not pretend the complete book has been read, and do not copy copyrighted exercises, figures or solution prose. Chapters supported primarily by a table-of-contents entry must be described as **independently developed mathematical lessons**.
+
+Preserve the book's progression: math prerequisites; vector and matrix operations; row reduction, determinants and inverses; geometry and vector spaces; linear transformations and change of basis; eigenvalues and decompositions; applications; probability; quantum mechanics.
+
+Every written lesson must have one clear question, one mathematical relationship, **immediate definitions of all symbols**, a numerical substitution, a derivation or explanation of why the relationship holds, a limitation and a practice question. Reuse the tablet-to-wall linear transformation and very small 2×2 matrices to build connected intuition. Do not turn the category into 24 unconnected definitions or a large programming framework.
+
+Tests verify selected arithmetic; they do not replace formal proof.

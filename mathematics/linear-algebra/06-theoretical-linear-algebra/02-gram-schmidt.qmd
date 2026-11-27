@@ -1,0 +1,38 @@
+---
+title: "Gram–Schmidt — Make Independent Directions Perpendicular"
+description: "A compact linear-algebra lesson with mathematical definitions, real values and reasoning."
+---
+
+## Start with a question
+
+Your two measuring rulers point diagonally instead of at right angles. Can you create a pair of perpendicular directions spanning the same plane?
+
+## Understand the central idea
+
+Start with the first vector and subtract from the second its shadow along the first. The remainder is perpendicular.
+
+## Express it with mathematics
+
+$$
+\mathbf u_2=\mathbf v_2-\frac{\mathbf v_2\cdot\mathbf u_1}{\mathbf u_1\cdot\mathbf u_1}\mathbf u_1
+$$
+
+**Every symbol explained:** v2 is the second original vector, u1 the first chosen nonzero direction, and u2 is the new orthogonalised vector. Dot means dot product, and the fraction gives the amount of u1 present in v2.
+
+**Substitute real numbers:** Take u1=(1,0) and v2=(1,1). The dot ratio is (1×1+1×0)/(1²+0²)=1. Subtract 1×(1,0) from (1,1), giving u2=(0,1). Check u1·u2=0.
+
+## Why this works
+
+The subtraction removes the component parallel to u1; what's left has zero dot product with u1. Repeating this idea yields an orthogonal basis for independent input vectors.
+
+## What can go wrong?
+
+If the second vector lies entirely along the first, the remainder is zero; there is no new independent direction. Classical Gram–Schmidt can be numerically less stable than modified Gram–Schmidt or Householder QR for difficult inputs.
+
+## Your turn
+
+Try u1=(2,0) and v2=(3,4): calculate the projection and the perpendicular remainder.
+
+**Textbook topic:** Ivan Savov, *No Bullshit Guide to Linear Algebra*, second edition, Theoretical linear algebra, §6.5. This is original educational content guided by the user's **extended preview** and its contents, not a reproduction of the full commercial book.
+
+[← Topic map](index.qmd) · [Linear Algebra home](../index.qmd)
