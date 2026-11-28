@@ -1,0 +1,85 @@
+---
+title: "25 Classical Numerical Tricks for Algorithm Problems"
+description: "Worked identities for pair sums, binomial counts, divisors, modular equations and Fibonacci numbers."
+---
+
+## 1. Squares and pairwise distances
+
+Suppose an interview question gives $2,5,9$ and asks for the sum of the squared distances between all pairs. There are three pairs. Their contribution is $9+49+16=74$. With a million inputs, listing pairs would be expensive. The familiar square expansion gives a shorter calculation.
+
+**1. Sum of squared pairwise distances.** For $n$ real values,
+
+$$
+\sum_{i<j}(x_i-x_j)^2=n\sum_i x_i^2-\left(\sum_i x_i\right)^2.
+$$
+
+Expand the left side. Each $x_i^2$ occurs in $n-1$ pairs. The cross terms are $-2\sum_{i<j}x_ix_j$. Expanding the square of the total gives exactly those cross terms after subtraction. For our numbers, $3(4+25+81)-16^2=330-256=74$. Accumulate the sum and sum of squares in one pass. Use sufficient precision for the intermediate products.
+
+**2. Sum of absolute pairwise distances.** Sort the values and number them $1$ to $n$. Then $\sum_{i<j}|x_j-x_i|=\sum_{i=1}^n(2i-n-1)x_i$. Each value is added once for every earlier value and subtracted once for every later value. For $2,5,9$ the coefficients are $-2,0,2$, giving $14$. Direct check: $3+7+4=14$.
+
+**3. Recover a product from a sum and a sum of squares.** If $s=a+b$ and $q=a^2+b^2$, then $ab=(s^2-q)/2$. If $s=14$ and $q=106$, the product is $45$. The two numbers solve $t^2-14t+45=(t-5)(t-9)=0$. This recovers two missing values when their first two power sums are known.
+
+**4. Complete a square to recover two factors.** For real $s,p$, $x^2-sx+p=(x-s/2)^2-(s^2/4-p)$. For $x^2-22x+85$, half of $22$ is $11$, and $121-85=36$. Thus $(x-11)^2-6^2=(x-17)(x-5)$. The expression $(11-x)^2$ works equally well because squaring removes the sign.
+
+## 2. Binomial sums and finite differences
+
+Write $\binom nk$ for the number of ways to choose $k$ of $n$ distinct items. Counts below are integers with $n\ge0$, and a coefficient with $k<0$ or $k>n$ is zero.
+
+| # | When to use it | Identity and numerical check |
+|---|---|---|
+| 5 | Count every subset by size | $\sum_k\binom nk=2^n$. For three elements, $1+3+3+1=8$. |
+| 6 | Count total element appearances across all subsets | $\sum_k k\binom nk=n2^{n-1}$ for $n\ge1$. Each element occurs in half the subsets. For three elements, $3+6+3=12$. |
+| 7 | Count choices split across two groups (Vandermonde's convolution) | $\sum_j\binom aj\binom b{k-j}=\binom{a+b}k$. Choosing two from groups of two and three gives $3+6+1=10$. |
+| 8 | Collapse a sum down a diagonal of Pascal's triangle (hockey-stick identity) | $\sum_{j=k}^n\binom jk=\binom{n+1}{k+1}$. For $k=2,n=4$, $1+3+6=10$. |
+| 9 | Sum squared binomial coefficients | $\sum_k\binom nk^2=\binom{2n}n$. For $n=3$, $1+9+9+1=20$. Apply Vandermonde with two equal groups. |
+| 10 | Generate consecutive coefficients with exact integer division | $\binom n{k+1}=\binom nk(n-k)/(k+1)$ for $0\le k<n$. Starting with $\binom62=15$, the next entry is $15(4)/3=20$. |
+| 11 | Distribute $s$ identical units among $k\ge1$ labelled buckets allowing zeros | Stars and bars gives $\binom{s+k-1}{k-1}$. Four units and three buckets give $\binom62=15$. |
+| 12 | Require every bucket to receive at least one unit | Give one to each first. For $s\ge k\ge1$ the count is $\binom{s-1}{k-1}$. Four units and three buckets give $\binom32=3$. |
+| 13 | Sum products of consecutive integers | $\sum_{i=1}^n i(i+1)=n(n+1)(n+2)/3$. For $n=3$, $2+6+12=20$. Subtract adjacent products of three consecutive integers to obtain $3i(i+1)$ and telescope. |
+
+For **8**, count triples chosen from $1,2,3,4,5$. If the largest member is $3$, the other two are forced. If it is $4$, there are three choices. If it is $5$, there are six. Grouping by the largest member explains why the sum gives all ten triples exactly once.
+
+Graham, Knuth and Patashnik develop summation and binomial methods in chapters 2 and 5 of *Concrete Mathematics*. The worked examples here use small inputs for recall. [Authors' book page](https://cs.stanford.edu/~knuth/gkp.html) · [Binomial identities](https://cp-algorithms.com/combinatorics/binomial-coefficients.html) · [Stars and bars](https://cp-algorithms.com/combinatorics/stars_and_bars.html)
+
+## 3. Divisors, factorials and overlapping multiples
+
+For a positive integer $N=\prod_i p_i^{e_i}$, each $p_i$ is a distinct prime and $e_i$ is its exponent.
+
+| # | Question | Shortcut and example |
+|---|---|---|
+| 14 | How many positive divisors does $N$ have? | $\tau(N)=\prod_i(e_i+1)$. For $72=2^3 3^2$ there are $4\cdot3=12$. Each exponent can be chosen independently, including zero. |
+| 15 | What is their sum? | $\sigma(N)=\prod_i(1+p_i+\cdots+p_i^{e_i})$. For $72$, $(1+2+4+8)(1+3+9)=195$. Expanding selects each divisor once. |
+| 16 | How many factors of a prime $p$ occur in $n!$? | Legendre's formula gives $v_p(n!)=\sum_{j\ge1}\lfloor n/p^j\rfloor$. For $100!$ and $p=5$, $20+4=24$. Stop at the first zero. |
+| 17 | How many trailing zeros does $n!$ have in base $b=\prod p_i^{e_i}\ge2$? | Each zero consumes one factor of $b$. Take $\min_i\lfloor v_{p_i}(n!)/e_i\rfloor$. For $10!$ in base $12=2^2 3$, the answer is $\min(8/2,4)=4$. |
+| 18 | How many integers from $1$ to $N$ are divisible by $a$ or $b$? | For positive $a,b$, use $\lfloor N/a\rfloor+\lfloor N/b\rfloor-\lfloor N/\operatorname{lcm}(a,b)\rfloor$. For $N=30,a=4,b=6$, this gives $7+5-2=10$. |
+| 19 | How many integers from $1$ to $N$ are coprime to $N$? | Euler's product gives $\varphi(N)=N\prod_{p\mid N}(1-1/p)$ over distinct primes. For $30$, the count is $30(1/2)(2/3)(4/5)=8$. |
+
+For **16**, the twenty multiples of five up to 100 each contribute one factor of five. Four of them, $25,50,75,100$, contribute a second five. No number up to 100 contributes a third. The calculation counts repeated factors without constructing the factorial.
+
+[Divisor functions](https://cp-algorithms.com/algebra/divisors.html) · [Prime factors in factorials](https://cp-algorithms.com/algebra/factorial-divisors.html) · [Inclusion–exclusion](https://cp-algorithms.com/combinatorics/inclusion-exclusion.html)
+
+## 4. Integer equations and repeating schedules
+
+**20. Bézout's identity.** For positive $a,b$, integer solutions to $ax+by=c$ exist exactly when $\gcd(a,b)$ divides $c$. With steps of $14$ and $21$ in either direction, $7=21-14$ is reachable. Every reachable position is a multiple of seven.
+
+**21. Modular inverse from Bézout coefficients.** If $au+mv=1$ and $m>1$, then $u$ is an inverse of $a$ modulo $m$. For $7$ modulo $26$, $7(15)-26(4)=1$, so $7x\equiv3\pmod{26}$ gives $x\equiv45\equiv19$. Check: $7(19)=133=5(26)+3$.
+
+**22. Fermat's little theorem.** For prime $p$ and $p\nmid a$, $a^{p-1}\equiv1\pmod p$. Thus $3^{100}\bmod7=3^4\bmod7=4$ because $100=16(6)+4$.
+
+**23. Euler's theorem.** If $\gcd(a,m)=1$ and $m>1$, then $a^{\varphi(m)}\equiv1\pmod m$. For the last digit of $7^{202}$, use $\varphi(10)=4$. The exponent leaves remainder two, giving $49\bmod10=9$.
+
+**24. Generalised Chinese remainder theorem.** Two schedules $x\equiv r\pmod a$ and $x\equiv s\pmod b$, with positive periods, coincide exactly when $\gcd(a,b)$ divides $s-r$. Their coincidences repeat every $\operatorname{lcm}(a,b)$. For $x\equiv2\pmod6$ and $x\equiv5\pmod9$, the difference is three. Testing $2,8,14$ gives the first nonnegative solution $14$, followed by $32,50,\ldots$.
+
+[MIT, *Mathematics for Computer Science*, chapter 8](https://ocw.mit.edu/courses/6-042j-mathematics-for-computer-science-spring-2015/mit6_042js15_textbook.pdf) · [University of Tübingen, number theory reference](https://www.math.uni-tuebingen.de/de/forschung/maphy/lehre/ss-2025/imc/imc.pdf)
+
+## 5. Doubling a Fibonacci index
+
+**25. Fibonacci fast doubling.** Let $F_0=0$, $F_1=1$, and $F_{n+2}=F_{n+1}+F_n$. From two neighbours $a=F_k$ and $b=F_{k+1}$, compute another neighbouring pair:
+
+$$
+F_{2k}=a(2b-a),\qquad F_{2k+1}=a^2+b^2.
+$$
+
+Take $k=5$, so $(a,b)=(5,8)$. The doubled pair is $(5(16-5),25+64)=(55,89)$. For an odd target use $(89,55+89)=(89,144)$ instead. Recursing on the halved index computes $F_n$ in $O(\log n)$ doubling steps. The integers grow with $n$ when an exact result is required. [Derivation and algorithm](https://cp-algorithms.com/algebra/fibonacci-numbers.html)
+
+[Return to the numerical formula sheet](memory-sheet.qmd)
