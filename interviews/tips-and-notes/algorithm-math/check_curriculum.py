@@ -53,7 +53,8 @@ def main():
             assert len(markers)==2,(path,"Expected one focused display formula")
             after=lesson[markers[1].end():]
             assert after.lstrip().startswith("**Every symbol explained:**"),path
-            assert "**Substitute actual numbers:**" in after[:1250],path
+            assert ("**Substitute actual numbers:**" in after[:1250]
+                    or "**Substitute actual values:**" in after[:1250]),path
             assert "## The 20-second memory card" in lesson,path
             assert "## " in lesson and "https://" in lesson,path
             assert "proof" in lesson.lower() or "why" in lesson.lower(),path
