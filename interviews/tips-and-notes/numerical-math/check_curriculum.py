@@ -60,8 +60,9 @@ def main():
             count+=1
     assert count==30
     memory=(HERE/"memory-sheet.qmd").read_text()
-    for n in range(1,31):
-        assert re.search(rf"(?m)^{n}\. ",memory),f"Missing recall card {n}"
+    # The recall sheet now contains 50 numbered Markdown table rows.
+    cards = [int(n) for n in re.findall(r"(?m)^\|\s*(\d+)\s*\|[^\n]+\|[^\n]+\|\s*$", memory)]
+    assert cards == list(range(1, 51)), f"Expected recall cards 1–50 in order, got {cards}"
     assert (HERE/"examples/numerical_math_lab.py").is_file()
     assert (HERE/"examples/test_numerical_math_lab.py").is_file()
     assert f"{root}examples/numerical_math_lab.py" in nav
