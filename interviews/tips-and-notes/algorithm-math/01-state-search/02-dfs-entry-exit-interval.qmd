@@ -1,0 +1,42 @@
+---
+title: "DFS Entry/Exit Times: Subtrees Become Intervals"
+description: "Memorisable mathematical reasoning for algorithm interviews, with a worked example and proof."
+---
+
+## When to recognise this technique
+
+When questions ask whether one vertex is an ancestor, or need many subtree queries.
+
+## Start with the question
+
+**How can a tree subtree become a contiguous numerical interval?**
+
+## Formula worth memorising
+
+$$
+\operatorname{subtree}(v)=[tin(v),tout(v))
+$$
+
+**Every symbol explained:** v is a rooted-tree vertex; tin(v) is its index when first visited in DFS preorder; tout(v) is the exclusive end index after processing all descendants. The square/round brackets represent a half-open interval.
+
+**Substitute actual values:** For tree 1→{2,3} with 2→{4}, one preorder is [1,2,4,3]. Then subtree(2) occupies preorder positions [1,3), containing vertices 2 and 4; subtree(3) is [3,4).
+
+## Why the mathematics works
+
+A recursive DFS finishes every child of a vertex before returning, so no unrelated subtree can be interleaved inside that vertex's preorder block. Its block is therefore contiguous, enabling subtree sums by prefix sums over DFS order.
+
+## Limits and counterexamples
+
+This formula uses preorder indices with exclusive subtree ends, not arbitrary wall-clock DFS exit timestamps. For an undirected graph with cycles, a DFS tree is a spanning tree, not the entire graph's ancestor structure.
+
+## The 20-second memory card
+
+**Memorise: DFS makes each rooted-tree subtree a contiguous slice; compute tin and subtree size or exclusive tout, then answer range queries.**
+
+Try explaining the formula aloud using the numerical example, then reproduce the proof from memory. An interview answer must justify the relationship, not just quote it.
+
+**Practice problems:** Subtree Sum Queries; LCA.
+
+**Research reference:** [Read the full explanation](https://cp-algorithms.com/graph/depth-first-search.html). This page uses an independent example and derivation rather than copying source text or community solutions.
+
+[← Mathematical techniques](../index.qmd)

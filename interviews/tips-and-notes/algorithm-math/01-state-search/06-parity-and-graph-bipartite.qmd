@@ -1,0 +1,42 @@
+---
+title: "Parity as an Invariant and a Graph Colouring Test"
+description: "Memorisable mathematical reasoning for algorithm interviews, with a worked example and proof."
+---
+
+## When to recognise this technique
+
+When moves change coordinates by one, or a graph must be divided into two mutually compatible groups.
+
+## Start with the question
+
+**Can I prove a configuration impossible without searching?**
+
+## Formula worth memorising
+
+$$
+c(x,y)=(x+y)\bmod2
+$$
+
+**Every symbol explained:** c(x,y) is a colour bit for grid cell (x,y); mod 2 is the remainder after dividing by two; values 0 and 1 represent the two colours of a checkerboard.
+
+**Substitute actual values:** Cells (0,0) and (1,1) both have colour 0 because their coordinate sums are even. Moving from (0,0) to (1,0) gives colour 1. A knight-like or neighbour move's parity effect must be analysed from its actual displacement.
+
+## Why the mathematics works
+
+Every unit horizontal/vertical move changes x+y by ±1, flipping its parity. Thus after an even number of such moves you must be on the original colour, and after an odd number on the opposite colour. This is a necessary condition for reachability.
+
+## Limits and counterexamples
+
+Parity is usually not sufficient: obstacles can make a parity-compatible destination unreachable. For general bipartite graphs, every edge must join opposite colours; an odd cycle proves that colouring impossible.
+
+## The 20-second memory card
+
+**Memorise: Find a quantity preserved or predictably flipped by each legal move; use it for an impossibility proof before implementing search.**
+
+Try explaining the formula aloud using the numerical example, then reproduce the proof from memory. An interview answer must justify the relationship, not just quote it.
+
+**Practice problems:** Is Graph Bipartite?; Grid Reachability.
+
+**Research reference:** [Read the full explanation](https://cp-algorithms.com/graph/bipartite-check.html). This page uses an independent example and derivation rather than copying source text or community solutions.
+
+[← Mathematical techniques](../index.qmd)

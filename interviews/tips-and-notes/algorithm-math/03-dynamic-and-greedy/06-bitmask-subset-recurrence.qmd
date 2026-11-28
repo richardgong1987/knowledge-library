@@ -1,0 +1,42 @@
+---
+title: "Bitmask: Encode a Set as One Integer"
+description: "Memorisable mathematical reasoning with small numerical examples."
+---
+
+## When to recognise the pattern
+
+When n is small and state includes a subset of used items.
+
+## The key question
+
+**Why does checking one bit answer whether an element belongs to the chosen subset?**
+
+## Formula worth memorising
+
+$$
+\operatorname{has}(m,i)=(m\ \&\ 2^i)\ne0
+$$
+
+**Every symbol explained:** m is a nonnegative integer bitmask; i is a zero-based element index; 2^i sets exactly bit i; & is bitwise AND; ≠0 means this bit is selected.
+
+**Substitute actual numbers:** For mask m=5, binary 101, test i=2: 5&4=4 ≠0, so element 2 is selected. Test i=1: 5&2=0, so element 1 is absent. Thus selected indices are {0,2}.
+
+## Why this is mathematically correct
+
+The binary representation is a sum of distinct powers of two. An AND with 2^i isolates the coefficient of that power; nonzero means the corresponding subset element exists.
+
+## Limits and counterexamples
+
+Number of possible subsets of n items is 2^n. Bitmasks do not remove exponential state count; they make state representation and transitions compact. Fixed-width signed integers need care for large shifts.
+
+## The 20-second memory card
+
+**Memorise: Set membership is one bit; add with OR, remove with AND complement, enumerate subsets only when n permits 2^n states.**
+
+Now reproduce the equation, example and proof aloud, without looking.
+
+**Interview problems:** Travelling Salesperson DP; Partition to K Equal Sum Subsets.
+
+**Research reference:** [Further reading](https://cp-algorithms.com/algebra/all-submasks.html). This is an independently written derivation, not a copied solution.
+
+[← Mathematical techniques](../index.qmd)

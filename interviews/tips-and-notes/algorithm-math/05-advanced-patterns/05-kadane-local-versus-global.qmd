@@ -1,0 +1,42 @@
+---
+title: "Kadane's Recurrence: Restart or Extend"
+description: "A mathematical interview pattern explained by a small example and proof."
+---
+
+## Recognition trigger
+
+Maximum-sum contiguous subarray in a list that may contain negative numbers.
+
+## Main question
+
+**Why is the best subarray ending here determined by only two choices?**
+
+## Formula worth memorising
+
+$$
+E_i=\max(a_i,E_{i-1}+a_i)
+$$
+
+**Every symbol explained:** E_i is the maximum sum among NONEMPTY subarrays ending at index i; a_i is current value; E_(i−1) is the best sum ending at the previous index; max chooses between starting fresh and extending.
+
+**Substitute actual numbers:** For a=[−2,3,−1,4], start E0=−2. E1=max(3,−2+3)=3. E2=max(−1,3−1)=2. E3=max(4,2+4)=6. The maximum E across all positions is 6, from [3,−1,4].
+
+## Derivation and correctness reasoning
+
+Every nonempty subarray ending at i either consists only of a_i or extends a nonempty subarray ending at i−1. The optimal extender must use the best previous ending sum, yielding the recurrence. Track a separate global maximum.
+
+## Failure modes and assumptions
+
+If the question permits an EMPTY subarray with sum 0, the base cases differ. Initialising the answer to zero incorrectly returns zero for all-negative arrays when nonempty subarrays are required.
+
+## The 20-second memory card
+
+**Memorise: Best ending here = max(start here, extend previous); best overall = max of all ending values.**
+
+Practise reciting the invariant or proof, not merely the equation.
+
+**Interview problems:** Maximum Subarray; Maximum Circular Subarray.
+
+**Research reference:** [Further mathematical detail](https://cp-algorithms.com/others/maximum_average_segment.html). The examples and explanations here were independently developed.
+
+[← Mathematical techniques](../index.qmd)

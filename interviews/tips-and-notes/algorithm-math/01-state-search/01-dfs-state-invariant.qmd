@@ -1,0 +1,42 @@
+---
+title: "DFS as a Mathematical State Transition"
+description: "Memorisable mathematical reasoning for algorithm interviews, with a worked example and proof."
+---
+
+## When to recognise this technique
+
+When a problem says explore every reachable configuration, connected region or path.
+
+## Start with the question
+
+**What is a state, which moves are legal, and how do I avoid visiting the same state forever?**
+
+## Formula worth memorising
+
+$$
+s_{t+1}\in N(s_t),\qquad s_t\in V
+$$
+
+**Every symbol explained:** s_t is the current state at step t, V the set of all possible states, and N(s_t) the legal next states reachable in one move. The membership sign means 'belongs to'.
+
+**Substitute actual values:** For graph A→B and A→C, DFS starting at A can visit A, then B, return to A, and then C. The new state must be a neighbour of the current state. The visited set prevents returning indefinitely.
+
+## Why the mathematics works
+
+DFS follows one branch until it cannot proceed, then returns. In a finite graph, marking a vertex when discovered means each vertex is expanded at most once; traversing adjacency lists costs O(V+E).
+
+## Limits and counterexamples
+
+Do not confuse 'find any path' (DFS works) with 'find the fewest edges' (ordinary DFS is not guaranteed optimal). Mark visited globally for reachability; for enumerating simple paths, you may instead need path-local membership and undo.
+
+## The 20-second memory card
+
+**Memorise: Define states, define legal transitions, define a visited invariant, then recurse. To prove completeness, argue every reachable unvisited neighbour will be explored.**
+
+Try explaining the formula aloud using the numerical example, then reproduce the proof from memory. An interview answer must justify the relationship, not just quote it.
+
+**Practice problems:** Number of Islands; Flood Fill.
+
+**Research reference:** [Read the full explanation](https://cp-algorithms.com/graph/depth-first-search.html). This page uses an independent example and derivation rather than copying source text or community solutions.
+
+[← Mathematical techniques](../index.qmd)

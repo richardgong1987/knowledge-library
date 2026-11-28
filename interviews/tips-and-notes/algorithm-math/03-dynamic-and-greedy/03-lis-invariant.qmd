@@ -1,0 +1,42 @@
+---
+title: "LIS: The Smallest Possible Tail for Each Length"
+description: "Memorisable mathematical reasoning with small numerical examples."
+---
+
+## When to recognise the pattern
+
+When you need the length of a longest increasing subsequence, not necessarily the subsequence itself.
+
+## The key question
+
+**Why does replacing a subsequence tail with a smaller value never hurt future extension?**
+
+## Formula worth memorising
+
+$$
+tail[k]=\min\{\text{last value of an increasing subsequence of length }k+1\}
+$$
+
+**Every symbol explained:** tail[k] is the smallest ending value among increasing subsequences of length k+1 encountered so far; k uses zero-based indexing; min chooses the least possible ending value.
+
+**Substitute actual numbers:** Read [3,5,2,4]. After 3, tails=[3]. After 5, [3,5]. After 2, replace 3 with 2: [2,5]. After 4, replace 5 with 4: [2,4]. LIS length is 2 (for example 2,4 or 3,5).
+
+## Why this is mathematically correct
+
+A smaller tail for a given subsequence length is always at least as easy to extend with a future larger number as a greater tail. Keep only the best tail of each length; find replacement positions by binary search, giving O(n log n).
+
+## Limits and counterexamples
+
+The tails array is not necessarily an actual subsequence of the input. For strictly increasing LIS, replace the first tail ≥x; for nondecreasing LIS, use the first tail >x.
+
+## The 20-second memory card
+
+**Memorise: For each length, keep the smallest ending value; smaller endings preserve every possible future extension.**
+
+Now reproduce the equation, example and proof aloud, without looking.
+
+**Interview problems:** Longest Increasing Subsequence; Russian Doll Envelopes.
+
+**Research reference:** [Further reading](https://cp-algorithms.com/dynamic_programming/longest_increasing_subsequence.html). This is an independently written derivation, not a copied solution.
+
+[← Mathematical techniques](../index.qmd)

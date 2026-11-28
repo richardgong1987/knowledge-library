@@ -1,0 +1,42 @@
+---
+title: "Greedy Exchange: Prove the First Choice Is Safe"
+description: "Memorisable mathematical reasoning with small numerical examples."
+---
+
+## When to recognise the pattern
+
+When an obvious local choice seems optimal but needs justification.
+
+## The key question
+
+**How do you prove choosing an earliest-ending interval never reduces the maximum number of compatible intervals?**
+
+## Formula worth memorising
+
+$$
+f(g)\le f(o)\ \Longrightarrow\ \text{the remaining choices after }g\supseteq\text{those after }o
+$$
+
+**Every symbol explained:** g is the greedy interval and o the first interval of an optimal solution; f(x) is an interval's finish time; ≤ means g finishes no later. The subset/superset sign says the set of later intervals compatible with o is also compatible with g, assuming interval selection based on end≤next start.
+
+**Substitute actual numbers:** Suppose available intervals are [1,2], [1,4], [2,3]. Greedy picks [1,2] because it ends at 2. It can then take [2,3], getting 2 intervals. Choosing [1,4] prevents both, giving only 1.
+
+## Why this is mathematically correct
+
+Take an optimal solution with a first interval o. Replace o with greedy earliest-finishing g. Because g ends no later, every later interval of the optimal solution still fits after g. Therefore there exists an equally good optimal solution beginning with g; repeat inductively.
+
+## Limits and counterexamples
+
+If intervals have different rewards, earliest-finish greedy may fail; weighted interval scheduling needs DP. The boundary inequality assumes touching endpoints are compatible (half-open intervals).
+
+## The 20-second memory card
+
+**Memorise: Compare greedy's first choice with an optimal first choice, swap them, and prove no later choice becomes invalid.**
+
+Now reproduce the equation, example and proof aloud, without looking.
+
+**Interview problems:** Non-overlapping Intervals; Maximum Number of Meetings.
+
+**Research reference:** [Further reading](https://cp-algorithms.com/schedules/schedule_one_machine.html). This is an independently written derivation, not a copied solution.
+
+[← Mathematical techniques](../index.qmd)

@@ -1,0 +1,42 @@
+---
+title: "Knapsack: Take or Skip the Current Item"
+description: "Memorisable mathematical reasoning with small numerical examples."
+---
+
+## When to recognise the pattern
+
+When each item can be used at most once and you choose a subset under a capacity.
+
+## The key question
+
+**How can one recurrence describe all possible subsets without listing every subset?**
+
+## Formula worth memorising
+
+$$
+D(i,c)=\max\{D(i-1,c),\,v_i+D(i-1,c-w_i)\}
+$$
+
+**Every symbol explained:** D(i,c) is the maximum value obtainable from the first i items with capacity c; item i has value v_i and weight w_i; max selects the better of skipping and taking it. The second option exists only when w_i≤c.
+
+**Substitute actual numbers:** Suppose item 1 has weight 2,value 3 and item 2 has weight 3,value 4; capacity c=3. Skip item 2: D(1,3)=3. Take item 2: value 4 plus D(1,0)=0, so max(3,4)=4.
+
+## Why this is mathematically correct
+
+Any feasible subset either contains the last item or does not. These cases cover every subset, and within each case an optimal remainder must itself be optimal; otherwise replacing it would improve the solution.
+
+## Limits and counterexamples
+
+This is 0/1 knapsack. If repetition is allowed, the take-case remainder may stay at i instead of i−1. Be explicit about zero-weight items and whether value can be negative.
+
+## The 20-second memory card
+
+**Memorise: Last item is either absent or present. Write both feasible branches and take max, then establish base case D(0,c)=0.**
+
+Now reproduce the equation, example and proof aloud, without looking.
+
+**Interview problems:** Partition Equal Subset Sum; 0/1 Knapsack.
+
+**Research reference:** [Further reading](https://cp-algorithms.com/dynamic_programming/knapsack.html). This is an independently written derivation, not a copied solution.
+
+[← Mathematical techniques](../index.qmd)

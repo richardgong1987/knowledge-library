@@ -1,0 +1,42 @@
+---
+title: "Amortised Analysis: Total Movement, Not Nested Loops"
+description: "Memorisable mathematical reasoning with small numerical examples."
+---
+
+## When to recognise the pattern
+
+When code contains a while loop nested inside a for loop but each pointer only moves forward.
+
+## The key question
+
+**How can two nested loops still take linear time?**
+
+## Formula worth memorising
+
+$$
+\sum_{t=1}^{m}\Delta r_t\le n
+$$
+
+**Every symbol explained:** r is a right pointer; Δr_t is how many positions it advances during outer iteration t; m is the number of outer iterations and n is the array length. Σ sums all pointer movements.
+
+**Substitute actual numbers:** For n=5, a pointer might advance by 3, then 1, then 0, then 1, then 0 positions. The total is 3+1+0+1+0=5, not 5 moves on every iteration.
+
+## Why this is mathematically correct
+
+A monotone pointer starts at 0 and never decreases, so across the entire algorithm it can advance at most n positions. Charging each increment once bounds the total inner-loop work by O(n) even though it is syntactically nested.
+
+## Limits and counterexamples
+
+If the inner pointer resets to zero on every outer iteration, the bound no longer holds. Likewise, expensive operations inside an increment can add costs beyond simple O(1) movements.
+
+## The 20-second memory card
+
+**Memorise: Count total pointer increments across the whole run, not the apparent nested-loop shape.**
+
+Now reproduce the equation, example and proof aloud, without looking.
+
+**Interview problems:** Longest Substring Without Repeating Characters; Sliding Window.
+
+**Research reference:** [Further reading](https://usaco.guide/silver/two-pointers). This is an independently written derivation, not a copied solution.
+
+[← Mathematical techniques](../index.qmd)

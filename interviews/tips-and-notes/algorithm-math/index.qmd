@@ -1,0 +1,92 @@
+---
+title: "Mathematical Techniques for Algorithm Interviews"
+subtitle: "Thirty mathematical invariants, derivations and tricks worth memorising"
+description: "A source-researched mathematical interview reference with immediate symbol explanations, numerical substitution and proofs."
+---
+
+# Mathematical Techniques for Algorithm Interviews
+
+This book is a **subsection of Interviews → Tips & Notes**, designed for solving algorithm problems through mathematics rather than memorising 30 code templates.
+
+Think of it as a collection of reusable *mini-proofs*. When a new problem appears, ask: **What mathematical structure makes one entire class of candidate answers unnecessary to examine?**
+
+This is separate from the more complete [Algorithms textbook](../../../algorithms/index.qmd), which develops whole algorithms. Here we concentrate on the **few mathematical lines that let you reconstruct an algorithm during an interview**.
+
+## Begin with five essential ideas
+
+1. **State and invariant:** What is known before and after each move? This leads naturally to DFS, BFS and backtracking.
+2. **Cancellation:** Which quantities disappear when two expressions are subtracted? This gives prefix sums and sliding windows.
+3. **Monotonicity:** What can only increase or decrease? This justifies two pointers, binary search and monotonic stacks.
+4. **Optimal substructure:** How does a globally best result depend on smaller best results? This gives dynamic programming and greedy exchange proofs.
+5. **Counting and bounds:** How many choices or outcomes are possible? This leads to combinatorics, complexity bounds and impossibility proofs.
+
+## The thirty compact lessons
+
+### 1. [State Search, DFS and Backtracking](01-state-search/index.qmd)
+
+1. [Model legal states and transitions](01-state-search/01-dfs-state-invariant.qmd)
+2. [Subtree = a DFS preorder interval](01-state-search/02-dfs-entry-exit-interval.qmd)
+3. [Choose, explore, undo; justify pruning](01-state-search/03-backtracking-choose-explore-undo.qmd)
+4. [Multiply choices to bound search complexity](01-state-search/04-search-tree-size.qmd)
+5. [BFS layers prove shortest edge count](01-state-search/05-bfs-distance-layers.qmd)
+6. [Parity proves some states impossible](01-state-search/06-parity-and-graph-bipartite.qmd)
+
+### 2. [Arrays, Prefix Sums and Search](02-arrays-and-search/index.qmd)
+
+1. [Range sum = two prefix values](02-arrays-and-search/01-prefix-sum-difference-of-prefixes.qmd)
+2. [Count target sums via earlier prefixes](02-arrays-and-search/02-prefix-frequency-subarray-count.qmd)
+3. [Sliding window = remove + add](02-arrays-and-search/03-sliding-window-delta.qmd)
+4. [Prove why discarding a pointer is safe](02-arrays-and-search/04-two-pointers-monotonicity.qmd)
+5. [Binary search a monotone feasibility predicate](02-arrays-and-search/05-binary-search-on-answer.qmd)
+6. [Range update = two boundary events](02-arrays-and-search/06-difference-array-range-updates.qmd)
+
+### 3. [Dynamic Programming, Greedy and Amortisation](03-dynamic-and-greedy/index.qmd)
+
+1. [DP = precise state, recurrence, base](03-dynamic-and-greedy/01-dp-state-recurrence-base.qmd)
+2. [Knapsack = take or skip](03-dynamic-and-greedy/02-dp-knapsack-choice.qmd)
+3. [LIS = smallest feasible tail for each length](03-dynamic-and-greedy/03-lis-invariant.qmd)
+4. [Greedy = exchange with an optimum](03-dynamic-and-greedy/04-greedy-exchange-argument.qmd)
+5. [Amortised proof = count total movements](03-dynamic-and-greedy/05-amortised-two-pointer.qmd)
+6. [Subset membership = one bit](03-dynamic-and-greedy/06-bitmask-subset-recurrence.qmd)
+
+### 4. [Counting, Sets and Number Theory](04-counting-and-number-theory/index.qmd)
+
+1. [Count orderings vs unordered selections](04-counting-and-number-theory/01-permutations-vs-combinations.qmd)
+2. [Overlap correction = inclusion–exclusion](04-counting-and-number-theory/02-inclusion-exclusion-overlaps.qmd)
+3. [Too many items forces collision](04-counting-and-number-theory/03-pigeonhole-lower-bound.qmd)
+4. [Equal residues imply divisible difference](04-counting-and-number-theory/04-modular-arithmetic-residue.qmd)
+5. [GCD is invariant under remainder replacement](04-counting-and-number-theory/05-euclid-gcd-invariant.qmd)
+6. [All subarrays = n(n+1)/2](04-counting-and-number-theory/06-triangular-numbers-interval-count.qmd)
+
+### 5. [Advanced Graph and Algebraic Patterns](05-advanced-patterns/index.qmd)
+
+1. [Relax the best-known path upper bound](05-advanced-patterns/01-shortest-path-relaxation.qmd)
+2. [Topological order respects dependency edges](05-advanced-patterns/02-dag-topological-order.qmd)
+3. [Jump K by its powers of two](05-advanced-patterns/03-binary-lifting-powers.qmd)
+4. [Every item pushed and popped at most once](05-advanced-patterns/04-monotonic-stack-amortisation.qmd)
+5. [Kadane = start fresh or extend](05-advanced-patterns/05-kadane-local-versus-global.qmd)
+6. [Hash strings algebraically; beware collisions](05-advanced-patterns/06-rolling-hash-polynomial.qmd)
+
+## Your memorisation sequence
+
+Start with the [**one-page memory sheet**](memory-sheet.qmd). Try to recall each rule from its situation rather than staring at a formula.
+
+For each technique, rehearse three spoken answers:
+
+- **10 seconds:** When should I think of this technique?
+- **30 seconds:** What is the invariant or exact formula, with every symbol defined?
+- **2 minutes:** Derive it from small numbers, justify correctness, and state a counterexample.
+
+A statement such as "two pointers is O(n)" is **not enough**. You must be able to explain *why* each pointer can move at most n times under the implementation's specific invariant.
+
+## Research approach
+
+The thirty lessons synthesise mathematical explanations from [CP-Algorithms](https://cp-algorithms.com/), [USACO Guide](https://usaco.guide/), and pattern discussions on [LeetCode](https://leetcode.com/discuss/). Each lesson links directly to a relevant technical reference and cites appropriate practice problem names.
+
+Those sites give complementary perspectives: CP-Algorithms emphasises correctness and formal properties; USACO Guide explains implementation patterns and constraints; LeetCode discussions help identify common interview triggers. This is a **new authored study guide**, not a copied set of articles or solutions.
+
+## Verify examples
+
+The [tiny mathematical checks](examples/index.qmd) validate representative numerical examples and counterexamples in Python. They are not substitutes for the proofs.
+
+[← Tips & Notes](../index.qmd)

@@ -1,0 +1,42 @@
+---
+title: "Euclid's Algorithm: Replace a Pair Without Changing GCD"
+description: "An interview maths technique with symbols, numbers and an independent proof."
+---
+
+## When this technique appears
+
+When simplifying ratios, testing coprimality, modular arithmetic or distributing equal-sized groups.
+
+## The question
+
+**Why does repeatedly taking a remainder eventually find the greatest common divisor?**
+
+## Formula worth memorising
+
+$$
+\gcd(a,b)=\gcd(b,a\bmod b)
+$$
+
+**Every symbol explained:** gcd is the greatest common divisor; a,b are nonnegative integers with b>0; a mod b is the remainder after dividing a by b.
+
+**Substitute actual numbers:** For a=48,b=18, remainder 48 mod18=12. So gcd(48,18)=gcd(18,12)=gcd(12,6)=gcd(6,0)=6.
+
+## Prove the mathematical step
+
+Every common divisor of a and b divides a−qb, which is the remainder. Conversely every divisor of b and the remainder divides a=qb+r. Thus common-divisor sets are unchanged, and remainders shrink until zero.
+
+## Common mistake or limitation
+
+The direct formula uses b>0; handle the terminal case gcd(a,0)=a. For negative inputs use absolute values, and define gcd(0,0) carefully if needed.
+
+## The 20-second memory card
+
+**Memorise: Replacing (a,b) by (b,remainder) preserves all common divisors but strictly decreases the second value.**
+
+Practise by speaking the argument, not reciting the formula alone.
+
+**Interview problems:** GCD of Strings; Water Jug Problem.
+
+**Research reference:** [See the underlying method](https://cp-algorithms.com/algebra/euclid-algorithm.html). The worked examples and explanation are original.
+
+[← Mathematical techniques](../index.qmd)

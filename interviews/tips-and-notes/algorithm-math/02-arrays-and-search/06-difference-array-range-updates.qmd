@@ -1,0 +1,42 @@
+---
+title: "Difference Arrays: Mark Where Changes Begin and End"
+description: "A mathematical technique worth memorising for algorithm interviews."
+---
+
+## Recognition trigger
+
+Many interval increments, imos technique, range additions and sweep-line events.
+
+## Problem to think through
+
+**Why update every element of an interval when just two boundaries change?**
+
+## Formula worth memorising
+
+$$
+D[l]\mathrel{+}=v,\qquad D[r+1]\mathrel{-}=v
+$$
+
+**Every symbol explained:** D is a difference array; [l,r] is the inclusive interval; v is the increment applied to each element; += and −= change the two boundary markers. Reconstruct A by taking the prefix sum of D.
+
+**Substitute actual values:** Start A=[0,0,0,0,0]. To add 3 to indices [1,3], mark D[1]+=3 and D[4]−=3. Prefix-summing those markers yields [0,3,3,3,0].
+
+## Why the derivation is valid
+
+The +v event begins the extra contribution at l; the −v event cancels it immediately after r. Between the boundaries, every prefix includes +v but not −v, so exactly the desired interval receives the update.
+
+## What could invalidate it?
+
+This is effective when you can process all updates before asking for final point values. Online range queries/updates may require a Fenwick or segment tree instead.
+
+## The 20-second memory card
+
+**Memorise: Range update = start event plus reverse event after the interval; one prefix pass reconstructs all values.**
+
+Reconstruct the proof from the example rather than memorising the code.
+
+**Interview problems:** Corporate Flight Bookings; Range Addition.
+
+**Research reference:** [Read the mathematical method](https://usaco.guide/silver/prefix-sums). The worked numbers and explanation are independently written.
+
+[← Mathematical techniques](../index.qmd)

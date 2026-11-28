@@ -1,0 +1,42 @@
+---
+title: "Prefix Sums: Subtract Two Accumulations"
+description: "A mathematical technique worth memorising for algorithm interviews."
+---
+
+## Recognition trigger
+
+Contiguous subarray sum, repeated range queries, or turning an interval condition into an equation.
+
+## Problem to think through
+
+**Why do two prefix sums give the total of a middle interval?**
+
+## Formula worth memorising
+
+$$
+S(l,r)=P[r+1]-P[l],\quad P[k]=\sum_{i=0}^{k-1}a_i
+$$
+
+**Every symbol explained:** a_i is array element i; P[k] is the sum of the first k elements; S(l,r) is the sum for inclusive indices l through r; Σ means adding the stated elements.
+
+**Substitute actual values:** For a=[2,4,1,5], prefixes P=[0,2,6,7,12]. Sum indices 1..3 is P[4]−P[1]=12−2=10, matching 4+1+5.
+
+## Why the derivation is valid
+
+P[r+1] includes every element from the beginning through r; P[l] removes precisely the elements before l. Their difference contains exactly the requested interval.
+
+## What could invalidate it?
+
+Remember the extra leading zero and index convention. Negative elements are completely fine for prefix sums; they do not require monotonicity.
+
+## The 20-second memory card
+
+**Memorise: Prefix[right+1] minus prefix[left], because the unwanted beginning cancels.**
+
+Reconstruct the proof from the example rather than memorising the code.
+
+**Interview problems:** Range Sum Query; Subarray Sum Equals K.
+
+**Research reference:** [Read the mathematical method](https://usaco.guide/silver/prefix-sums). The worked numbers and explanation are independently written.
+
+[← Mathematical techniques](../index.qmd)

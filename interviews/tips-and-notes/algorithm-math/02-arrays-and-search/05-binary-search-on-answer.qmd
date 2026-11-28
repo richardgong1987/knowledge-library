@@ -1,0 +1,42 @@
+---
+title: "Binary Search on Answer: Search a Monotone Predicate"
+description: "A mathematical technique worth memorising for algorithm interviews."
+---
+
+## Recognition trigger
+
+Minimum feasible capacity, speed, days or maximum achievable threshold.
+
+## Problem to think through
+
+**How can you search an unknown answer when no sorted array is provided?**
+
+## Formula worth memorising
+
+$$
+F(x)=0\ (x<x^\star),\qquad F(x)=1\ (x\ge x^\star)
+$$
+
+**Every symbol explained:** F(x) is a Boolean feasibility test, 0 means impossible, 1 possible, and x* is the smallest feasible threshold. x is the candidate answer.
+
+**Substitute actual values:** Suppose a worker needs 17 hours of work spread across d days with max 5 hours/day. Feasibility is F(d)=[5d≥17]. F(3)=0 because 15<17; F(4)=1 because 20≥17. The smallest feasible day count is 4.
+
+## Why the derivation is valid
+
+If a plan is possible with capacity x, it remains possible with any larger capacity under the same constraints. That creates a false-to-true boundary, so testing a midpoint discards half the candidate range. Binary search needs O(log R) predicate calls for an integer range of size R.
+
+## What could invalidate it?
+
+You MUST prove monotonicity. Some problems are feasible only for isolated values; using binary search there silently skips answers. Guard against overflow in midpoint arithmetic in fixed-width languages.
+
+## The 20-second memory card
+
+**Memorise: Define F(x), prove its true/false boundary, find infeasible/feasible bounds, then halve the interval.**
+
+Reconstruct the proof from the example rather than memorising the code.
+
+**Interview problems:** Koko Eating Bananas; Capacity To Ship Packages Within D Days.
+
+**Research reference:** [Read the mathematical method](https://cp-algorithms.com/num_methods/binary_search.html). The worked numbers and explanation are independently written.
+
+[← Mathematical techniques](../index.qmd)

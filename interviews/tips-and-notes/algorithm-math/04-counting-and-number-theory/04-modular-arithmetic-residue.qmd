@@ -1,0 +1,42 @@
+---
+title: "Modulo: Group Numbers by Remainder"
+description: "An interview maths technique with symbols, numbers and an independent proof."
+---
+
+## When this technique appears
+
+When detecting multiples, cycles, divisibility or equal-prefix residues.
+
+## The question
+
+**Why do equal remainders prove that their difference is divisible by k?**
+
+## Formula worth memorising
+
+$$
+a\equiv b\pmod k\ \Longrightarrow\ k\mid(a-b)
+$$
+
+**Every symbol explained:** a and b are integers; k is a positive modulus; ≡ means equal remainders on division by k; k∣(a−b) means a−b is an integer multiple of k.
+
+**Substitute actual numbers:** For a=17,b=5,k=4, both remainders are 1. Their difference is 12=4×3, so divisible by 4. If two prefix sums have the same remainder modulo 4, the subarray between them sums to a multiple of 4.
+
+## Prove the mathematical step
+
+Write a=qk+r and b=pk+r with the same remainder r. Subtract: a−b=(q−p)k, so k divides the difference. This turns divisibility into equal-prefix bucket lookups.
+
+## Common mistake or limitation
+
+For negative values, `%` can have language-specific sign conventions. Normalise a residue to 0..k−1 when using dictionary keys across implementations.
+
+## The 20-second memory card
+
+**Memorise: Difference divisible by k ⇔ equal residues mod k. Use prefix remainders to find divisible subarrays.**
+
+Practise by speaking the argument, not reciting the formula alone.
+
+**Interview problems:** Subarray Sums Divisible by K; Continuous Subarray Sum.
+
+**Research reference:** [See the underlying method](https://cp-algorithms.com/algebra/module-inverse.html). The worked examples and explanation are original.
+
+[← Mathematical techniques](../index.qmd)

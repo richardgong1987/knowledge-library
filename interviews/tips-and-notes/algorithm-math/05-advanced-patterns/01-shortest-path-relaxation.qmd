@@ -1,0 +1,42 @@
+---
+title: "Shortest Paths: Relax an Upper Bound"
+description: "A mathematical interview pattern explained by a small example and proof."
+---
+
+## Recognition trigger
+
+Weighted graph minimum-cost routes, Dijkstra and Bellman–Ford reasoning.
+
+## Main question
+
+**Why can we update a known distance when a new path through another vertex is cheaper?**
+
+## Formula worth memorising
+
+$$
+d[v]\leftarrow\min(d[v],d[u]+w(u,v))
+$$
+
+**Every symbol explained:** d[v] is the best currently known upper bound on distance from the start to vertex v; d[u] is the known upper bound for u; w(u,v) is edge cost from u to v; min keeps the lower candidate.
+
+**Substitute actual numbers:** Suppose a direct path from start S to B costs 9. The best route to A costs 3 and edge A→B costs 4. Relaxation sets d[B]=min(9,3+4)=7, improving the route.
+
+## Derivation and correctness reasoning
+
+Any path to u followed by edge (u,v) gives a valid candidate path to v. Taking its cost cannot worsen the current best bound. Repeated valid relaxations underpin shortest-path algorithms.
+
+## Failure modes and assumptions
+
+Dijkstra's greedy finalisation assumes nonnegative edge weights; a later negative edge can undermine the finalisation proof. A relaxation formula alone does not choose the correct algorithm.
+
+## The 20-second memory card
+
+**Memorise: A path through u produces d[u]+weight; replace v's bound only if that candidate is smaller.**
+
+Practise reciting the invariant or proof, not merely the equation.
+
+**Interview problems:** Network Delay Time; Cheapest Flights Within K Stops.
+
+**Research reference:** [Further mathematical detail](https://cp-algorithms.com/graph/dijkstra.html). The examples and explanations here were independently developed.
+
+[← Mathematical techniques](../index.qmd)

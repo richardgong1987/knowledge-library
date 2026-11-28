@@ -1,0 +1,42 @@
+---
+title: "DP: State, Recurrence, Base Case, Order"
+description: "Memorisable mathematical reasoning with small numerical examples."
+---
+
+## When to recognise the pattern
+
+When subproblems overlap and you need an optimal value or count.
+
+## The key question
+
+**How do you transform a story into a recurrence without writing code first?**
+
+## Formula worth memorising
+
+$$
+F(i)=F(i-1)+F(i-2),\quad F(0)=1,\ F(1)=1
+$$
+
+**Every symbol explained:** F(i) is the number of distinct ways to climb i steps using 1-step or 2-step moves; i is a nonnegative integer. F(0)=1 counts the empty sequence of moves, and F(1)=1 counts one single step.
+
+**Substitute actual numbers:** For i=2, F(2)=F(1)+F(0)=1+1=2: [1,1] or [2]. For i=3, F(3)=F(2)+F(1)=2+1=3: [1,1,1], [1,2], [2,1].
+
+## Why this is mathematically correct
+
+Every valid sequence ends with either one step from i−1 or two from i−2. These final-move classes are mutually exclusive and exhaustive, so their counts add. Caching subproblem values prevents exponential recomputation.
+
+## Limits and counterexamples
+
+The recurrence changes if allowed move lengths change. In optimisation DP, replace addition of counts with min/max of costs; always distinguish counting from choosing the best.
+
+## The 20-second memory card
+
+**Memorise: Define the meaning of state F(i), partition solutions by last decision, prove the recurrence, state base cases.**
+
+Now reproduce the equation, example and proof aloud, without looking.
+
+**Interview problems:** Climbing Stairs; House Robber.
+
+**Research reference:** [Further reading](https://cp-algorithms.com/dynamic_programming/intro-to-dp.html). This is an independently written derivation, not a copied solution.
+
+[← Mathematical techniques](../index.qmd)

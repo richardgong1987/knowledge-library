@@ -1,0 +1,42 @@
+---
+title: "Triangular Numbers: Count All Contiguous Subarrays"
+description: "An interview maths technique with symbols, numbers and an independent proof."
+---
+
+## When this technique appears
+
+When a nested-loop problem counts all intervals or pairs of indices.
+
+## The question
+
+**Why are there exactly n(n+1)/2 nonempty contiguous subarrays?**
+
+## Formula worth memorising
+
+$$
+\sum_{\ell=1}^{n}\ell=\frac{n(n+1)}2
+$$
+
+**Every symbol explained:** n is array length; ℓ ranges from 1 through n and denotes a subarray length; Σ adds the number of subarrays over lengths, while the right side is the triangular-number identity.
+
+**Substitute actual numbers:** For n=4, there are 4 subarrays of length 1, 3 of length 2, 2 of length 3 and 1 of length 4, totalling 4+3+2+1=10=4×5/2.
+
+## Prove the mathematical step
+
+A subarray of length ℓ can start in n−ℓ+1 positions. Summing over lengths from 1 to n is 1+2+...+n. Pair first and last terms to derive n(n+1)/2.
+
+## Common mistake or limitation
+
+Subarrays are contiguous and include repeated values at different positions as different intervals. The count differs from the 2^n subsets of an array.
+
+## The 20-second memory card
+
+**Memorise: Every start i admits n−i ending positions; adding the decreasing counts yields the triangular number.**
+
+Practise by speaking the argument, not reciting the formula alone.
+
+**Interview problems:** Count Subarrays; All Pairs of Indices.
+
+**Research reference:** [See the underlying method](https://cp-algorithms.com/combinatorics/binomial-coefficients.html). The worked examples and explanation are original.
+
+[← Mathematical techniques](../index.qmd)

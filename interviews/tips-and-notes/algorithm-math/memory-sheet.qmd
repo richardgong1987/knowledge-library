@@ -1,0 +1,67 @@
+---
+title: "Memory Sheet — Thirty Algorithm Maths Techniques"
+description: "One-sentence recall prompts and key invariants for technical interview practice."
+---
+
+# Mathematical Memory Sheet
+
+The goal is to reconstruct the reasoning, **not** to recite syntax.
+
+## State search, DFS and backtracking
+
+1. **DFS states:** Define current state, legal neighbours, visited condition, and what is guaranteed on return.
+2. **DFS subtree interval:** In rooted-tree preorder, a subtree occupies one contiguous half-open interval.
+3. **Backtracking:** State + choice + constraint + base case + undo; prune only when no completion is possible.
+4. **Search complexity:** Multiply branching factors across depth; a binary tree of depth three has 8 leaves.
+5. **BFS shortest path:** Queue order explores unit-edge-distance layers; first discovery gives shortest edge count.
+6. **Parity:** Track a quantity that stays unchanged or flips predictably with every legal move.
+
+## Arrays, intervals and monotone search
+
+7. **Prefix sums:** Range sum on [l,r] is P[r+1]−P[l], with P[0]=0.
+8. **Prefix counts:** A target-sum subarray needs earlier prefix equal to current prefix minus target.
+9. **Sliding window:** Fixed window moves by removing one outgoing item and adding one incoming item.
+10. **Two pointers:** Before discarding a boundary, prove sortedness/monotonicity makes every skipped candidate impossible.
+11. **Binary search on answer:** Define a false→true feasibility predicate; prove it stays true beyond the boundary.
+12. **Difference array:** Start an interval increment at l and reverse it after r; prefix-sum to reconstruct.
+
+## Dynamic programming, greedy, complexity
+
+13. **DP:** Define what a state *means*, classify solutions by last decision, prove recurrence and base cases.
+14. **0/1 knapsack:** Each item is either absent or present; take the better feasible option.
+15. **LIS:** For each length, retain its smallest possible tail to preserve extension opportunities.
+16. **Greedy exchange:** Swap a greedy choice into a known optimal solution without worsening its objective.
+17. **Amortisation:** Count total pointer advances across the whole algorithm, even inside a nested loop.
+18. **Bitmask:** Store membership of n small-set items in n bits; remember there are still 2^n subsets.
+
+## Counting and number theory
+
+19. **Permutations/combinations:** Ask whether order matters before multiplying by factorials.
+20. **Inclusion–exclusion:** Correct double counting by subtracting overlaps.
+21. **Pigeonhole:** More objects than buckets means one bucket has at least two.
+22. **Modulo:** Equal residues modulo k imply their difference is divisible by k.
+23. **GCD:** Replace (a,b) with (b,a mod b) without changing common divisors.
+24. **Triangle sums:** Number of nonempty contiguous subarrays is n(n+1)/2.
+
+## Advanced patterns
+
+25. **Relaxation:** A new path via u gives a candidate distance to v; keep the smaller upper bound.
+26. **DAG order:** Every dependency edge must point forward.
+27. **Binary lifting:** Express a jump count as powers of two and compose those jumps.
+28. **Monotonic stack:** Every input enters and leaves the stack at most once, so operations total O(n).
+29. **Kadane:** Best sum ending here is either just this element or an extension of the previous best ending.
+30. **Rolling hash:** Polynomial encoding enables fast comparisons, but hash equality can collide.
+
+## Recitation drill
+
+Pick any number from 1–30, then say:
+
+1. **Trigger:** "I recognise this when the problem asks for..."
+2. **Rule:** State the formula, defining every symbol.
+3. **Example:** Substitute a tiny input and compute an answer.
+4. **Proof:** Say the cancellation, invariant, partition or exchange argument.
+5. **Limit:** Explain one condition that would make it fail.
+
+If you can do all five without looking, you remember a technique well enough to derive an implementation.
+
+[← Thirty full mathematical lessons](index.qmd)

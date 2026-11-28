@@ -212,3 +212,14 @@ Tests verify selected arithmetic; they do not replace formal proof.
 Interviews is a separate top-level Knowledge Library category. Its content is intentionally **source-led**. Only the landing page and the editorial guide exist until the user uploads interview-preparation books. Do not claim any future source has been read or generate numerous empty topic pages.
 
 When an interview source is uploaded, inspect its actual chapters, terminology and examples before designing second-level categories. Build rigorous, independently worded learning chapters with small examples, symbol definitions and numerical substitutions, concise interview explanations and follow-up challenges. Attribute sources, distinguish source material from illustrative extensions, and avoid copyrighted prose or illustrations. Preserve the user's established English-language teaching style; prefer British English for spoken interview answers.
+
+
+## Interviews → Tips & Notes → Algorithm Mathematical Techniques
+
+This third-level topic contains **reusable mathematical mini-proofs**, not copied solutions and not a second entire algorithms textbook. Search credible public resources before adding content: CP-Algorithms, USACO Guide and LeetCode problem discussions; distinguish formal proofs from community heuristic advice.
+
+Each chapter must contain an interview recognition trigger, an exact displayed formula or invariant, **definitions of every symbol immediately after the display**, a substituted small numeric example, the correctness argument, a counterexample or limitation, a 20-second memory card and a link to a relevant public source. Include a representative problem to practice, but do not reproduce copyrighted solution text.
+
+The key design criterion is **memorisation value**: after reading a chapter, the user should be able to derive the algorithmic idea, not just recite one implementation. Avoid piling code, many variants and unrelated formulas onto one page. A compact one-page memory sheet complements 30 fully worked lessons.
+
+Run the curriculum audit and dependency-free Python numerical checks before publishing. Distinguish an empirical passing test from a general proof.

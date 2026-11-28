@@ -1,0 +1,42 @@
+---
+title: "Two Pointers: Prove a Boundary Moves Only Forward"
+description: "A mathematical technique worth memorising for algorithm interviews."
+---
+
+## Recognition trigger
+
+Sorted pair-sum, monotone feasible windows and problems requiring an O(n) scan.
+
+## Problem to think through
+
+**What is the proof that moving a pointer cannot skip an answer?**
+
+## Formula worth memorising
+
+$$
+a_l+a_r<T\ \Longrightarrow\ a_l+a_j<T\quad(j\le r)
+$$
+
+**Every symbol explained:** a is a nondecreasing sorted array; l,r are current left/right indices; T is target sum; j is any index no farther right than r; the implication says every smaller right value is also too small with the current left value.
+
+**Substitute actual values:** For sorted [1,2,4,7] and target 9, start l=0,r=3. The sum 1+7=8<9, so 1 plus any earlier element is ≤8. Discard left value 1 and move l right. Then 2+7=9.
+
+## Why the derivation is valid
+
+Sortedness makes the implication true. If even the largest permitted right element is too small with a_l, then no right index can pair with a_l to reach T. Discarding that index is safe. Analogous reasoning moves the right index when sum is too big.
+
+## What could invalidate it?
+
+For arbitrary unsorted arrays the implication fails. Sliding windows with a sum threshold often need nonnegative values for the shrink/expand monotonicity, but sorted two-sum has different premises.
+
+## The 20-second memory card
+
+**Memorise: Write the inequality proving the discarded pointer cannot participate in any solution.**
+
+Reconstruct the proof from the example rather than memorising the code.
+
+**Interview problems:** Two Sum II; Container With Most Water.
+
+**Research reference:** [Read the mathematical method](https://usaco.guide/silver/two-pointers). The worked numbers and explanation are independently written.
+
+[← Mathematical techniques](../index.qmd)

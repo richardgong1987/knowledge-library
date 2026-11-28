@@ -1,0 +1,42 @@
+---
+title: "Backtracking: Choose, Explore, Undo"
+description: "Memorisable mathematical reasoning for algorithm interviews, with a worked example and proof."
+---
+
+## When to recognise this technique
+
+When the problem asks for all valid subsets, paths, permutations or assignments.
+
+## Start with the question
+
+**What mathematical condition allows pruning before exploring a whole branch?**
+
+## Formula worth memorising
+
+$$
+\mathcal S(x)=\bigcup_{a\in A(x)}\mathcal S(T(x,a))
+$$
+
+**Every symbol explained:** x is the current partial solution/state; A(x) is the set of allowed next choices; T(x,a) is the state after choice a; S(x) is the family of complete valid solutions reachable from x; union combines solutions from all legal children.
+
+**Substitute actual values:** For permutations of [1,2], initial choices are 1 or 2. Choosing 1 leaves [2] giving [1,2]; choosing 2 leaves [1] giving [2,1]. The union contains two solutions.
+
+## Why the mathematics works
+
+Enumerating every valid next choice ensures completeness; rejecting a partial state is safe only when no completion could satisfy the constraints. An implementation may mutate a shared path, recurse and undo to restore the previous state.
+
+## Limits and counterexamples
+
+Not all DFS is backtracking: reachability DFS need not restore a path for alternative assignments. Conversely, backtracking may explore a tree of choices rather than the original input graph.
+
+## The 20-second memory card
+
+**Memorise: state + choices + validity condition + base case + undo. Every prune requires an impossibility argument.**
+
+Try explaining the formula aloud using the numerical example, then reproduce the proof from memory. An interview answer must justify the relationship, not just quote it.
+
+**Practice problems:** Permutations; N-Queens.
+
+**Research reference:** [Read the full explanation](https://cp-algorithms.com/graph/depth-first-search.html). This page uses an independent example and derivation rather than copying source text or community solutions.
+
+[← Mathematical techniques](../index.qmd)

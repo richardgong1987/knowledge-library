@@ -1,0 +1,42 @@
+---
+title: "BFS Layers: Why the First Visit Is Shortest"
+description: "Memorisable mathematical reasoning for algorithm interviews, with a worked example and proof."
+---
+
+## When to recognise this technique
+
+When the question asks for minimum moves or minimum edges on an unweighted graph.
+
+## Start with the question
+
+**How can a queue certify the shortest path without checking all possible paths?**
+
+## Formula worth memorising
+
+$$
+dist(v)=dist(u)+1\quad\text{for a first-discovered }v\in N(u)
+$$
+
+**Every symbol explained:** dist(u) is the already-known minimum number of edges from the start to u; N(u) is the set of neighbours; v is a newly discovered neighbour whose distance is one more.
+
+**Substitute actual values:** If A connects to B and C, and B connects to D, BFS begins dist(A)=0, then dist(B)=dist(C)=1, then dist(D)=2. A path to D cannot use fewer than 2 edges because BFS already examined all vertices at depths 0 and 1.
+
+## Why the mathematics works
+
+A FIFO queue processes all distance-k vertices before distance-(k+1) vertices. The earliest discovery of a vertex must therefore use a shortest-edge-count path; marking on enqueue avoids duplicate discoveries.
+
+## Limits and counterexamples
+
+This proof assumes every edge has equal unit cost. Weighted graphs require other methods, such as Dijkstra for nonnegative weights or 0–1 BFS for weights 0 and 1.
+
+## The 20-second memory card
+
+**Memorise: The queue maintains distance layers; first discovery yields shortest number of edges.**
+
+Try explaining the formula aloud using the numerical example, then reproduce the proof from memory. An interview answer must justify the relationship, not just quote it.
+
+**Practice problems:** Word Ladder; Minimum Knight Moves.
+
+**Research reference:** [Read the full explanation](https://cp-algorithms.com/graph/breadth-first-search.html). This page uses an independent example and derivation rather than copying source text or community solutions.
+
+[← Mathematical techniques](../index.qmd)

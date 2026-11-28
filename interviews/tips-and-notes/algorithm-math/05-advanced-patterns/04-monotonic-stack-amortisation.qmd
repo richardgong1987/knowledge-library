@@ -1,0 +1,42 @@
+---
+title: "Monotonic Stack: Each Item Is Pushed and Popped Once"
+description: "A mathematical interview pattern explained by a small example and proof."
+---
+
+## Recognition trigger
+
+Next greater element, histogram bounds and nearest smaller neighbour.
+
+## Main question
+
+**Why is the while-loop work linear even if many elements are popped at once?**
+
+## Formula worth memorising
+
+$$
+\#push+\#pop\le2n
+$$
+
+**Every symbol explained:** #push counts pushes of input elements onto a stack; #pop counts removals of those elements; n is number of input positions. The bound assumes each element enters at most once and is removed at most once.
+
+**Substitute actual numbers:** Scan [2,1,3] while keeping a decreasing stack for next-greater searches: push 2, push 1; when 3 arrives, pop 1 and 2, then push 3. Total pushes=3, pops=2: 5≤2×3=6.
+
+## Derivation and correctness reasoning
+
+Each input index is pushed once and, after being popped, never re-enters. Charge each pop to its unique earlier push. Total stack operations are at most 2n even though pops appear inside a nested loop.
+
+## Failure modes and assumptions
+
+Stack comparison direction matters: greater versus greater-or-equal changes answers when duplicate values occur. State the equality policy in the invariant.
+
+## The 20-second memory card
+
+**Memorise: Maintain monotonic order; every pop is permanent, so total pushes and pops are O(n).**
+
+Practise reciting the invariant or proof, not merely the equation.
+
+**Interview problems:** Daily Temperatures; Next Greater Element.
+
+**Research reference:** [Further mathematical detail](https://cp-algorithms.com/data_structures/stack_queue_modification.html). The examples and explanations here were independently developed.
+
+[← Mathematical techniques](../index.qmd)

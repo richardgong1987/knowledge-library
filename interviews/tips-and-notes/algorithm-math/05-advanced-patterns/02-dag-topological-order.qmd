@@ -1,0 +1,42 @@
+---
+title: "Topological Order: Respect Every Dependency"
+description: "A mathematical interview pattern explained by a small example and proof."
+---
+
+## Recognition trigger
+
+Prerequisites, scheduling tasks with dependencies and DAG dynamic programming.
+
+## Main question
+
+**How do we know which job may be processed before another?**
+
+## Formula worth memorising
+
+$$
+(u,v)\in E\ \Longrightarrow\ pos(u)<pos(v)
+$$
+
+**Every symbol explained:** E is the directed edge set; (u,v) is a dependency edge from task u to task v; pos(x) is the task's index in a proposed order; < means u must appear before v.
+
+**Substitute actual numbers:** For edges A→C and B→C, order [A,B,C] is valid since pos(A)=0<2 and pos(B)=1<2. Order [A,C,B] fails because B→C would require pos(B)=2<1, which is false.
+
+## Derivation and correctness reasoning
+
+A directed acyclic graph has at least one zero-indegree vertex. Remove one such vertex, emit it first, and repeat. Every emitted vertex has no unmet prerequisites among remaining tasks. If edges remain but no zero-indegree vertex exists, the graph has a directed cycle.
+
+## Failure modes and assumptions
+
+Topological sorting is not defined for cyclic prerequisite graphs. Multiple topological orders may exist, so do not equate a valid order with the only possible schedule.
+
+## The 20-second memory card
+
+**Memorise: Every edge points forward in the order. Repeatedly remove vertices with no incoming unmet edges.**
+
+Practise reciting the invariant or proof, not merely the equation.
+
+**Interview problems:** Course Schedule; Alien Dictionary.
+
+**Research reference:** [Further mathematical detail](https://cp-algorithms.com/graph/topological-sort.html). The examples and explanations here were independently developed.
+
+[← Mathematical techniques](../index.qmd)

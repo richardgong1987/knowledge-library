@@ -1,0 +1,42 @@
+---
+title: "Pigeonhole Principle: Prove a Collision Is Unavoidable"
+description: "An interview maths technique with symbols, numbers and an independent proof."
+---
+
+## When this technique appears
+
+When proving a duplicate, shared bucket, remainder collision or guaranteed matching pair.
+
+## The question
+
+**What can be guaranteed without constructing a specific matching pair?**
+
+## Formula worth memorising
+
+$$
+N>k\ \Longrightarrow\ \exists\text{ a bucket containing at least }2\text{ objects}
+$$
+
+**Every symbol explained:** N is the number of objects; k is the number of buckets; > means there are more objects than buckets; ∃ means there exists at least one bucket with two or more objects.
+
+**Substitute actual numbers:** Put 5 socks into 4 labelled drawers. If every drawer held at most one, there could be at most 4 socks. Since there are 5, some drawer holds at least 2.
+
+## Prove the mathematical step
+
+Proof by contradiction: assume every bucket has at most one item. Summing over k buckets gives at most k objects, contradicting N>k. This is a lower-bound argument requiring no search.
+
+## Common mistake or limitation
+
+A duplicate bucket does not imply identical objects unless bucket definitions encode the right equivalence relation. Repeated hash values do not guarantee identical inputs.
+
+## The 20-second memory card
+
+**Memorise: Define buckets, count capacity if every bucket avoids collision, then show objects exceed capacity.**
+
+Practise by speaking the argument, not reciting the formula alone.
+
+**Interview problems:** Contains Duplicate; Remainder Collisions.
+
+**Research reference:** [See the underlying method](https://cp-algorithms.com/combinatorics/pigeonhole-principle.html). The worked examples and explanation are original.
+
+[← Mathematical techniques](../index.qmd)

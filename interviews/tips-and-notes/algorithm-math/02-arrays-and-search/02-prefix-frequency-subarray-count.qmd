@@ -1,0 +1,42 @@
+---
+title: "Count Subarrays by Equal Prefix Differences"
+description: "A mathematical technique worth memorising for algorithm interviews."
+---
+
+## Recognition trigger
+
+Find how many contiguous subarrays sum to target K, including arrays with negative values.
+
+## Problem to think through
+
+**How can a counting problem become a lookup of earlier prefix sums?**
+
+## Formula worth memorising
+
+$$
+P[j]-P[i]=K\iff P[i]=P[j]-K
+$$
+
+**Every symbol explained:** P[t] is the sum of elements before index t; i is a possible start, j is exclusive end; K is the target sum; ⇔ means the two conditions are equivalent.
+
+**Substitute actual values:** For a=[1,2,1], K=3 and prefix sums [0,1,3,4]. At j=2, P[j]−K=0 matches P[0], giving [1,2]. At j=3, 4−3=1 matches P[1], giving [2,1]. There are 2 answers.
+
+## Why the derivation is valid
+
+Scan j left to right and maintain frequencies of prefix values from earlier positions i<j. Every occurrence of P[j]−K identifies one valid start index. A map lookup and increment per element yields expected O(n) with standard hash-table assumptions.
+
+## What could invalidate it?
+
+Insert the initial zero prefix with frequency 1, and query BEFORE inserting the current prefix; otherwise K=0 may count an empty subarray. Unlike standard shrinking windows, this works with negatives.
+
+## The 20-second memory card
+
+**Memorise: Current prefix minus target equals the earlier prefix we want; count all earlier occurrences, not just existence.**
+
+Reconstruct the proof from the example rather than memorising the code.
+
+**Interview problems:** Subarray Sum Equals K; Continuous Subarray Sum.
+
+**Research reference:** [Read the mathematical method](https://usaco.guide/silver/prefix-sums). The worked numbers and explanation are independently written.
+
+[← Mathematical techniques](../index.qmd)

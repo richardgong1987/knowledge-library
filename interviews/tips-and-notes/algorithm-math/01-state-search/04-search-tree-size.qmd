@@ -1,0 +1,42 @@
+---
+title: "Search Complexity: Branching Factor and Depth"
+description: "Memorisable mathematical reasoning for algorithm interviews, with a worked example and proof."
+---
+
+## When to recognise this technique
+
+When your recursive search is correct but too slow.
+
+## Start with the question
+
+**How many candidates can a choice tree produce at depth d?**
+
+## Formula worth memorising
+
+$$
+1+b+\cdots+b^d=\frac{b^{d+1}-1}{b-1}
+$$
+
+**Every symbol explained:** b is a fixed branching factor greater than 1, d is maximum depth starting at depth 0, and the left side counts nodes at every level from root to depth d.
+
+**Substitute actual values:** With b=2 and d=3, the levels contain 1, 2, 4 and 8 nodes, totalling 15. The leaf count is 2³=8. At b=3,d=3, leaves already reach 27.
+
+## Why the mathematics works
+
+At level k, every prior partial choice has b children, giving b^k nodes. Sum the geometric series to get the node bound. A finite choice tree therefore often has exponential worst-case size without strong pruning.
+
+## Limits and counterexamples
+
+Real branching factors vary, so use this as an upper-bound model rather than an exact runtime. For n distinct items' permutations, the number of leaves is n!, not n^n.
+
+## The 20-second memory card
+
+**Memorise: count choices per level, multiply across levels, then ask which constraints can remove entire subtrees.**
+
+Try explaining the formula aloud using the numerical example, then reproduce the proof from memory. An interview answer must justify the relationship, not just quote it.
+
+**Practice problems:** Subsets; Combination Sum.
+
+**Research reference:** [Read the full explanation](https://cp-algorithms.com/dynamic_programming/intro-to-dp.html). This page uses an independent example and derivation rather than copying source text or community solutions.
+
+[← Mathematical techniques](../index.qmd)

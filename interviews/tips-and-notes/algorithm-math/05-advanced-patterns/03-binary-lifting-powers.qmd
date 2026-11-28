@@ -1,0 +1,42 @@
+---
+title: "Binary Lifting: Jump by Powers of Two"
+description: "A mathematical interview pattern explained by a small example and proof."
+---
+
+## Recognition trigger
+
+Kth ancestor queries, tree LCA and repeated function application.
+
+## Main question
+
+**Why can 13 ancestor steps be computed with only three jumps?**
+
+## Formula worth memorising
+
+$$
+up(v,k)=up(up(v,k-1),k-1)
+$$
+
+**Every symbol explained:** up(v,k) denotes the ancestor of vertex v exactly 2^k steps up the rooted tree; k is a nonnegative integer; up(v,0) is v's parent. The recurrence composes two 2^(k−1)-step jumps.
+
+**Substitute actual numbers:** Thirteen is 8+4+1=2³+2²+2⁰. To travel thirteen parent edges, take an 8-step precomputed jump, then a 4-step jump, then a 1-step jump. Only three table lookups are needed.
+
+## Derivation and correctness reasoning
+
+A 2^k-step jump is two consecutive 2^(k−1)-step jumps. Precompute these for k up to floor(log₂N). Binary representation of any requested distance selects O(log N) powers of two.
+
+## Failure modes and assumptions
+
+Represent ancestors above the root with a sentinel, and ensure the table handles it safely. This handles ancestor jumps; LCA queries also need depth alignment and a careful paired-lifting step.
+
+## The 20-second memory card
+
+**Memorise: Precompute doubling jumps, split K into powers of two, and apply only the set bits.**
+
+Practise reciting the invariant or proof, not merely the equation.
+
+**Interview problems:** Kth Ancestor of a Tree Node; Lowest Common Ancestor.
+
+**Research reference:** [Further mathematical detail](https://cp-algorithms.com/graph/lca_binary_lifting.html). The examples and explanations here were independently developed.
+
+[← Mathematical techniques](../index.qmd)

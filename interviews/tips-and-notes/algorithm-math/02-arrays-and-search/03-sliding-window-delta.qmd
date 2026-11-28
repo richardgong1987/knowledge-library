@@ -1,0 +1,42 @@
+---
+title: "Sliding Window: Only Two Items Change"
+description: "A mathematical technique worth memorising for algorithm interviews."
+---
+
+## Recognition trigger
+
+Fixed-length consecutive sums, rolling counts and neighbouring windows.
+
+## Problem to think through
+
+**Why is it wasteful to recompute a whole window when it moves one position?**
+
+## Formula worth memorising
+
+$$
+W_{i+1}=W_i-a_i+a_{i+k}
+$$
+
+**Every symbol explained:** W_i is the sum of the k elements beginning at index i; a_i is the outgoing leftmost element; a_{i+k} is the incoming new element; k is fixed window length.
+
+**Substitute actual values:** With a=[2,4,1,5], k=3, first sum W0=2+4+1=7. Shift right: W1=7−2+5=10. We didn't rescan the shared middle elements 4 and 1.
+
+## Why the derivation is valid
+
+The old and new fixed-size windows share exactly k−1 elements. All common terms cancel, leaving only one subtraction and addition per shift, so all n−k+1 windows take O(n) total time.
+
+## What could invalidate it?
+
+The formula is for additive fixed-size windows. A maximum/minimum requires different state, often a monotonic deque; variable-length windows require a valid invariant.
+
+## The 20-second memory card
+
+**Memorise: Adjacent windows overlap: subtract the one leaving, add the one entering.**
+
+Reconstruct the proof from the example rather than memorising the code.
+
+**Interview problems:** Maximum Average Subarray; Maximum Sum of Size K.
+
+**Research reference:** [Read the mathematical method](https://usaco.guide/gold/sliding-window). The worked numbers and explanation are independently written.
+
+[← Mathematical techniques](../index.qmd)

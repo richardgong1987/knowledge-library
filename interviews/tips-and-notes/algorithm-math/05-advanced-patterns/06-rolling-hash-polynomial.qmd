@@ -1,0 +1,42 @@
+---
+title: "Rolling Hash: Turn a String into Arithmetic"
+description: "A mathematical interview pattern explained by a small example and proof."
+---
+
+## Recognition trigger
+
+Fast substring equality candidates, repetitive strings and pattern matching.
+
+## Main question
+
+**How can two strings be compared through a compact algebraic fingerprint?**
+
+## Formula worth memorising
+
+$$
+H(s)=\left(\sum_{i=0}^{n-1}c_i p^i\right)\bmod m
+$$
+
+**Every symbol explained:** s is a string of length n; c_i is integer code assigned to character at position i; p is a chosen polynomial base; m is a positive modulus; Σ adds powers of p weighted by character codes; H is the resulting residue.
+
+**Substitute actual numbers:** For codes a=1,b=2 and base p=3, modulus m=101, H('ab')=1×3⁰+2×3¹=1+6=7. H('ba')=2×1+1×3=5, so these strings are distinguishable by this hash.
+
+## Derivation and correctness reasoning
+
+A polynomial representation permits updating substring hashes using arithmetic on powers of p, rather than scanning all characters for every comparison. Prefix-hash variants enable fast substring-hash queries after preprocessing.
+
+## Failure modes and assumptions
+
+Distinct strings can collide modulo m, so hash equality does not prove string equality. For security-sensitive or exact problems, confirm candidates directly or use collision-free methods; randomisation and double hashing only reduce collision likelihood.
+
+## The 20-second memory card
+
+**Memorise: Encode characters as polynomial coefficients, take a modulus, and remember collisions prevent deterministic equality proofs.**
+
+Practise reciting the invariant or proof, not merely the equation.
+
+**Interview problems:** Repeated DNA Sequences; Longest Duplicate Substring.
+
+**Research reference:** [Further mathematical detail](https://cp-algorithms.com/string/string-hashing.html). The examples and explanations here were independently developed.
+
+[← Mathematical techniques](../index.qmd)
