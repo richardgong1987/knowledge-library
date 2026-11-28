@@ -1,0 +1,35 @@
+---
+title: "XOR Cancellation — Identical Bits Remove Each Other"
+---
+
+# XOR Cancellation — Identical Bits Remove Each Other
+
+## The identity to remember
+
+$$
+x\oplus x=0,\qquad x\oplus0=x
+$$
+
+**Every symbol explained:** x is an integer represented in binary; ⊕ is bitwise exclusive OR; 0 is the all-zero bit pattern.
+
+**Substitute actual numbers:** For x=6 (binary 110), 110 XOR 110 = 000 = 0. Also 110 XOR 000=110.
+
+## Why it is true
+
+At each bit, XOR returns 1 exactly when the inputs differ. Matching bits therefore cancel; associativity and commutativity let repeated values pair off regardless of order.
+
+## Algorithm or number puzzle application
+
+In an array where every integer appears twice except one, XOR all values to recover the single value.
+
+## Assumptions and pitfalls
+
+For [4,1,4,7,1], (4⊕4)⊕(1⊕1)⊕7=7. The cancellation is algebraic and O(1) extra space.
+
+## Your turn
+
+It only solves this exact multiplicity structure; if an item appears three times or several distinct singles remain, a simple XOR may not recover what you want.
+
+**Memory rule:** Remember the mathematical structure behind the bit or counting operation, not a memorised code template.
+
+[← Numerical & Algebraic Tricks](../index.qmd)

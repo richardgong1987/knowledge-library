@@ -1,0 +1,40 @@
+---
+title: "Prefix Sum — Subtract Off the Unwanted Beginning"
+description: "Learn a closed-form identity with derivation and small numerical substitution."
+---
+
+# Prefix Sum — Subtract Off the Unwanted Beginning
+
+## The identity to remember
+
+$$
+\sum_{i=l}^{r}a_i=P_{r+1}-P_l
+$$
+
+**Every symbol explained:** a_i are sequence values; l and r are inclusive zero-based positions; P_j is the sum of a_0 through a_(j−1), with P_0=0.
+
+**Substitute actual numbers:** For a=[2,4,1,5], prefix array P=[0,2,6,7,12]. Sum from l=1 to r=3 is 12−2=10, matching 4+1+5.
+
+## Why it is true
+
+P_(r+1) includes all values up through r. P_l includes exactly those before l. Subtracting cancels the unwanted prefix and leaves the desired contiguous interval.
+
+## When to recognise it
+
+Use in algorithms that repeatedly request interval sums; it reduces each sum query to two lookups once P is constructed.
+
+## Algorithm or number puzzle application
+
+For repeated queries over 10,000 elements, preprocessing takes O(n) and each range sum takes O(1), instead of summing every range separately.
+
+## Assumptions and pitfalls
+
+The index convention matters; P[r]−P[l] means a half-open interval [l,r), not inclusive r.
+
+## Your turn
+
+Given P=[0,3,8,9,15], find sum of positions 1 through 3.
+
+**Memory rule:** Reconstruct the cancellation or counting argument before memorising the formula.
+
+[← Numerical & Algebraic Tricks](../index.qmd)

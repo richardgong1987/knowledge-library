@@ -1,0 +1,35 @@
+---
+title: "Bit Counting — Repeatedly Remove the Lowest Set Bit"
+---
+
+# Bit Counting — Repeatedly Remove the Lowest Set Bit
+
+## The identity to remember
+
+$$
+n'=n\mathbin{\&}(n-1)
+$$
+
+**Every symbol explained:** n is a positive integer, n′ is the new integer after one operation, & is bitwise AND; n−1 subtracts one. The expression deletes the least significant 1 bit of n.
+
+**Substitute actual numbers:** Take n=12 (binary 1100). Then n−1=11 (binary 1011). AND: 1100 & 1011 = 1000, or 8, removing one set bit. Next 1000 & 0111 = 0000.
+
+## Why it is true
+
+Subtracting one flips the lowest 1 bit to 0 and all lower 0 bits to 1. AND with the original clears exactly that lowest 1 while retaining higher bits.
+
+## Algorithm or number puzzle application
+
+Use to count bits by repeating until zero. Complexity is proportional to the number of set bits, not the total bit width.
+
+## Assumptions and pitfalls
+
+For 12, iterations: 12→8→0, so two 1 bits. Its binary form 1100 indeed contains two ones.
+
+## Your turn
+
+For n=0, n−1 is negative and the expression is not meaningful in fixed-width unsigned arithmetic without careful conventions. Use a positive-loop guard.
+
+**Memory rule:** Remember the mathematical structure behind the bit or counting operation, not a memorised code template.
+
+[← Numerical & Algebraic Tricks](../index.qmd)

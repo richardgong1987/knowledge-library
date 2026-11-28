@@ -1,0 +1,40 @@
+---
+title: "Telescoping Sum — Watch Interior Terms Cancel"
+description: "Learn a closed-form identity with derivation and small numerical substitution."
+---
+
+# Telescoping Sum — Watch Interior Terms Cancel
+
+## The identity to remember
+
+$$
+\sum_{k=1}^{n}(f(k+1)-f(k))=f(n+1)-f(1)
+$$
+
+**Every symbol explained:** f is any function defined on the relevant integer indices; k runs from 1 to n; Σ adds n differences. All intermediate values appear once positive and once negative.
+
+**Substitute actual numbers:** Take f(k)=k², n=3. The terms are (4−1)+(9−4)+(16−9)=3+5+7=15. The right side is 16−1=15.
+
+## Why it is true
+
+Expand the sum and write consecutive brackets. Every +f(j) cancels −f(j) from the next term for j=2..n, leaving only the final and initial values.
+
+## When to recognise it
+
+Use when seeing differences between consecutive states, amortised potential changes, or sums of rational expressions decomposed into differences.
+
+## Algorithm or number puzzle application
+
+Sum 1/(k(k+1)) by writing 1/k−1/(k+1). For k=1..3, the sum is 1−1/4=3/4.
+
+## Assumptions and pitfalls
+
+Cancellation requires the sequence of indexed terms to match exactly; careless changes of starting index lead to off-by-one errors.
+
+## Your turn
+
+Simplify Σ from k=1 to 5 of (1/k−1/(k+1)).
+
+**Memory rule:** Reconstruct the cancellation or counting argument before memorising the formula.
+
+[← Numerical & Algebraic Tricks](../index.qmd)

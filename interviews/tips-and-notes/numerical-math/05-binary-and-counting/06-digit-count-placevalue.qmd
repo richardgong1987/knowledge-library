@@ -1,0 +1,35 @@
+---
+title: "Decimal Digit Count — Use Place-Value Intervals"
+---
+
+# Decimal Digit Count — Use Place-Value Intervals
+
+## The identity to remember
+
+$$
+\operatorname{digits}(n)=\lfloor\log_{10}n\rfloor+1\quad(n\ge1)
+$$
+
+**Every symbol explained:** n is a positive integer; digits(n) counts its base-10 digits; log₁₀ is the base-10 logarithm; floor rounds down.
+
+**Substitute actual numbers:** For n=999, log₁₀999 lies between 2 and 3, so floor is 2 and digits=3. For n=1000, log₁₀=3 and digits=4.
+
+## Why it is true
+
+Exactly d-digit positive integers satisfy 10^(d−1)≤n<10^d. Taking logarithms yields d−1≤log₁₀n<d, hence floor(log₁₀n)+1=d.
+
+## Algorithm or number puzzle application
+
+Use to count how many printed characters appear when numbering pages or concatenating integers; group 1-digit, 2-digit and 3-digit numbers separately.
+
+## Assumptions and pitfalls
+
+Pages 1..99 contain 9×1+90×2=189 digits. Pages 100..120 add 21×3=63, giving 252 total.
+
+## Your turn
+
+In floating-point implementations, logarithms near exact powers of ten can round incorrectly; for exact integer code use repeated division or an integer-length routine. The value n=0 is a separate case.
+
+**Memory rule:** Remember the mathematical structure behind the bit or counting operation, not a memorised code template.
+
+[← Numerical & Algebraic Tricks](../index.qmd)

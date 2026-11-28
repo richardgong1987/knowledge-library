@@ -1,0 +1,35 @@
+---
+title: "Binomial Coefficients — Count Choices, Not Orders"
+---
+
+# Binomial Coefficients — Count Choices, Not Orders
+
+## The identity to remember
+
+$$
+{n\choose k}={n-1\choose k-1}+{n-1\choose k}
+$$
+
+**Every symbol explained:** n is number of distinct items; k is how many are selected without order; the binomial coefficient counts such subsets. The recurrence assumes 1≤k≤n−1, with boundary values 1.
+
+**Substitute actual numbers:** Choose 2 of 4 items: C(4,2)=6. Split by whether item A is chosen: choose 1 more of remaining 3 (C(3,1)=3) or choose both from remaining 3 (C(3,2)=3). Sum 3+3=6.
+
+## Why it is true
+
+Every k-element subset either contains a distinguished item or not, and these categories do not overlap. The first has k−1 others; the second k others. Counting each and adding proves the recurrence.
+
+## Algorithm or number puzzle application
+
+Use this to derive Pascal's triangle or calculate combinations with dynamic programming without computing huge factorials.
+
+## Assumptions and pitfalls
+
+The number of shortest lattice paths with 2 right and 3 up moves is C(5,2)=10 because any such path is an ordering of 2 R and 3 U symbols.
+
+## Your turn
+
+This model assumes moves are unrestricted and only their counts matter. Obstacles invalidate the simple binomial answer.
+
+**Memory rule:** Remember the mathematical structure behind the bit or counting operation, not a memorised code template.
+
+[← Numerical & Algebraic Tricks](../index.qmd)

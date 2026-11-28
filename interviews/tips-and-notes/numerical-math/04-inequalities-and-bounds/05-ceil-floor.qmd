@@ -1,0 +1,35 @@
+---
+title: "Floor and Ceiling — Translate Integer Constraints"
+---
+
+# Floor and Ceiling — Translate Integer Constraints
+
+## The identity to remember
+
+$$
+\left\lceil\frac ab\right\rceil=\left\lfloor\frac{a+b-1}{b}\right\rfloor
+$$
+
+**Every symbol explained:** a is a nonnegative integer number of items; b is positive integer capacity per batch; ceil rounds up, floor rounds down. The right identity applies to integers a≥0,b>0.
+
+**Substitute actual numbers:** With 17 items in batches of 5, ceil(17/5)=ceil(3.4)=4. Formula floor((17+5−1)/5)=floor(21/5)=4.
+
+## Why it is true
+
+Write a=qb+r with 0≤r<b. If r=0, both expressions equal q. If r>0, both equal q+1. Therefore the integer expression computes the number of batches.
+
+## Algorithm or number puzzle application
+
+Use for number of pages, servers, trips, rounds or blocks when partial final groups need a whole slot.
+
+## Assumptions and pitfalls
+
+For nonnegative fixed-width integers, a+b−1 can overflow; alternative safe code uses a/b+(a%b!=0). Negative a requires a different rounding proof.
+
+## Your turn
+
+Compute how many 64-byte blocks store 1000 bytes.
+
+**Memory rule:** Translate the inequality into a statement about maximum, minimum or impossible values, then prove it.
+
+[← Numerical & Algebraic Tricks](../index.qmd)

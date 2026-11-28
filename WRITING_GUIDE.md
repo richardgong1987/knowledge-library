@@ -223,3 +223,14 @@ Each chapter must contain an interview recognition trigger, an exact displayed f
 The key design criterion is **memorisation value**: after reading a chapter, the user should be able to derive the algorithmic idea, not just recite one implementation. Avoid piling code, many variants and unrelated formulas onto one page. A compact one-page memory sheet complements 30 fully worked lessons.
 
 Run the curriculum audit and dependency-free Python numerical checks before publishing. Distinguish an empirical passing test from a general proof.
+
+
+## Correction: Numerical Mathematics in Interview Tips & Notes
+
+**Numerical & Algebraic Tricks** is the primary mathematical memorisation resource. It is explicitly about relationships between **numbers**: differences of squares, expansions of powers, summation identities, divisibility, modular arithmetic, inequalities, square roots, rounding, bit-level numerical identities and binomial coefficients.
+
+Do NOT fill the section with algorithm-design patterns like DFS, BFS, dynamic programming, sliding window or monotone stack. Those are preserved separately in the **Algorithm Reasoning Patterns** section.
+
+Every numerical identity lesson must display a correct formula, define every symbol IMMEDIATELY under it, substitute actual numbers, derive/prove the identity, give an algorithm-relevant number example, warn about assumptions such as sign, integer domains or overflow, and provide a new exercise. Use concise, independently written mathematics rather than a big code example.
+
+If a coding lab checks example values, tests are supplementary; derive the identity algebraically for the general case.
