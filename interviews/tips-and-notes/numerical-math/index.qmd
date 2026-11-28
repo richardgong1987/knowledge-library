@@ -1,6 +1,6 @@
 ---
 title: "Numerical & Algebraic Tricks for Algorithm Interviews"
-subtitle: "30 identities and numeric shortcuts worth knowing by heart"
+subtitle: "50 key numerical formulas and 30 detailed worked lessons"
 description: "Algebraic identities, series, modular arithmetic, inequalities, binary arithmetic and counting, each proved and demonstrated with actual numbers."
 ---
 
@@ -21,6 +21,46 @@ $$
 **Why it works:** Multiply $(a+b)(a-b)$: the $-ab$ and $+ab$ terms cancel. You have derived the identity rather than merely memorising it.
 
 **Practical recognition:** If a problem asks whether an integer is a difference of two squares, turn it into two factors. That can change the entire approach to the problem.
+
+## Essential formulas to memorise first
+
+Read a formula in both directions: expansion and factorisation. Start with the following identities before studying any algorithm.
+
+| Name | Formula | Numerical example |
+|---|---|---|
+| Difference of squares | $a^2-b^2=(a+b)(a-b)$ | $51\times49=2500-1=2499$ |
+| Square of a sum | $(a+b)^2=a^2+2ab+b^2$ | $13^2=100+60+9=169$ |
+| Square of a difference | $(a-b)^2=a^2-2ab+b^2$ | $19^2=400-40+1=361$ |
+| Sum of cubes | $a^3+b^3=(a+b)(a^2-ab+b^2)$ | $27+8=5(9-6+4)=35$ |
+| Difference of cubes | $a^3-b^3=(a-b)(a^2+ab+b^2)$ | $125-8=3(25+10+4)=117$ |
+| Product from squares | $2ab=(a+b)^2-a^2-b^2$ | $2(3)(4)=49-9-16=24$ |
+| Consecutive squares | $(n+1)^2-n^2=2n+1$ | $121-100=21$ |
+| First $n$ integers | $\sum_{k=1}^n k=\frac{n(n+1)}2$ | $1+2+3+4+5=15$ |
+| First $n$ odd integers | $\sum_{k=1}^n(2k-1)=n^2$ | $1+3+5+7=16$ |
+| Sum of squares | $\sum_{k=1}^n k^2=\frac{n(n+1)(2n+1)}6$ | $1+4+9+16=30$ |
+| Sum of cubes | $\sum_{k=1}^n k^3=(\frac{n(n+1)}2)^2$ | $1+8+27=36$ |
+| Geometric sum | $\sum_{k=0}^{n-1}r^k=\frac{r^n-1}{r-1}$, $r\ne1$ | $1+2+4+8=15$ |
+| Fraction cancellation | $\frac1{k(k+1)}=\frac1k-\frac1{k+1}$, $k\ne0,-1$ | $1/6=1/2-1/3$ |
+| Number of unordered pairs | $\binom n2=\frac{n(n-1)}2$, $n\ge2$ | Six items make 15 pairs |
+| Pairwise product sum | $\sum_{i<j}x_ix_j=\frac{(\sum_i x_i)^2-\sum_i x_i^2}{2}$ | $2(3)+2(4)+3(4)=26$ |
+
+**[Open the complete 50-formula memory sheet](memory-sheet.qmd).** It includes additional identities for factors, remainders, exponents, fractions and numerical rearrangement.
+
+### Why these identities matter
+
+Suppose you need the sum of all distinct-index pairwise products of $2,3,4$. Instead of generating every pair, expand the square:
+
+$
+(2+3+4)^2=2^2+3^2+4^2+2(2\cdot3+2\cdot4+3\cdot4).
+$
+
+Rearranging gives
+
+$
+2\cdot3+2\cdot4+3\cdot4=\frac{81-29}{2}=26.
+$
+
+For $n$ numbers, the same identity replaces a quadratic enumeration of pairs with two linear sums. This is the kind of numerical relationship that is worth knowing by heart.
 
 ## The thirty lessons
 
