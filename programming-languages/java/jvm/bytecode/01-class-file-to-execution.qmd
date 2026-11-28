@@ -74,6 +74,108 @@ java -Xlog:class+load=info -cp programming-languages/java/jvm/bytecode/examples 
 
 Expect substantial JVM output; filter for `OrderLab` to locate the relevant classes.
 
+
+### Escape analysis: does the object need to exist?
+
+Consider a simple class:
+
+```java
+class Point {
+    int x, y;
+    Point(int x, int y) { this.x = x; this.y = y; }
+}
+```
+
+#### Case A: no escape
+
+```java
+int calculate() {
+    Point p = new Point(10, 20);
+    return p.x + p.y;
+}
+```
+
+```{mermaid}
+flowchart LR
+    subgraph Frame["calculate() — conceptual stack frame"]
+        P["Reference p"]
+        R["Return integer 30"]
+    end
+    subgraph Heap["Heap before optimisation"]
+        O["Point: x = 10, y = 20"]
+    end
+    P --> O
+    R --> C["Caller receives 30"]
+```
+
+The caller receives an integer, not a reference to Point. The object is not needed outside this calculation.
+
+#### Case B: the reference escapes
+
+```java
+Point createPoint() {
+    Point p = new Point(10, 20);
+    return p;
+}
+```
+
+```{mermaid}
+flowchart LR
+    P["createPoint(): p"] --> O["Heap: Point (10, 20)"]
+    C["Caller: returned reference"] --> O
+    P -. "return p" .-> C
+```
+
+The caller can access the object after the method returns. Storing a reference in a static field or publishing it to another thread can also cause escape. Returning an object does not necessarily prevent optimisation if the JIT inlines the method and proves the object does not escape the larger compilation context.
+
+#### Scalar replacement: remove the allocation
+
+Escape analysis is a compiler analysis, not itself an allocation strategy. HotSpot's optimising C2 compiler can use it to eliminate eligible allocations through scalar replacement.
+
+```{mermaid}
+flowchart TD
+    A["Original: new Point(10, 20)"] --> B["Escape analysis: reference does not escape"]
+    B --> C["Scalar replacement: x = 10; y = 20"]
+    C --> D["Constant folding: 10 + 20"]
+    D --> E["Return 30 — no Point allocation"]
+```
+
+Conceptually, the original calculation becomes:
+
+```java
+int calculate() {
+    int x = 10;
+    int y = 20;
+    return x + y;
+}
+```
+
+The scalar values may live in registers or stack slots, or disappear entirely through constant folding. This is not a guarantee of allocating a complete object on the stack. The JIT transforms its intermediate representation, not the Java source file.
+
+#### Why performance improves
+
+For N calls, assuming one allocation per call before optimisation and successful elimination on every optimised call, the number of Point allocations changes from N to zero. This reduces allocation traffic and potentially garbage collection work. Heap allocation in HotSpot is already often cheap through thread-local allocation buffers (TLABs), so the actual speedup must be measured.
+
+Escape analysis can also enable lock elimination when a monitor cannot be observed by another thread and removing it preserves semantics.
+
+```{mermaid}
+flowchart TD
+    A["Object allocation"] --> B{"Can the JIT prove relevant references do not escape?"}
+    B -->|No| C["Retain allocation when required"]
+    B -->|Yes| D["Check scalar replacement eligibility"]
+    D --> E["May eliminate allocation"]
+    D --> F["May eliminate unobservable locking"]
+```
+
+#### Experiment and interview answer
+
+Use JMH with non-constant inputs and consume the result to avoid dead-code elimination. Compare allocation rates with the GC profiler (`-prof gc`) and, on HotSpot, compare against a run with `-XX:-DoEscapeAnalysis`. Warm up sufficiently; results depend on the JVM and compilation decisions. The diagrams are conceptual, not literal machine-memory layouts.
+
+**Interview answer:** Escape analysis determines whether an object's reference escapes its allocation context. If the JIT proves that an object is sufficiently confined, it may eliminate its heap allocation using scalar replacement, keeping only the required field values. It may also eliminate unnecessary synchronisation. This reduces allocation pressure and potentially garbage collection overhead, while preserving observable Java behaviour. These optimisations are not guaranteed.
+
+Further reading: [OpenJDK HotSpot escape analysis implementation](https://github.com/openjdk/jdk/blob/master/src/hotspot/share/opto/escape.cpp).
+
+
 ## Check your understanding
 
 1. Why are a Java source line and a bytecode instruction not interchangeable?
