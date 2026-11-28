@@ -30,9 +30,9 @@ def main():
     yml=(ROOT/"_quarto.yml").read_text()
     landing=(HERE/"index.qmd").read_text()
     tips=(HERE.parent/"index.qmd").read_text()
-    assert "Thirty mathematical invariants" in landing
+    assert "Algorithm Reasoning Patterns" in landing
     assert "algorithm-math/index.qmd" in tips
-    assert 'section: "Algorithm Mathematical Techniques"' in yml
+    assert 'section: "Algorithm Reasoning Patterns"' in yml
     assert "algorithm-math/examples/algorithm_math_lab.py" in yml
     assert "algorithm-math/examples/test_algorithm_math_lab.py" in yml
 
